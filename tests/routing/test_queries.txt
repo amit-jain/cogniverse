@@ -1,0 +1,101 @@
+# Test Queries for Query Analysis System
+# Format: query, expected_routing, expected_temporal
+# Routing: video|text|both
+# Temporal: pattern (e.g., yesterday, last_week, 2024-01-15) or none
+
+# === VIDEO-FOCUSED QUERIES ===
+Show me videos with moving objects, video, none
+Find clips of the red square, video, none
+Search for videos with animations, video, none
+Look for recordings of demonstrations, video, none
+Show me visual content from the presentation, video, none
+Find clips where something is moving from left to right, video, none
+Search for videos with bright colors, video, none
+Display footage of the test sequence, video, none
+
+# === TEXT-FOCUSED QUERIES ===
+Find documents about machine learning, text, none
+Search for reports on quarterly performance, text, none
+What information do we have about project timelines, text, none
+Look up documentation on system architecture, text, none
+Find articles about data analysis, text, none
+Search for meeting notes from the team, text, none
+What reports mention budget allocations, text, none
+Find text about implementation guidelines, text, none
+
+# === MULTI-MODAL QUERIES ===
+Find all content about the drone prototype, both, none
+Search for information about system installation, both, none
+Look for anything related to the new product launch, both, none
+Find documentation and videos about training, both, none
+Search for content about the quarterly review, both, none
+Find materials about the conference presentation, both, none
+
+# === TEMPORAL FILTERING QUERIES ===
+Show me videos from yesterday, video, yesterday
+Find clips from last week, video, last_week
+Search for content from last month, video, last_month
+Look for videos recorded this week, video, this_week
+Find footage from this morning, video, this_morning
+Show me content from the past 7 days, video, past_7_days
+Search for videos from 2024-01-15, video, 2024-01-15
+Find clips between 2024-01-10 and 2024-01-20, video, 2024-01-10_to_2024-01-20
+Look for content from January 2024, video, january_2024
+Show me videos from the first quarter, video, first_quarter
+
+# === TEMPORAL + CONTENT QUERIES ===
+Find videos of the red square from yesterday, video, yesterday
+Show me drone footage from last week, video, last_week
+Search for meeting recordings from this month, video, this_month
+Look for training videos from the past week, video, past_week
+Find demonstration clips from last Tuesday, video, last_tuesday
+Show me test footage from 2024-01-15, video, 2024-01-15
+Search for prototype videos from this quarter, video, this_quarter
+Find animation clips from the past month, video, past_month
+
+# === COMPLEX TEMPORAL EXPRESSIONS ===
+Show me videos from three days ago, video, three_days_ago
+Find content from the day before yesterday, video, day_before_yesterday
+Search for clips from two weeks ago, video, two_weeks_ago
+Look for videos from the beginning of this month, video, beginning_of_month
+Find footage from the end of last year, video, end_of_last_year
+Show me content from next week, video, next_week
+Search for videos from a month ago, video, month_ago
+Find clips from the previous quarter, video, previous_quarter
+
+# === AMBIGUOUS QUERIES (should default to video) ===
+Find something interesting, video, none
+Show me content, video, none
+Search for information, video, none
+Look for data, video, none
+Find materials, video, none
+Show me results, video, none
+Search the database, video, none
+Find relevant content, video, none
+
+# === EDGE CASES ===
+Find videos with no sound, video, none
+Search for silent clips, video, none
+Look for empty footage, video, none
+Show me blank content, video, none
+Find corrupted videos, video, none
+Search for missing files, video, none
+Look for deleted content, video, none
+Find archived materials, video, none
+
+# === SPECIFIC DATE FORMATS ===
+Find videos from 01/15/2024, video, 2024-01-15
+Show me content from 2024-01-15, video, 2024-01-15
+Search for clips from January 15 2024, video, 2024-01-15
+Look for footage from 15 Jan 2024, video, 2024-01-15
+Find videos from 15/01/2024, video, 2024-01-15
+Show me content from Monday last week, video, monday_last_week
+Search for clips from the weekend, video, weekend
+Find videos from the holiday period, video, holiday_period
+
+Show me videos from yesterday, video, yesterday
+Find documents created last week, text, last_week
+Search for content about machine learning, both, none
+Display recording from this morning, video, this_morning
+Get reports from 2024-01-15, text, 2024-01-15
+Find footage of the meeting, video, none 

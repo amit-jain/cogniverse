@@ -1,0 +1,71 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.env
+.venv
+venv/
+ENV/
+env/
+.python-version
+build/
+dist/
+wheels/
+*.egg-info
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.cursorindexingignore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+data*
+archive*
+poc*
+*.log
+logs/
+.byaldi/
+.specstory/
+test_results/
+optimization_results/
+outputs/
+video_rag_agent/
+
+# Debug files
+debug_*.py
+check_*.py
+test_vespa_*.py
+test_float_*.py
+
+# Model files
+*.bin
+*.pth
+*.onnx
+*.safetensors
+
+# Large data files
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.npy
+*.npz
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+temp/
+
+# Test outputs
+
+# Claude configuration
+CLAUDE.md

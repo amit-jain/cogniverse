@@ -1,0 +1,33 @@
+# requirements.txt
+# Core Agent & Server Frameworks
+google-adk
+fastapi
+uvicorn[standard]
+httpx
+requests
+
+# Text Search Agent
+elasticsearch
+sentence-transformers
+
+# Video Search Agent & Ingestion
+torch
+transformers
+Pillow
+opencv-python
+# Using faster-whisper instead of openai-whisper for Python 3.12 compatibility
+faster-whisper
+moviepy
+imageio
+imageio-ffmpeg
+
+# GLiNER for entity extraction
+gliner>=0.2.19
+colpali-engine>=0.3.0,<0.4.0
+pyvespa
+vespacli
+byaldi
+
+# Additional dependencies for Python 3.12 compatibility
+numba>=0.58.0  # Ensures Python 3.12 support
+llvmlite>=0.41.0  # Ensures Python 3.12 support

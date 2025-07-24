@@ -1,0 +1,19 @@
+{
+  "total_tests": 1,
+  "passed": 1,
+  "failed": 0,
+  "success_rate": 100.0,
+  "results": [
+    {
+      "test_name": "ColPali Search",
+      "success": true,
+      "message": "ColPali text-to-video search working correctly",
+      "details": {},
+      "timestamp": 1753277428.1235578
+    }
+  ],
+  "failed_tests": [],
+  "passed_tests": [
+    "ColPali Search"
+  ]
+}
