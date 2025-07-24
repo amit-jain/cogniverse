@@ -1,0 +1,64 @@
+{
+  "comment": "Multi-Agent RAG System Configuration - Copy this file to config.json and modify the values as needed",
+  
+  "text_agent_url": "http://localhost:8002",
+  "video_agent_url": "http://localhost:8001",
+  "composing_agent_port": 8000,
+  
+  "search_backend": "byaldi",
+  
+  "elastic_cloud_id": "your_elastic_cloud_id",
+  "elastic_api_key": "your_elastic_api_key",
+  "elastic_index": "your-text-index",
+  
+  "vespa_url": "http://localhost",
+  "vespa_port": 8080,
+  "vespa_schema": "video_content",
+  
+  "byaldi_index_name": ".byaldi/my_video_index",
+  
+  "vllm_model": "Qwen/Qwen2-VL-7B-Instruct",
+  "colpali_model": "vidore/colsmol-500m",
+  "embedding_model": "all-MiniLM-L6-v2",
+  
+  "local_llm_model": "deepseek-r1:1.5b",
+  "base_url": "http://localhost:11434",
+  
+  "query_inference_engine": {
+    "mode": "gliner_only",
+    "available_gliner_models": [
+      "urchade/gliner_small-v2.1",
+      "urchade/gliner_medium-v2.1", 
+      "urchade/gliner_large-v2.1",
+      "urchade/gliner_multi-v2.1"
+    ],
+    "current_gliner_model": "urchade/gliner_large-v2.1",
+    "enable_llm_fallback": false,
+    "gliner_labels": ["video_content", "visual_content", "document_content", "text_information", "time_reference", "date_pattern", "search_intent"],
+    "gliner_threshold": 0.3,
+    "optimization_results": {
+      "strategy": "focused",
+      "accuracy": 0.9333,
+      "optimized_on": "2025-01-03",
+      "note": "Optimized configuration achieving 93.3% accuracy"
+    }
+  },
+  
+  "pipeline_config": {
+    "extract_keyframes": true,
+    "transcribe_audio": true,
+    "generate_descriptions": true,
+    "generate_embeddings": true
+  },
+
+  "device": "cuda",
+  "max_workers": 4,
+  "timeout": 60.0,
+  
+  "log_level": "INFO",
+  "log_file": "multi_agent_system.log",
+  
+  "video_data_dir": "data/videos",
+  "text_data_dir": "data/text",
+  "index_dir": "data/indexes"
+} 

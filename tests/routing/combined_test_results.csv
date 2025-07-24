@@ -1,0 +1,85 @@
+model_type,model_name,query,expected_routing,expected_temporal,actual_routing,actual_temporal,routing_correct,temporal_correct,response_time,error
+llm,deepseek-r1:1.5b,Search for prototype videos from this quarter,video,this_quarter,error,error,False,False,11.87925124168396,Expected temporal pattern 'this_quarter' but extracted none
+llm,deepseek-r1:1.5b,Search for videos from 2024-01-15,video,2024-01-15,video,this_week,True,False,4.102831840515137,
+llm,deepseek-r1:1.5b,Show me videos from the first quarter,video,first_quarter,error,error,False,False,3.9574458599090576,Expected temporal pattern 'first_quarter' but extracted none
+llm,deepseek-r1:1.5b,Find footage from the end of last year,video,end_of_last_year,text,date_range,False,False,4.399369955062866,
+llm,deepseek-r1:1.5b,Search for content about machine learning,both,none,text,none,False,True,3.0348899364471436,
+llm,deepseek-r1:1.5b,Display recording from this morning,video,this_morning,video,this_week,True,False,3.440711259841919,
+llm,gemma3:1b,Search for prototype videos from this quarter,video,this_quarter,error,error,False,False,0.7167799472808838,Expected temporal pattern 'this_quarter' but extracted none
+llm,gemma3:1b,Search for videos from 2024-01-15,video,2024-01-15,video,2024-01-15,True,True,0.749891996383667,
+llm,gemma3:1b,Show me videos from the first quarter,video,first_quarter,error,error,False,False,0.6912760734558105,Expected temporal pattern 'first_quarter' but extracted none
+llm,gemma3:1b,Find footage from the end of last year,video,end_of_last_year,error,error,False,False,0.8590562343597412,Expected temporal pattern 'end_of_last_year' but extracted none
+llm,gemma3:1b,Search for content about machine learning,both,none,text,none,False,True,0.6931700706481934,
+llm,gemma3:1b,Display recording from this morning,video,this_morning,video,this_morning,True,True,0.7426867485046387,
+llm,deepseek-r1:7b,Search for prototype videos from this quarter,video,this_quarter,error,error,False,False,5.4905641078948975,Expected temporal pattern 'this_quarter' but extracted none
+llm,deepseek-r1:7b,Search for videos from 2024-01-15,video,2024-01-15,error,error,False,False,9.391542911529541,Expected temporal pattern '2024-01-15' but extracted none
+llm,deepseek-r1:7b,Show me videos from the first quarter,video,first_quarter,error,error,False,False,4.451959848403931,Expected temporal pattern 'first_quarter' but extracted none
+llm,deepseek-r1:7b,Find footage from the end of last year,video,end_of_last_year,video,past_7_days,True,False,3.75101900100708,
+llm,deepseek-r1:7b,Search for content about machine learning,both,none,video,none,False,True,6.276144027709961,
+llm,deepseek-r1:7b,Display recording from this morning,video,this_morning,video,this_morning,True,True,3.6043717861175537,
+llm,deepseek-r1:8b,Search for prototype videos from this quarter,video,this_quarter,video,month_year,True,False,9.788547039031982,
+llm,deepseek-r1:8b,Search for videos from 2024-01-15,video,2024-01-15,video,date_range,True,False,6.422636985778809,
+llm,deepseek-r1:8b,Show me videos from the first quarter,video,first_quarter,video,month_year,True,False,6.647621154785156,
+llm,deepseek-r1:8b,Find footage from the end of last year,video,end_of_last_year,video,month_year,True,False,23.10389471054077,
+llm,deepseek-r1:8b,Search for content about machine learning,both,none,both,none,True,True,7.839705944061279,
+llm,deepseek-r1:8b,Display recording from this morning,video,this_morning,error,error,False,False,23.126244068145752,Expected temporal pattern 'this_morning' but extracted none
+llm,gemma3:4b,Search for prototype videos from this quarter,video,this_quarter,error,error,False,False,2.810703992843628,Expected temporal pattern 'this_quarter' but extracted none
+llm,gemma3:4b,Search for videos from 2024-01-15,video,2024-01-15,video,date_range,True,False,1.0214221477508545,
+llm,gemma3:4b,Show me videos from the first quarter,video,first_quarter,error,error,False,False,1.0198438167572021,Expected temporal pattern 'first_quarter' but extracted none
+llm,gemma3:4b,Find footage from the end of last year,video,end_of_last_year,error,error,False,False,1.0509438514709473,Expected temporal pattern 'end_of_last_year' but extracted none
+llm,gemma3:4b,Search for content about machine learning,both,none,text,none,False,True,0.9834277629852295,
+llm,gemma3:4b,Display recording from this morning,video,this_morning,video,this_morning,True,True,1.0985782146453857,
+llm,gemma3:12b,Search for prototype videos from this quarter,video,this_quarter,error,error,False,False,7.953513860702515,Expected temporal pattern 'this_quarter' but extracted none
+llm,gemma3:12b,Search for videos from 2024-01-15,video,2024-01-15,video,date_range,True,False,2.934917688369751,
+llm,gemma3:12b,Show me videos from the first quarter,video,first_quarter,video,month_year,True,False,2.9453349113464355,
+llm,gemma3:12b,Find footage from the end of last year,video,end_of_last_year,error,error,False,False,2.792024850845337,Expected temporal pattern 'end_of_last_year' but extracted none
+llm,gemma3:12b,Search for content about machine learning,both,none,text,none,False,True,2.6380741596221924,
+llm,gemma3:12b,Display recording from this morning,video,this_morning,video,this_morning,True,True,2.8075199127197266,
+llm,qwen3:0.6b,Search for prototype videos from this quarter,video,this_quarter,error,error,False,False,3.468384027481079,Expected temporal pattern 'this_quarter' but extracted none
+llm,qwen3:0.6b,Search for videos from 2024-01-15,video,2024-01-15,video,this_month,True,False,1.7461419105529785,
+llm,qwen3:0.6b,Show me videos from the first quarter,video,first_quarter,error,error,False,False,4.518639087677002,Expected temporal pattern 'first_quarter' but extracted none
+llm,qwen3:0.6b,Find footage from the end of last year,video,end_of_last_year,error,error,False,False,2.375593900680542,Expected temporal pattern 'end_of_last_year' but extracted none
+llm,qwen3:0.6b,Search for content about machine learning,both,none,text,none,False,True,1.4285366535186768,
+llm,qwen3:0.6b,Display recording from this morning,video,this_morning,video,this_week,True,False,1.6883180141448975,
+llm,qwen3:1.7b,Search for prototype videos from this quarter,video,this_quarter,error,error,False,False,7.65618896484375,Expected temporal pattern 'this_quarter' but extracted none
+llm,qwen3:1.7b,Search for videos from 2024-01-15,video,2024-01-15,video,past_7_days,True,False,4.202670097351074,
+llm,qwen3:1.7b,Show me videos from the first quarter,video,first_quarter,video,month_year,True,False,7.542200088500977,
+llm,qwen3:1.7b,Find footage from the end of last year,video,end_of_last_year,error,error,False,False,3.7385480403900146,Expected temporal pattern 'end_of_last_year' but extracted none
+llm,qwen3:1.7b,Search for content about machine learning,both,none,video,none,False,True,4.563223123550415,
+llm,qwen3:1.7b,Display recording from this morning,video,this_morning,error,error,False,False,10.809998035430908,Expected temporal pattern 'this_morning' but extracted none
+llm,qwen3:4b,Search for prototype videos from this quarter,video,this_quarter,error,error,False,False,105.06941413879395,Expected temporal pattern 'this_quarter' but extracted none
+llm,qwen3:4b,Search for videos from 2024-01-15,video,2024-01-15,video,date_range,True,False,77.58883619308472,
+llm,qwen3:4b,Show me videos from the first quarter,video,first_quarter,error,error,False,False,78.5398850440979,Expected temporal pattern 'first_quarter' but extracted none
+llm,qwen3:4b,Find footage from the end of last year,video,end_of_last_year,error,error,False,False,27.2990779876709,Expected temporal pattern 'end_of_last_year' but extracted none
+llm,qwen3:4b,Search for content about machine learning,both,none,both,none,True,True,3.5840768814086914,
+llm,qwen3:4b,Display recording from this morning,video,this_morning,error,error,False,False,66.82012796401978,Expected temporal pattern 'this_morning' but extracted none
+llm,qwen3:8b,Search for prototype videos from this quarter,video,this_quarter,error,error,False,False,69.45885896682739,Expected temporal pattern 'this_quarter' but extracted none
+llm,qwen3:8b,Search for videos from 2024-01-15,video,2024-01-15,video,date_range,True,False,10.348548889160156,
+llm,qwen3:8b,Show me videos from the first quarter,video,first_quarter,video,month_year,True,False,11.509585857391357,
+llm,qwen3:8b,Find footage from the end of last year,video,end_of_last_year,error,error,False,False,80.01499319076538,Expected temporal pattern 'end_of_last_year' but extracted none
+llm,qwen3:8b,Search for content about machine learning,both,none,both,none,True,True,7.251752853393555,
+llm,qwen3:8b,Display recording from this morning,video,this_morning,error,error,False,False,74.85560894012451,Expected temporal pattern 'this_morning' but extracted none
+gliner,urchade/gliner_small-v2.1,Show me videos from the first quarter,video,first_quarter,video,none,True,False,0.06666994094848633,
+gliner,urchade/gliner_small-v2.1,Search for silent clips,video,none,both,none,False,True,0.057672977447509766,
+gliner,urchade/gliner_small-v2.1,Show me content from 2024-01-15,video,2024-01-15,both,2024-01-15,False,True,0.059155941009521484,
+gliner,urchade/gliner_small-v2.1,Search for prototype videos from this quarter,video,this_quarter,video,none,True,False,0.05921483039855957,
+gliner,urchade/gliner_small-v2.1,Look for data,video,none,video,none,True,True,0.061827659606933594,
+gliner,urchade/gliner_small-v2.1,Look up documentation on system architecture,text,none,text,none,True,True,0.06180095672607422,
+gliner,urchade/gliner_medium-v2.1,Show me videos from the first quarter,video,first_quarter,video,none,True,False,0.06990480422973633,
+gliner,urchade/gliner_medium-v2.1,Search for silent clips,video,none,both,none,False,True,0.08942198753356934,
+gliner,urchade/gliner_medium-v2.1,Show me content from 2024-01-15,video,2024-01-15,both,2024-01-15,False,True,0.09029126167297363,
+gliner,urchade/gliner_medium-v2.1,Search for prototype videos from this quarter,video,this_quarter,video,none,True,False,0.08749890327453613,
+gliner,urchade/gliner_medium-v2.1,Look for data,video,none,video,none,True,True,0.08585309982299805,
+gliner,urchade/gliner_medium-v2.1,Look up documentation on system architecture,text,none,text,none,True,True,0.08307194709777832,
+gliner,urchade/gliner_large-v2.1,Show me videos from the first quarter,video,first_quarter,video,none,True,False,0.22441601753234863,
+gliner,urchade/gliner_large-v2.1,Search for silent clips,video,none,video,none,True,True,0.22124695777893066,
+gliner,urchade/gliner_large-v2.1,Show me content from 2024-01-15,video,2024-01-15,both,2024-01-15,False,True,0.2218329906463623,
+gliner,urchade/gliner_large-v2.1,Search for prototype videos from this quarter,video,this_quarter,video,none,True,False,0.2573885917663574,
+gliner,urchade/gliner_large-v2.1,Look for data,video,none,video,none,True,True,0.24487996101379395,
+gliner,urchade/gliner_large-v2.1,Look up documentation on system architecture,text,none,text,none,True,True,0.23227381706237793,
+gliner,urchade/gliner_multi-v2.1,Show me videos from the first quarter,video,first_quarter,video,none,True,False,0.10894608497619629,
+gliner,urchade/gliner_multi-v2.1,Search for silent clips,video,none,both,none,False,True,0.1418139934539795,
+gliner,urchade/gliner_multi-v2.1,Show me content from 2024-01-15,video,2024-01-15,both,2024-01-15,False,True,0.12927794456481934,
+gliner,urchade/gliner_multi-v2.1,Search for prototype videos from this quarter,video,this_quarter,video,none,True,False,0.14488482475280762,
+gliner,urchade/gliner_multi-v2.1,Look for data,video,none,video,none,True,True,0.13798213005065918,
+gliner,urchade/gliner_multi-v2.1,Look up documentation on system architecture,text,none,text,none,True,True,0.12444424629211426,

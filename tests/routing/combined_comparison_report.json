@@ -1,0 +1,717 @@
+{
+  "test_date": "2025-07-04T18:26:12.907636",
+  "models_tested": 14,
+  "total_queries": 6,
+  "scores": [
+    {
+      "model_type": "llm",
+      "model_name": "deepseek-r1:8b",
+      "total_queries": 6,
+      "routing_accuracy": 83.3,
+      "temporal_accuracy": 16.7,
+      "overall_accuracy": 50.0,
+      "avg_response_time": 12.82,
+      "errors": 1
+    },
+    {
+      "model_type": "llm",
+      "model_name": "gemma3:1b",
+      "total_queries": 6,
+      "routing_accuracy": 33.3,
+      "temporal_accuracy": 50.0,
+      "overall_accuracy": 41.7,
+      "avg_response_time": 0.74,
+      "errors": 3
+    },
+    {
+      "model_type": "llm",
+      "model_name": "gemma3:12b",
+      "total_queries": 6,
+      "routing_accuracy": 50.0,
+      "temporal_accuracy": 33.3,
+      "overall_accuracy": 41.7,
+      "avg_response_time": 3.68,
+      "errors": 2
+    },
+    {
+      "model_type": "llm",
+      "model_name": "deepseek-r1:7b",
+      "total_queries": 6,
+      "routing_accuracy": 33.3,
+      "temporal_accuracy": 33.3,
+      "overall_accuracy": 33.3,
+      "avg_response_time": 5.49,
+      "errors": 3
+    },
+    {
+      "model_type": "llm",
+      "model_name": "gemma3:4b",
+      "total_queries": 6,
+      "routing_accuracy": 33.3,
+      "temporal_accuracy": 33.3,
+      "overall_accuracy": 33.3,
+      "avg_response_time": 1.33,
+      "errors": 3
+    },
+    {
+      "model_type": "llm",
+      "model_name": "qwen3:8b",
+      "total_queries": 6,
+      "routing_accuracy": 50.0,
+      "temporal_accuracy": 16.7,
+      "overall_accuracy": 33.3,
+      "avg_response_time": 42.24,
+      "errors": 3
+    },
+    {
+      "model_type": "llm",
+      "model_name": "deepseek-r1:1.5b",
+      "total_queries": 6,
+      "routing_accuracy": 33.3,
+      "temporal_accuracy": 16.7,
+      "overall_accuracy": 25.0,
+      "avg_response_time": 5.14,
+      "errors": 2
+    },
+    {
+      "model_type": "llm",
+      "model_name": "qwen3:0.6b",
+      "total_queries": 6,
+      "routing_accuracy": 33.3,
+      "temporal_accuracy": 16.7,
+      "overall_accuracy": 25.0,
+      "avg_response_time": 2.54,
+      "errors": 3
+    },
+    {
+      "model_type": "llm",
+      "model_name": "qwen3:1.7b",
+      "total_queries": 6,
+      "routing_accuracy": 33.3,
+      "temporal_accuracy": 16.7,
+      "overall_accuracy": 25.0,
+      "avg_response_time": 6.42,
+      "errors": 3
+    },
+    {
+      "model_type": "llm",
+      "model_name": "qwen3:4b",
+      "total_queries": 6,
+      "routing_accuracy": 33.3,
+      "temporal_accuracy": 16.7,
+      "overall_accuracy": 25.0,
+      "avg_response_time": 59.82,
+      "errors": 4
+    },
+    {
+      "model_type": "gliner",
+      "model_name": "urchade/gliner_small-v2.1",
+      "total_queries": 6,
+      "routing_accuracy": 66.66666666666666,
+      "temporal_accuracy": 66.66666666666666,
+      "overall_accuracy": 66.66666666666666,
+      "avg_response_time": 0.061057051022847496,
+      "errors": 0
+    },
+    {
+      "model_type": "gliner",
+      "model_name": "urchade/gliner_medium-v2.1",
+      "total_queries": 6,
+      "routing_accuracy": 66.66666666666666,
+      "temporal_accuracy": 66.66666666666666,
+      "overall_accuracy": 66.66666666666666,
+      "avg_response_time": 0.08434033393859863,
+      "errors": 0
+    },
+    {
+      "model_type": "gliner",
+      "model_name": "urchade/gliner_large-v2.1",
+      "total_queries": 6,
+      "routing_accuracy": 83.33333333333334,
+      "temporal_accuracy": 66.66666666666666,
+      "overall_accuracy": 75.0,
+      "avg_response_time": 0.23367305596669516,
+      "errors": 0
+    },
+    {
+      "model_type": "gliner",
+      "model_name": "urchade/gliner_multi-v2.1",
+      "total_queries": 6,
+      "routing_accuracy": 66.66666666666666,
+      "temporal_accuracy": 66.66666666666666,
+      "overall_accuracy": 66.66666666666666,
+      "avg_response_time": 0.1312248706817627,
+      "errors": 0
+    }
+  ],
+  "ranking": {
+    "by_overall_accuracy": [
+      {
+        "model_type": "gliner",
+        "model_name": "urchade/gliner_large-v2.1",
+        "total_queries": 6,
+        "routing_accuracy": 83.33333333333334,
+        "temporal_accuracy": 66.66666666666666,
+        "overall_accuracy": 75.0,
+        "avg_response_time": 0.23367305596669516,
+        "errors": 0
+      },
+      {
+        "model_type": "gliner",
+        "model_name": "urchade/gliner_small-v2.1",
+        "total_queries": 6,
+        "routing_accuracy": 66.66666666666666,
+        "temporal_accuracy": 66.66666666666666,
+        "overall_accuracy": 66.66666666666666,
+        "avg_response_time": 0.061057051022847496,
+        "errors": 0
+      },
+      {
+        "model_type": "gliner",
+        "model_name": "urchade/gliner_medium-v2.1",
+        "total_queries": 6,
+        "routing_accuracy": 66.66666666666666,
+        "temporal_accuracy": 66.66666666666666,
+        "overall_accuracy": 66.66666666666666,
+        "avg_response_time": 0.08434033393859863,
+        "errors": 0
+      },
+      {
+        "model_type": "gliner",
+        "model_name": "urchade/gliner_multi-v2.1",
+        "total_queries": 6,
+        "routing_accuracy": 66.66666666666666,
+        "temporal_accuracy": 66.66666666666666,
+        "overall_accuracy": 66.66666666666666,
+        "avg_response_time": 0.1312248706817627,
+        "errors": 0
+      },
+      {
+        "model_type": "llm",
+        "model_name": "deepseek-r1:8b",
+        "total_queries": 6,
+        "routing_accuracy": 83.3,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 50.0,
+        "avg_response_time": 12.82,
+        "errors": 1
+      },
+      {
+        "model_type": "llm",
+        "model_name": "gemma3:1b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 50.0,
+        "overall_accuracy": 41.7,
+        "avg_response_time": 0.74,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "gemma3:12b",
+        "total_queries": 6,
+        "routing_accuracy": 50.0,
+        "temporal_accuracy": 33.3,
+        "overall_accuracy": 41.7,
+        "avg_response_time": 3.68,
+        "errors": 2
+      },
+      {
+        "model_type": "llm",
+        "model_name": "deepseek-r1:7b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 33.3,
+        "overall_accuracy": 33.3,
+        "avg_response_time": 5.49,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "gemma3:4b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 33.3,
+        "overall_accuracy": 33.3,
+        "avg_response_time": 1.33,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "qwen3:8b",
+        "total_queries": 6,
+        "routing_accuracy": 50.0,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 33.3,
+        "avg_response_time": 42.24,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "deepseek-r1:1.5b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 25.0,
+        "avg_response_time": 5.14,
+        "errors": 2
+      },
+      {
+        "model_type": "llm",
+        "model_name": "qwen3:0.6b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 25.0,
+        "avg_response_time": 2.54,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "qwen3:1.7b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 25.0,
+        "avg_response_time": 6.42,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "qwen3:4b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 25.0,
+        "avg_response_time": 59.82,
+        "errors": 4
+      }
+    ],
+    "by_routing_accuracy": [
+      {
+        "model_type": "gliner",
+        "model_name": "urchade/gliner_large-v2.1",
+        "total_queries": 6,
+        "routing_accuracy": 83.33333333333334,
+        "temporal_accuracy": 66.66666666666666,
+        "overall_accuracy": 75.0,
+        "avg_response_time": 0.23367305596669516,
+        "errors": 0
+      },
+      {
+        "model_type": "llm",
+        "model_name": "deepseek-r1:8b",
+        "total_queries": 6,
+        "routing_accuracy": 83.3,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 50.0,
+        "avg_response_time": 12.82,
+        "errors": 1
+      },
+      {
+        "model_type": "gliner",
+        "model_name": "urchade/gliner_small-v2.1",
+        "total_queries": 6,
+        "routing_accuracy": 66.66666666666666,
+        "temporal_accuracy": 66.66666666666666,
+        "overall_accuracy": 66.66666666666666,
+        "avg_response_time": 0.061057051022847496,
+        "errors": 0
+      },
+      {
+        "model_type": "gliner",
+        "model_name": "urchade/gliner_medium-v2.1",
+        "total_queries": 6,
+        "routing_accuracy": 66.66666666666666,
+        "temporal_accuracy": 66.66666666666666,
+        "overall_accuracy": 66.66666666666666,
+        "avg_response_time": 0.08434033393859863,
+        "errors": 0
+      },
+      {
+        "model_type": "gliner",
+        "model_name": "urchade/gliner_multi-v2.1",
+        "total_queries": 6,
+        "routing_accuracy": 66.66666666666666,
+        "temporal_accuracy": 66.66666666666666,
+        "overall_accuracy": 66.66666666666666,
+        "avg_response_time": 0.1312248706817627,
+        "errors": 0
+      },
+      {
+        "model_type": "llm",
+        "model_name": "gemma3:12b",
+        "total_queries": 6,
+        "routing_accuracy": 50.0,
+        "temporal_accuracy": 33.3,
+        "overall_accuracy": 41.7,
+        "avg_response_time": 3.68,
+        "errors": 2
+      },
+      {
+        "model_type": "llm",
+        "model_name": "qwen3:8b",
+        "total_queries": 6,
+        "routing_accuracy": 50.0,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 33.3,
+        "avg_response_time": 42.24,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "gemma3:1b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 50.0,
+        "overall_accuracy": 41.7,
+        "avg_response_time": 0.74,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "deepseek-r1:7b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 33.3,
+        "overall_accuracy": 33.3,
+        "avg_response_time": 5.49,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "gemma3:4b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 33.3,
+        "overall_accuracy": 33.3,
+        "avg_response_time": 1.33,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "deepseek-r1:1.5b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 25.0,
+        "avg_response_time": 5.14,
+        "errors": 2
+      },
+      {
+        "model_type": "llm",
+        "model_name": "qwen3:0.6b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 25.0,
+        "avg_response_time": 2.54,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "qwen3:1.7b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 25.0,
+        "avg_response_time": 6.42,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "qwen3:4b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 25.0,
+        "avg_response_time": 59.82,
+        "errors": 4
+      }
+    ],
+    "by_temporal_accuracy": [
+      {
+        "model_type": "gliner",
+        "model_name": "urchade/gliner_small-v2.1",
+        "total_queries": 6,
+        "routing_accuracy": 66.66666666666666,
+        "temporal_accuracy": 66.66666666666666,
+        "overall_accuracy": 66.66666666666666,
+        "avg_response_time": 0.061057051022847496,
+        "errors": 0
+      },
+      {
+        "model_type": "gliner",
+        "model_name": "urchade/gliner_medium-v2.1",
+        "total_queries": 6,
+        "routing_accuracy": 66.66666666666666,
+        "temporal_accuracy": 66.66666666666666,
+        "overall_accuracy": 66.66666666666666,
+        "avg_response_time": 0.08434033393859863,
+        "errors": 0
+      },
+      {
+        "model_type": "gliner",
+        "model_name": "urchade/gliner_large-v2.1",
+        "total_queries": 6,
+        "routing_accuracy": 83.33333333333334,
+        "temporal_accuracy": 66.66666666666666,
+        "overall_accuracy": 75.0,
+        "avg_response_time": 0.23367305596669516,
+        "errors": 0
+      },
+      {
+        "model_type": "gliner",
+        "model_name": "urchade/gliner_multi-v2.1",
+        "total_queries": 6,
+        "routing_accuracy": 66.66666666666666,
+        "temporal_accuracy": 66.66666666666666,
+        "overall_accuracy": 66.66666666666666,
+        "avg_response_time": 0.1312248706817627,
+        "errors": 0
+      },
+      {
+        "model_type": "llm",
+        "model_name": "gemma3:1b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 50.0,
+        "overall_accuracy": 41.7,
+        "avg_response_time": 0.74,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "gemma3:12b",
+        "total_queries": 6,
+        "routing_accuracy": 50.0,
+        "temporal_accuracy": 33.3,
+        "overall_accuracy": 41.7,
+        "avg_response_time": 3.68,
+        "errors": 2
+      },
+      {
+        "model_type": "llm",
+        "model_name": "deepseek-r1:7b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 33.3,
+        "overall_accuracy": 33.3,
+        "avg_response_time": 5.49,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "gemma3:4b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 33.3,
+        "overall_accuracy": 33.3,
+        "avg_response_time": 1.33,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "deepseek-r1:8b",
+        "total_queries": 6,
+        "routing_accuracy": 83.3,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 50.0,
+        "avg_response_time": 12.82,
+        "errors": 1
+      },
+      {
+        "model_type": "llm",
+        "model_name": "qwen3:8b",
+        "total_queries": 6,
+        "routing_accuracy": 50.0,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 33.3,
+        "avg_response_time": 42.24,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "deepseek-r1:1.5b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 25.0,
+        "avg_response_time": 5.14,
+        "errors": 2
+      },
+      {
+        "model_type": "llm",
+        "model_name": "qwen3:0.6b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 25.0,
+        "avg_response_time": 2.54,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "qwen3:1.7b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 25.0,
+        "avg_response_time": 6.42,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "qwen3:4b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 25.0,
+        "avg_response_time": 59.82,
+        "errors": 4
+      }
+    ],
+    "by_response_time": [
+      {
+        "model_type": "gliner",
+        "model_name": "urchade/gliner_small-v2.1",
+        "total_queries": 6,
+        "routing_accuracy": 66.66666666666666,
+        "temporal_accuracy": 66.66666666666666,
+        "overall_accuracy": 66.66666666666666,
+        "avg_response_time": 0.061057051022847496,
+        "errors": 0
+      },
+      {
+        "model_type": "gliner",
+        "model_name": "urchade/gliner_medium-v2.1",
+        "total_queries": 6,
+        "routing_accuracy": 66.66666666666666,
+        "temporal_accuracy": 66.66666666666666,
+        "overall_accuracy": 66.66666666666666,
+        "avg_response_time": 0.08434033393859863,
+        "errors": 0
+      },
+      {
+        "model_type": "gliner",
+        "model_name": "urchade/gliner_multi-v2.1",
+        "total_queries": 6,
+        "routing_accuracy": 66.66666666666666,
+        "temporal_accuracy": 66.66666666666666,
+        "overall_accuracy": 66.66666666666666,
+        "avg_response_time": 0.1312248706817627,
+        "errors": 0
+      },
+      {
+        "model_type": "gliner",
+        "model_name": "urchade/gliner_large-v2.1",
+        "total_queries": 6,
+        "routing_accuracy": 83.33333333333334,
+        "temporal_accuracy": 66.66666666666666,
+        "overall_accuracy": 75.0,
+        "avg_response_time": 0.23367305596669516,
+        "errors": 0
+      },
+      {
+        "model_type": "llm",
+        "model_name": "gemma3:1b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 50.0,
+        "overall_accuracy": 41.7,
+        "avg_response_time": 0.74,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "gemma3:4b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 33.3,
+        "overall_accuracy": 33.3,
+        "avg_response_time": 1.33,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "qwen3:0.6b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 25.0,
+        "avg_response_time": 2.54,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "gemma3:12b",
+        "total_queries": 6,
+        "routing_accuracy": 50.0,
+        "temporal_accuracy": 33.3,
+        "overall_accuracy": 41.7,
+        "avg_response_time": 3.68,
+        "errors": 2
+      },
+      {
+        "model_type": "llm",
+        "model_name": "deepseek-r1:1.5b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 25.0,
+        "avg_response_time": 5.14,
+        "errors": 2
+      },
+      {
+        "model_type": "llm",
+        "model_name": "deepseek-r1:7b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 33.3,
+        "overall_accuracy": 33.3,
+        "avg_response_time": 5.49,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "qwen3:1.7b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 25.0,
+        "avg_response_time": 6.42,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "deepseek-r1:8b",
+        "total_queries": 6,
+        "routing_accuracy": 83.3,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 50.0,
+        "avg_response_time": 12.82,
+        "errors": 1
+      },
+      {
+        "model_type": "llm",
+        "model_name": "qwen3:8b",
+        "total_queries": 6,
+        "routing_accuracy": 50.0,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 33.3,
+        "avg_response_time": 42.24,
+        "errors": 3
+      },
+      {
+        "model_type": "llm",
+        "model_name": "qwen3:4b",
+        "total_queries": 6,
+        "routing_accuracy": 33.3,
+        "temporal_accuracy": 16.7,
+        "overall_accuracy": 25.0,
+        "avg_response_time": 59.82,
+        "errors": 4
+      }
+    ]
+  }
+}
