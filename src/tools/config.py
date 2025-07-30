@@ -23,6 +23,7 @@ class Config:
         self.config_data = {}
         self.config_path = None
         self.logger = logging.getLogger(__name__)
+        self.active_profile = None
         self.load_config()
         self._initialized = True
     
@@ -106,6 +107,41 @@ class Config:
         else:
             self.logger.warning(f"config.json not found in any of: {config_paths}")
             print(f"Warning: config.json not found in any of: {config_paths}")
+        
+        # Apply video processing profile if specified
+        profile_name = os.getenv("VIDEO_PROFILE") or self.config_data.get("active_video_profile")
+        if profile_name:
+            self._apply_video_profile(profile_name)
+    
+    def _apply_video_profile(self, profile_name: str):
+        """Apply video processing profile settings."""
+        profiles = self.config_data.get("video_processing_profiles", {})
+        if profile_name not in profiles:
+            self.logger.warning(f"Video profile '{profile_name}' not found. Available profiles: {list(profiles.keys())}")
+            return
+        
+        profile = profiles[profile_name]
+        self.active_profile = profile_name
+        
+        # Override vespa_schema
+        if "vespa_schema" in profile:
+            self.config_data["vespa_schema"] = profile["vespa_schema"]
+        
+        # Override pipeline_config
+        if "pipeline_config" in profile:
+            self.config_data["pipeline_config"] = profile["pipeline_config"]
+        
+        # Override embedding model
+        if "embedding_model" in profile:
+            self.config_data["colpali_model"] = profile["embedding_model"]
+        
+        # Add profile-specific settings
+        self.config_data["embedding_type"] = profile.get("embedding_type", "frame_based")
+        
+        if "model_specific" in profile:
+            self.config_data["model_specific"] = profile["model_specific"]
+        
+        self.logger.info(f"Applied video processing profile: {profile_name}")
     
     def reload(self):
         """Reload configuration from file"""
@@ -184,6 +220,14 @@ class Config:
             "model": self.get("local_llm_model"),
             "base_url": self.get("base_url"),
         }
+    
+    def get_active_profile(self) -> Optional[str]:
+        """Get the active video processing profile."""
+        return self.active_profile
+    
+    def get_pipeline_config(self) -> Dict[str, Any]:
+        """Get pipeline configuration."""
+        return self.get("pipeline_config", {})
     
     def is_development(self) -> bool:
         """Check if running in development mode."""

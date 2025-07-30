@@ -123,24 +123,7 @@ class VLMDescriptor:
             # Legacy path support
             descriptions_file = output_dir / "descriptions" / f"{video_id}.json"
         
-        # Check if already processed
-        if descriptions_file.exists():
-            with open(descriptions_file, 'r') as f:
-                existing_descriptions = json.load(f)
-                # Check if file has actual descriptions
-                if existing_descriptions and len(existing_descriptions) > 0:
-                    self.logger.info(f"Found existing descriptions for {video_id}: {len(existing_descriptions)} descriptions")
-                    print(f"  ✅ Already generated {len(existing_descriptions)} descriptions")
-                    # Return in the expected format for the pipeline
-                    return {
-                        "video_id": video_id,
-                        "descriptions": existing_descriptions,
-                        "total_descriptions": len(existing_descriptions),
-                        "created_at": time.time()
-                    }
-                else:
-                    self.logger.warning(f"Found empty descriptions file for {video_id}, will regenerate")
-                    print(f"  ⚠️ Found empty descriptions file, will regenerate")
+        # Remove caching - always regenerate descriptions
         
         # Only start service when we actually need to generate descriptions
         if self.auto_start and not self._service_started:

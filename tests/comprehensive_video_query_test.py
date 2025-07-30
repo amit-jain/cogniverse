@@ -9,14 +9,74 @@ import numpy as np
 import torch
 import sys
 import argparse
+import os
+import random
 from pathlib import Path
-from colpali_engine.models import ColIdefics3, ColIdefics3Processor
+from typing import List, Dict, Any, Tuple
 
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
 from src.tools.config import get_config
 from src.processing.vespa.vespa_search_client import VespaVideoSearchClient
 from tests.test_utils import TestResultsFormatter
+
+
+def load_random_test_queries(num_queries: int = 10, seed: int = 42) -> List[Dict[str, Any]]:
+    """Load random test queries from our evaluation set"""
+    queries = []
+    
+    # Try processed videos queries first (these are mapped to our actual videos)
+    processed_query_file = Path(__file__).parent.parent / "processed_videos_test_queries.json"
+    if processed_query_file.exists():
+        with open(processed_query_file, 'r') as f:
+            data = json.load(f)
+            all_queries = data.get('queries', [])
+            
+            # Sample random queries
+            random.seed(seed)
+            sampled = random.sample(all_queries, min(num_queries, len(all_queries)))
+            
+            # Convert to test case format
+            for q in sampled:
+                # Take first expected video as target
+                if q['expected_videos']:
+                    queries.append({
+                        "video_id": q['expected_videos'][0],  # Use first expected video
+                        "description": q.get('category', 'test query'),
+                        "queries": [q['query']],
+                        "expected_videos": q['expected_videos'],
+                        "query_id": q.get('query_id', '')
+                    })
+            return queries
+    
+    # Fallback to original retrieval test queries
+    query_file = Path(__file__).parent.parent / "retrieval_test_queries_with_temporal.json"
+    
+    if query_file.exists():
+        with open(query_file, 'r') as f:
+            data = json.load(f)
+            all_queries = data.get('queries', [])
+            
+            # Filter queries with expected videos
+            queries_with_ground_truth = [q for q in all_queries if q.get('expected_videos')]
+            
+            # Sample random queries
+            random.seed(seed)
+            sampled = random.sample(queries_with_ground_truth, min(num_queries, len(queries_with_ground_truth)))
+            
+            # Convert to test case format
+            for q in sampled:
+                # Take first expected video as target
+                if q['expected_videos']:
+                    queries.append({
+                        "video_id": q['expected_videos'][0],  # Use first expected video
+                        "description": q.get('category', 'test query'),
+                        "queries": [q['query']],
+                        "expected_videos": q['expected_videos'],
+                        "query_id": q.get('query_id', '')
+                    })
+    
+    return queries
 
 def execute_search_with_client(search_client, strategy, query, embeddings_np=None, silent=False):
     """Execute a search using the VespaVideoSearchClient"""
@@ -60,7 +120,7 @@ def analyze_strategy_failures(strategy_performance, strategies_to_analyze=None):
     
     if strategies_to_analyze is None:
         # Default to analyzing high-performing visual strategies that had failures
-        strategies_to_analyze = ['binary_binary', 'phased']
+        strategies_to_analyze = ['default', 'binary_binary', 'phased']
     
     print("\n" + "=" * 120)
     print("DETAILED FAILURE ANALYSIS")
@@ -194,17 +254,18 @@ def display_cross_strategy_comparison(strategy_performance, query_filter=None):
             rank_info = f"Rank: {result['expected_rank']}" if result['expected_rank'] else "Not in top 10"
             print(f"  {strategy:35s}: {status} Top: {result['top_video']:20s} Score: {result['top_score']:8.4f} {rank_info}")
 
-def test_all_ranking_strategies(search_client, query, video_id, embeddings_np, vespa_schema="video_frame"):
+def test_all_ranking_strategies(search_client, query, video_id, embeddings_np, vespa_schema="video_frame", profile="frame_based_colpali"):
     """Test all ranking strategies and return performance data"""
     
-    # Define all strategies
-    text_only = ["bm25_only", "bm25_no_description"]
-    visual_only = ["float_float", "binary_binary", "float_binary", "phased"]
-    hybrid = ["hybrid_float_bm25", "hybrid_binary_bm25", "hybrid_bm25_binary", "hybrid_bm25_float",
-              "hybrid_float_bm25_no_description", "hybrid_binary_bm25_no_description",
-              "hybrid_bm25_binary_no_description", "hybrid_bm25_float_no_description"]
+    # Get supported strategies for this profile
+    from src.utils.profile_utils import get_supported_ranking_strategies
+    all_strategies = get_supported_ranking_strategies(profile)
     
-    all_strategies = text_only + visual_only + hybrid
+    # Categorize strategies
+    text_only = [s for s in all_strategies if s.startswith("bm25_")]
+    visual_only = [s for s in all_strategies if s in ["float_float", "binary_binary", "default", "float_binary", "phased"]]
+    hybrid = [s for s in all_strategies if s.startswith("hybrid_")]
+    
     strategy_results = {}
     
     for strategy in all_strategies:
@@ -246,14 +307,14 @@ def test_all_ranking_strategies(search_client, query, video_id, embeddings_np, v
     
     return strategy_results
 
-def analyze_results(expected_video, query, binary_results, float_results, output_format="text"):
+def analyze_results(expected_video, query, binary_results, float_results, output_format="text", expected_videos=None):
     """Analyze and compare binary vs float results"""
     
     analysis = {}
     
     if not binary_results or not float_results:
         print(f"   ⚠️ Missing results - cannot compare")
-        return
+        return analysis
     
     # Get top video IDs
     binary_videos = [r['video_id'] for r in binary_results]
@@ -262,10 +323,52 @@ def analyze_results(expected_video, query, binary_results, float_results, output
     binary_top = binary_videos[0] if binary_videos else None
     float_top = float_videos[0] if float_videos else None
     
+    # Calculate metrics if we have expected videos
+    if expected_videos:
+        # Binary metrics
+        binary_recall_5 = len(set(binary_videos[:5]) & set(expected_videos)) / len(expected_videos)
+        binary_recall_10 = len(set(binary_videos[:10]) & set(expected_videos)) / len(expected_videos)
+        binary_mrr = 0
+        for i, vid in enumerate(binary_videos):
+            if vid in expected_videos:
+                binary_mrr = 1.0 / (i + 1)
+                break
+        
+        # Float metrics
+        float_recall_5 = len(set(float_videos[:5]) & set(expected_videos)) / len(expected_videos)
+        float_recall_10 = len(set(float_videos[:10]) & set(expected_videos)) / len(expected_videos)
+        float_mrr = 0
+        for i, vid in enumerate(float_videos):
+            if vid in expected_videos:
+                float_mrr = 1.0 / (i + 1)
+                break
+        
+        analysis['binary_metrics'] = {
+            'recall@5': binary_recall_5,
+            'recall@10': binary_recall_10,
+            'mrr': binary_mrr
+        }
+        analysis['float_metrics'] = {
+            'recall@5': float_recall_5,
+            'recall@10': float_recall_10,
+            'mrr': float_mrr
+        }
+    
     print(f"\n📊 ANALYSIS:")
     print(f"   Expected video: {expected_video}")
     print(f"   Binary top result: {binary_top}")
     print(f"   Float top result: {float_top}")
+    
+    if expected_videos:
+        print(f"\n   📈 Metrics (Binary):")
+        print(f"      Recall@5: {analysis['binary_metrics']['recall@5']:.3f}")
+        print(f"      Recall@10: {analysis['binary_metrics']['recall@10']:.3f}")
+        print(f"      MRR: {analysis['binary_metrics']['mrr']:.3f}")
+        
+        print(f"\n   📈 Metrics (Float):")
+        print(f"      Recall@5: {analysis['float_metrics']['recall@5']:.3f}")
+        print(f"      Recall@10: {analysis['float_metrics']['recall@10']:.3f}")
+        print(f"      MRR: {analysis['float_metrics']['mrr']:.3f}")
     
     # Check if expected video appears in results
     binary_has_expected = expected_video in binary_videos
@@ -297,8 +400,17 @@ def analyze_results(expected_video, query, binary_results, float_results, output
     return analysis
 
 
-def comprehensive_video_test(custom_query=None, output_format="table", test_all_strategies=False):
-    """Test using actual video content to create targeted queries"""
+def comprehensive_video_test(custom_query=None, output_format="table", test_all_strategies=False, use_random_queries=False, num_queries=10, seed=42):
+    """Test using actual video content to create targeted queries
+    
+    Args:
+        custom_query: Custom query to test
+        output_format: Output format (table or text)
+        test_all_strategies: Whether to test all ranking strategies
+        use_random_queries: Use random queries from evaluation set
+        num_queries: Number of random queries to test
+        seed: Random seed for reproducibility
+    """
     
     print("=== COMPREHENSIVE VIDEO CONTENT TEST ===")
     
@@ -310,38 +422,48 @@ def comprehensive_video_test(custom_query=None, output_format="table", test_all_
     # Load config
     config = get_config()
     vespa_schema = config.get("vespa_schema", "video_frame")
-    model_name = config.get("colpali_model", "vidore/colsmol-500m")
     vespa_url = config.get("vespa_url", "http://localhost")
     vespa_port = config.get("vespa_port", 8080)
     
-    # Use same device detection as video agent
-    if torch.cuda.is_available():
-        device = "cuda"
-        dtype = torch.bfloat16
-    elif torch.backends.mps.is_available():
-        device = "mps"
-        dtype = torch.float32
+    # Get current profile
+    current_profile = os.environ.get("VIDEO_PROFILE", "frame_based_colpali")
+    
+    # Import and use the video agent's query encoder
+    from src.agents.query_encoders import QueryEncoderFactory
+    
+    # Get model name from config
+    profiles = config.get("video_processing_profiles", {})
+    if current_profile and current_profile in profiles:
+        model_name = profiles[current_profile].get("embedding_model", config.get("colpali_model", "vidore/colsmol-500m"))
     else:
-        device = "cpu"
-        dtype = torch.float32
+        model_name = config.get("colpali_model", "vidore/colsmol-500m")
     
-    print(f"Loading ColPali model: {model_name}")
-    print(f"Device: {device}, dtype: {dtype}")
-    
-    col_model = ColIdefics3.from_pretrained(
-        model_name,
-        torch_dtype=dtype,
-        device_map=device
-    ).eval()
-    
-    col_processor = ColIdefics3Processor.from_pretrained(model_name)
+    # Initialize query encoder
+    try:
+        query_encoder = QueryEncoderFactory.create_encoder(current_profile, model_name)
+        print(f"Using query encoder for profile: {current_profile}")
+        print(f"Model: {model_name}")
+        print(f"Embedding dimension: {query_encoder.get_embedding_dim()}")
+    except Exception as e:
+        print(f"Error initializing query encoder: {e}")
+        # Fall back to ColPali
+        query_encoder = QueryEncoderFactory.create_encoder("frame_based_colpali")
+        print("Falling back to ColPali query encoder")
     
     # Initialize search client
     search_client = VespaVideoSearchClient(vespa_url=vespa_url, vespa_port=vespa_port)
     print(f"✅ Initialized search client for {vespa_url}:{vespa_port}")
     
     # Define test cases based on actual video content (excluding Big Buck Bunny to avoid bias)
-    test_cases = [
+    if use_random_queries:
+        # Load random queries from evaluation set
+        test_cases = load_random_test_queries(num_queries, seed)
+        print(f"\nLoaded {len(test_cases)} random test queries from evaluation set")
+        if test_cases:
+            print(f"Example query: '{test_cases[0]['queries'][0]}'")
+    else:
+        # Use default test cases
+        test_cases = [
         {
             "video_id": "v_-IMXSEIabMM",
             "description": "Snow removal/winter scene",
@@ -389,19 +511,14 @@ def comprehensive_video_test(custom_query=None, output_format="table", test_all_
         for query_idx, query in enumerate(queries):
             print(f"\n--- Query {query_idx + 1}: '{query}' ---")
             
-            # Generate embeddings
-            batch_queries = col_processor.process_queries([query]).to(device)
-            with torch.no_grad():
-                query_embeddings = col_model(**batch_queries)
-            
-            # Convert to numpy array (keep as numpy for search client)
-            embeddings_np = query_embeddings.cpu().numpy().squeeze(0)
+            # Generate embeddings using query encoder
+            embeddings_np = query_encoder.encode(query)
             print(f"Query embedding shape: {embeddings_np.shape}")
             
             if test_all_strategies:
                 # Test all ranking strategies
                 print(f"🔍 Testing all ranking strategies...")
-                strategy_results = test_all_ranking_strategies(search_client, query, video_id, embeddings_np, vespa_schema)
+                strategy_results = test_all_ranking_strategies(search_client, query, video_id, embeddings_np, vespa_schema, current_profile)
                 
                 # Store strategy performance
                 for strategy, results in strategy_results.items():
@@ -434,7 +551,8 @@ def comprehensive_video_test(custom_query=None, output_format="table", test_all_
                 )
                 
                 # Analyze results
-                analysis = analyze_results(video_id, query, binary_results, float_results, output_format)
+                expected_videos = test_case.get('expected_videos', [video_id])
+                analysis = analyze_results(video_id, query, binary_results, float_results, output_format, expected_videos)
                 
                 # Collect results for final summary
                 if binary_results and float_results:
@@ -453,7 +571,7 @@ def comprehensive_video_test(custom_query=None, output_format="table", test_all_
         display_strategy_performance_table(strategy_performance, formatter)
         
         # Add failure analysis for high-performing strategies
-        analyze_strategy_failures(strategy_performance, ['binary_binary', 'phased', 'hybrid_bm25_binary', 'hybrid_bm25_float'])
+        analyze_strategy_failures(strategy_performance, ['default', 'binary_binary', 'phased', 'hybrid_bm25_binary', 'hybrid_bm25_float'])
         
         # Add cross-strategy comparison for difficult queries
         display_cross_strategy_comparison(strategy_performance)
@@ -494,6 +612,40 @@ def comprehensive_video_test(custom_query=None, output_format="table", test_all_
         
         formatter.print_summary(all_results, stats)
         
+    # Add aggregated metrics summary for random queries
+    if use_random_queries and all_results:
+        print("\n" + "="*60)
+        print("AGGREGATED METRICS - Random Query Evaluation")
+        print("="*60)
+        
+        # Collect all metrics
+        binary_metrics = {'recall@5': [], 'recall@10': [], 'mrr': []}
+        float_metrics = {'recall@5': [], 'recall@10': [], 'mrr': []}
+        
+        for result in all_results:
+            if 'analysis' in result and result['analysis']:
+                analysis = result['analysis']
+                if 'binary_metrics' in analysis:
+                    for metric, value in analysis['binary_metrics'].items():
+                        binary_metrics[metric].append(value)
+                if 'float_metrics' in analysis:
+                    for metric, value in analysis['float_metrics'].items():
+                        float_metrics[metric].append(value)
+        
+        # Calculate averages
+        if binary_metrics['mrr']:
+            print("\nBINARY SEARCH Performance:")
+            print(f"  Average Recall@5:  {np.mean(binary_metrics['recall@5']):.3f}")
+            print(f"  Average Recall@10: {np.mean(binary_metrics['recall@10']):.3f}")
+            print(f"  Average MRR:       {np.mean(binary_metrics['mrr']):.3f}")
+            
+            print("\nFLOAT SEARCH Performance:")
+            print(f"  Average Recall@5:  {np.mean(float_metrics['recall@5']):.3f}")
+            print(f"  Average Recall@10: {np.mean(float_metrics['recall@10']):.3f}")
+            print(f"  Average MRR:       {np.mean(float_metrics['mrr']):.3f}")
+            
+            print(f"\nTested {len(binary_metrics['mrr'])} queries with ground truth")
+    
     # Always save results automatically
     if all_results:
         csv_path = formatter.save_csv(all_results)
@@ -501,6 +653,58 @@ def comprehensive_video_test(custom_query=None, output_format="table", test_all_
         print(f"\n📊 Results saved to:")
         print(f"   CSV: {csv_path}")
         print(f"   JSON: {json_path}")
+
+
+def test_all_profiles_comprehensive(use_random_queries=False, num_queries=10, seed=42, test_all_strategies=False):
+    """Test comprehensive search for all video processing profiles"""
+    
+    profiles = [
+        "frame_based_colpali",
+        "direct_video_colqwen", 
+        "direct_video_global",  # VideoPrism Global Base (LVT)
+        "direct_video_global_large"  # VideoPrism Global Large (LVT)
+    ]
+    
+    # Save current profile
+    original_profile = os.environ.get("VIDEO_PROFILE", "")
+    
+    for profile in profiles:
+        print(f"\n\n{'='*80}")
+        print(f"🎯 TESTING PROFILE: {profile}")
+        print(f"{'='*80}")
+        
+        # Set the profile
+        os.environ["VIDEO_PROFILE"] = profile
+        
+        # Reload config to pick up profile-specific settings
+        from src.tools.config import get_config
+        config = get_config()
+        config.reload()
+        
+        # Get the schema for this profile
+        schema = config.get("vespa_schema", "video_frame")
+        print(f"Using schema: {schema}")
+        
+        try:
+            # Run comprehensive test with all strategies
+            comprehensive_video_test(
+                test_all_strategies=test_all_strategies if test_all_strategies else True,
+                use_random_queries=use_random_queries,
+                num_queries=num_queries,
+                seed=seed
+            )
+        except Exception as e:
+            print(f"❌ Error testing {profile}: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # Restore original profile
+    if original_profile:
+        os.environ["VIDEO_PROFILE"] = original_profile
+    else:
+        os.environ.pop("VIDEO_PROFILE", None)
+
+
 
 
 if __name__ == "__main__":
@@ -511,12 +715,31 @@ if __name__ == "__main__":
                        help="Output format (default: table)")
     parser.add_argument("--all-strategies", action="store_true",
                        help="Test all ranking strategies instead of just binary/float")
+    parser.add_argument("--all-profiles", action="store_true",
+                       help="Test all video processing profiles")
+    parser.add_argument("--random-queries", action="store_true",
+                       help="Use random queries from evaluation set instead of default test cases")
+    parser.add_argument("--num-queries", type=int, default=10,
+                       help="Number of random queries to test (default: 10)")
+    parser.add_argument("--seed", type=int, default=42,
+                       help="Random seed for query selection (default: 42)")
     
     args = parser.parse_args()
     
     config = get_config()
     output_format = config.get("test_output_format", args.format)
     
-    comprehensive_video_test(custom_query=args.query,
-                           output_format=output_format, 
-                           test_all_strategies=args.all_strategies)
+    if args.all_profiles:
+        test_all_profiles_comprehensive(
+            use_random_queries=args.random_queries,
+            num_queries=args.num_queries,
+            seed=args.seed,
+            test_all_strategies=args.all_strategies
+        )
+    else:
+        comprehensive_video_test(custom_query=args.query,
+                               output_format=output_format, 
+                               test_all_strategies=args.all_strategies,
+                               use_random_queries=args.random_queries,
+                               num_queries=args.num_queries,
+                               seed=args.seed)

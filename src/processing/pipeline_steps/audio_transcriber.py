@@ -44,30 +44,7 @@ class AudioTranscriber:
             video_id = video_path.stem
             transcript_file = output_dir / "transcripts" / f"{video_id}.json"
         
-        # Check if already processed
-        if transcript_file.exists():
-            with open(transcript_file, 'r') as f:
-                existing_data = json.load(f)
-                # Handle both old format (list) and new format (dict)
-                if isinstance(existing_data, list):
-                    # Convert old format to new format
-                    segments_count = len(existing_data)
-                    print(f"  ✅ Already transcribed ({segments_count} segments) - old format")
-                    # Return old format data wrapped in expected structure
-                    return {
-                        "video_id": video_id,
-                        "video_path": str(video_path),
-                        "segments": existing_data,
-                        "full_text": " ".join([seg.get("text", "") for seg in existing_data]),
-                        "language": "unknown",
-                        "duration": existing_data[-1].get("end", 0) if existing_data else 0,
-                        "created_at": time.time()
-                    }
-                else:
-                    # New format
-                    segments_count = len(existing_data.get('segments', []))
-                    print(f"  ✅ Already transcribed ({segments_count} segments)")
-                    return existing_data
+        # Remove caching - always retranscribe audio
         
         video_id = video_path.stem
         try:

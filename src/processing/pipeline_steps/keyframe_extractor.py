@@ -40,12 +40,7 @@ class KeyframeExtractor:
             
         keyframes_dir.mkdir(parents=True, exist_ok=True)
         
-        # Check if already processed
-        if metadata_file.exists():
-            with open(metadata_file, 'r') as f:
-                existing_data = json.load(f)
-                print(f"  ✅ Already extracted {existing_data['stats']['total_keyframes']} keyframes")
-                return existing_data
+        # Remove caching - always extract keyframes
         
         cap = cv2.VideoCapture(str(video_path))
         fps = cap.get(cv2.CAP_PROP_FPS)

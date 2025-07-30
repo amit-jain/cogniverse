@@ -40,9 +40,9 @@ fi
 
 echo ""
 echo "💾 Data Status:"
-if [ -d "data/vespa/var" ] && [ -d "data/vespa/logs" ]; then
-    echo "✅ Vespa data preserved in data/vespa/"
-    echo "📊 Data size: $(du -sh data/vespa/ | cut -f1)"
+if [ -d "outputs/vespa/var" ] && [ -d "outputs/vespa/logs" ]; then
+    echo "✅ Vespa data preserved in outputs/vespa/"
+    echo "📊 Data size: $(du -sh outputs/vespa/ | cut -f1)"
 else
     echo "⚠️  Vespa data directories not found"
 fi

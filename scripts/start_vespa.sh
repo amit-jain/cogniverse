@@ -7,8 +7,8 @@ echo "🚀 Starting Vespa with persistent storage"
 
 # Set up volume paths
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VESPA_VAR_STORAGE="$PROJECT_ROOT/data/vespa/var"
-VESPA_LOG_STORAGE="$PROJECT_ROOT/data/vespa/logs"
+VESPA_VAR_STORAGE="$PROJECT_ROOT/outputs/vespa/var"
+VESPA_LOG_STORAGE="$PROJECT_ROOT/outputs/vespa/logs"
 
 echo "📁 Project root: $PROJECT_ROOT"
 echo "📁 Vespa var storage: $VESPA_VAR_STORAGE"

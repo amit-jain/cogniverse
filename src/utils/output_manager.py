@@ -23,11 +23,6 @@ class OutputManager:
             "test_results": "test_results",
             "optimization": "optimization",
             "processing": "processing",
-            "embeddings": "processing/embeddings",
-            "transcripts": "processing/transcripts",
-            "descriptions": "processing/descriptions",
-            "keyframes": "processing/keyframes",
-            "metadata": "processing/metadata",
             "agents": "agents",
             "vespa": "vespa",
             "exports": "exports",
@@ -83,8 +78,7 @@ class OutputManager:
         Args:
             subtype: Optional subdirectory type (embeddings, transcripts, etc.)
         """
-        if subtype and f"{subtype}" in self.subdirs:
-            return self.get_path(subtype)
+        # Always return base processing dir - profiles handle subdirs
         return self.get_path("processing")
     
     def get_temp_dir(self) -> Path:

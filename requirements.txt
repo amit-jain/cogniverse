@@ -31,3 +31,11 @@ byaldi
 # Additional dependencies for Python 3.12 compatibility
 numba>=0.58.0  # Ensures Python 3.12 support
 llvmlite>=0.41.0  # Ensures Python 3.12 support
+
+# JAX and VideoPrism dependencies
+jax[cpu]  # Use jax[cuda] for GPU support
+jaxlib
+flax
+einops
+einshape
+huggingface_hub
