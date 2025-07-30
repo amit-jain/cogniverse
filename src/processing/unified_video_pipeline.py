@@ -31,6 +31,7 @@ from src.processing.pipeline_steps import (
     VLMDescriptor,
     EmbeddingGenerator
 )
+from src.processing.pipeline_steps.keyframe_extractor_fps import FPSKeyframeExtractor
 
 
 class PipelineStep(Enum):
@@ -56,7 +57,7 @@ class PipelineConfig:
     
     # Paths
     video_dir: Path = Path("data/videos")
-    output_dir: Path = Path("data/videos/processed")
+    output_dir: Path = None  # Will be set from OutputManager
     
     # Backend selection
     search_backend: str = "byaldi"  # "byaldi" or "vespa"
@@ -67,6 +68,10 @@ class PipelineConfig:
         config = get_config()
         pipeline_config = config.get("pipeline_config", {})
         
+        # Get output directory from OutputManager
+        from src.utils.output_manager import get_output_manager
+        output_manager = get_output_manager()
+        
         return cls(
             extract_keyframes=pipeline_config.get("extract_keyframes", True),
             transcribe_audio=pipeline_config.get("transcribe_audio", True), 
@@ -75,7 +80,8 @@ class PipelineConfig:
             keyframe_threshold=pipeline_config.get("keyframe_threshold", 0.999),
             max_frames_per_video=pipeline_config.get("max_frames_per_video", 3000),
             vlm_batch_size=pipeline_config.get("vlm_batch_size", 500),
-            search_backend=config.get("search_backend", "byaldi")
+            search_backend=config.get("search_backend", "byaldi"),
+            output_dir=output_manager.get_processing_dir()
         )
 
 
@@ -90,13 +96,22 @@ class VideoIngestionPipeline:
         self._initialize_pipeline_steps()
         
     def setup_directories(self):
-        """Create necessary directories"""
+        """Create necessary directories with profile-specific organization"""
+        # Get active profile name
+        active_profile = self.app_config.get_active_profile()
+        if active_profile:
+            # Use profile-specific directory
+            self.profile_output_dir = self.config.output_dir / f"profile_{active_profile}"
+        else:
+            # Fallback to default
+            self.profile_output_dir = self.config.output_dir / "default"
+        
         directories = [
-            self.config.output_dir / "keyframes",
-            self.config.output_dir / "metadata", 
-            self.config.output_dir / "descriptions",
-            self.config.output_dir / "transcripts",
-            self.config.output_dir / "embeddings",
+            self.profile_output_dir / "keyframes",
+            self.profile_output_dir / "metadata", 
+            self.profile_output_dir / "descriptions",
+            self.profile_output_dir / "transcripts",
+            self.profile_output_dir / "embeddings",
             Path("logs")  # Add logs directory
         ]
         
@@ -111,11 +126,12 @@ class VideoIngestionPipeline:
         # Clear existing handlers
         logger.handlers.clear()
         
-        # Create timestamp for log file
+        # Create timestamp for log file with profile name
         from src.utils.output_manager import get_output_manager
         output_manager = get_output_manager()
         timestamp = int(time.time())
-        log_file = output_manager.get_logs_dir() / f"video_processing_{timestamp}.log"
+        active_profile = self.app_config.get_active_profile() or "default"
+        log_file = output_manager.get_logs_dir() / f"video_processing_{active_profile}_{timestamp}.log"
         
         # File handler with detailed formatting
         file_handler = logging.FileHandler(log_file)
@@ -140,41 +156,60 @@ class VideoIngestionPipeline:
         # Log initialization
         logger.info(f"VideoIngestionPipeline initialized - logging to: {log_file}")
         logger.info(f"Backend: {self.config.search_backend}")
-        logger.info(f"Output directory: {self.config.output_dir}")
+        logger.info(f"Output directory: {self.profile_output_dir}")
         logger.info(f"Pipeline config: {self.config}")
         
         return logger
     
     def _initialize_pipeline_steps(self):
         """Initialize all pipeline step handlers"""
-        # Initialize keyframe extractor
-        self.keyframe_extractor = KeyframeExtractor(
-            threshold=self.config.keyframe_threshold,
-            max_frames=self.config.max_frames_per_video
-        )
+        # Initialize keyframe extractor only if needed
+        if self.config.extract_keyframes:
+            # Check if FPS-based extraction is configured
+            extraction_method = self.app_config.get("pipeline_config.keyframe_extraction_method", "histogram")
+            if extraction_method == "fps":
+                target_fps = self.app_config.get("pipeline_config.keyframe_fps", 1.0)
+                self.keyframe_extractor = FPSKeyframeExtractor(target_fps=target_fps)
+                self.logger.info(f"Using FPS-based keyframe extraction at {target_fps} FPS")
+            else:
+                self.keyframe_extractor = KeyframeExtractor(
+                    threshold=self.config.keyframe_threshold,
+                    max_frames=self.config.max_frames_per_video
+                )
+                self.logger.info("Using histogram-based keyframe extraction")
+        else:
+            self.keyframe_extractor = None
         
-        # Initialize audio transcriber
-        self.audio_transcriber = AudioTranscriber(
-            model_size="base",
-            device=None  # Auto-detect
-        )
-        
-        # Initialize VLM descriptor
-        vlm_endpoint = self.app_config.get("vlm_endpoint_url")
-        if vlm_endpoint:
-            auto_start_vlm = self.app_config.get("auto_start_vlm_service", True)
-            self.vlm_descriptor = VLMDescriptor(
-                vlm_endpoint=vlm_endpoint,
-                batch_size=self.config.vlm_batch_size,
-                timeout=10800,  # 3 hours
-                auto_start=auto_start_vlm
+        # Initialize audio transcriber only if needed
+        if self.config.transcribe_audio:
+            self.audio_transcriber = AudioTranscriber(
+                model_size="base",
+                device=None  # Auto-detect
             )
+        else:
+            self.audio_transcriber = None
+        
+        # Initialize VLM descriptor only if needed
+        if self.config.generate_descriptions:
+            vlm_endpoint = self.app_config.get("vlm_endpoint_url")
+            if vlm_endpoint:
+                auto_start_vlm = self.app_config.get("auto_start_vlm_service", True)
+                self.vlm_descriptor = VLMDescriptor(
+                    vlm_endpoint=vlm_endpoint,
+                    batch_size=self.config.vlm_batch_size,
+                    timeout=10800,  # 3 hours
+                    auto_start=auto_start_vlm
+                )
+            else:
+                self.vlm_descriptor = None
         else:
             self.vlm_descriptor = None
             
-        # Initialize embedding generator
+        # Initialize embedding generator with embedding type
+        embedding_type = self.app_config.get("embedding_type", "frame_based")
         self.embedding_generator = EmbeddingGenerator(
-            backend=self.config.search_backend
+            backend=self.config.search_backend,
+            embedding_type=embedding_type
         )
             
     def get_video_files(self, video_dir: Optional[Path] = None) -> List[Path]:
@@ -190,11 +225,11 @@ class VideoIngestionPipeline:
     
     def extract_keyframes(self, video_path: Path) -> Dict[str, Any]:
         """Extract keyframes from video using KeyframeExtractor"""
-        return self.keyframe_extractor.extract_keyframes(video_path, self.config.output_dir)
+        return self.keyframe_extractor.extract_keyframes(video_path, self.profile_output_dir)
     
     def transcribe_audio(self, video_path: Path) -> Dict[str, Any]:
         """Extract and transcribe audio from video using AudioTranscriber"""
-        return self.audio_transcriber.transcribe_audio(video_path, self.config.output_dir)
+        return self.audio_transcriber.transcribe_audio(video_path, self.profile_output_dir)
     
     def generate_descriptions(self, keyframes_metadata: Dict[str, Any]) -> Dict[str, Any]:
         """Generate VLM descriptions for keyframes using VLMDescriptor"""
@@ -202,7 +237,7 @@ class VideoIngestionPipeline:
             print("  ⚠️ No VLM endpoint configured, skipping description generation")
             return {}
         
-        return self.vlm_descriptor.generate_descriptions(keyframes_metadata, self.config.output_dir)
+        return self.vlm_descriptor.generate_descriptions(keyframes_metadata, self.profile_output_dir)
     
     
     def generate_embeddings(self, results: Dict[str, Any]) -> Dict[str, Any]:
@@ -212,13 +247,14 @@ class VideoIngestionPipeline:
         # Pass minimal data to avoid large object serialization issues
         video_data = {
             "video_id": results.get("video_id"),
-            "output_dir": str(self.config.output_dir)  # Pass path instead of large data structures
+            "video_path": results.get("video_path"),  # Add video path for direct processing
+            "output_dir": str(self.profile_output_dir)  # Pass path instead of large data structures
         }
         
         self.logger.info(f"Data extracted - Video ID: {video_data['video_id']}")
         self.logger.info(f"Output directory: {video_data['output_dir']}")
         
-        result = self.embedding_generator.generate_embeddings(video_data, self.config.output_dir)
+        result = self.embedding_generator.generate_embeddings(video_data, self.profile_output_dir)
         return result
     
     
@@ -259,11 +295,7 @@ class VideoIngestionPipeline:
                     raise Exception(f"Keyframe extraction failed: {keyframes_data['error']}")
                 else:
                     keyframe_count = len(keyframes_data.get("keyframes", []))
-                    # Check if keyframes were already available (very fast completion)
-                    if step_time < 0.1:
-                        self.logger.info(f"Step 1 completed in {step_time:.2f}s - found {keyframe_count} existing keyframes")
-                    else:
-                        self.logger.info(f"Step 1 completed in {step_time:.2f}s - extracted {keyframe_count} keyframes")
+                    self.logger.info(f"Step 1 completed in {step_time:.2f}s - extracted {keyframe_count} keyframes")
             else:
                 self.logger.info("Step 1: Skipping keyframe extraction (disabled)")
                 print("⏭️ Skipping keyframe extraction (disabled)")
@@ -281,11 +313,7 @@ class VideoIngestionPipeline:
                     raise Exception(f"Audio transcription failed: {transcript_data['error']}")
                 else:
                     segment_count = len(transcript_data.get("segments", []))
-                    # Check if transcript was already available (very fast completion)
-                    if step_time < 0.1:
-                        self.logger.info(f"Step 2 completed in {step_time:.2f}s - found {segment_count} existing segments")
-                    else:
-                        self.logger.info(f"Step 2 completed in {step_time:.2f}s - transcribed {segment_count} segments")
+                    self.logger.info(f"Step 2 completed in {step_time:.2f}s - transcribed {segment_count} segments")
             else:
                 self.logger.info("Step 2: Skipping audio transcription (disabled)")
                 print("⏭️ Skipping audio transcription (disabled)")
@@ -304,11 +332,7 @@ class VideoIngestionPipeline:
                     raise Exception(f"Description generation failed: {descriptions_data['error']}")
                 else:
                     desc_count = len(descriptions_data.get("descriptions", {}))
-                    # Check if descriptions were already available (very fast completion)
-                    if step_time < 0.1:
-                        self.logger.info(f"Step 3 completed in {step_time:.2f}s - found {desc_count} existing descriptions")
-                    else:
-                        self.logger.info(f"Step 3 completed in {step_time:.2f}s - generated {desc_count} descriptions")
+                    self.logger.info(f"Step 3 completed in {step_time:.2f}s - generated {desc_count} descriptions")
             elif not self.config.generate_descriptions:
                 self.logger.info("Step 3: Skipping description generation (disabled)")
                 print("⏭️ Skipping description generation (disabled)")
@@ -329,11 +353,7 @@ class VideoIngestionPipeline:
                     raise Exception(f"Embedding generation failed: {embeddings_data['error']}")
                 else:
                     embed_count = embeddings_data.get("total_documents", 0)
-                    # Check if embeddings were already available (very fast completion)
-                    if step_time < 1.0:  # Embeddings take longer, so use 1 second threshold
-                        self.logger.info(f"Step 4 completed in {step_time:.2f}s - found {embed_count} existing embeddings")
-                    else:
-                        self.logger.info(f"Step 4 completed in {step_time:.2f}s - generated {embed_count} embeddings")
+                    self.logger.info(f"Step 4 completed in {step_time:.2f}s - generated {embed_count} embeddings")
             else:
                 self.logger.info("Step 4: Skipping embedding generation (disabled)")
                 print("⏭️ Skipping embedding generation (disabled)")
@@ -384,10 +404,12 @@ class VideoIngestionPipeline:
             print(f"❌ No video files found in {video_dir}")
             return {"error": "No video files found"}
         
+        # Process all videos found
+        
         self.logger.info(f"Starting batch processing: {len(video_files)} videos from {video_dir}")
         
         print(f"🎬 Found {len(video_files)} videos to process")
-        print(f"📁 Output directory: {self.config.output_dir}")
+        print(f"📁 Output directory: {self.profile_output_dir}")
         print(f"⚙️ Pipeline config: {self.config}")
         
         # Convert PosixPath objects to strings for JSON serialization
@@ -395,8 +417,11 @@ class VideoIngestionPipeline:
         config_dict["video_dir"] = str(config_dict["video_dir"])
         config_dict["output_dir"] = str(config_dict["output_dir"])
         
+        active_profile = self.app_config.get_active_profile() or "default"
         results = {
+            "profile": active_profile,
             "pipeline_config": config_dict,
+            "output_directory": str(self.profile_output_dir),
             "total_videos": len(video_files),
             "processed_videos": [],
             "failed_videos": [], 
@@ -428,7 +453,7 @@ class VideoIngestionPipeline:
         results["total_processing_time"] = results["completed_at"] - results["started_at"]
         
         # Save summary
-        summary_file = self.config.output_dir / "pipeline_summary.json"
+        summary_file = self.profile_output_dir / "pipeline_summary.json"
         with open(summary_file, 'w') as f:
             json.dump(results, f, indent=2)
         

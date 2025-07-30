@@ -238,7 +238,14 @@ VIDEO_FILE_SERVER_PID=$!
 # Start the Video Search Agent in the background
 VIDEO_PORT=$(jq -r '.video_agent_url' "$CONFIG_FILE" | grep -oE '[0-9]+$' || echo "8001")
 echo "🎥 Starting Video Search Agent on port $VIDEO_PORT..."
-uv run uvicorn src.agents.video_agent_server:app --host 0.0.0.0 --port "$VIDEO_PORT" > "$LOG_DIR/video_search_agent.log" 2>&1 &
+# Get active profile if set
+ACTIVE_PROFILE=$(jq -r '.active_profile // ""' "$CONFIG_FILE")
+if [ -n "$ACTIVE_PROFILE" ]; then
+    echo "   Using profile: $ACTIVE_PROFILE"
+    uv run python src/agents/video_agent_server.py --port "$VIDEO_PORT" --profile "$ACTIVE_PROFILE" > "$LOG_DIR/video_search_agent.log" 2>&1 &
+else
+    uv run python src/agents/video_agent_server.py --port "$VIDEO_PORT" > "$LOG_DIR/video_search_agent.log" 2>&1 &
+fi
 VIDEO_AGENT_PID=$!
 
 # Text Search Agent - commented out until Elasticsearch is configured

@@ -34,10 +34,14 @@ class EnhancedA2AClientTool(BaseTool):
         self.result_type = result_type
         self.client = A2AClient(timeout=config.get("timeout", 60.0))
 
-    async def execute(self, query: str, top_k: int = 10, start_date: str = None, end_date: str = None) -> Dict[str, Any]:
+    async def execute(self, query: str, top_k: int = 10, start_date: str = None, end_date: str = None, preferred_agent: str = None) -> Dict[str, Any]:
         """Execute search with enhanced error handling and result formatting."""
         start_time = time.time()
         logger.info(f"⏱️ [{self.name}] Starting execution for query: '{query}'")
+        
+        # Handle manual routing if preferred_agent is specified
+        agent_url = preferred_agent if preferred_agent else self.agent_url
+        
         try:
             # Prepare search parameters
             search_params = {
@@ -52,9 +56,9 @@ class EnhancedA2AClientTool(BaseTool):
                 search_params["end_date"] = end_date
             
             # Execute the search
-            logger.info(f"⏱️ [{self.name}] Sending request to agent at {self.agent_url}")
+            logger.info(f"⏱️ [{self.name}] Sending request to agent at {agent_url}")
             agent_start = time.time()
-            response = await self.client.send_task(self.agent_url, **search_params)
+            response = await self.client.send_task(agent_url, **search_params)
             agent_end = time.time()
             logger.info(f"⏱️ [{self.name}] Agent response time: {agent_end - agent_start:.3f}s")
             
@@ -355,11 +359,46 @@ My goal is to provide comprehensive, well-organized answers by combining insight
 )
     
 # --- Direct Tool Execution (Bypass LLM) ---
-async def route_and_execute_query(query: str, top_k: int = 10) -> Dict[str, Any]:
-    """Route query to appropriate agent based on analysis."""
-    logger.info("🔍 Routing query: {query}")
+async def route_and_execute_query(query: str, top_k: int = 10, preferred_agent: Optional[str] = None) -> Dict[str, Any]:
+    """Route query to appropriate agent based on analysis or manual preference.
+    
+    Args:
+        query: The search query
+        top_k: Number of results to return
+        preferred_agent: Optional manual routing to specific agent URL
+    """
+    logger.info(f"🔍 Routing query: {query}")
+    if preferred_agent:
+        logger.info(f"📍 Manual routing requested to: {preferred_agent}")
     
     try:
+        # Check for manual routing first
+        if preferred_agent:
+            # Manual routing bypasses query analysis
+            results = {
+                "query": query,
+                "query_analysis": {"manual_routing": True, "preferred_agent": preferred_agent},
+                "execution_type": "manual_routed",
+                "agents_called": [],
+                "success": True
+            }
+            
+            # Create a custom tool for the preferred agent
+            manual_agent_tool = EnhancedA2AClientTool(
+                name="ManuallyRoutedAgent",
+                description=f"Manually routed to {preferred_agent}",
+                agent_url=preferred_agent,
+                result_type="video"  # Default to video type
+            )
+            
+            logger.info(f"🎯 Executing query on manually specified agent: {preferred_agent}")
+            search_results = await manual_agent_tool.execute(query=query, top_k=top_k)
+            
+            results["search_results"] = search_results
+            results["agents_called"].append(f"Manual: {preferred_agent}")
+            
+            return results
+        
         # Step 1: Analyze the query to determine routing
         logger.info("📊 Step 1: Analyzing query for routing...")
         analysis = await query_analyzer.execute(query)

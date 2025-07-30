@@ -11,6 +11,8 @@ from pathlib import Path
 import sys
 import json
 import argparse
+import os
+import random
 
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -21,7 +23,42 @@ from src.tools.config import get_config
 from tests.test_utils import TestResultsFormatter
 
 
-def test_colpali_search(output_format="table", save_results=False):
+def load_test_queries(num_queries=5, seed=42):
+    """Load random test queries from our evaluation set"""
+    # Try to load from our retrieval test queries
+    query_file = Path(__file__).parent.parent / "retrieval_test_queries_with_temporal.json"
+    
+    if query_file.exists():
+        with open(query_file, 'r') as f:
+            data = json.load(f)
+            all_queries = data.get('queries', [])
+            
+            # Filter for queries suitable for ColPali (visual-focused)
+            colpali_suitable = []
+            for q in all_queries:
+                # Prefer visual and object queries for ColPali
+                if q['category'] in ['action_retrieval', 'object_retrieval', 'scene_understanding', 
+                                   'visual_attribute_retrieval', 'colpali_optimized']:
+                    colpali_suitable.append(q)
+            
+            # If we have suitable queries, use them; otherwise use all
+            queries_to_sample = colpali_suitable if colpali_suitable else all_queries
+            
+            # Sample random queries
+            random.seed(seed)
+            sampled = random.sample(queries_to_sample, min(num_queries, len(queries_to_sample)))
+            
+            return [(q['query'], q.get('expected_videos', [])) for q in sampled]
+    
+    # Fallback to default queries if file not found
+    return [
+        ("doctor explaining medical procedures", []),
+        ("people playing sports outdoors", []),
+        ("cooking in a kitchen", [])
+    ]
+
+
+def test_colpali_search(output_format="table", save_results=False, num_queries=5):
     """Test ColPali search with proper tensor format"""
     
     # Initialize results formatter
@@ -41,9 +78,15 @@ def test_colpali_search(output_format="table", save_results=False):
     col_processor = ColIdefics3Processor.from_pretrained(model_name)
     print("✅ ColPali model loaded")
     
-    # Create a test query
-    test_query = "doctor explaining medical procedures"
-    print(f"\nTest query: '{test_query}'")
+    # Load random test queries
+    test_queries = load_test_queries(num_queries)
+    print(f"\nLoaded {len(test_queries)} test queries")
+    
+    # Test first query in detail
+    test_query, expected_videos = test_queries[0]
+    print(f"\nDetailed test with query: '{test_query}'")
+    if expected_videos:
+        print(f"Expected videos: {expected_videos[:3]}...") # Show first 3
     
     # Encode query
     batch_queries = col_processor.process_queries([test_query]).to(device)
@@ -74,7 +117,7 @@ def test_colpali_search(output_format="table", save_results=False):
     search_body = {
         "yql": f"select * from {vespa_schema} where true",  # brute force search, rank all frames
         "ranking": "default",  # Test default binary visual search
-        "hits": 5,
+        "hits": 20,  # Get more results for better evaluation
         "timeout": 10,
         "query": test_query,  # Add text query for BM25 component
         "input.query(qtb)": binary_embedding,  # Binary embedding for visual search
@@ -90,16 +133,38 @@ def test_colpali_search(output_format="table", save_results=False):
         
         print(f"✅ Search completed! Found {len(response.hits)} results")
         
+        # Calculate metrics if we have expected videos
+        retrieved_videos = [hit["fields"].get('video_id') for hit in response.hits]
+        
+        if expected_videos:
+            # Calculate recall@k
+            recall_at_5 = len(set(retrieved_videos[:5]) & set(expected_videos)) / len(expected_videos)
+            recall_at_10 = len(set(retrieved_videos[:10]) & set(expected_videos)) / len(expected_videos)
+            
+            # Calculate MRR
+            mrr = 0
+            for i, vid in enumerate(retrieved_videos):
+                if vid in expected_videos:
+                    mrr = 1.0 / (i + 1)
+                    break
+            
+            print(f"\n📊 Evaluation Metrics:")
+            print(f"  Recall@5: {recall_at_5:.3f}")
+            print(f"  Recall@10: {recall_at_10:.3f}")
+            print(f"  MRR: {mrr:.3f}")
+        
         # Collect results for formatting
         results = []
         for i, hit in enumerate(response.hits[:5]):
             fields = hit["fields"]
+            is_relevant = "✓" if expected_videos and fields.get('video_id') in expected_videos else ""
             result = {
                 "Rank": i + 1,
                 "Video ID": fields.get('video_id'),
                 "Frame ID": fields.get('frame_id'),
                 "Score": f"{hit.get('relevance'):.4f}",
-                "Description": fields.get('frame_description', '')[:60] + "..."
+                "Relevant": is_relevant,
+                "Description": fields.get('frame_description', '')[:50] + "..."
             }
             results.append(result)
         
@@ -346,6 +411,8 @@ def test_hybrid_float_bm25(output_format="table", save_results=False):
         traceback.print_exc()
 
 
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Test ColPali search functionality")
     parser.add_argument("--format", choices=["table", "text"], default="table",
@@ -354,6 +421,10 @@ if __name__ == "__main__":
                        help="Save results to CSV file")
     parser.add_argument("--test", choices=["binary", "float", "hybrid", "all"], default="all",
                        help="Which test to run (default: all)")
+    parser.add_argument("--num-queries", type=int, default=5,
+                       help="Number of random queries to test (default: 5)")
+    parser.add_argument("--seed", type=int, default=42,
+                       help="Random seed for query selection (default: 42)")
     
     args = parser.parse_args()
     
@@ -365,7 +436,7 @@ if __name__ == "__main__":
     
     if args.test in ["binary", "all"]:
         print("\n🔍 Binary Search Test:")
-        test_colpali_search(output_format=output_format, save_results=args.save)
+        test_colpali_search(output_format=output_format, save_results=args.save, num_queries=args.num_queries)
     
     if args.test in ["float", "all"]:
         print("\n🔍 Float-Float Search Test:")

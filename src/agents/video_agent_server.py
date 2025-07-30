@@ -2,9 +2,11 @@
 import os
 import json
 import torch
+import numpy as np
 import datetime
 import uvicorn
 import logging
+import argparse
 from typing import List, Dict, Any, Optional, Union, Literal, Annotated
 
 from fastapi import FastAPI, HTTPException
@@ -13,6 +15,7 @@ from colpali_engine.models import ColIdefics3, ColIdefics3Processor
 from vespa.application import Vespa
 from src.processing.vespa.vespa_search_client import VespaVideoSearchClient
 from src.tools.config import get_config
+from src.agents.query_encoders import QueryEncoderFactory
 
 # Configure logging
 logging.basicConfig(
@@ -49,7 +52,18 @@ class VideoSearchAgent:
         vespa_url = kwargs.get("vespa_url")
         vespa_port = kwargs.get("vespa_port")
         config = get_config()
-        model_name = kwargs.get("model_name", config.get("colpali_model", "vidore/colsmol-500m"))
+        
+        # Get model from active profile or use default
+        active_profile = config.get_active_profile()
+        profiles = config.get("video_processing_profiles", {})
+        if active_profile and active_profile in profiles:
+            model_name = profiles[active_profile].get("embedding_model", config.get("colpali_model", "vidore/colsmol-500m"))
+            self.embedding_type = profiles[active_profile].get("embedding_type", "frame_based")
+        else:
+            model_name = kwargs.get("model_name", config.get("colpali_model", "vidore/colsmol-500m"))
+            self.embedding_type = "frame_based"
+            active_profile = "frame_based_colpali"  # Default profile
+        
         if not vespa_url or not vespa_port:
             raise ValueError("Vespa backend requires 'vespa_url' and 'vespa_port'.")
         
@@ -57,48 +71,36 @@ class VideoSearchAgent:
         try:
             self.vespa_client = VespaVideoSearchClient(vespa_url=vespa_url, vespa_port=vespa_port)
             print(f"Successfully initialized Vespa search client at {vespa_url}:{vespa_port}")
+            print(f"Active profile: {active_profile}, Embedding type: {self.embedding_type}")
         except Exception as e:
             print(f"Could not initialize Vespa search client. Please ensure Vespa is running. Error: {e}")
             self.vespa_client = None
         
-        # Initialize ColPali model for query encoding with proper device detection
-        if torch.cuda.is_available():
-            self.device = "cuda"
-            dtype = torch.bfloat16
-        elif torch.backends.mps.is_available():
-            self.device = "mps"
-            dtype = torch.float32
-        else:
-            self.device = "cpu"
-            dtype = torch.float32
-            
-        self.col_model = ColIdefics3.from_pretrained(model_name, torch_dtype=dtype, device_map=self.device).eval()
-        
-        self.col_processor = ColIdefics3Processor.from_pretrained(model_name)
-        print(f"Vespa backend: Loaded model '{model_name}' on device '{self.device}' with dtype '{dtype}'")
+        # Initialize query encoder based on profile
+        try:
+            self.query_encoder = QueryEncoderFactory.create_encoder(active_profile, model_name)
+            print(f"Initialized query encoder for profile: {active_profile}")
+            print(f"Embedding dimension: {self.query_encoder.get_embedding_dim()}")
+        except Exception as e:
+            print(f"Error initializing query encoder: {e}")
+            # Fall back to ColPali encoder
+            self.query_encoder = QueryEncoderFactory.create_encoder("frame_based_colpali")
+            print("Falling back to ColPali query encoder")
 
     def search(self, query: str, top_k: int = 10, start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[Dict[str, Any]]:
         return self._search_vespa(query, top_k, start_date, end_date)
 
-    def _encode_query_for_vespa(self, query: str) -> torch.Tensor:
-        """Encode query text to ColPali embeddings for Vespa search"""
+    def _encode_query_for_vespa(self, query: str) -> np.ndarray:
+        """Encode query text to embeddings for Vespa search"""
         import time
-        if not self.col_model or not self.col_processor:
-            raise RuntimeError("ColPali model is not initialized for Vespa.")
+        if not self.query_encoder:
+            raise RuntimeError("Query encoder is not initialized for Vespa.")
         
         t1 = time.time()
-        batch_queries = self.col_processor.process_queries([query]).to(self.device)
+        result = self.query_encoder.encode(query)
         t2 = time.time()
-        logger.info(f"   Processing query took {t2-t1:.3f}s")
-        
-        with torch.no_grad():
-            query_embeddings = self.col_model(**batch_queries)
-        t3 = time.time()
-        logger.info(f"   Model inference took {t3-t2:.3f}s")
-        
-        result = query_embeddings.cpu().numpy().squeeze(0)
-        t4 = time.time()
-        logger.info(f"   CPU transfer took {t4-t3:.3f}s")
+        logger.info(f"   Query encoding took {t2-t1:.3f}s")
+        logger.info(f"   Embedding shape: {result.shape}")
         
         return result
 
@@ -220,6 +222,32 @@ async def send_task(task: Task):
     return {"task_id": task.id, "status": "completed", "results": search_results}
 
 if __name__ == "__main__":
-    print("--- To run the A2A server, use: uvicorn video_agent_server:app --reload --port 8001 ---")
-    print("--- Agent is configured to use Vespa backend ---")
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    parser = argparse.ArgumentParser(description="Video Search Agent Server")
+    parser.add_argument("--port", type=int, default=8001, help="Port to run the server on (default: 8001)")
+    parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)")
+    parser.add_argument("--profile", type=str, help="Video processing profile to use (sets VIDEO_PROFILE env var)")
+    parser.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
+    
+    args = parser.parse_args()
+    
+    # Set profile if specified
+    if args.profile:
+        os.environ["VIDEO_PROFILE"] = args.profile
+        # Reload config with the new profile
+        from src.tools.config import get_config
+        app_config = get_config()
+        app_config.reload()
+        print(f"--- Using video processing profile: {args.profile} ---")
+    
+    # Get active profile for display
+    config = get_config()
+    active_profile = config.get_active_profile()
+    
+    print(f"--- Starting Video Search Agent Server ---")
+    print(f"--- Port: {args.port} ---")
+    print(f"--- Host: {args.host} ---")
+    print(f"--- Active Profile: {active_profile} ---")
+    print(f"--- Vespa backend configured ---")
+    print(f"--- To run manually: uvicorn video_agent_server:app --reload --port {args.port} ---")
+    
+    uvicorn.run(app, host=args.host, port=args.port, reload=args.reload)

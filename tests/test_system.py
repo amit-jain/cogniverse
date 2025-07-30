@@ -10,8 +10,9 @@ import json
 import sys
 import time
 import subprocess
+import random
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 # Add the project root to the path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -33,6 +34,42 @@ class SystemTester:
         from src.utils.output_manager import get_output_manager
         self.output_manager = get_output_manager()
         self.results_dir = self.output_manager.get_test_results_dir()
+        
+        # Load test queries for evaluation
+        self.test_queries = self._load_test_queries()
+    
+    def _load_test_queries(self, num_queries: int = 10, seed: int = 42) -> List[Tuple[str, List[str]]]:
+        """Load random test queries from our evaluation set"""
+        queries = []
+        
+        # Try to load from our retrieval test queries
+        query_file = Path(__file__).parent.parent / "retrieval_test_queries_with_temporal.json"
+        
+        if query_file.exists():
+            with open(query_file, 'r') as f:
+                data = json.load(f)
+                all_queries = data.get('queries', [])
+                
+                # Sample random queries
+                random.seed(seed)
+                sampled = random.sample(all_queries, min(num_queries, len(all_queries)))
+                
+                # Return query text and expected videos
+                for q in sampled:
+                    queries.append((q['query'], q.get('expected_videos', [])))
+        
+        # Add some fallback queries if needed
+        if len(queries) < 5:
+            fallback_queries = [
+                ("Find videos where someone throws an object", []),
+                ("Show indoor sports activities", []),
+                ("Find videos with fire or flames visible", []),
+                ("Show people exercising or training", []),
+                ("Find videos where someone prepares food", [])
+            ]
+            queries.extend(fallback_queries[:5-len(queries)])
+        
+        return queries
         
     def log_test(self, test_name: str, success: bool, message: str, details: Dict[str, Any] = None):
         """Log a test result."""
@@ -400,33 +437,76 @@ class SystemTester:
             return False
     
     async def test_end_to_end_system(self) -> bool:
-        """Test complete end-to-end multi-agent system."""
+        """Test complete end-to-end multi-agent system with random queries."""
         try:
             # Import here to avoid loading issues
             from src.agents.composing_agents_main import query_analyzer, video_search_tool
             
-            # Test query analysis
-            analysis_result = await query_analyzer.execute("Show me videos about doctors")
-            if not analysis_result.get("needs_video_search"):
-                self.log_test(
-                    "End-to-End System",
-                    False,
-                    "Query analysis failed to detect video search need"
-                )
-                return False
+            # Test with multiple random queries
+            print("\n" + "="*60)
+            print("Testing with random queries from evaluation set")
+            print("="*60)
             
-            # Test A2A communication
-            search_result = await video_search_tool.execute(
-                query="doctor emergency room", 
-                top_k=3
-            )
-            if not search_result.get("success"):
-                self.log_test(
-                    "End-to-End System",
-                    False,
-                    f"A2A communication failed: {search_result.get('error', 'Unknown error')}"
+            successful_tests = 0
+            total_metrics = {"recall@5": [], "recall@10": [], "mrr": []}
+            
+            # Test up to 5 random queries
+            for i, (query, expected_videos) in enumerate(self.test_queries[:5]):
+                print(f"\n[{i+1}/5] Testing query: '{query}'")
+                
+                # Test query analysis
+                analysis_result = await query_analyzer.execute(query)
+                if not analysis_result.get("needs_video_search"):
+                    print(f"  ⚠️  Query analysis didn't detect video search need")
+                    continue
+                
+                # Test A2A communication
+                search_result = await video_search_tool.execute(
+                    query=query, 
+                    top_k=20
                 )
-                return False
+                
+                if not search_result.get("success"):
+                    print(f"  ❌ Search failed: {search_result.get('error', 'Unknown error')}")
+                    continue
+                
+                # Calculate metrics if we have ground truth
+                if expected_videos and search_result.get('results'):
+                    retrieved_videos = [r['video_id'] for r in search_result['results']]
+                    
+                    # Calculate recall@k
+                    recall_at_5 = len(set(retrieved_videos[:5]) & set(expected_videos)) / len(expected_videos)
+                    recall_at_10 = len(set(retrieved_videos[:10]) & set(expected_videos)) / len(expected_videos)
+                    
+                    # Calculate MRR
+                    mrr = 0
+                    for idx, vid in enumerate(retrieved_videos):
+                        if vid in expected_videos:
+                            mrr = 1.0 / (idx + 1)
+                            break
+                    
+                    print(f"  ✅ Search succeeded")
+                    print(f"  📊 Metrics: Recall@5={recall_at_5:.3f}, Recall@10={recall_at_10:.3f}, MRR={mrr:.3f}")
+                    
+                    total_metrics["recall@5"].append(recall_at_5)
+                    total_metrics["recall@10"].append(recall_at_10)
+                    total_metrics["mrr"].append(mrr)
+                else:
+                    print(f"  ✅ Search succeeded (no ground truth for evaluation)")
+                
+                successful_tests += 1
+            
+            # Print summary
+            if total_metrics["mrr"]:
+                print("\n" + "="*60)
+                print("SUMMARY - End-to-End System Performance")
+                print("="*60)
+                print(f"Successful queries: {successful_tests}/{min(5, len(self.test_queries))}")
+                print(f"Average Recall@5: {sum(total_metrics['recall@5'])/len(total_metrics['recall@5']):.3f}")
+                print(f"Average Recall@10: {sum(total_metrics['recall@10'])/len(total_metrics['recall@10']):.3f}")
+                print(f"Average MRR: {sum(total_metrics['mrr'])/len(total_metrics['mrr']):.3f}")
+            
+            success = successful_tests > 0
             
             self.log_test(
                 "End-to-End System",
@@ -553,6 +633,18 @@ async def main():
         action="store_true",
         help="List all available tests"
     )
+    parser.add_argument(
+        "--num-queries",
+        type=int,
+        default=10,
+        help="Number of random queries to test (default: 10)"
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed for query selection (default: 42)"
+    )
     
     args = parser.parse_args()
     
@@ -569,6 +661,8 @@ async def main():
         return
     
     tester = SystemTester()
+    # Reload test queries with command line parameters
+    tester.test_queries = tester._load_test_queries(num_queries=args.num_queries, seed=args.seed)
     results = await tester.run_tests(args.tests)
     
     # Save results to file

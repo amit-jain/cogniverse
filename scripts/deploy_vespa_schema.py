@@ -8,6 +8,7 @@ It should be run after starting Vespa but before running ingestion.
 
 import sys
 import logging
+import argparse
 from pathlib import Path
 
 # Add project root to path
@@ -25,10 +26,15 @@ def main():
     
     logger = logging.getLogger(__name__)
     
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Deploy Vespa schema')
+    parser.add_argument('--schema', type=str, help='Schema name to deploy (e.g., video_frame, video_colqwen)')
+    args = parser.parse_args()
+    
     try:
         # Get configuration
         config = get_config()
-        vespa_schema = config.get("vespa_schema", "video_frame")
+        vespa_schema = args.schema if args.schema else config.get("vespa_schema", "video_frame")
         
         # Initialize the schema manager
         schema_manager = VespaSchemaManager()
