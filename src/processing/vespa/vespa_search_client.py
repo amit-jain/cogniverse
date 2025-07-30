@@ -7,6 +7,7 @@ import logging
 import json
 import torch
 import numpy as np
+import os
 from typing import List, Dict, Any, Optional, Tuple, Union
 from datetime import datetime
 from enum import Enum
@@ -196,11 +197,16 @@ class VespaVideoSearchClient:
         sys.path.append(str(Path(__file__).parent.parent.parent.parent))
         from src.tools.config import get_config
         self.config = get_config()
-        self.vespa_schema = self.config.get("vespa_schema", "video_frame")
+        # Check environment variable first, then config
+        self.vespa_schema = os.environ.get("VESPA_SCHEMA", self.config.get("vespa_schema", "video_frame"))
         
         self.logger = logging.getLogger(__name__)
         self.vespa_url = vespa_url
         self.vespa_port = vespa_port
+        
+        # Initialize query encoder based on schema
+        self.query_encoder = None
+        self._init_query_encoder()
         
         try:
             self.vespa_app = Vespa(url=f"{vespa_url}:{vespa_port}")
@@ -208,6 +214,42 @@ class VespaVideoSearchClient:
         except Exception as e:
             self.logger.error(f"Failed to connect to Vespa: {e}")
             self.vespa_app = None
+    
+    def _init_query_encoder(self):
+        """Initialize query encoder based on the Vespa schema"""
+        try:
+            from src.agents.query_encoders import QueryEncoderFactory
+            from src.processing.vespa.schema_profile_mapping import get_profile_for_schema
+            
+            try:
+                profile = get_profile_for_schema(self.vespa_schema)
+            except ValueError:
+                self.logger.warning(f"No profile mapping for schema {self.vespa_schema}")
+                return
+            
+            if profile:
+                # Get model name from config
+                profiles = self.config.get("video_processing_profiles", {})
+                if profile in profiles:
+                    model_name = profiles[profile].get("embedding_model")
+                else:
+                    # Default models
+                    default_models = {
+                        "frame_based_colpali": "vidore/colsmol-500m",
+                        "direct_video_colqwen": "vidore/colqwen-omni-v0.1",
+                        "direct_video_frame": "videoprism_public_v1_base_hf",
+                        "direct_video_frame_large": "videoprism_public_v1_large_hf"
+                    }
+                    model_name = default_models.get(profile)
+                
+                self.query_encoder = QueryEncoderFactory.create_encoder(profile, model_name)
+                self.logger.info(f"Initialized query encoder for {self.vespa_schema} using {profile}")
+            else:
+                self.logger.warning(f"No query encoder mapping for schema: {self.vespa_schema}")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to initialize query encoder: {e}")
+            self.query_encoder = None
     
     def health_check(self) -> bool:
         """Check if Vespa is healthy and responsive"""
@@ -227,7 +269,8 @@ class VespaVideoSearchClient:
     
     def search(self, 
                query_params: Union[Dict[str, Any], str],
-               embeddings: Optional[np.ndarray] = None) -> List[Dict[str, Any]]:
+               embeddings: Optional[np.ndarray] = None,
+               schema: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Unified search method supporting all 9 ranking strategies with JSON query format.
         
@@ -239,6 +282,7 @@ class VespaVideoSearchClient:
                 - start_date (str): Filter start date YYYY-MM-DD (optional)
                 - end_date (str): Filter end date YYYY-MM-DD (optional)
             embeddings: Pre-computed embeddings for visual strategies (optional)
+            schema: Override the default schema name (optional)
             
         Returns:
             List of search results with frame information
@@ -259,12 +303,34 @@ class VespaVideoSearchClient:
         start_date = params.get("start_date")
         end_date = params.get("end_date")
         
+        # Extract schema from params if provided, otherwise use the method parameter
+        if "schema" in params:
+            schema = params.get("schema")
+        
         # Validate ranking strategy
         try:
             strategy = RankingStrategy(ranking)
         except ValueError:
             available = [s.value for s in RankingStrategy]
             raise ValueError(f"Invalid ranking strategy '{ranking}'. Available: {available}")
+        
+        # Generate embeddings if needed and not provided
+        if embeddings is None:
+            strategy_info = RankingStrategy.get_strategy_info()[ranking]
+            if strategy_info["requires_embeddings"] != "No":
+                if self.query_encoder and query_text:
+                    try:
+                        embeddings = self.query_encoder.encode(query_text)
+                        self.logger.info(f"Generated query embeddings: shape={embeddings.shape}")
+                    except Exception as e:
+                        self.logger.error(f"Failed to generate query embeddings: {e}")
+                        # For strategies that require embeddings, this is fatal
+                        raise RuntimeError(f"Query encoder failed for {self.vespa_schema}: {e}")
+                else:
+                    if not query_text:
+                        raise ValueError(f"Strategy '{ranking}' requires a text query")
+                    else:
+                        raise RuntimeError(f"No query encoder available for schema {self.vespa_schema}")
         
         # Validate strategy inputs
         validation_errors = self.validate_strategy_inputs(ranking, query_text, embeddings)
@@ -278,7 +344,8 @@ class VespaVideoSearchClient:
             embeddings=embeddings,
             top_k=top_k,
             start_date=start_date,
-            end_date=end_date
+            end_date=end_date,
+            schema=schema
         )
     
     
@@ -288,7 +355,8 @@ class VespaVideoSearchClient:
                                 embeddings: Optional[np.ndarray],
                                 top_k: int,
                                 start_date: Optional[str],
-                                end_date: Optional[str]) -> List[Dict[str, Any]]:
+                                end_date: Optional[str],
+                                schema: Optional[str] = None) -> List[Dict[str, Any]]:
         """Execute search using the specified ranking strategy."""
         
         # Log search parameters
@@ -298,14 +366,19 @@ class VespaVideoSearchClient:
         self.logger.info(f"   Time range: {start_date} to {end_date}")
         self.logger.info(f"   Embeddings: {embeddings.shape if embeddings is not None else 'None'}")
         
+        # Use provided schema or fall back to default
+        search_schema = schema or self.vespa_schema
+        self.logger.info(f"   Using schema: {search_schema} (provided: {schema}, default: {self.vespa_schema})")
+        
         # Build base YQL query
-        yql = self._build_base_yql(strategy, start_date, end_date, query_text)
+        yql = self._build_base_yql(strategy, start_date, end_date, query_text, schema=search_schema)
         self.logger.info(f"   YQL query: {yql}")
         
         # Build request body based on strategy
         body = {
             "yql": yql,
-            "hits": top_k
+            "hits": top_k,
+            "model.restrict": search_schema  # Restrict to specific schema to avoid tensor conflicts
         }
         
         # Add strategy-specific parameters
@@ -322,14 +395,25 @@ class VespaVideoSearchClient:
             if embeddings is None:
                 raise ValueError(f"Strategy '{strategy.value}' requires embeddings")
             
-            # Only create float embeddings for float-based strategies
-            float_embedding = {index: vector.tolist() for index, vector in enumerate(embeddings)}
-            self.logger.info(f"   Using float embeddings with {len(float_embedding)} tokens")
+            # Check if this is a global embedding schema (single vector)
+            is_global_schema = "global" in search_schema.lower()
             
-            body.update({
-                "ranking": strategy.value,
-                "input.query(qt)": float_embedding
-            })
+            if is_global_schema and embeddings.ndim == 1:
+                # Global embedding - single vector
+                self.logger.info(f"   Using global float embedding with shape {embeddings.shape}")
+                body.update({
+                    "ranking": strategy.value,
+                    "input.query(qt)": embeddings.tolist()
+                })
+            else:
+                # Multi-token embeddings for patch-based models
+                float_embedding = {index: vector.tolist() for index, vector in enumerate(embeddings)}
+                self.logger.info(f"   Using float embeddings with {len(float_embedding)} tokens")
+                
+                body.update({
+                    "ranking": strategy.value,
+                    "input.query(qt)": float_embedding
+                })
             
             # Add text query for hybrid strategies
             if strategy in [RankingStrategy.HYBRID_FLOAT_BM25, RankingStrategy.HYBRID_BM25_FLOAT,
@@ -343,17 +427,36 @@ class VespaVideoSearchClient:
             if embeddings is None:
                 raise ValueError(f"Strategy '{strategy.value}' requires embeddings")
             
-            # Only create binary embeddings for binary-based strategies
-            binary_embedding = {
-                index: np.packbits(np.where(vector > 0, 1, 0), axis=0).astype(np.int8).tolist()
-                for index, vector in enumerate(embeddings)
-            }
-            self.logger.info(f"   Using binary embeddings with {len(binary_embedding)} tokens")
+            # Check if this is a global embedding schema (single vector)
+            is_global_schema = "global" in search_schema.lower()
             
-            body.update({
-                "ranking": strategy.value,
-                "input.query(qtb)": binary_embedding
-            })
+            if is_global_schema and embeddings.ndim == 1:
+                # Global embedding - single vector, convert to binary hex string
+                from binascii import hexlify
+                self.logger.debug(f"   Raw embeddings: shape={embeddings.shape}, min={embeddings.min():.4f}, max={embeddings.max():.4f}")
+                self.logger.debug(f"   First 10 values: {embeddings[:10]}")
+                
+                binary_vector = np.packbits(np.where(embeddings > 0, 1, 0), axis=0).astype(np.int8)
+                binary_hex = str(hexlify(binary_vector), "utf-8")
+                self.logger.info(f"   Using global binary embedding with {len(binary_vector)} bytes -> {len(binary_hex)} hex chars")
+                self.logger.debug(f"   Binary hex first 20 chars: {binary_hex[:20]}")
+                
+                body.update({
+                    "ranking": strategy.value,
+                    "input.query(qtb)": binary_hex
+                })
+            else:
+                # Multi-token embeddings for patch-based models
+                binary_embedding = {
+                    index: np.packbits(np.where(vector > 0, 1, 0), axis=0).astype(np.int8).tolist()
+                    for index, vector in enumerate(embeddings)
+                }
+                self.logger.info(f"   Using binary embeddings with {len(binary_embedding)} tokens")
+                
+                body.update({
+                    "ranking": strategy.value,
+                    "input.query(qtb)": binary_embedding
+                })
             
             # Add text query for hybrid strategies
             if strategy in [RankingStrategy.HYBRID_BINARY_BM25, RankingStrategy.HYBRID_BM25_BINARY,
@@ -365,54 +468,152 @@ class VespaVideoSearchClient:
             if embeddings is None:
                 raise ValueError(f"Strategy '{strategy.value}' requires embeddings")
             
-            # Use Vespa ColPali format: input.query(qt) with simple dict
-            float_embedding = {index: vector.tolist() for index, vector in enumerate(embeddings)}
+            # Check if this is a global embedding schema (single vector)
+            is_global_schema = "global" in search_schema.lower()
             
-            body.update({
-                "ranking": strategy.value,
-                "input.query(qt)": float_embedding
-            })
+            if is_global_schema and embeddings.ndim == 1:
+                # Global embedding - float_binary needs both qtb for search and qt for reranking
+                # Based on ingestion, we store binary as list of int8, so let's use list format
+                binary_vector = np.packbits(np.where(embeddings > 0, 1, 0), axis=0).astype(np.int8)
+                self.logger.info(f"   Using global embeddings for float_binary (search on binary, rerank with float)")
+                self.logger.debug(f"   Binary vector shape: {binary_vector.shape}, dtype: {binary_vector.dtype}")
+                
+                # Try using list format for qtb (matching ingestion format)
+                body.update({
+                    "ranking": strategy.value,
+                    "input.query(qtb)": binary_vector.tolist(),  # List of int8 values
+                    "input.query(qt)": embeddings.tolist()  # Float values for reranking
+                })
+            else:
+                # Use Vespa ColPali format: input.query(qt) with simple dict
+                float_embedding = {index: vector.tolist() for index, vector in enumerate(embeddings)}
+                
+                body.update({
+                    "ranking": strategy.value,
+                    "input.query(qt)": float_embedding
+                })
         
         elif strategy == RankingStrategy.PHASED:
             if embeddings is None:
                 raise ValueError(f"Strategy '{strategy.value}' requires embeddings")
             
-            # PHASED strategy needs both float and binary embeddings
-            float_embedding = {index: vector.tolist() for index, vector in enumerate(embeddings)}
-            binary_embedding = {
-                index: np.packbits(np.where(vector > 0, 1, 0), axis=0).astype(np.int8).tolist()
-                for index, vector in enumerate(embeddings)
-            }
-            self.logger.info(f"   Using both float and binary embeddings with {len(float_embedding)} tokens (sample: {list(float_embedding.values())[:2]})")
+            # Check if this is a global embedding schema (single vector)
+            is_global_schema = "global" in search_schema.lower()
             
-            body.update({
-                "ranking": strategy.value,
-                "input.query(qtb)": binary_embedding,
-                "input.query(qt)": float_embedding
-            })
+            if is_global_schema and embeddings.ndim == 1:
+                # Global embedding - single vector for both float and binary
+                from binascii import hexlify
+                binary_vector = np.packbits(np.where(embeddings > 0, 1, 0), axis=0).astype(np.int8)
+                binary_hex = str(hexlify(binary_vector), "utf-8")
+                self.logger.info(f"   Using global embeddings for phased search")
+                
+                body.update({
+                    "ranking": strategy.value,
+                    "input.query(qtb)": binary_hex,
+                    "input.query(qt)": embeddings.tolist()
+                })
+            else:
+                # PHASED strategy needs both float and binary embeddings
+                float_embedding = {index: vector.tolist() for index, vector in enumerate(embeddings)}
+                binary_embedding = {
+                    index: np.packbits(np.where(vector > 0, 1, 0), axis=0).astype(np.int8).tolist()
+                    for index, vector in enumerate(embeddings)
+                }
+                self.logger.info(f"   Using both float and binary embeddings with {len(float_embedding)} tokens")
+                
+                body.update({
+                    "ranking": strategy.value,
+                    "input.query(qtb)": binary_embedding,
+                    "input.query(qt)": float_embedding
+                })
         
         return self._execute_search(body, f"search_{strategy.value}")
     
-    def _build_base_yql(self, strategy: RankingStrategy, start_date: Optional[str], end_date: Optional[str], query_text: str = "") -> str:
+    def _build_base_yql(self, strategy: RankingStrategy, start_date: Optional[str], end_date: Optional[str], query_text: str = "", schema: Optional[str] = None) -> str:
         """Build base YQL query for the strategy."""
         
-        # Field selection based on strategy needs
-        if strategy in [RankingStrategy.BM25_ONLY, RankingStrategy.BM25_NO_DESCRIPTION,
-                       RankingStrategy.HYBRID_FLOAT_BM25, RankingStrategy.HYBRID_BINARY_BM25, 
-                       RankingStrategy.HYBRID_BM25_BINARY, RankingStrategy.HYBRID_BM25_FLOAT,
-                       RankingStrategy.HYBRID_FLOAT_BM25_NO_DESC, RankingStrategy.HYBRID_BINARY_BM25_NO_DESC,
-                       RankingStrategy.HYBRID_BM25_BINARY_NO_DESC, RankingStrategy.HYBRID_BM25_FLOAT_NO_DESC]:
-            # Text-involved strategies need transcript
-            yql = f"select video_id, video_title, frame_id, start_time, end_time, frame_description, audio_transcript from {self.vespa_schema}"
-        else:
-            # Pure visual strategies
-            yql = f"select video_id, video_title, frame_id, start_time, end_time, frame_description from {self.vespa_schema}"
+        # Use the provided schema or default
+        target_schema = schema or self.vespa_schema
         
-        # Add WHERE clause - use userQuery() for BM25 strategies to enable fieldset
-        if strategy in [RankingStrategy.BM25_ONLY, RankingStrategy.BM25_NO_DESCRIPTION,
-                       RankingStrategy.HYBRID_FLOAT_BM25, RankingStrategy.HYBRID_BINARY_BM25, 
+        # Schema-specific field names
+        if "colqwen" in target_schema.lower():
+            # ColQwen uses segment_id instead of frame_id
+            id_field = "segment_id"
+            desc_field = ""  # ColQwen doesn't have frame_description
+            transcript_field = ""  # ColQwen doesn't have audio_transcript
+        elif "videoprism" in target_schema.lower():
+            # VideoPrism uses frame_id but no description/transcript
+            id_field = "frame_id"
+            desc_field = ""  # VideoPrism doesn't have frame_description
+            transcript_field = ""  # VideoPrism doesn't have audio_transcript
+        else:
+            # Default (ColPali) has all fields
+            id_field = "frame_id"
+            desc_field = "frame_description"
+            transcript_field = "audio_transcript"
+        
+        # Build field list
+        fields = ["video_id", "video_title", id_field, "start_time", "end_time"]
+        
+        # Add optional fields based on schema and strategy
+        if desc_field and strategy not in [RankingStrategy.BM25_NO_DESCRIPTION,
+                                          RankingStrategy.HYBRID_FLOAT_BM25_NO_DESC,
+                                          RankingStrategy.HYBRID_BINARY_BM25_NO_DESC,
+                                          RankingStrategy.HYBRID_BM25_BINARY_NO_DESC,
+                                          RankingStrategy.HYBRID_BM25_FLOAT_NO_DESC]:
+            fields.append(desc_field)
+            
+        if transcript_field and strategy in [RankingStrategy.BM25_ONLY, RankingStrategy.BM25_NO_DESCRIPTION,
+                                            RankingStrategy.HYBRID_FLOAT_BM25, RankingStrategy.HYBRID_BINARY_BM25, 
+                                            RankingStrategy.HYBRID_BM25_BINARY, RankingStrategy.HYBRID_BM25_FLOAT,
+                                            RankingStrategy.HYBRID_FLOAT_BM25_NO_DESC, RankingStrategy.HYBRID_BINARY_BM25_NO_DESC,
+                                            RankingStrategy.HYBRID_BM25_BINARY_NO_DESC, RankingStrategy.HYBRID_BM25_FLOAT_NO_DESC]:
+            fields.append(transcript_field)
+        
+        yql = f"select {', '.join(fields)} from {target_schema}"
+        
+        # Add WHERE clause
+        # For visual strategies, use nearestNeighbor if this is a global embedding schema
+        is_global_schema = "global" in target_schema.lower()
+        
+        if strategy == RankingStrategy.FLOAT_FLOAT:
+            if is_global_schema:
+                # Use nearestNeighbor for global embeddings with float field
+                yql += " where ({targetHits:100}nearestNeighbor(embedding, qt))"
+            else:
+                yql += " where true"
+        elif strategy == RankingStrategy.FLOAT_BINARY:
+            if is_global_schema:
+                # float_binary searches on binary field but reranks with float
+                yql += " where ({targetHits:100}nearestNeighbor(embedding_binary, qtb))"
+            else:
+                yql += " where true"
+        elif strategy == RankingStrategy.PHASED:
+            if is_global_schema:
+                # Phased uses binary for first phase
+                yql += " where ({targetHits:100}nearestNeighbor(embedding_binary, qtb))"
+            else:
+                yql += " where true"
+        elif strategy in [RankingStrategy.BINARY_BINARY]:
+            if is_global_schema:
+                # Use nearestNeighbor for global embeddings
+                yql += " where ({targetHits:100}nearestNeighbor(embedding_binary, qtb))"
+            else:
+                yql += " where true"
+        elif strategy in [RankingStrategy.HYBRID_FLOAT_BM25, RankingStrategy.HYBRID_FLOAT_BM25_NO_DESC]:
+            if is_global_schema:
+                # Hybrid with float embeddings - use nearestNeighbor
+                yql += " where ({targetHits:100}nearestNeighbor(embedding, qt))"
+            else:
+                yql += " where userQuery()"
+        elif strategy in [RankingStrategy.HYBRID_BINARY_BM25, RankingStrategy.HYBRID_BINARY_BM25_NO_DESC]:
+            if is_global_schema:
+                # Hybrid with binary embeddings - use nearestNeighbor
+                yql += " where ({targetHits:100}nearestNeighbor(embedding_binary, qtb))"
+            else:
+                yql += " where userQuery()"
+        elif strategy in [RankingStrategy.BM25_ONLY, RankingStrategy.BM25_NO_DESCRIPTION,
                        RankingStrategy.HYBRID_BM25_BINARY, RankingStrategy.HYBRID_BM25_FLOAT,
-                       RankingStrategy.HYBRID_FLOAT_BM25_NO_DESC, RankingStrategy.HYBRID_BINARY_BM25_NO_DESC,
                        RankingStrategy.HYBRID_BM25_BINARY_NO_DESC, RankingStrategy.HYBRID_BM25_FLOAT_NO_DESC]:
             yql += " where userQuery()"
         else:
@@ -678,6 +879,12 @@ class VespaVideoSearchClient:
         try:
             start_time = time.time()
             self.logger.info(f"📤 Sending Vespa query for {search_type}")
+            self.logger.debug(f"   Full body being sent: {body}")
+            if "input.query(qtb)" in body:
+                qtb_value = body["input.query(qtb)"]
+                self.logger.debug(f"   input.query(qtb) length: {len(qtb_value) if isinstance(qtb_value, (list, dict)) else 'not list/dict'}")
+                if isinstance(qtb_value, list):
+                    self.logger.debug(f"   qtb is list, first 5 elements: {qtb_value[:5]}")
             
             # Log request body with truncated embeddings for readability
             log_body = body.copy()
@@ -705,6 +912,12 @@ class VespaVideoSearchClient:
                 self.logger.info(f"   Top {min(3, len(response.hits))} results:")
                 for i, hit in enumerate(response.hits[:3]):
                     relevance = hit.get('relevance', 0.0)
+                    # Handle case where relevance might be a string
+                    if isinstance(relevance, str):
+                        try:
+                            relevance = float(relevance)
+                        except ValueError:
+                            relevance = 0.0
                     video_id = hit.get('fields', {}).get('video_id', 'unknown')
                     frame_id = hit.get('fields', {}).get('frame_id', 'unknown')
                     timestamp = hit.get('fields', {}).get('start_time', 'unknown')
@@ -723,7 +936,7 @@ class VespaVideoSearchClient:
                     "relevance": hit.get("relevance", 0.0),
                     "video_id": hit["fields"].get("video_id"),
                     "video_title": hit["fields"].get("video_title"),
-                    "frame_id": hit["fields"].get("frame_id"),
+                    "frame_id": hit["fields"].get("frame_id") or hit["fields"].get("segment_id"),  # Handle both frame_id and segment_id
                     "start_time": hit["fields"].get("start_time"),
                     "end_time": hit["fields"].get("end_time"),
                     "frame_description": hit["fields"].get("frame_description"),
