@@ -19,6 +19,7 @@ def main():
     parser.add_argument("--video_dir", type=Path, help="Directory containing videos")
     parser.add_argument("--output_dir", type=Path, help="Output directory for processed data")
     parser.add_argument("--backend", choices=["byaldi", "vespa"], help="Search backend")
+    parser.add_argument("--profile", nargs="+", help="Video processing profiles (space-separated, e.g., direct_video_colqwen direct_video_frame)")
     
     # Pipeline step toggles
     parser.add_argument("--skip-keyframes", action="store_true", help="Skip keyframe extraction")
@@ -33,65 +34,94 @@ def main():
     
     args = parser.parse_args()
     
-    # Create pipeline config
-    config = PipelineConfig.from_config()
+    # Get profiles to process
+    from src.tools.config import get_config
+    app_config = get_config()
     
-    # Override with command line arguments
-    if args.video_dir:
-        config.video_dir = args.video_dir
-    if args.output_dir:
-        config.output_dir = args.output_dir
-    if args.backend:
-        config.search_backend = args.backend
+    if args.profile:
+        profiles_to_process = args.profile
+    else:
+        # If no profiles specified, use the active one
+        active = app_config.get_active_profile()
+        profiles_to_process = [active] if active else ["frame_based_colpali"]
+    
+    # Process each profile
+    all_results = {}
+    for profile in profiles_to_process:
+        print(f"\n{'='*60}")
+        print(f"🎯 Processing with profile: {profile}")
+        print(f"{'='*60}")
         
-    # Processing parameters
-    if args.keyframe_threshold != 0.98:  # Only override if user specified
-        config.keyframe_threshold = args.keyframe_threshold
-    if args.max_frames != 3000:
-        config.max_frames_per_video = args.max_frames
-    if args.vlm_batch_size != 1000:
-        config.vlm_batch_size = args.vlm_batch_size
+        # Set the profile
+        import os
+        os.environ["VIDEO_PROFILE"] = profile
+        app_config.reload()
         
-    # Apply skip flags
-    if args.skip_keyframes:
-        config.extract_keyframes = False
-    if args.skip_audio:
-        config.transcribe_audio = False  
-    if args.skip_descriptions:
-        config.generate_descriptions = False
-    if args.skip_embeddings:
-        config.generate_embeddings = False
+        # Create pipeline config
+        config = PipelineConfig.from_config()
     
-    print(f"🎬 Starting Unified Video Processing Pipeline")
-    print(f"📁 Video directory: {config.video_dir}")
-    print(f"📂 Output directory: {config.output_dir}")
-    print(f"🔧 Backend: {config.search_backend}")
-    print(f"⚙️ Pipeline steps enabled:")
-    print(f"  - Keyframes: {config.extract_keyframes}")
-    print(f"  - Audio: {config.transcribe_audio}")
-    print(f"  - Descriptions: {config.generate_descriptions}")
-    print(f"  - Embeddings: {config.generate_embeddings}")
+        # Override with command line arguments
+        if args.video_dir:
+            config.video_dir = args.video_dir
+        if args.output_dir:
+            config.output_dir = args.output_dir
+        if args.backend:
+            config.search_backend = args.backend
+            
+        # Processing parameters
+        if args.keyframe_threshold != 0.98:  # Only override if user specified
+            config.keyframe_threshold = args.keyframe_threshold
+        if args.max_frames != 3000:
+            config.max_frames_per_video = args.max_frames
+        if args.vlm_batch_size != 1000:
+            config.vlm_batch_size = args.vlm_batch_size
+            
+        # Apply skip flags
+        if args.skip_keyframes:
+            config.extract_keyframes = False
+        if args.skip_audio:
+            config.transcribe_audio = False  
+        if args.skip_descriptions:
+            config.generate_descriptions = False
+        if args.skip_embeddings:
+            config.generate_embeddings = False
+        
+        print(f"🎬 Starting Video Processing Pipeline")
+        print(f"📁 Video directory: {config.video_dir}")
+        print(f"📂 Output directory: {config.output_dir}")
+        print(f"🔧 Backend: {config.search_backend}")
+        print(f"🎯 Profile: {profile}")
+        print(f"⚙️ Pipeline steps enabled:")
+        print(f"  - Keyframes: {config.extract_keyframes}")
+        print(f"  - Audio: {config.transcribe_audio}")
+        print(f"  - Descriptions: {config.generate_descriptions}")
+        print(f"  - Embeddings: {config.generate_embeddings}")
+        
+        # Run pipeline
+        pipeline = VideoIngestionPipeline(config)
+        results = pipeline.process_directory()
+        
+        # Store results
+        all_results[profile] = results
+        
+        # Display results for this profile
+        if results.get("error"):
+            print(f"\n❌ Pipeline failed for {profile}: {results['error']}")
+        else:
+            print(f"\n✅ Profile {profile} completed!")
+            print(f"   Processed: {len(results['processed_videos'])} videos")
+            print(f"   Failed: {len(results['failed_videos'])} videos")
+            print(f"   Time: {results['total_processing_time']/60:.1f} minutes")
     
-    # Run pipeline
-    pipeline = VideoIngestionPipeline(config)
-    results = pipeline.process_directory()
+    # Final summary
+    print(f"\n{'='*60}")
+    print("📊 Overall Summary")
+    print(f"{'='*60}")
+    print(f"Processed {len(profiles_to_process)} profiles")
     
-    # Display final results
-    if results.get("error"):
-        print(f"\n❌ Pipeline failed: {results['error']}")
-        return 1
-    
-    print(f"\n🎉 Pipeline completed successfully!")
-    print(f"✅ Processed: {len(results['processed_videos'])} videos")
-    print(f"❌ Failed: {len(results['failed_videos'])} videos")
-    print(f"⏱️ Total time: {results['total_processing_time']/60:.1f} minutes")
-    
-    if results['failed_videos']:
-        print(f"\n⚠️ Failed videos:")
-        for failed in results['failed_videos']:
-            video_path = failed.get('video_path', 'unknown')
-            error = failed.get('error', 'unknown error')
-            print(f"  - {Path(video_path).name}: {error}")
+    for profile, results in all_results.items():
+        status = "✅" if not results.get("error") else "❌"
+        print(f"{status} {profile}: {len(results.get('processed_videos', []))} videos processed")
     
     return 0
 

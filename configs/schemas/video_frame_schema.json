@@ -107,7 +107,7 @@
       "name": "default",
       "fields": [
         "video_title",
-        "frame_description", 
+        "frame_description",
         "audio_transcript"
       ]
     }
@@ -127,15 +127,18 @@
           "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(colpali_binary)), v)), max, patch), querytoken)"
         }
       ],
-      "first_phase": "max_sim_hamming"
+      "first_phase": "max_sim_hamming",
+      "timeout": 2.0
     },
     {
       "name": "bm25_only",
-      "first_phase": "bm25(video_title) + bm25(frame_description) + bm25(audio_transcript)"
+      "first_phase": "bm25(video_title) + bm25(frame_description) + bm25(audio_transcript)",
+      "timeout": 2.0
     },
     {
       "name": "bm25_no_description",
-      "first_phase": "bm25(video_title) + bm25(audio_transcript)"
+      "first_phase": "bm25(video_title) + bm25(audio_transcript)",
+      "timeout": 2.0
     },
     {
       "name": "float_float",
@@ -151,7 +154,8 @@
           "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(colpali_embedding), float), v), max, patch), querytoken)"
         }
       ],
-      "first_phase": "max_sim"
+      "first_phase": "max_sim",
+      "timeout": 2.0
     },
     {
       "name": "binary_binary",
@@ -167,7 +171,8 @@
           "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(colpali_binary)), v)), max, patch), querytoken)"
         }
       ],
-      "first_phase": "max_sim_hamming"
+      "first_phase": "max_sim_hamming",
+      "timeout": 2.0
     },
     {
       "name": "float_binary",
@@ -183,7 +188,8 @@
           "expression": "sum(reduce(sum(query(qt) * unpack_bits(attribute(colpali_binary)), v), max, patch), querytoken)"
         }
       ],
-      "first_phase": "max_sim"
+      "first_phase": "max_sim",
+      "timeout": 2.0
     },
     {
       "name": "phased",
@@ -211,7 +217,8 @@
       "second_phase": {
         "expression": "max_sim",
         "rerank_count": 100
-      }
+      },
+      "timeout": 5.0
     },
     {
       "name": "hybrid_float_bm25",
@@ -235,7 +242,8 @@
       "second_phase": {
         "expression": "text_sim",
         "rerank_count": 100
-      }
+      },
+      "timeout": 2.0
     },
     {
       "name": "hybrid_binary_bm25",
@@ -259,7 +267,8 @@
       "second_phase": {
         "expression": "text_sim",
         "rerank_count": 100
-      }
+      },
+      "timeout": 2.0
     },
     {
       "name": "hybrid_bm25_binary",
@@ -283,7 +292,8 @@
       "second_phase": {
         "expression": "visual_sim_binary",
         "rerank_count": 100
-      }
+      },
+      "timeout": 2.0
     },
     {
       "name": "hybrid_bm25_float",
@@ -307,7 +317,8 @@
       "second_phase": {
         "expression": "visual_sim_float",
         "rerank_count": 100
-      }
+      },
+      "timeout": 2.0
     },
     {
       "name": "hybrid_float_bm25_no_description",
@@ -331,7 +342,8 @@
       "second_phase": {
         "expression": "text_sim_no_desc",
         "rerank_count": 100
-      }
+      },
+      "timeout": 2.0
     },
     {
       "name": "hybrid_binary_bm25_no_description",
@@ -355,7 +367,8 @@
       "second_phase": {
         "expression": "visual_sim_binary",
         "rerank_count": 100
-      }
+      },
+      "timeout": 2.0
     },
     {
       "name": "hybrid_bm25_binary_no_description",
@@ -379,7 +392,8 @@
       "second_phase": {
         "expression": "visual_sim_binary",
         "rerank_count": 100
-      }
+      },
+      "timeout": 2.0
     },
     {
       "name": "hybrid_bm25_float_no_description",
@@ -403,7 +417,8 @@
       "second_phase": {
         "expression": "visual_sim_float",
         "rerank_count": 100
-      }
+      },
+      "timeout": 2.0
     }
   ]
 }

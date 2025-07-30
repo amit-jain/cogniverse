@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""
+Deploy All Vespa Schemas for Video Search
+
+This script deploys all schemas from the configs/schemas directory to Vespa.
+"""
+
+import sys
+import logging
+from pathlib import Path
+
+# Add project root to path
+sys.path.append(str(Path(__file__).parent.parent))
+
+from src.processing.vespa.vespa_schema_manager import VespaSchemaManager
+from src.processing.vespa.json_schema_parser import JsonSchemaParser
+from src.tools.config import get_config
+from vespa.package import ApplicationPackage
+
+def main():
+    # Setup logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Get configuration
+        config = get_config()
+        
+        # Initialize the schema manager
+        schema_manager = VespaSchemaManager()
+        
+        # Get all schema files
+        schemas_dir = Path(__file__).parent.parent / "configs" / "schemas"
+        schema_files = list(schemas_dir.glob("*.json"))
+        
+        logger.info(f"🚀 Found {len(schema_files)} schemas to deploy")
+        
+        # Create application package with all schemas
+        app_package = ApplicationPackage(name="videosearch")
+        
+        # Parse each schema and add to package
+        for schema_file in schema_files:
+            logger.info(f"📄 Loading schema from {schema_file.name}")
+            try:
+                parser = JsonSchemaParser()
+                schema = parser.load_schema_from_json_file(str(schema_file))
+                app_package.add_schema(schema)
+                logger.info(f"✅ Added schema: {schema.name}")
+            except Exception as e:
+                logger.error(f"❌ Failed to parse {schema_file.name}: {str(e)}")
+                continue
+        
+        # Deploy all schemas at once
+        logger.info("📦 Deploying all schemas to Vespa...")
+        
+        # Add validation overrides to allow schema changes
+        from datetime import datetime, timedelta
+        from vespa.package import Validation
+        
+        # Allow schema removal for deployment
+        until_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+        validation = Validation(
+            validation_id="schema-removal",
+            until=until_date
+        )
+        if app_package.validations is None:
+            app_package.validations = []
+        app_package.validations.append(validation)
+        
+        try:
+            # Use the schema manager's deploy method
+            schema_manager._deploy_package(app_package)
+            logger.info("✅ All schemas deployed successfully!")
+        except Exception as e:
+            logger.error(f"❌ Failed to deploy schemas: {str(e)}")
+            import traceback
+            traceback.print_exc()
+        
+        logger.info("🎉 Schema deployment complete!")
+        logger.info("🔍 You can now run video ingestion with: python scripts/run_ingestion.py --video_dir data/videos --backend vespa")
+        
+        return 0
+        
+    except Exception as e:
+        logger.error(f"❌ Script failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+if __name__ == "__main__":
+    exit(main())

@@ -521,15 +521,31 @@ class VespaSchemaManager:
         
         self._logger.info(f"Successfully uploaded {len(schemas)} schemas from {schemas_dir}")
     
-    def _deploy_package(self, app_package: ApplicationPackage) -> None:
+    def _deploy_package(self, app_package: ApplicationPackage, allow_field_type_change: bool = False) -> None:
         """
         Deploy an application package to Vespa.
         
         Args:
             app_package: The ApplicationPackage to deploy
+            allow_field_type_change: If True, adds validation override for field type changes
         """
         import requests
         import json
+        from vespa.package import Validation, ValidationID
+        
+        # Add validation override if requested
+        if allow_field_type_change:
+            from datetime import datetime, timedelta
+            # Set validation until 29 days from now (to stay within 30-day limit)
+            until_date = (datetime.now() + timedelta(days=29)).strftime("%Y-%m-%d")
+            validation = Validation(
+                validation_id=ValidationID.fieldTypeChange,
+                until=until_date,
+                comment="Allow field type changes for schema updates"
+            )
+            if app_package.validations is None:
+                app_package.validations = []
+            app_package.validations.append(validation)
         
         # Create the deployment URL
         deploy_url = f"{self.vespa_endpoint.replace('8080', str(self.vespa_port))}/application/v2/tenant/default/prepareandactivate"
