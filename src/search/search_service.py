@@ -62,7 +62,8 @@ class SearchService:
                 vespa_url=vespa_url,
                 vespa_port=vespa_port,
                 schema_name=schema_name,
-                profile=self.profile
+                profile=self.profile,
+                query_encoder_factory=QueryEncoderFactory
             )
         else:
             raise ValueError(f"Unsupported search backend: {backend_type}")
@@ -88,10 +89,17 @@ class SearchService:
         Returns:
             List of SearchResult objects
         """
-        # Encode query
-        logger.info(f"Encoding query: '{query}'")
-        query_embeddings = self.query_encoder.encode(query)
-        logger.info(f"Query embeddings shape: {query_embeddings.shape}")
+        # Check if we should pre-generate embeddings (for backward compatibility)
+        # or let the backend handle it on-demand
+        if hasattr(self.search_backend, 'query_encoder_factory') and self.search_backend.query_encoder_factory:
+            # Backend has encoder factory, let it handle embeddings on-demand
+            logger.info(f"Searching with on-demand embedding generation")
+            query_embeddings = None
+        else:
+            # Legacy path: pre-generate embeddings
+            logger.info(f"Encoding query: '{query}'")
+            query_embeddings = self.query_encoder.encode(query)
+            logger.info(f"Query embeddings shape: {query_embeddings.shape}")
         
         # Search
         logger.info(f"Searching with backend...")

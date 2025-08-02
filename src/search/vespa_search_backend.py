@@ -36,6 +36,7 @@ from src.processing.vespa.ranking_strategy_extractor import (
 )
 from src.utils.retry import retry_with_backoff, RetryConfig
 from src.utils.output_manager import OutputManager
+from src.agents.query_encoders import QueryEncoderFactory, QueryEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -267,6 +268,7 @@ class VespaSearchBackend(SearchBackend):
         vespa_port: int,
         schema_name: str,
         profile: str,
+        query_encoder_factory: Optional[QueryEncoderFactory] = None,
         enable_metrics: bool = True,
         enable_connection_pool: bool = True,
         pool_config: Optional[ConnectionPoolConfig] = None,
@@ -280,6 +282,7 @@ class VespaSearchBackend(SearchBackend):
             vespa_port: Vespa port
             schema_name: Name of the Vespa schema
             profile: Video processing profile
+            query_encoder_factory: Optional factory for creating query encoders on-demand
             enable_metrics: Whether to collect metrics
             enable_connection_pool: Whether to use connection pooling
             pool_config: Connection pool configuration
@@ -322,8 +325,9 @@ class VespaSearchBackend(SearchBackend):
         # Load ranking strategies
         self._load_ranking_strategies()
         
-        # Initialize text encoders cache
-        self._text_encoders: Dict[str, VideoPrismTextEncoder] = {}
+        # Initialize query encoder factory and cache
+        self.query_encoder_factory = query_encoder_factory
+        self._query_encoder: Optional[QueryEncoder] = None
         self._encoder_lock = threading.Lock()
         
         logger.info(
@@ -358,20 +362,14 @@ class VespaSearchBackend(SearchBackend):
             f"for schema '{self.schema_name}'"
         )
     
-    def _get_text_encoder(self, model_name: str, embedding_dim: int) -> VideoPrismTextEncoder:
-        """Get or create text encoder with caching"""
-        cache_key = f"{model_name}_{embedding_dim}"
-        
-        with self._encoder_lock:
-            if cache_key not in self._text_encoders:
-                self._text_encoders[cache_key] = create_text_encoder(
-                    model_name=model_name,
-                    embedding_dim=embedding_dim,
-                    cache_size=1000,
-                    enable_circuit_breaker=True,
-                    enable_metrics=True
-                )
-            return self._text_encoders[cache_key]
+    def _get_query_encoder(self) -> Optional[QueryEncoder]:
+        """Get or create query encoder lazily"""
+        if self._query_encoder is None and self.query_encoder_factory:
+            with self._encoder_lock:
+                if self._query_encoder is None:
+                    self._query_encoder = self.query_encoder_factory.create_encoder(self.profile)
+                    logger.info(f"Created query encoder for profile: {self.profile}")
+        return self._query_encoder
     
     def _embeddings_to_vespa_format(self, embeddings: np.ndarray, profile: str) -> Dict[str, Any]:
         """Convert embeddings to Vespa query format."""
@@ -434,7 +432,7 @@ class VespaSearchBackend(SearchBackend):
     @retry_with_backoff
     def search(
         self,
-        query_embeddings: np.ndarray,
+        query_embeddings: Optional[np.ndarray],
         query_text: str,
         top_k: int = 10,
         filters: Optional[Dict[str, Any]] = None,
@@ -444,7 +442,7 @@ class VespaSearchBackend(SearchBackend):
         Search for documents matching the query.
         
         Args:
-            query_embeddings: Query embeddings from encoder
+            query_embeddings: Optional query embeddings from encoder (generated on-demand if None)
             query_text: Original query text
             top_k: Number of results to return
             filters: Optional filters (date range, etc.)
@@ -484,6 +482,23 @@ class VespaSearchBackend(SearchBackend):
             
             strategy = self.ranking_strategies[ranking_profile]
             
+            # Check if strategy requires embeddings
+            requires_embeddings = (
+                strategy.get("needs_float_embeddings", False) or 
+                strategy.get("needs_binary_embeddings", False)
+            )
+            
+            # Generate embeddings on-demand if needed and not provided
+            if requires_embeddings and query_embeddings is None:
+                encoder = self._get_query_encoder()
+                if encoder:
+                    logger.info(f"[{correlation_id}] Generating embeddings on-demand for strategy '{ranking_profile}'")
+                    query_embeddings = encoder.encode(query_text)
+                else:
+                    logger.warning(
+                        f"[{correlation_id}] Strategy '{ranking_profile}' requires embeddings but no encoder available"
+                    )
+            
             # Build query based on strategy
             query_params = self._build_query(query_text, query_embeddings, strategy, top_k, correlation_id)
             
@@ -521,7 +536,7 @@ class VespaSearchBackend(SearchBackend):
     def _build_query(
         self,
         query_text: str,
-        query_embeddings: np.ndarray,
+        query_embeddings: Optional[np.ndarray],
         strategy: Dict[str, Any],
         limit: int,
         correlation_id: str
