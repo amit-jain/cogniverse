@@ -72,9 +72,19 @@ class VideoPrismInference:
         try:
             # Try to import from the reference implementation
             import sys
-            videoprism_path = Path(__file__).parent.parent.parent.parent.parent / "videoprism"
-            if videoprism_path.exists():
-                sys.path.insert(0, str(videoprism_path))
+            from src.tools.config import get_config
+            config = get_config()
+            videoprism_path = config.get("videoprism_repo_path")
+            
+            if not videoprism_path:
+                # Fallback to environment variable
+                import os
+                videoprism_path = os.environ.get("VIDEOPRISM_REPO_PATH")
+            
+            if videoprism_path:
+                videoprism_path = Path(videoprism_path)
+                if videoprism_path.exists():
+                    sys.path.insert(0, str(videoprism_path))
                 from videoprism import models as vp
                 
                 # Build and load model

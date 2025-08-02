@@ -28,10 +28,10 @@ from src.tools.config import get_config
 from src.processing.pipeline_steps import (
     KeyframeExtractor,
     AudioTranscriber,
-    VLMDescriptor,
-    EmbeddingGenerator
+    VLMDescriptor
 )
 from src.processing.pipeline_steps.keyframe_extractor_fps import FPSKeyframeExtractor
+from src.processing.pipeline_steps.embedding_generator import create_embedding_generator
 
 
 class PipelineStep(Enum):
@@ -168,9 +168,13 @@ class VideoIngestionPipeline:
             # Check if FPS-based extraction is configured
             extraction_method = self.app_config.get("pipeline_config.keyframe_extraction_method", "histogram")
             if extraction_method == "fps":
-                target_fps = self.app_config.get("pipeline_config.keyframe_fps", 1.0)
-                self.keyframe_extractor = FPSKeyframeExtractor(target_fps=target_fps)
-                self.logger.info(f"Using FPS-based keyframe extraction at {target_fps} FPS")
+                # FPS-based extraction
+                keyframe_fps = self.app_config.get("pipeline_config.keyframe_fps", 1.0)
+                self.keyframe_extractor = FPSKeyframeExtractor(
+                    fps=keyframe_fps,
+                    max_frames=self.config.max_frames_per_video
+                )
+                self.logger.info(f"Using FPS-based keyframe extraction at {keyframe_fps} FPS")
             else:
                 self.keyframe_extractor = KeyframeExtractor(
                     threshold=self.config.keyframe_threshold,
@@ -205,12 +209,25 @@ class VideoIngestionPipeline:
         else:
             self.vlm_descriptor = None
             
-        # Initialize embedding generator with embedding type
-        embedding_type = self.app_config.get("embedding_type", "frame_based")
-        self.embedding_generator = EmbeddingGenerator(
-            backend=self.config.search_backend,
-            embedding_type=embedding_type
-        )
+        # Initialize embedding generator v2
+        if self.config.generate_embeddings:
+            try:
+                # Get the config data from the Config object
+                generator_config = self.app_config.config_data.copy()
+                generator_config["embedding_backend"] = self.config.search_backend
+                generator_config["active_profile"] = self.app_config.get_active_profile()
+                
+                # Create embedding generator v2
+                self.embedding_generator = create_embedding_generator(
+                    config=generator_config,
+                    logger=self.logger
+                )
+                self.logger.info(f"Initialized embedding generator v2 with backend: {self.config.search_backend}")
+            except Exception as e:
+                self.logger.error(f"Failed to initialize embedding generator v2: {e}")
+                self.embedding_generator = None
+        else:
+            self.embedding_generator = None
             
     def get_video_files(self, video_dir: Optional[Path] = None) -> List[Path]:
         """Get all video files from directory"""
@@ -241,21 +258,52 @@ class VideoIngestionPipeline:
     
     
     def generate_embeddings(self, results: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate embeddings for search backend using EmbeddingGenerator"""
+        """Generate embeddings for search backend using EmbeddingGenerator v2"""
+        if not self.embedding_generator:
+            self.logger.error("Embedding generator not initialized")
+            return {"error": "Embedding generator not initialized"}
+            
         self.logger.info("Extracting data for embedding generation...")
         
-        # Pass minimal data to avoid large object serialization issues
+        # Prepare video data for v2 generator
         video_data = {
             "video_id": results.get("video_id"),
-            "video_path": results.get("video_path"),  # Add video path for direct processing
-            "output_dir": str(self.profile_output_dir)  # Pass path instead of large data structures
+            "video_path": results.get("video_path"),
+            "duration": results.get("duration", 0),
+            "output_dir": str(self.profile_output_dir)
         }
+        
+        # For frame-based processing, add frame information if available
+        if "keyframes" in results.get("results", {}):
+            keyframes_data = results["results"]["keyframes"]
+            if "keyframes" in keyframes_data:
+                # Convert keyframe data to frames format expected by v2
+                frames = []
+                for kf in keyframes_data["keyframes"]:
+                    frames.append({
+                        "frame_id": kf.get("frame_id"),
+                        "frame_path": kf.get("path"),
+                        "timestamp": kf.get("timestamp", 0.0)
+                    })
+                video_data["frames"] = frames
         
         self.logger.info(f"Data extracted - Video ID: {video_data['video_id']}")
         self.logger.info(f"Output directory: {video_data['output_dir']}")
         
+        # Call v2 generator which returns EmbeddingResult
         result = self.embedding_generator.generate_embeddings(video_data, self.profile_output_dir)
-        return result
+        
+        # Convert EmbeddingResult to dict format expected by pipeline
+        return {
+            "video_id": result.video_id,
+            "total_documents": result.total_documents,
+            "documents_processed": result.documents_processed,
+            "documents_fed": result.documents_fed,
+            "processing_time": result.processing_time,
+            "errors": result.errors,
+            "metadata": result.metadata,
+            "backend": self.config.search_backend
+        }
     
     
     def process_video(self, video_path: Path) -> Dict[str, Any]:
@@ -264,6 +312,9 @@ class VideoIngestionPipeline:
         
         self.logger.info(f"Starting video processing: {video_id}")
         self.logger.info(f"Video path: {video_path}")
+        
+        # Get video duration
+        duration = self._get_video_duration(video_path)
         
         print(f"\n🎬 Processing video: {video_path.name}")
         print("=" * 60)
@@ -276,6 +327,7 @@ class VideoIngestionPipeline:
         results = {
             "video_id": video_id,
             "video_path": str(video_path),
+            "duration": duration,
             "pipeline_config": config_dict,
             "results": {},
             "started_at": time.time()
@@ -476,6 +528,28 @@ class VideoIngestionPipeline:
             self.logger.info("VLM service stopped")
         
         return results
+    
+    def _get_video_duration(self, video_path: Path) -> float:
+        """Get video duration in seconds using ffprobe"""
+        try:
+            import subprocess
+            import json
+            
+            cmd = [
+                'ffprobe', '-v', 'quiet',
+                '-print_format', 'json',
+                '-show_format',
+                str(video_path)
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                return float(data.get('format', {}).get('duration', 0))
+            return 0
+        except Exception as e:
+            self.logger.error(f"Failed to get video duration: {e}")
+            return 0
 
 
 if __name__ == "__main__":

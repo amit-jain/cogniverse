@@ -86,14 +86,14 @@
         "index": "enable-bm25"
       },
       {
-        "name": "colpali_embedding",
+        "name": "embedding",
         "type": "tensor<bfloat16>(patch{}, v[128])",
         "indexing": [
           "attribute"
         ]
       },
       {
-        "name": "colpali_binary",
+        "name": "embedding_binary",
         "type": "tensor<int8>(patch{}, v[16])",
         "indexing": [
           "attribute",
@@ -124,7 +124,7 @@
       "functions": [
         {
           "name": "max_sim_hamming",
-          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(colpali_binary)), v)), max, patch), querytoken)"
+          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken)"
         }
       ],
       "first_phase": "max_sim_hamming",
@@ -151,7 +151,7 @@
       "functions": [
         {
           "name": "max_sim",
-          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(colpali_embedding), float), v), max, patch), querytoken)"
+          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, patch), querytoken)"
         }
       ],
       "first_phase": "max_sim",
@@ -168,7 +168,7 @@
       "functions": [
         {
           "name": "max_sim_hamming",
-          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(colpali_binary)), v)), max, patch), querytoken)"
+          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken)"
         }
       ],
       "first_phase": "max_sim_hamming",
@@ -185,7 +185,7 @@
       "functions": [
         {
           "name": "max_sim",
-          "expression": "sum(reduce(sum(query(qt) * unpack_bits(attribute(colpali_binary)), v), max, patch), querytoken)"
+          "expression": "sum(reduce(sum(query(qt) * unpack_bits(attribute(embedding_binary)), v), max, patch), querytoken)"
         }
       ],
       "first_phase": "max_sim",
@@ -206,11 +206,11 @@
       "functions": [
         {
           "name": "max_sim_hamming",
-          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(colpali_binary)), v)), max, patch), querytoken)"
+          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken)"
         },
         {
           "name": "max_sim",
-          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(colpali_embedding), float), v), max, patch), querytoken)"
+          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, patch), querytoken)"
         }
       ],
       "first_phase": "max_sim_hamming",
@@ -231,7 +231,7 @@
       "functions": [
         {
           "name": "visual_sim_float",
-          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(colpali_embedding), float), v), max, patch), querytoken)"
+          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, patch), querytoken)"
         },
         {
           "name": "text_sim",
@@ -256,7 +256,7 @@
       "functions": [
         {
           "name": "visual_sim_binary",
-          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(colpali_binary)), v)), max, patch), querytoken)"
+          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken)"
         },
         {
           "name": "text_sim",
@@ -281,7 +281,7 @@
       "functions": [
         {
           "name": "visual_sim_binary",
-          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(colpali_binary)), v)), max, patch), querytoken)"
+          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken)"
         },
         {
           "name": "text_sim",
@@ -306,7 +306,7 @@
       "functions": [
         {
           "name": "visual_sim_float",
-          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(colpali_embedding), float), v), max, patch), querytoken)"
+          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, patch), querytoken)"
         },
         {
           "name": "text_sim",
@@ -331,7 +331,7 @@
       "functions": [
         {
           "name": "visual_sim_float",
-          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(colpali_embedding), float), v), max, patch), querytoken)"
+          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, patch), querytoken)"
         },
         {
           "name": "text_sim_no_desc",
@@ -356,7 +356,7 @@
       "functions": [
         {
           "name": "visual_sim_binary",
-          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(colpali_binary)), v)), max, patch), querytoken)"
+          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken)"
         },
         {
           "name": "text_sim_no_desc",
@@ -381,7 +381,7 @@
       "functions": [
         {
           "name": "visual_sim_binary",
-          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(colpali_binary)), v)), max, patch), querytoken)"
+          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken)"
         },
         {
           "name": "text_sim_no_desc",
@@ -406,7 +406,7 @@
       "functions": [
         {
           "name": "visual_sim_float",
-          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(colpali_embedding), float), v), max, patch), querytoken)"
+          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, patch), querytoken)"
         },
         {
           "name": "text_sim_no_desc",

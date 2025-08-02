@@ -17,8 +17,7 @@ from datetime import datetime
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
 from src.tools.config import get_config
-from src.processing.vespa.vespa_search_client import VespaVideoSearchClient
-from src.agents.query_encoders import QueryEncoderFactory
+from src.search.search_service import SearchService
 
 
 # Better visual queries that don't rely on text descriptions
@@ -138,23 +137,23 @@ def calculate_metrics(results: List[Dict], expected_videos: List[str], k_values:
     return metrics
 
 
-def test_profile_with_queries(profile: str, queries: List[Dict], search_client: VespaVideoSearchClient, test_multiple_strategies: bool = False) -> Dict:
+def test_profile_with_queries(profile: str, queries: List[Dict], test_multiple_strategies: bool = False) -> Dict:
     """Test a profile with all queries and return detailed results"""
     
-    # Get config and query encoder
+    # Get config and create search service
     config = get_config()
-    profiles = config.get("video_processing_profiles", {})
-    model_name = profiles[profile].get("embedding_model", "vidore/colsmol-500m")
     
-    # Get the schema for this profile (important for VideoPrism)
-    schema_name = profiles[profile].get("vespa_schema", "video_frame")
-    
-    # Initialize query encoder
-    query_encoder = QueryEncoderFactory.create_encoder(profile, model_name)
+    try:
+        search_service = SearchService(config, profile)
+    except Exception as e:
+        print(f"❌ Failed to create search service for {profile}: {e}")
+        return {
+            'profile': profile,
+            'error': str(e)
+        }
     
     # Determine strategies to test
     if test_multiple_strategies:
-        # Test multiple strategies for all profiles when flag is set
         if profile == 'frame_based_colpali':
             strategies_to_test = [
                 ('binary_binary', 'Visual Only'),
@@ -163,7 +162,6 @@ def test_profile_with_queries(profile: str, queries: List[Dict], search_client: 
                 ('bm25_only', 'Text Only')
             ]
         elif 'global' in profile:
-            # For VideoPrism global models
             strategies_to_test = [
                 ('binary_binary', 'Binary Visual'),
                 ('float_binary', 'Float-Binary Hybrid'),
@@ -171,7 +169,6 @@ def test_profile_with_queries(profile: str, queries: List[Dict], search_client: 
                 ('float_float', 'Float Visual')
             ]
         else:
-            # For other VideoPrism models (if any)
             strategies_to_test = [
                 ('float_float', 'Float Visual'),
                 ('float_binary', 'Float-Binary Hybrid'),
@@ -179,16 +176,21 @@ def test_profile_with_queries(profile: str, queries: List[Dict], search_client: 
                 ('phased', 'Phased (Binary→Float)')
             ]
     else:
-        # Single strategy for other profiles
-        strategy = get_best_strategy_for_profile(profile)
-        strategies_to_test = [(strategy, 'Default')]
+        # Use default strategy for profile
+        strategies_to_test = [(None, 'Default')]
+    
+    # Get model name from config
+    config = get_config()
+    profiles = config.get("video_processing_profiles", {})
+    model_name = profiles.get(profile, {}).get("embedding_model", "Unknown")
     
     # Results storage
     profile_results = {
         'profile': profile,
         'model': model_name,
-        'strategies': {},
-        'aggregate_metrics_by_strategy': {}
+        'strategies': {} if test_multiple_strategies else None,
+        'queries': [],
+        'aggregate_metrics': {}
     }
     
     for strategy, strategy_name in strategies_to_test:
@@ -204,34 +206,48 @@ def test_profile_with_queries(profile: str, queries: List[Dict], search_client: 
             query = query_data['query']
             expected_videos = query_data['expected_videos']
             
-            # Encode query
-            embeddings_np = query_encoder.encode(query)
-            
-            # Execute search with schema
-            search_params = {
-                "query": query if needs_text_for_strategy(strategy) else "",
-                "ranking": strategy,
-                "top_k": 10,
-                "schema": schema_name  # Pass the schema for this profile
-            }
-            
-            results = search_client.search(search_params, embeddings_np if needs_embeddings_for_strategy(strategy) else None)
-            
-            # Calculate metrics
-            metrics = calculate_metrics(results, expected_videos)
-            all_metrics.append(metrics)
-            
-            # Store query results
-            query_result = {
-                'query': query,
-                'expected': expected_videos,
-                'results': [r['video_id'] for r in results[:5]],  # Top 5
-                'metrics': metrics,
-                'top_result_correct': results[0]['video_id'] in expected_videos if results else False
-            }
-            strategy_results['queries'].append(query_result)
+            try:
+                # Execute search using SearchService with optional ranking strategy
+                search_results = search_service.search(query, top_k=10, ranking_strategy=strategy)
+                
+                # Convert SearchResult objects to dicts and extract video IDs
+                result_dicts = [r.to_dict() for r in search_results]
+                results = []
+                for r in result_dicts:
+                    video_id = r.get('source_id', r['document_id'].split('_')[0])
+                    results.append({
+                        'video_id': video_id,
+                        'score': r['score'],
+                        'document_id': r['document_id']
+                    })
+                
+                # Calculate metrics
+                metrics = calculate_metrics(results, expected_videos)
+                all_metrics.append(metrics)
+                
+                # Store query results
+                query_result = {
+                    'query': query,
+                    'expected': expected_videos,
+                    'results': [r['video_id'] for r in results[:5]],  # Top 5
+                    'metrics': metrics,
+                    'top_result_correct': results[0]['video_id'] in expected_videos if results else False
+                }
+                strategy_results['queries'].append(query_result)
+                
+            except Exception as e:
+                print(f"❌ Search failed for query '{query}' with strategy '{strategy}': {e}")
+                query_result = {
+                    'query': query,
+                    'expected': expected_videos,
+                    'results': [],
+                    'metrics': {'recall@1': 0, 'recall@5': 0, 'recall@10': 0, 'mrr': 0},
+                    'top_result_correct': False,
+                    'error': str(e)
+                }
+                strategy_results['queries'].append(query_result)
         
-        # Calculate aggregate metrics
+        # Calculate aggregate metrics for this strategy
         if all_metrics:
             for metric_name in all_metrics[0].keys():
                 values = [m[metric_name] for m in all_metrics]
@@ -242,13 +258,19 @@ def test_profile_with_queries(profile: str, queries: List[Dict], search_client: 
                     'max': np.max(values)
                 }
         
-        profile_results['strategies'][strategy] = strategy_results
-        profile_results['aggregate_metrics_by_strategy'][strategy_name] = strategy_results['aggregate_metrics']
+        if test_multiple_strategies:
+            profile_results['strategies'][strategy or 'default'] = strategy_results
+        else:
+            # For single strategy, put results at top level
+            profile_results['queries'] = strategy_results['queries']
+            profile_results['aggregate_metrics'] = strategy_results['aggregate_metrics']
     
-    # For backward compatibility, include the default strategy results at top level
-    default_strategy = strategies_to_test[0][0]
-    profile_results['queries'] = profile_results['strategies'][default_strategy]['queries']
-    profile_results['aggregate_metrics'] = profile_results['strategies'][default_strategy]['aggregate_metrics']
+    # For backward compatibility when testing multiple strategies
+    if test_multiple_strategies and profile_results['strategies']:
+        # Use the first strategy as default for top-level results
+        first_strategy = list(profile_results['strategies'].values())[0]
+        profile_results['queries'] = first_strategy['queries']
+        profile_results['aggregate_metrics'] = first_strategy['aggregate_metrics']
     
     return profile_results
 
@@ -285,6 +307,10 @@ def create_comprehensive_results_table(all_results: List[Dict]) -> pd.DataFrame:
     for profile_results in all_results:
         profile = profile_results['profile']
         
+        # Skip profiles that failed to initialize
+        if 'error' in profile_results:
+            continue
+            
         for query_result in profile_results['queries']:
             query = query_result['query']
             expected = ', '.join(query_result['expected'])
@@ -327,11 +353,26 @@ def create_metrics_summary_table(all_results: List[Dict]) -> pd.DataFrame:
     
     for profile_results in all_results:
         profile = profile_results['profile']
-        metrics = profile_results['aggregate_metrics']
+        
+        # Skip profiles that failed to initialize
+        if 'error' in profile_results:
+            rows.append({
+                'Profile': profile,
+                'Model': 'FAILED',
+                'MRR': 'ERROR',
+                'RECALL@1': 'ERROR',
+                'RECALL@5': 'ERROR',
+                'RECALL@10': 'ERROR',
+                'NDCG@5': 'ERROR',
+                'NDCG@10': 'ERROR'
+            })
+            continue
+            
+        metrics = profile_results.get('aggregate_metrics', {})
         
         row = {
             'Profile': profile,
-            'Model': profile_results['model'][:30] + '...' if len(profile_results['model']) > 30 else profile_results['model']
+            'Model': profile_results.get('model', 'N/A')[:30] + '...' if profile_results.get('model', '') and len(profile_results.get('model', '')) > 30 else profile_results.get('model', 'N/A')
         }
         
         # Add mean metrics
@@ -355,15 +396,16 @@ def main():
     parser.add_argument("--output-format", choices=["table", "html", "csv"], default="table",
                        help="Output format")
     parser.add_argument("--test-multiple-strategies", action="store_true",
-                       help="Test multiple ranking strategies for ColPali")
+                       help="Test multiple ranking strategies for each profile")
     
     args = parser.parse_args()
     
-    # Initialize search client
+    if args.test_multiple_strategies:
+        print("📊 Testing multiple ranking strategies for each profile...")
+        print("    This will help identify the optimal strategy for each model\n")
+    
+    # Get config
     config = get_config()
-    vespa_url = config.get("vespa_url", "http://localhost")
-    vespa_port = config.get("vespa_port", 8080)
-    search_client = VespaVideoSearchClient(vespa_url=vespa_url, vespa_port=vespa_port)
     
     # Create output directory if it doesn't exist
     output_dir = Path(__file__).parent.parent / "outputs" / "test_results"
@@ -379,14 +421,8 @@ def main():
     for profile in args.profiles:
         print(f"\n🔍 Testing profile: {profile}")
         
-        # Set environment variable
-        os.environ["VIDEO_PROFILE"] = profile
-        
-        # Reload config
-        config.reload()
-        
         try:
-            results = test_profile_with_queries(profile, VISUAL_TEST_QUERIES, search_client, 
+            results = test_profile_with_queries(profile, VISUAL_TEST_QUERIES, 
                                                test_multiple_strategies=args.test_multiple_strategies)
             all_results.append(results)
             print(f"✅ Completed {profile}")

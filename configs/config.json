@@ -17,6 +17,10 @@
   "embedding_model": "all-MiniLM-L6-v2",
   "local_llm_model": "deepseek-r1:7b",
   "base_url": "http://localhost:11434",
+  "remote_inference_url": null,
+  "remote_inference_api_key": null,
+  "remote_inference_provider": null,
+  "videoprism_repo_path": "/Users/amjain/source/hobby/videoprism",
   "video_processing_profiles": {
     "frame_based_colpali": {
       "vespa_schema": "video_frame",
@@ -27,7 +31,7 @@
         "generate_descriptions": true,
         "generate_embeddings": true
       },
-      "embedding_type": "frame_based",
+      "embedding_type": "direct_video_segment",
       "schema_config": {
         "schema_name": "video_colpali",
         "model_name": "ColPali",
