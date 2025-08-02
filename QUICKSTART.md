@@ -45,7 +45,7 @@ python scripts/setup_system.py
 ./scripts/run_servers.sh
 
 # If using Vespa backend (first time only):
-python scripts/deploy_vespa_schema.py
+python scripts/deploy_all_schemas.py
 ```
 
 Then open **http://localhost:8000** in your browser and select **"CoordinatorAgent"**.

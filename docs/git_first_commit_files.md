@@ -73,7 +73,7 @@
 
 ### Processing and Ingestion
 - `scripts/run_ingestion.py` - Video ingestion
-- `scripts/deploy_vespa_schema.py` - Schema deployment
+- `scripts/deploy_all_schemas.py` - Deploy all Vespa schemas
 - `scripts/setup_output_directories.py` - Output directory setup
 
 ### Optimization

@@ -28,8 +28,11 @@ import torch
 from PIL import Image
 
 from .embedding_generator import (
-    EmbeddingGenerator, EmbeddingResult, ProcessingConfig,
-    Document, MediaType, TemporalInfo, SegmentInfo
+    EmbeddingGenerator, ProcessingConfig,
+    EmbeddingResult as ProcessingResult
+)
+from src.core.documents import (
+    Document, MediaType, TemporalInfo, SegmentInfo, EmbeddingResult
 )
 from src.models import get_or_load_model
 
@@ -74,7 +77,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         
         # Determine media type based on process type
         if self.process_type.startswith("direct_video"):
-            self.media_type = MediaType.VIDEO
+            self.media_type = MediaType.VIDEO_SEGMENT
         else:
             self.media_type = MediaType.VIDEO_FRAME
         
@@ -123,7 +126,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         self,
         video_data: Dict[str, Any],
         output_dir: Path
-    ) -> EmbeddingResult:
+    ) -> ProcessingResult:
         """Generate embeddings for a video"""
         start_time = time.time()
         video_id = video_data.get('video_id', 'unknown')
@@ -152,7 +155,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
             
         except Exception as e:
             self.logger.error(f"Embedding generation failed: {e}")
-            return EmbeddingResult(
+            return ProcessingResult(
                 video_id=video_id,
                 total_documents=0,
                 documents_processed=0,
@@ -228,7 +231,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         
         return Document(
             doc_id=doc_id,
-            media_type=MediaType.VIDEO,
+            media_type=MediaType.VIDEO_SEGMENT,
             embeddings=embedding_result,
             temporal_info=TemporalInfo(
                 start_time=start_time,
@@ -417,7 +420,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
     def _feed_single_document(self, document: Document) -> bool:
         if self.backend_client:
             success_count, failed_ids = self.backend_client.feed(document)
-            self.logger.debug(f"Fed document {document.document_id}: success={success_count}, failed={failed_ids}")
+            self.logger.debug(f"Fed document {document.doc_id}: success={success_count}, failed={failed_ids}")
             return success_count > 0
         self.logger.warning("No backend client available")
         return False
@@ -426,7 +429,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         self,
         video_data: Dict[str, Any],
         output_dir: Path
-    ) -> EmbeddingResult:
+    ) -> ProcessingResult:
         """Generate embeddings for direct video processing"""
         video_path = Path(video_data['video_path'])
         video_id = video_data['video_id']
@@ -466,7 +469,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
                 self.logger.error(f"Error processing segment {segment_idx}: {e}")
                 errors.append(f"Segment {segment_idx}: {str(e)}")
         
-        return EmbeddingResult(
+        return ProcessingResult(
             video_id=video_id,
             total_documents=num_segments,
             documents_processed=documents_processed,
@@ -490,7 +493,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         # Load keyframes metadata
         keyframes_file = output_dir / "metadata" / f"{video_id}_keyframes.json"
         if not keyframes_file.exists():
-            return EmbeddingResult(
+            return ProcessingResult(
                 video_id=video_id,
                 total_documents=0,
                 documents_processed=0,
@@ -593,7 +596,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
                 self.logger.error(f"Error processing batch starting at {i}: {e}")
                 errors.append(f"Batch {i}: {str(e)}")
         
-        return EmbeddingResult(
+        return ProcessingResult(
             video_id=video_id,
             total_documents=len(keyframes),
             documents_processed=documents_processed,

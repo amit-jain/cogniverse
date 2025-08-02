@@ -75,6 +75,15 @@ def main():
             # Use the schema manager's deploy method
             schema_manager._deploy_package(app_package)
             logger.info("✅ All schemas deployed successfully!")
+            
+            # Extract and save ranking strategies after schema deployment
+            logger.info("📊 Extracting ranking strategies from all schemas...")
+            from src.processing.vespa.ranking_strategy_extractor import extract_all_ranking_strategies, save_ranking_strategies
+            
+            strategies = extract_all_ranking_strategies(schemas_dir)
+            save_ranking_strategies(strategies, schemas_dir / "ranking_strategies.json")
+            logger.info(f"✅ Extracted {sum(len(s) for s in strategies.values())} ranking strategies from {len(strategies)} schemas")
+            
         except Exception as e:
             logger.error(f"❌ Failed to deploy schemas: {str(e)}")
             import traceback
