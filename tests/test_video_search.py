@@ -16,8 +16,8 @@ from datetime import datetime
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.processing.vespa.vespa_search_client import VespaVideoSearchClient
-from colpali_engine.models import ColIdefics3, ColIdefics3Processor
+from src.search.search_service import SearchService
+from src.tools.config import get_config
 import torch
 
 
@@ -33,99 +33,41 @@ class VideoSearchComparison:
         """
         self.agents = agent_configs
         self.results = {}
+        self.config = get_config()
         
-        # Initialize query encoder (shared across all approaches)
-        self._init_query_encoder()
+        # Initialize search services for each profile
+        self.search_services = {}
+        for agent in agent_configs:
+            profile = agent['profile']
+            # Update config with agent-specific settings
+            self.config['vespa_url'] = agent['url']
+            self.config['vespa_port'] = agent['port']
+            self.search_services[profile] = SearchService(self.config, profile)
     
-    def _init_query_encoder(self):
-        """Initialize ColPali model for query encoding"""
-        print("Initializing query encoder...")
+    def search_profile(self, profile: str, query: str, top_k: int = 10) -> Dict[str, Any]:
+        """Search using a specific profile"""
+        if profile not in self.search_services:
+            return {"error": f"Profile {profile} not initialized"}
         
-        # Device detection
-        if torch.cuda.is_available():
-            self.device = "cuda"
-            dtype = torch.bfloat16
-        elif torch.backends.mps.is_available():
-            self.device = "mps"
-            dtype = torch.float32
-        else:
-            self.device = "cpu"
-            dtype = torch.float32
-        
-        # Load model
-        model_name = "vidore/colsmol-500m"  # Use consistent model for queries
-        self.col_model = ColIdefics3.from_pretrained(
-            model_name, 
-            torch_dtype=dtype, 
-            device_map=self.device
-        ).eval()
-        self.col_processor = ColIdefics3Processor.from_pretrained(model_name)
-        
-        print(f"Query encoder loaded: {model_name} on {self.device}")
-    
-    def encode_query(self, query: str) -> np.ndarray:
-        """Encode query text to embeddings"""
-        batch_queries = self.col_processor.process_queries([query]).to(self.device)
-        with torch.no_grad():
-            query_embeddings = self.col_model(**batch_queries)
-        return query_embeddings.cpu().numpy().squeeze(0)
-    
-    def search_agent(self, agent: Dict[str, Any], query: str, embeddings: np.ndarray, top_k: int = 10) -> Dict[str, Any]:
-        """Search using a specific agent"""
-        agent_url = f"http://{agent['url']}:{agent['port']}"
-        
-        # Check agent health
         try:
-            health_response = requests.get(f"{agent_url}/agent.json", timeout=5)
-            if health_response.status_code != 200:
-                return {"error": f"Agent not healthy: {health_response.status_code}"}
-        except Exception as e:
-            return {"error": f"Agent not reachable: {str(e)}"}
-        
-        # Prepare search request
-        task_data = {
-            "id": f"test_{int(time.time())}",
-            "messages": [{
-                "role": "user",
-                "parts": [{
-                    "type": "data",
-                    "data": {
-                        "query": query,
-                        "top_k": top_k
-                    }
-                }]
-            }]
-        }
-        
-        # Execute search
-        start_time = time.time()
-        try:
-            response = requests.post(
-                f"{agent_url}/tasks/send",
-                json=task_data,
-                timeout=30
-            )
+            # Use the search service for this profile
+            search_service = self.search_services[profile]
+            results = search_service.search(query, top_k=top_k)
             
-            if response.status_code == 202:
-                result = response.json()
-                search_time = time.time() - start_time
-                
-                return {
-                    "success": True,
-                    "results": result.get("results", []),
-                    "search_time": search_time,
-                    "agent": agent['name']
-                }
-            else:
-                return {
-                    "error": f"Search failed: {response.status_code}",
-                    "details": response.text
-                }
-                
-        except Exception as e:
+            # Convert results to dict format
             return {
-                "error": f"Search exception: {str(e)}"
+                "profile": profile,
+                "query": query,
+                "num_results": len(results),
+                "results": [r.to_dict() for r in results]
             }
+        except Exception as e:
+            return {"error": str(e), "profile": profile}
+    
+    
+    def search_agent(self, agent: Dict[str, Any], query: str, top_k: int = 10) -> Dict[str, Any]:
+        """Search using a specific agent"""
+        return self.search_profile(agent['profile'], query, top_k)
     
     def compare_searches(self, queries: List[str], top_k: int = 10):
         """Run searches across all agents and compare results"""
@@ -135,26 +77,26 @@ class VideoSearchComparison:
             print(f"Query: {query}")
             print(f"{'='*80}")
             
-            # Encode query once
-            print("Encoding query...")
-            embeddings = self.encode_query(query)
-            print(f"Query embeddings shape: {embeddings.shape}")
-            
             query_results = {}
             
             # Search with each agent
             for agent in self.agents:
                 print(f"\n--- Searching with {agent['name']} ---")
-                result = self.search_agent(agent, query, embeddings, top_k)
+                result = self.search_agent(agent, query, top_k)
                 
                 if "error" in result:
                     print(f"❌ Error: {result['error']}")
                 else:
-                    print(f"✅ Success: {len(result['results'])} results in {result['search_time']:.2f}s")
+                    print(f"✅ Success: {result['num_results']} results for profile {result['profile']}")
                     
                     # Show top 3 results
                     for i, hit in enumerate(result['results'][:3]):
-                        print(f"  {i+1}. {hit['video_id']} - frame {hit['frame_id']} @ {hit['start_time']:.1f}s (score: {hit['relevance']:.3f})")
+                        source_id = hit.get('source_id', hit['document_id'].split('_')[0])
+                        if 'temporal_info' in hit and hit['temporal_info']:
+                            start_time = hit['temporal_info']['start_time']
+                            print(f"  {i+1}. {source_id} @ {start_time:.1f}s (score: {hit['score']:.3f})")
+                        else:
+                            print(f"  {i+1}. {source_id} (score: {hit['score']:.3f})")
                 
                 query_results[agent['name']] = result
             
@@ -174,11 +116,6 @@ class VideoSearchComparison:
             print("Not enough successful results to compare")
             return
         
-        # Compare timing
-        print("\nSearch Times:")
-        for name, res in successful.items():
-            print(f"  {name}: {res['search_time']:.2f}s")
-        
         # Compare top results overlap
         print("\nTop Results Overlap:")
         agent_names = list(successful.keys())
@@ -187,8 +124,8 @@ class VideoSearchComparison:
                 agent1, agent2 = agent_names[i], agent_names[j]
                 
                 # Get video IDs from top 10 results
-                videos1 = set(r['video_id'] for r in successful[agent1]['results'][:10])
-                videos2 = set(r['video_id'] for r in successful[agent2]['results'][:10])
+                videos1 = set(r.get('source_id', r['document_id'].split('_')[0]) for r in successful[agent1]['results'][:10])
+                videos2 = set(r.get('source_id', r['document_id'].split('_')[0]) for r in successful[agent2]['results'][:10])
                 
                 overlap = len(videos1 & videos2)
                 print(f"  {agent1} vs {agent2}: {overlap}/10 videos in common")
@@ -196,7 +133,7 @@ class VideoSearchComparison:
         # Compare score distributions
         print("\nScore Distributions:")
         for name, res in successful.items():
-            scores = [r['relevance'] for r in res['results']]
+            scores = [r['score'] for r in res['results']]
             if scores:
                 print(f"  {name}: min={min(scores):.3f}, max={max(scores):.3f}, avg={np.mean(scores):.3f}")
     

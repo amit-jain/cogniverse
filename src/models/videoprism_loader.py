@@ -12,13 +12,30 @@ from typing import Dict, Any, List, Optional, Tuple
 import cv2
 from PIL import Image
 
-try:
-    from .videoprism_models import get_videoprism_model, SimpleVideoPrismModel
-    VIDEOPRISM_AVAILABLE = True
-except ImportError:
-    VIDEOPRISM_AVAILABLE = False
-    
 logger = logging.getLogger(__name__)
+
+# Defer import to avoid JAX initialization issues
+VIDEOPRISM_AVAILABLE = None
+_videoprism_models = None
+
+def _check_videoprism_available():
+    """Check if VideoPrism is available, importing on first use"""
+    global VIDEOPRISM_AVAILABLE, _videoprism_models
+    if VIDEOPRISM_AVAILABLE is None:
+        try:
+            # Import from models directory - handle both relative and absolute imports
+            try:
+                from . import videoprism_models
+                _videoprism_models = videoprism_models
+            except ImportError:
+                # Fallback to absolute import
+                import src.models.videoprism_models as videoprism_models
+                _videoprism_models = videoprism_models
+            VIDEOPRISM_AVAILABLE = True
+        except ImportError as e:
+            logger.warning(f"VideoPrism import failed: {e}")
+            VIDEOPRISM_AVAILABLE = False
+    return VIDEOPRISM_AVAILABLE
 
 
 class VideoPrismLoader:
@@ -32,7 +49,7 @@ class VideoPrismLoader:
             model_name: Model variant to load (base or large)
             config: Configuration dictionary for model-specific settings
         """
-        if not VIDEOPRISM_AVAILABLE:
+        if not _check_videoprism_available():
             raise ImportError("VideoPrism not available. Check videoprism_models.py")
             
         self.model_name = model_name
@@ -65,7 +82,7 @@ class VideoPrismLoader:
         logger.info(f"Loading VideoPrism model: {self.model_name}")
         
         # Build model using our local implementation
-        self.model = get_videoprism_model(self.model_name)
+        self.model = _videoprism_models.get_videoprism_model(self.model_name)
         self.model.load_model()
         self.forward_fn = self.model.forward_fn
         
@@ -351,6 +368,10 @@ class VideoPrismGlobalLoader(VideoPrismLoader):
         
         # LVT models produce global embeddings
         logger.info(f"Initialized VideoPrism LVT loader for global embeddings: {actual_model}")
+        
+        # Text encoder components (loaded on demand)
+        self.text_tokenizer = None
+        self.text_encoder = None
     
     def embeddings_to_vespa_format(self, embeddings: np.ndarray) -> Tuple[Dict[str, Any], np.ndarray]:
         """
@@ -488,6 +509,57 @@ class VideoPrismGlobalLoader(VideoPrismLoader):
             "num_patches": 1,  # Global embedding is a single vector
             "is_global": True
         }
+    
+    def load_text_encoder(self):
+        """Load text encoder components for LVT models"""
+        if self.text_encoder is not None:
+            return  # Already loaded
+        
+        logger.info(f"Loading text encoder for {self.model_name}")
+        
+        try:
+            # Use our text encoder implementation - handle both relative and absolute imports
+            try:
+                from .videoprism_text_encoder import VideoPrismTextEncoder
+            except ImportError:
+                # Fallback to absolute import
+                from src.models.videoprism_text_encoder import VideoPrismTextEncoder
+            
+            self.text_encoder = VideoPrismTextEncoder(
+                self.model_name,
+                self.embedding_dim
+            )
+            self.text_encoder.load()
+            logger.info("Text encoder loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to load text encoder: {e}")
+            self.text_encoder = None
+    
+    def encode_text(self, text: str) -> np.ndarray:
+        """Encode text query to embeddings
+        
+        Args:
+            text: Text query to encode
+            
+        Returns:
+            Numpy array of shape (embedding_dim,) for global embeddings
+        """
+        if self.model is None:
+            self.load_model()
+        
+        if self.text_encoder is None:
+            self.load_text_encoder()
+        
+        if self.text_encoder is None:
+            raise RuntimeError("Text encoder not available for this model")
+        
+        logger.info(f"Encoding text query: '{text}'")
+        
+        # Use our text encoder implementation
+        embeddings = self.text_encoder.encode(text)
+        logger.info(f"Generated text embeddings shape: {embeddings.shape}")
+        
+        return embeddings
 
 
 def get_videoprism_loader(model_name: str = "videoprism_public_v1_base_hf", config: Optional[Dict[str, Any]] = None) -> VideoPrismLoader:

@@ -49,8 +49,21 @@ class SimpleVideoPrismModel:
             # Import the actual VideoPrism implementation
             import sys
             from pathlib import Path
-            videoprism_path = Path(__file__).parent.parent.parent.parent.parent / "videoprism"
             
+            # Get videoprism path from config or environment
+            from src.tools.config import get_config
+            config = get_config()
+            videoprism_path = config.get("videoprism_repo_path")
+            
+            if not videoprism_path:
+                # Fallback to environment variable
+                import os
+                videoprism_path = os.environ.get("VIDEOPRISM_REPO_PATH")
+            
+            if not videoprism_path:
+                raise ImportError("VideoPrism repository path not configured. Set videoprism_repo_path in config.json or VIDEOPRISM_REPO_PATH environment variable")
+            
+            videoprism_path = Path(videoprism_path)
             if not videoprism_path.exists():
                 raise ImportError(f"VideoPrism not found at {videoprism_path}")
                 

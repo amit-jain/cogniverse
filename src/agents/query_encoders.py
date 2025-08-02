@@ -1,6 +1,4 @@
-"""
-Query encoders for different video processing profiles
-"""
+"""Query encoders for different video processing profiles."""
 
 import numpy as np
 import torch
@@ -8,6 +6,12 @@ import torch.nn as nn
 from typing import Optional, Dict, Any
 from abc import ABC, abstractmethod
 import logging
+import sys
+from pathlib import Path
+
+# Add project root to path
+sys.path.append(str(Path(__file__).parent.parent.parent))
+from src.models import get_or_load_model
 
 logger = logging.getLogger(__name__)
 
@@ -30,25 +34,12 @@ class ColPaliQueryEncoder(QueryEncoder):
     """Query encoder for ColPali models"""
     
     def __init__(self, model_name: str = "vidore/colsmol-500m"):
-        from colpali_engine.models import ColIdefics3, ColIdefics3Processor
+        # Use v2 model loader for consistency
+        config = {"colpali_model": model_name}
+        self.model, self.processor = get_or_load_model(model_name, config, logger)
         
-        # Detect device
-        if torch.cuda.is_available():
-            self.device = "cuda"
-            dtype = torch.bfloat16
-        elif torch.backends.mps.is_available():
-            self.device = "mps"
-            dtype = torch.float32
-        else:
-            self.device = "cpu"
-            dtype = torch.float32
-            
-        self.model = ColIdefics3.from_pretrained(
-            model_name,
-            torch_dtype=dtype,
-            device_map=self.device
-        ).eval()
-        self.processor = ColIdefics3Processor.from_pretrained(model_name)
+        # Get device from model
+        self.device = next(self.model.parameters()).device
         self.embedding_dim = 128  # ColPali uses 128-dim embeddings
         logger.info(f"Loaded ColPali query encoder: {model_name} on {self.device}")
     
@@ -68,33 +59,12 @@ class ColQwenQueryEncoder(QueryEncoder):
     """Query encoder for ColQwen models"""
     
     def __init__(self, model_name: str = "vidore/colqwen-omni-v0.1"):
-        # Load appropriate ColQwen model and processor
-        if "omni" in model_name.lower():
-            from colpali_engine.models import ColQwen2_5Omni, ColQwen2_5OmniProcessor
-            model_class = ColQwen2_5Omni
-            processor_class = ColQwen2_5OmniProcessor
-        else:
-            from colpali_engine.models import ColQwen2, ColQwen2Processor
-            model_class = ColQwen2
-            processor_class = ColQwen2Processor
+        # Use v2 model loader for consistency
+        config = {"colpali_model": model_name}
+        self.model, self.processor = get_or_load_model(model_name, config, logger)
         
-        # Detect device
-        if torch.cuda.is_available():
-            self.device = "cuda"
-            dtype = torch.bfloat16
-        elif torch.backends.mps.is_available():
-            self.device = "mps"
-            dtype = torch.float32
-        else:
-            self.device = "cpu"
-            dtype = torch.float32
-            
-        self.model = model_class.from_pretrained(
-            model_name,
-            torch_dtype=dtype,
-            device_map=self.device
-        ).eval()
-        self.processor = processor_class.from_pretrained(model_name)
+        # Get device from model
+        self.device = next(self.model.parameters()).device
         self.embedding_dim = 128  # ColQwen uses 128-dim embeddings
         logger.info(f"Loaded ColQwen query encoder: {model_name} on {self.device}")
     
@@ -115,12 +85,9 @@ class VideoPrismQueryEncoder(QueryEncoder):
     
     def __init__(self, model_name: str = "videoprism_public_v1_base_hf"):
         self.model_name = model_name
-        self.model = None
-        self.text_tokenizer = None
-        self.forward_fn = None
         
         # VideoPrism dimensions
-        self.is_global = "lvt" in model_name.lower()  # Check if this is a global embedding model (LVT models)
+        self.is_global = "lvt" in model_name.lower() or "global" in model_name.lower()
         if "large" in model_name:
             self.embedding_dim = 1024
             self.num_patches = 2048  # For patch-based models
@@ -128,120 +95,44 @@ class VideoPrismQueryEncoder(QueryEncoder):
             self.embedding_dim = 768
             self.num_patches = 4096  # For patch-based models
         
-        # Try to load VideoPrism with text encoding
-        self._load_model()
-    
-    def _load_model(self):
-        """Load VideoPrism model with text encoding capabilities"""
-        try:
-            import sys
-            import os
-            from pathlib import Path
-            
-            # Force CPU backend to avoid Metal issues
-            os.environ["JAX_PLATFORM_NAME"] = "cpu"
-            os.environ["JAX_PLATFORMS"] = "cpu"
-            
-            # Add VideoPrism to path
-            videoprism_path = Path("/Users/amjain/source/hobby/videoprism")
-            if not videoprism_path.exists():
-                raise ImportError(f"VideoPrism not found at {videoprism_path}")
-                
-            sys.path.insert(0, str(videoprism_path))
-            
-            # Import VideoPrism modules
-            from videoprism import models as vp
-            
-            # Load text tokenizer
-            self.text_tokenizer = vp.load_text_tokenizer('c4_en')
-            logger.info("Loaded VideoPrism text tokenizer")
-            
-            # Load model using the same approach as video encoding
-            # Map our model name to VideoPrism's naming
-            # We need the LVT (Language-Vision-Text) version for text encoding
-            if "base" in self.model_name:
-                vp_model_name = "videoprism_lvt_public_v1_base"
-            else:
-                vp_model_name = "videoprism_lvt_public_v1_large"
-            
-            # Load model and weights
-            self.model = vp.MODELS[vp_model_name]()
-            state = vp.load_pretrained_weights(vp_model_name)
-            self.state = state
-            
-            # Create forward function for text encoding
-            import jax
-            @jax.jit
-            def text_forward_fn(text_ids, text_paddings):
-                # Forward pass with only text (no video frames)
-                # FactorizedVideoCLIP expects: inputs, text_token_ids, text_paddings
-                _, text_embeddings, _ = self.model.apply(
-                    state,
-                    inputs=None,  # No video frames
-                    text_token_ids=text_ids,
-                    text_paddings=text_paddings,
-                    train=False,
-                    normalize=True
-                )
-                return text_embeddings
-            
-            self.forward_fn = text_forward_fn
-            self.vp = vp  # Store module reference
-            logger.info(f"Loaded VideoPrism text encoder for {self.model_name}")
-                
-        except Exception as e:
-            logger.error(f"Failed to load VideoPrism text encoder: {e}")
-            import traceback
-            traceback.print_exc()
-            self.model = None
+        # Use v2 model loader - it returns the videoprism loader instance
+        config = {"colpali_model": model_name, "model_name": model_name}
+        self.videoprism_loader, _ = get_or_load_model(model_name, config, logger)
+        
+        # Get text encoding components from the loader
+        if hasattr(self.videoprism_loader, 'text_tokenizer'):
+            self.text_tokenizer = self.videoprism_loader.text_tokenizer
+            self.forward_fn = self.videoprism_loader.text_forward_fn if hasattr(self.videoprism_loader, 'text_forward_fn') else None
+            logger.info(f"Loaded VideoPrism query encoder: {model_name}")
+        else:
+            logger.warning(f"VideoPrism loader doesn't have text encoder support")
             self.text_tokenizer = None
+            self.forward_fn = None
     
     def encode(self, query: str) -> np.ndarray:
-        """Encode text query to multi-patch embeddings matching VideoPrism format"""
-        if self.text_tokenizer is None or self.forward_fn is None:
+        """Encode text query to embeddings matching VideoPrism format"""
+        if not hasattr(self.videoprism_loader, 'encode_text'):
             raise RuntimeError(
-                "VideoPrism text encoder not loaded. Ensure VideoPrism is installed "
-                "and the model weights are available."
+                "VideoPrism loader doesn't have text encoding support. "
+                "Ensure the model supports text encoding (LVT models)."
             )
         
-        # Add prompt template to make it more video-like
-        query_with_prompt = f"A video of {query}"
-        
-        # Tokenize text using VideoPrism's tokenizer
-        text_ids, text_paddings = self.vp.tokenize_texts(
-            self.text_tokenizer, 
-            [query_with_prompt]
-        )
-        
-        # Generate embeddings
         try:
-            text_embeddings = self.forward_fn(text_ids, text_paddings)
-            # Convert JAX array to numpy and remove batch dimension
-            embeddings_np = np.array(text_embeddings[0])
+            # Use the videoprism loader's text encoding method
+            embeddings_np = self.videoprism_loader.encode_text(query)
             
             logger.info(f"Generated text embeddings shape: {embeddings_np.shape}")
             
-            # For global embedding models (LVT), return as-is (single vector)
+            # For global embedding models, return as-is (single vector)
             if self.is_global:
-                logger.info("Using global embedding format for LVT model")
+                logger.info("Using global embedding format")
                 # Ensure we return a 1D array for global models
                 if len(embeddings_np.shape) > 1:
                     embeddings_np = embeddings_np.flatten()
                 return embeddings_np
             
-            # For patch-based models, we need to tile the embedding
-            # VideoPrism text encoder returns a single embedding vector.
-            # For Vespa search which expects multiple query tokens, we need to
-            # tile it to match the expected format. This is different from the
-            # standard VideoPrism similarity computation shown in their Colab.
-            else:
-                if len(embeddings_np.shape) == 1:
-                    # Single vector - tile it to create multi-patch format for Vespa
-                    # This allows the text embedding to be compared against each video patch
-                    embeddings_np = np.tile(embeddings_np, (self.num_patches, 1))
-                    logger.info(f"Tiled text embedding for Vespa format: {embeddings_np.shape}")
-                
-                return embeddings_np
+            # For patch-based models, the loader should handle the format
+            return embeddings_np
             
         except Exception as e:
             logger.error(f"Failed to encode text query: {e}")

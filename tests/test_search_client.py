@@ -17,8 +17,7 @@ from collections import defaultdict
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.processing.vespa.vespa_search_client import VespaVideoSearchClient, RankingStrategy
-from colpali_engine.models import ColIdefics3, ColIdefics3Processor
+from src.search.search_service import SearchService
 from src.tools.config import get_config
 
 # Setup logging with more verbose output
@@ -29,33 +28,26 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def load_colpali_model():
-    """Load ColPali model for generating test embeddings"""
-    model_name = "vidore/colsmol-500m"
-    device = "cpu"
+def create_search_services(config):
+    """Create search services for different profiles"""
+    services = {}
     
-    logger.info(f"Loading ColPali model: {model_name}")
-    col_model = ColIdefics3.from_pretrained(
-        model_name,
-        torch_dtype=torch.float32,
-        device_map=device
-    ).eval()
+    # Define profiles to test
+    profiles = [
+        "frame_based_colpali",
+        "direct_video_colqwen",
+        "direct_video_frame",
+        "direct_video_global"
+    ]
     
-    col_processor = ColIdefics3Processor.from_pretrained(model_name)
-    logger.info("✅ ColPali model loaded")
+    for profile in profiles:
+        try:
+            services[profile] = SearchService(config, profile)
+            logger.info(f"✅ Created search service for profile: {profile}")
+        except Exception as e:
+            logger.error(f"❌ Failed to create service for {profile}: {e}")
     
-    return col_model, col_processor, device
-
-def generate_test_embeddings(col_model, col_processor, device, query_text):
-    """Generate test embeddings for a query"""
-    batch_queries = col_processor.process_queries([query_text]).to(device)
-    with torch.no_grad():
-        query_embeddings = col_model(**batch_queries)
-    
-    # Convert to proper format - squeeze to get 2D tensor [patches, dims]
-    embedding = query_embeddings.cpu().squeeze(0)  # Remove batch dimension
-    logger.info(f"Generated embeddings shape: {embedding.shape}")
-    return embedding.numpy()
+    return services
 
 def analyze_ranking_results(results_df, strategy_performance):
     """Analyze ranking results to find patterns and insights"""
