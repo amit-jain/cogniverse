@@ -7,6 +7,12 @@ from typing import Dict, Any, List, Optional
 from abc import ABC, abstractmethod
 import time
 from dataclasses import dataclass
+from pathlib import Path
+import sys
+
+# Add project root to path
+sys.path.append(str(Path(__file__).parent.parent.parent.parent))
+from src.processing.vespa.strategy_aware_processor import StrategyAwareProcessor
 
 
 @dataclass
@@ -29,6 +35,8 @@ class BaseDocumentBuilder(ABC):
     
     def __init__(self, schema_name: str):
         self.schema_name = schema_name
+        self.strategy_processor = StrategyAwareProcessor()
+        self.field_names = self._get_field_names()
     
     @abstractmethod
     def build_document(
@@ -47,6 +55,22 @@ class BaseDocumentBuilder(ABC):
     def create_put_id(self, doc_id: str) -> str:
         """Create the PUT ID for Vespa"""
         return f"id:video:{self.schema_name}::{doc_id}"
+    
+    def _get_field_names(self) -> Dict[str, str]:
+        """Get field names from schema strategy"""
+        try:
+            field_names = self.strategy_processor.get_embedding_field_names(self.schema_name)
+            # Default field names if not found in strategy
+            return {
+                'float_field': field_names.get('float_field', 'embedding'),
+                'binary_field': field_names.get('binary_field', 'embedding_binary')
+            }
+        except Exception:
+            # Fallback to default field names
+            return {
+                'float_field': 'embedding',
+                'binary_field': 'embedding_binary'
+            }
 
 
 class VideoFrameDocumentBuilder(BaseDocumentBuilder):
@@ -70,8 +94,8 @@ class VideoFrameDocumentBuilder(BaseDocumentBuilder):
             "frame_id": metadata.segment_idx,
             "start_time": metadata.start_time,
             "end_time": metadata.end_time,
-            "colpali_embedding": embeddings.get("float_embeddings", {}),
-            "colpali_binary": embeddings.get("binary_embeddings", {})
+            self.field_names['float_field']: embeddings.get("float_embeddings", {}),
+            self.field_names['binary_field']: embeddings.get("binary_embeddings", {})
         }
         
         # Add optional fields

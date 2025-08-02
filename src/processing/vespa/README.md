@@ -99,8 +99,8 @@ The current schema (`schemas/video_frame_schema.json`) includes:
 - `start_time`, `end_time` (double) - Frame time boundaries
 - `frame_description` (string) - VLM-generated frame description
 - `audio_transcript` (string) - Audio transcript for this frame
-- `colpali_embedding` (tensor<float>) - Float embeddings (128-dim per patch)
-- `colpali_binary` (tensor<int8>) - Binary embeddings (16-dim per patch)
+- `embedding` (tensor<float>) - Float embeddings (128-dim per patch)
+- `embedding_binary` (tensor<int8>) - Binary embeddings (16-dim per patch)
 
 ### Ranking Profiles (9 Total)
 

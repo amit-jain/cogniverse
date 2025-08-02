@@ -338,7 +338,7 @@ class VespaSchemaManager:
                             attribute=['distance-metric:dotproduct']
                         ),
                         Field(
-                            name='colpali_binary', 
+                            name='embedding_binary', 
                             type='tensor<int8>(patch{}, v[16])',
                             indexing=['attribute', 'index'],
                             attribute=['distance-metric:hamming']
@@ -361,7 +361,7 @@ class VespaSchemaManager:
                         functions=[
                             Function(
                                 name='max_sim',
-                                expression='sum(reduce(sum(query(qt) * attribute(colpali_embedding), v), max, patch), querytoken)'
+                                expression='sum(reduce(sum(query(qt) * attribute(embedding), v), max, patch), querytoken)'
                             )
                         ],
                         first_phase='max_sim'
@@ -369,7 +369,7 @@ class VespaSchemaManager:
                     
                     # Binary-first with float re-ranking (efficient retrieval)
                     RankProfile(
-                        name='colpali_binary_float',
+                        name='binary_float',
                         inputs=[
                             ('query(qt)', 'tensor<float>(querytoken{}, v[128])'),
                             ('query(qtb)', 'tensor<int8>(querytoken{}, v[16])')
@@ -377,11 +377,11 @@ class VespaSchemaManager:
                         functions=[
                             Function(
                                 name='max_sim_float',
-                                expression='sum(reduce(sum(query(qt) * attribute(colpali_embedding), v), max, patch), querytoken)'
+                                expression='sum(reduce(sum(query(qt) * attribute(embedding), v), max, patch), querytoken)'
                             ),
                             Function(
                                 name='max_sim_binary',
-                                expression='sum(reduce(sum(query(qtb) * attribute(colpali_binary), v), max, patch), querytoken)'
+                                expression='sum(reduce(sum(query(qtb) * attribute(embedding_binary), v), max, patch), querytoken)'
                             )
                         ],
                         first_phase='max_sim_binary',
@@ -397,7 +397,7 @@ class VespaSchemaManager:
                         functions=[
                             Function(
                                 name='visual_sim',
-                                expression='sum(reduce(sum(query(qt) * attribute(colpali_embedding), v), max, patch), querytoken)'
+                                expression='sum(reduce(sum(query(qt) * attribute(embedding), v), max, patch), querytoken)'
                             ),
                             Function(
                                 name='text_sim',
