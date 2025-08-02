@@ -69,3 +69,6 @@ temp/
 
 # Claude configuration
 CLAUDE.md
+
+# Generated files
+configs/schemas/ranking_strategies.json

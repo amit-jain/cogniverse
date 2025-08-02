@@ -43,6 +43,6 @@
 ## Schema Deployment Command
 
 ```bash
-# Deploy the updated video_frame schema
-uv run python scripts/deploy_vespa_schema.py --schema configs/schemas/video_frame_schema.json --allow-field-type-change
+# Deploy all schemas including the updated video_frame schema
+uv run python scripts/deploy_all_schemas.py
 ```

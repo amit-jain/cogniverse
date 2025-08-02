@@ -24,6 +24,7 @@ from binascii import hexlify
 from .backend_client import BackendClient
 from .vespa_embedding_processor import VespaEmbeddingProcessor
 from src.core import Document, MediaType
+from src.processing.vespa.strategy_aware_processor import StrategyAwareProcessor
 
 
 class VespaPyClient(BackendClient):
@@ -71,6 +72,9 @@ class VespaPyClient(BackendClient):
                 model_name = profiles[active_profile].get("embedding_model", "")
         
         self._embedding_processor = VespaEmbeddingProcessor(logger, model_name, schema_name)
+        
+        # Initialize strategy-aware processor to get field names from ranking strategies
+        self._strategy_processor = StrategyAwareProcessor()
     
     def connect(self) -> bool:
         """Connect to Vespa using pyvespa"""
@@ -126,10 +130,29 @@ class VespaPyClient(BackendClient):
                 }
             }
         """
+        # Get required embeddings and field names from strategy processor
+        required_embeddings = self._strategy_processor.get_required_embeddings(self.schema_name)
+        field_names = self._strategy_processor.get_embedding_field_names(self.schema_name)
+        
         # Process embeddings using internal processor
-        processed_embeddings = self._embedding_processor.process_embeddings(
+        all_processed_embeddings = self._embedding_processor.process_embeddings(
             doc.embeddings.embeddings if doc.embeddings else None
         )
+        
+        # Map processed embeddings to the correct field names based on ranking strategies
+        processed_embeddings = {}
+        
+        # Float embeddings
+        if required_embeddings.get("needs_float", False) and "embedding" in all_processed_embeddings:
+            float_field = field_names.get("float_field", "embedding")
+            processed_embeddings[float_field] = all_processed_embeddings["embedding"]
+            self.logger.debug(f"Adding float embeddings to field '{float_field}'")
+        
+        # Binary embeddings
+        if required_embeddings.get("needs_binary", False) and "embedding_binary" in all_processed_embeddings:
+            binary_field = field_names.get("binary_field", "embedding_binary")
+            processed_embeddings[binary_field] = all_processed_embeddings["embedding_binary"]
+            self.logger.debug(f"Adding binary embeddings to field '{binary_field}'")
         
         # Build base fields - don't include document_id as it's not in schema
         fields = {
@@ -159,9 +182,7 @@ class VespaPyClient(BackendClient):
                     "segment_id": doc.segment_info.segment_idx,  # Map segment_idx to segment_id for schema
                     "total_segments": doc.segment_info.total_segments
                 })
-                # Don't override segment_id if explicitly provided
-                if doc.segment_info.segment_id and "segment_id" not in fields:
-                    fields["segment_id"] = doc.segment_info.segment_id
+                # segment_id is already set from segment_idx above
                 
                 # Calculate segment duration if temporal info is available
                 if doc.temporal_info:
@@ -169,7 +190,7 @@ class VespaPyClient(BackendClient):
                     fields["segment_duration"] = float(segment_duration)
         
         # Map universal fields to schema-specific fields
-        if doc.media_type in [MediaType.VIDEO, MediaType.VIDEO_FRAME]:
+        if doc.media_type in [MediaType.VIDEO_SEGMENT, MediaType.VIDEO_FRAME]:
             fields["video_id"] = doc.metadata.get("source_id", doc.doc_id.split("_")[0])
             fields["video_title"] = doc.metadata.get("video_title", fields["video_id"])
         

@@ -31,7 +31,7 @@
         "generate_descriptions": true,
         "generate_embeddings": true
       },
-      "embedding_type": "direct_video_segment",
+      "embedding_type": "frame_based",
       "schema_config": {
         "schema_name": "video_colpali",
         "model_name": "ColPali",

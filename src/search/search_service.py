@@ -7,7 +7,7 @@ import numpy as np
 from src.models import get_or_load_model
 from src.agents.query_encoders import QueryEncoderFactory
 from .search import SearchBackend, SearchResult
-from .vespa_search_backend import VespaSearchBackend
+from .vespa_search_backend_refactored import VespaSearchBackend
 
 logger = logging.getLogger(__name__)
 

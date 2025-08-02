@@ -138,7 +138,7 @@ curl localhost:8080/ApplicationStatus
 ### Test Failures
 ```bash
 # Verify schema deployment
-python scripts/deploy_vespa_schema.py
+python scripts/deploy_all_schemas.py
 
 # Check if data is indexed
 curl "localhost:8080/search/?yql=select * from video_frame where true&hits=1"

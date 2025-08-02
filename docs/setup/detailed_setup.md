@@ -121,8 +121,8 @@ For production deployments with large video collections:
 # Start servers (auto-starts Vespa with persistent storage if not running)
 ./scripts/run_servers.sh vespa
 
-# Deploy Vespa schema (first time only)
-python scripts/deploy_vespa_schema.py
+# Deploy all Vespa schemas (first time only)
+python scripts/deploy_all_schemas.py
 
 # Process videos for Vespa
 python scripts/run_ingestion.py --video_dir data/videos --backend vespa
