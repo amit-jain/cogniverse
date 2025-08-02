@@ -321,7 +321,7 @@ class VespaVideoSearchClient:
                 if self.query_encoder and query_text:
                     try:
                         embeddings = self.query_encoder.encode(query_text)
-                        self.logger.info(f"Generated query embeddings: shape={embeddings.shape}")
+                        self.logger.debug(f"Generated query embeddings: shape={embeddings.shape}")
                     except Exception as e:
                         self.logger.error(f"Failed to generate query embeddings: {e}")
                         # For strategies that require embeddings, this is fatal
@@ -360,19 +360,18 @@ class VespaVideoSearchClient:
         """Execute search using the specified ranking strategy."""
         
         # Log search parameters
-        self.logger.info(f"🔍 Executing {strategy.value} search:")
-        self.logger.info(f"   Query: '{query_text}'")
-        self.logger.info(f"   Top-K: {top_k}")
-        self.logger.info(f"   Time range: {start_date} to {end_date}")
-        self.logger.info(f"   Embeddings: {embeddings.shape if embeddings is not None else 'None'}")
+        self.logger.info(f"Executing {strategy.value} search:")
+        self.logger.info(f"  Query: '{query_text}'")
+        self.logger.info(f"  Top-K: {top_k}")
+        if embeddings is not None:
+            self.logger.info(f"  Embeddings shape: {embeddings.shape}")
         
         # Use provided schema or fall back to default
         search_schema = schema or self.vespa_schema
-        self.logger.info(f"   Using schema: {search_schema} (provided: {schema}, default: {self.vespa_schema})")
+        self.logger.info(f"  Using schema: {search_schema}")
         
         # Build base YQL query
         yql = self._build_base_yql(strategy, start_date, end_date, query_text, schema=search_schema)
-        self.logger.info(f"   YQL query: {yql}")
         
         # Build request body based on strategy
         body = {
@@ -388,7 +387,6 @@ class VespaVideoSearchClient:
                 "ranking": strategy.value,
                 "model.defaultIndex": "default"  # Use fieldset for BM25 fields
             })
-            self.logger.info(f"   Using {strategy.value} text search on query: '{query_text}' with fieldset")
         
         elif strategy in [RankingStrategy.FLOAT_FLOAT, RankingStrategy.HYBRID_FLOAT_BM25, RankingStrategy.HYBRID_BM25_FLOAT,
                          RankingStrategy.HYBRID_FLOAT_BM25_NO_DESC, RankingStrategy.HYBRID_BM25_FLOAT_NO_DESC]:
@@ -400,7 +398,6 @@ class VespaVideoSearchClient:
             
             if is_global_schema and embeddings.ndim == 1:
                 # Global embedding - single vector
-                self.logger.info(f"   Using global float embedding with shape {embeddings.shape}")
                 body.update({
                     "ranking": strategy.value,
                     "input.query(qt)": embeddings.tolist()
@@ -408,7 +405,6 @@ class VespaVideoSearchClient:
             else:
                 # Multi-token embeddings for patch-based models
                 float_embedding = {index: vector.tolist() for index, vector in enumerate(embeddings)}
-                self.logger.info(f"   Using float embeddings with {len(float_embedding)} tokens")
                 
                 body.update({
                     "ranking": strategy.value,
@@ -420,7 +416,6 @@ class VespaVideoSearchClient:
                           RankingStrategy.HYBRID_FLOAT_BM25_NO_DESC, RankingStrategy.HYBRID_BM25_FLOAT_NO_DESC]:
                 body["query"] = query_text
                 body["model.defaultIndex"] = "default"  # Use fieldset for BM25 component
-                self.logger.info(f"   Hybrid strategy: combining embeddings with BM25 text search")
         
         elif strategy in [RankingStrategy.BINARY_BINARY, RankingStrategy.HYBRID_BINARY_BM25, RankingStrategy.HYBRID_BM25_BINARY,
                          RankingStrategy.HYBRID_BINARY_BM25_NO_DESC, RankingStrategy.HYBRID_BM25_BINARY_NO_DESC]:
@@ -433,13 +428,9 @@ class VespaVideoSearchClient:
             if is_global_schema and embeddings.ndim == 1:
                 # Global embedding - single vector, convert to binary hex string
                 from binascii import hexlify
-                self.logger.debug(f"   Raw embeddings: shape={embeddings.shape}, min={embeddings.min():.4f}, max={embeddings.max():.4f}")
-                self.logger.debug(f"   First 10 values: {embeddings[:10]}")
                 
                 binary_vector = np.packbits(np.where(embeddings > 0, 1, 0), axis=0).astype(np.int8)
                 binary_hex = str(hexlify(binary_vector), "utf-8")
-                self.logger.info(f"   Using global binary embedding with {len(binary_vector)} bytes -> {len(binary_hex)} hex chars")
-                self.logger.debug(f"   Binary hex first 20 chars: {binary_hex[:20]}")
                 
                 body.update({
                     "ranking": strategy.value,
@@ -451,7 +442,6 @@ class VespaVideoSearchClient:
                     index: np.packbits(np.where(vector > 0, 1, 0), axis=0).astype(np.int8).tolist()
                     for index, vector in enumerate(embeddings)
                 }
-                self.logger.info(f"   Using binary embeddings with {len(binary_embedding)} tokens")
                 
                 body.update({
                     "ranking": strategy.value,
@@ -475,8 +465,6 @@ class VespaVideoSearchClient:
                 # Global embedding - float_binary needs both qtb for search and qt for reranking
                 # Based on ingestion, we store binary as list of int8, so let's use list format
                 binary_vector = np.packbits(np.where(embeddings > 0, 1, 0), axis=0).astype(np.int8)
-                self.logger.info(f"   Using global embeddings for float_binary (search on binary, rerank with float)")
-                self.logger.debug(f"   Binary vector shape: {binary_vector.shape}, dtype: {binary_vector.dtype}")
                 
                 # Try using list format for qtb (matching ingestion format)
                 body.update({
@@ -505,7 +493,6 @@ class VespaVideoSearchClient:
                 from binascii import hexlify
                 binary_vector = np.packbits(np.where(embeddings > 0, 1, 0), axis=0).astype(np.int8)
                 binary_hex = str(hexlify(binary_vector), "utf-8")
-                self.logger.info(f"   Using global embeddings for phased search")
                 
                 body.update({
                     "ranking": strategy.value,
@@ -519,7 +506,6 @@ class VespaVideoSearchClient:
                     index: np.packbits(np.where(vector > 0, 1, 0), axis=0).astype(np.int8).tolist()
                     for index, vector in enumerate(embeddings)
                 }
-                self.logger.info(f"   Using both float and binary embeddings with {len(float_embedding)} tokens")
                 
                 body.update({
                     "ranking": strategy.value,
@@ -878,13 +864,7 @@ class VespaVideoSearchClient:
         
         try:
             start_time = time.time()
-            self.logger.info(f"📤 Sending Vespa query for {search_type}")
-            self.logger.debug(f"   Full body being sent: {body}")
-            if "input.query(qtb)" in body:
-                qtb_value = body["input.query(qtb)"]
-                self.logger.debug(f"   input.query(qtb) length: {len(qtb_value) if isinstance(qtb_value, (list, dict)) else 'not list/dict'}")
-                if isinstance(qtb_value, list):
-                    self.logger.debug(f"   qtb is list, first 5 elements: {qtb_value[:5]}")
+            self.logger.info(f"Sending Vespa query for {search_type}")
             
             # Log request body with truncated embeddings for readability
             log_body = body.copy()
@@ -896,20 +876,16 @@ class VespaVideoSearchClient:
                         sample_embeddings[token_key] = embedding[:3] if isinstance(embedding, list) else embedding
                     log_body[key] = f"{{sample: {sample_embeddings}, total_tokens: {len(log_body[key])}}}"
             
-            self.logger.info(f"   Request body: {json.dumps(log_body, indent=2)}")
+            self.logger.info(f"Request body: {json.dumps(log_body, indent=2)}")
             
             response = self.vespa_app.query(body=body)
             
             query_time = time.time() - start_time
-            self.logger.info(f"📥 {search_type}: Found {len(response.hits)} results in {query_time:.3f}s")
-            
-            # Log query performance metrics if available
-            if hasattr(response, 'timing') and response.timing:
-                self.logger.info(f"   Query timing: {response.timing}")
+            self.logger.info(f"{search_type}: Found {len(response.hits)} results in {query_time:.3f}s")
             
             # Log top results with scores
             if response.hits:
-                self.logger.info(f"   Top {min(3, len(response.hits))} results:")
+                self.logger.info(f"Top {min(3, len(response.hits))} results:")
                 for i, hit in enumerate(response.hits[:3]):
                     relevance = hit.get('relevance', 0.0)
                     # Handle case where relevance might be a string
@@ -921,13 +897,10 @@ class VespaVideoSearchClient:
                     video_id = hit.get('fields', {}).get('video_id', 'unknown')
                     frame_id = hit.get('fields', {}).get('frame_id', 'unknown')
                     timestamp = hit.get('fields', {}).get('start_time', 'unknown')
-                    self.logger.info(f"     {i+1}. {video_id} frame {frame_id} @{timestamp}s (score: {relevance:.3f})")
+                    self.logger.info(f"  {i+1}. {video_id} frame {frame_id} @{timestamp}s (score: {relevance:.3f})")
             
-            # Debug: Log detailed structure only if no results found or debugging enabled
             if not response.hits:
-                self.logger.warning(f"❌ No results found for {search_type}")
-            elif len(response.hits) < 5:
-                self.logger.debug(f"🔍 First hit detailed structure: {json.dumps(response.hits[0], indent=2, default=str)}")
+                self.logger.warning(f"No results found for {search_type}")
             
             # Format results with frame information
             results = []
@@ -947,8 +920,8 @@ class VespaVideoSearchClient:
             return results
             
         except Exception as e:
-            self.logger.error(f"❌ Search execution failed for {search_type}: {e}")
-            self.logger.error(f"   Failed query body: {json.dumps(body, indent=2)}")
+            self.logger.error(f"Search execution failed for {search_type}: {e}")
+            self.logger.error(f"Failed query body: {json.dumps(body, indent=2)}")
             return []
     
     def get_video_summary(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:

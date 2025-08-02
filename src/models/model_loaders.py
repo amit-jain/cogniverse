@@ -18,6 +18,8 @@ import torch
 from pathlib import Path
 import requests
 import numpy as np
+import subprocess
+from src.utils.retry import retry_with_backoff, RetryConfig
 
 
 class ModelLoader(ABC):
@@ -79,9 +81,16 @@ class RemoteInferenceClient:
         if self.api_key:
             self.session.headers['Authorization'] = f'Bearer {self.api_key}'
             
+    @retry_with_backoff(
+        config=RetryConfig(
+            max_attempts=3,
+            initial_delay=0.5,
+            exceptions=(requests.RequestException, ConnectionError, TimeoutError)
+        )
+    )
     def process_images(self, images: list, **kwargs) -> Dict[str, Any]:
         """
-        Send images to remote inference endpoint.
+        Send images to remote inference endpoint with retry logic.
         
         Args:
             images: List of image paths or PIL images
@@ -151,9 +160,16 @@ class RemoteInferenceClient:
                 "processing_time": 0.5
             }
     
+    @retry_with_backoff(
+        config=RetryConfig(
+            max_attempts=3,
+            initial_delay=0.5,
+            exceptions=(requests.RequestException, ConnectionError, TimeoutError, subprocess.CalledProcessError)
+        )
+    )
     def process_video_segment(self, video_path: Path, start_time: float, end_time: float, **kwargs) -> Dict[str, Any]:
         """
-        Send video segment to remote inference endpoint.
+        Send video segment to remote inference endpoint with retry logic.
         
         Args:
             video_path: Path to video file
@@ -312,8 +328,15 @@ class RemoteVideoPrismLoader(ModelLoader):
 class ColPaliModelLoader(ModelLoader):
     """Loader for ColPali models"""
     
+    @retry_with_backoff(
+        config=RetryConfig(
+            max_attempts=3,
+            initial_delay=2.0,
+            exceptions=(Exception,)  # Retry on any exception during model loading
+        )
+    )
     def load_model(self) -> Tuple[Any, Any]:
-        """Load ColPali model and processor"""
+        """Load ColPali model and processor with retry logic"""
         try:
             self.logger.info(f"Loading ColPali model: {self.model_name}")
             from colpali_engine.models import ColIdefics3, ColIdefics3Processor
@@ -350,14 +373,21 @@ class ColPaliModelLoader(ModelLoader):
             
         except Exception as e:
             self.logger.error(f"Failed to load ColPali model: {e}")
-            raise
+            raise  # Re-raise for retry
 
 
 class ColQwenModelLoader(ModelLoader):
     """Loader for ColQwen models"""
     
+    @retry_with_backoff(
+        config=RetryConfig(
+            max_attempts=3,
+            initial_delay=2.0,
+            exceptions=(Exception,)  # Retry on any exception during model loading
+        )
+    )
     def load_model(self) -> Tuple[Any, Any]:
-        """Load ColQwen model and processor"""
+        """Load ColQwen model and processor with retry logic"""
         try:
             self.logger.info(f"Loading ColQwen model: {self.model_name}")
             
@@ -419,14 +449,21 @@ class ColQwenModelLoader(ModelLoader):
             
         except Exception as e:
             self.logger.error(f"Failed to load ColQwen model: {e}")
-            raise
+            raise  # Re-raise for retry
 
 
 class VideoPrismModelLoader(ModelLoader):
     """Loader for VideoPrism models with production fixes"""
     
+    @retry_with_backoff(
+        config=RetryConfig(
+            max_attempts=3,
+            initial_delay=2.0,
+            exceptions=(Exception,)  # Retry on any exception during model loading
+        )
+    )
     def load_model(self) -> Tuple[Any, Any]:
-        """Load VideoPrism model with JAX platform fix and text encoder support"""
+        """Load VideoPrism model with JAX platform fix and text encoder support with retry logic"""
         try:
             self.logger.info(f"Loading VideoPrism model: {self.model_name}")
             
@@ -492,7 +529,7 @@ class VideoPrismModelLoader(ModelLoader):
             
         except Exception as e:
             self.logger.error(f"Failed to load VideoPrism model: {e}")
-            raise
+            raise  # Re-raise for retry
 
 
 class ModelLoaderFactory:
