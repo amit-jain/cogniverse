@@ -25,6 +25,7 @@ from .backend_client import BackendClient
 from .vespa_embedding_processor import VespaEmbeddingProcessor
 from src.core import Document, MediaType
 from src.processing.vespa.strategy_aware_processor import StrategyAwareProcessor
+from src.utils.retry import retry_with_backoff, RetryConfig
 
 
 class VespaPyClient(BackendClient):
@@ -76,8 +77,9 @@ class VespaPyClient(BackendClient):
         # Initialize strategy-aware processor to get field names from ranking strategies
         self._strategy_processor = StrategyAwareProcessor()
     
+    @retry_with_backoff(config=RetryConfig(max_attempts=3, initial_delay=1.0))
     def connect(self) -> bool:
-        """Connect to Vespa using pyvespa"""
+        """Connect to Vespa using pyvespa with retry logic"""
         try:
             from vespa.application import Vespa
             
@@ -99,7 +101,7 @@ class VespaPyClient(BackendClient):
                 
         except Exception as e:
             self.logger.error(f"Failed to connect to Vespa: {e}")
-            return False
+            raise  # Re-raise for retry logic
     
     def process(self, doc: Document) -> Dict[str, Any]:
         """
@@ -356,7 +358,7 @@ class VespaPyClient(BackendClient):
                         except:
                             self.logger.error(f"Failed to feed {doc_id}: {response.status_code}")
                 
-                # Use feed_iterable instead of feed_batch
+                # Use feed_iterable - pyvespa has built-in retry mechanisms
                 self.app.feed_iterable(
                     iter=feed_batch_iter(),
                     schema=self.schema_name,

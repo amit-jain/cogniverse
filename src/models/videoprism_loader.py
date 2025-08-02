@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 import cv2
 from PIL import Image
+from src.utils.retry import retry_with_backoff, RetryConfig
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +75,15 @@ class VideoPrismLoader:
             
         logger.info(f"Initialized VideoPrism loader for {model_name}")
     
+    @retry_with_backoff(
+        config=RetryConfig(
+            max_attempts=3,
+            initial_delay=2.0,
+            exceptions=(Exception,)  # Retry on any exception during model loading
+        )
+    )
     def load_model(self):
-        """Load VideoPrism model and weights"""
+        """Load VideoPrism model and weights with retry logic"""
         if self.model is not None:
             return  # Already loaded
             

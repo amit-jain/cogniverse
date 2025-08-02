@@ -210,3 +210,77 @@ The system provides clear errors at each step:
 4. **Query**: Backend automatically uses new strategies
 
 No manual extraction step needed - it's all integrated!
+
+## 7. Production Features (v2 Implementation)
+
+### Connection Pooling
+- Thread-safe pool with configurable min/max connections
+- Health checks every 60 seconds
+- Automatic cleanup of unhealthy connections
+- Connection reuse for better performance
+
+### Retry Logic with Exponential Backoff
+```python
+@retry_with_backoff(config=RetryConfig(
+    max_attempts=3,
+    initial_delay=0.5,
+    exponential_base=2
+))
+def connect(self) -> bool:
+    # Automatic retry on failure
+```
+
+### Circuit Breaker Pattern
+- Opens after 3 consecutive failures
+- Auto-recovery after 30 seconds
+- Prevents cascading failures
+
+### Comprehensive Metrics
+```python
+metrics = backend.get_metrics()
+# Returns:
+{
+    "search_metrics": {
+        "total_searches": 1000,
+        "success_rate": 99.5,
+        "avg_latency_ms": 45.2,
+        "p95_latency_ms": 120.5,
+        "strategy_usage": {"float_float": 600, "hybrid_binary_bm25": 400}
+    },
+    "encoder_metrics": {
+        "cache_hit_rate": 0.75,
+        "circuit_state": "closed"
+    }
+}
+```
+
+### Important Query Fix
+The v2 implementation uses the correct Vespa query interface:
+```python
+# CORRECT (v2)
+response = conn.query(body=query_params)
+
+# INCORRECT (was causing scalar value errors)
+response = conn.query(**query_params)
+```
+
+### Strategy-Based Query Building
+The system intelligently builds queries based on strategy type:
+
+- **Pure Visual** (float_float, binary_binary):
+  - Global models: Use `nearestNeighbor`
+  - Patch models: Use tensor ranking
+  
+- **Hybrid** (hybrid_binary_bm25):
+  - Combines `userInput` for text with embeddings
+  
+- **Text-Only** (bm25_only):
+  - Only uses `userInput`, no embeddings needed
+
+### How Embeddings Flow
+1. SearchService generates embeddings upfront
+2. Backend receives both text and embeddings
+3. Strategy determines what to use:
+   - `requires_query_embedding: true` → Use embeddings
+   - `requires_query_embedding: false` → Ignore embeddings
+4. Future optimization: Make embeddings optional, generate lazily
