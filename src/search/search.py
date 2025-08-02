@@ -44,7 +44,7 @@ class SearchBackend(ABC):
     @abstractmethod
     def search(
         self,
-        query_embeddings: np.ndarray,
+        query_embeddings: Optional[np.ndarray],
         query_text: str,
         top_k: int = 10,
         filters: Optional[Dict[str, Any]] = None,
@@ -54,10 +54,11 @@ class SearchBackend(ABC):
         Search for documents matching the query.
         
         Args:
-            query_embeddings: Query embeddings from encoder
+            query_embeddings: Optional query embeddings from encoder (generated on-demand if None)
             query_text: Original query text
             top_k: Number of results to return
             filters: Optional filters (date range, etc.)
+            ranking_strategy: Optional ranking strategy override
             
         Returns:
             List of SearchResult objects
