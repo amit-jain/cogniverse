@@ -21,6 +21,23 @@
   "remote_inference_api_key": null,
   "remote_inference_provider": null,
   "videoprism_repo_path": "/Users/amjain/source/hobby/videoprism",
+  "pipeline_cache": {
+    "enabled": true,
+    "backends": [
+      {
+        "backend_type": "structured_filesystem",
+        "base_path": "~/.cache/cogniverse/structured_pipeline",
+        "serialization_format": "json",
+        "priority": 0,
+        "enable_ttl": true,
+        "cleanup_on_startup": true,
+        "metadata_format": "json"
+      }
+    ],
+    "default_ttl": 0,
+    "enable_compression": true,
+    "serialization_format": "json"
+  },
   "video_processing_profiles": {
     "frame_based_colpali": {
       "vespa_schema": "video_frame",
@@ -29,7 +46,9 @@
         "extract_keyframes": true,
         "transcribe_audio": true,
         "generate_descriptions": true,
-        "generate_embeddings": true
+        "generate_embeddings": true,
+        "keyframe_strategy": "fps",
+        "keyframe_fps": 1.0
       },
       "embedding_type": "frame_based",
       "schema_config": {
