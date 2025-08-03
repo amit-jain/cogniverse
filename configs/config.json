@@ -201,6 +201,39 @@
         "binary_dim": 128,
         "global_embedding": true
       }
+    },
+    "single__video_videoprism_large_6s": {
+      "vespa_schema": "video_chunks",
+      "embedding_model": "videoprism_lvt_public_v1_large",
+      "processing_type": "single_vector",
+      "pipeline_config": {
+        "extract_keyframes": false,
+        "transcribe_audio": true,
+        "generate_descriptions": false,
+        "generate_embeddings": true
+      },
+      "embedding_type": "video_chunks",
+      "model_specific": {
+        "chunk_duration": 6.0,
+        "chunk_overlap": 1.0,
+        "sampling_fps": 2.0,
+        "max_frames_per_chunk": 12,
+        "min_frames": 4,
+        "store_as_single_doc": true,
+        "native_dimensions": true
+      },
+      "inference_config": {
+        "model_type": "videoprism",
+        "backend": "auto",
+        "query_encoder": "videoprism_lvt_public_v1_large"
+      },
+      "schema_config": {
+        "schema_name": "video_chunks",
+        "model_name": "VideoPrism-Large-Chunks",
+        "embedding_dim": 1024,
+        "binary_dim": 128,
+        "chunk_based": true
+      }
     }
   },
   "active_video_profile": "frame_based_colpali",

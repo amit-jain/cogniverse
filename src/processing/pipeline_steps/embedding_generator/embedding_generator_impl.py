@@ -101,7 +101,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         Returns:
             bool: True if model should be loaded, False otherwise
         """
-        return self.process_type.startswith("direct_video")
+        return self.process_type.startswith("direct_video") or self.process_type in ["single_vector", "video_chunks"]
     
     def _load_model(self):
         """Load the appropriate model"""
@@ -140,6 +140,8 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
                 result = self._generate_direct_video_embeddings(video_data, output_dir)
             elif self.process_type == "frame_based":
                 result = self._generate_frame_based_embeddings(video_data, output_dir)
+            elif self.process_type in ["single_vector", "video_chunks"]:
+                result = self._generate_single_vector_embeddings(video_data, output_dir)
             else:
                 raise ValueError(f"Unknown process type: {self.process_type}")
             
@@ -605,3 +607,162 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
             errors=errors,
             metadata={'num_frames': len(keyframes)}
         )
+    
+    def _generate_single_vector_embeddings(
+        self,
+        video_data: Dict[str, Any],
+        output_dir: Path
+    ) -> ProcessingResult:
+        """Generate embeddings for single vector processing (chunks/windows stored in one doc)"""
+        video_id = video_data['video_id']
+        video_path = Path(video_data['video_path'])
+        segments = video_data.get('segments', [])
+        document_structure = video_data.get('document_structure', {})
+        
+        if not segments:
+            return ProcessingResult(
+                video_id=video_id,
+                total_documents=0,
+                documents_processed=0,
+                documents_fed=0,
+                processing_time=0.0,
+                errors=["No segments found for processing"],
+                metadata={}
+            )
+        
+        # Generate embeddings for all segments
+        all_embeddings = []
+        all_embeddings_binary = []
+        start_times = []
+        end_times = []
+        segment_transcripts = []
+        errors = []
+        
+        for segment in segments:
+            try:
+                # Extract frames from segment
+                frames = segment.frames if hasattr(segment, 'frames') else segment.get('frames', [])
+                
+                if frames:
+                    # Get temporal info first
+                    seg_start_time = segment.start_time if hasattr(segment, 'start_time') else segment.get('start_time', 0)
+                    seg_end_time = segment.end_time if hasattr(segment, 'end_time') else segment.get('end_time', 0)
+                    
+                    # Generate embeddings for this segment using the raw embeddings method
+                    raw_embeddings = self._generate_raw_embeddings(
+                        video_path,
+                        seg_start_time,
+                        seg_end_time
+                    )
+                    
+                    if raw_embeddings is not None:
+                        # Process embeddings based on model
+                        if self.model_name.startswith("videoprism"):
+                            # VideoPrism embeddings
+                            float_embeddings = raw_embeddings
+                            # Generate binary embeddings
+                            binary_embeddings = (float_embeddings > 0).astype(np.int8)
+                        else:
+                            # For other models, assume raw embeddings are ready
+                            float_embeddings = raw_embeddings
+                            binary_embeddings = (float_embeddings > 0).astype(np.int8)
+                        
+                        all_embeddings.append(float_embeddings)
+                        all_embeddings_binary.append(binary_embeddings)
+                    
+                    # Store temporal info
+                    start_times.append(float(seg_start_time))
+                    end_times.append(float(seg_end_time))
+                    
+                    # Store transcript
+                    transcript = segment.transcript_text if hasattr(segment, 'transcript_text') else segment.get('transcript_text', '')
+                    segment_transcripts.append(transcript)
+                    
+            except Exception as e:
+                segment_id = segment.segment_id if hasattr(segment, 'segment_id') else segment.get('segment_id', 'unknown')
+                self.logger.error(f"Error processing segment {segment_id}: {e}")
+                errors.append(str(e))
+        
+        if not all_embeddings:
+            return ProcessingResult(
+                video_id=video_id,
+                total_documents=0,
+                documents_processed=0,
+                documents_fed=0,
+                processing_time=0.0,
+                errors=errors + ["No embeddings generated"],
+                metadata={}
+            )
+        
+        # Create single document with all embeddings
+        try:
+            # Stack embeddings into tensors
+            embeddings_tensor = np.vstack(all_embeddings)
+            embeddings_binary_tensor = np.vstack(all_embeddings_binary)
+            
+            # Get full transcript
+            full_transcript = video_data.get('full_transcript', '')
+            
+            # Create metadata for Document
+            metadata = {
+                "video_url": video_data.get('video_url', video_id),
+                "title": video_data.get('title', video_id),
+                "keywords": video_data.get('keywords', ''),
+                "video_summary": video_data.get('video_summary', ''),
+                "start_offset_sec": start_times,
+                "end_offset_sec": end_times,
+                "transcript": full_transcript,
+                "segment_transcripts": segment_transcripts,
+                "processing_strategy": document_structure.get('type', 'chunks')
+            }
+            
+            # Create EmbeddingResult with both float and binary embeddings
+            # For single vector, embeddings should be the tensor arrays
+            embedding_result = EmbeddingResult(
+                embeddings={
+                    "embeddings": embeddings_tensor,
+                    "embeddings_binary": embeddings_binary_tensor
+                },
+                metadata=metadata
+            )
+            
+            # Create Document object
+            doc = Document(
+                doc_id=video_id,
+                media_type=MediaType.VIDEO_SEGMENT,  # Using VIDEO_SEGMENT for chunks
+                embeddings=embedding_result,
+                temporal_info=None,  # Temporal info is in arrays
+                metadata=metadata
+            )
+            
+            # Feed using standard feed method
+            if self.backend_client:
+                success_count, failed_ids = self.backend_client.feed(doc)
+                fed = success_count > 0
+            else:
+                fed = False
+            
+            return ProcessingResult(
+                video_id=video_id,
+                total_documents=1,
+                documents_processed=1,
+                documents_fed=1 if fed else 0,
+                processing_time=0.0,
+                errors=errors,
+                metadata={
+                    'num_segments': len(segments),
+                    'embedding_shape': embeddings_tensor.shape
+                }
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Error creating document: {e}")
+            return ProcessingResult(
+                video_id=video_id,
+                total_documents=1,
+                documents_processed=0,
+                documents_fed=0,
+                processing_time=0.0,
+                errors=errors + [str(e)],
+                metadata={}
+            )

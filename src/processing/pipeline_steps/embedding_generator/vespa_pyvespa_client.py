@@ -156,23 +156,39 @@ class VespaPyClient(BackendClient):
             processed_embeddings[binary_field] = all_processed_embeddings["embedding_binary"]
             self.logger.debug(f"Adding binary embeddings to field '{binary_field}'")
         
-        # Build base fields - don't include document_id as it's not in schema
-        fields = {
-            # document_id is used for the document ID in the put operation, not as a field
-            "creation_timestamp": int(time.time() * 1000),  # milliseconds
-            **processed_embeddings
-        }
+        # Special handling for video_chunks schema
+        if self.schema_name == "video_chunks":
+            # video_chunks stores data from SingleVectorVideoProcessor
+            metadata = doc.metadata or {}
+            
+            fields = {
+                "video_id": metadata.get("video_id", doc.doc_id),
+                "duration": metadata.get("duration", 0.0),
+                "num_segments": metadata.get("num_segments", 0),
+                "segment_transcripts": metadata.get("segment_transcripts", []),
+                "start_times": metadata.get("start_times", []),
+                "end_times": metadata.get("end_times", []),
+                "creation_timestamp": metadata.get("creation_timestamp", int(time.time())),
+                **processed_embeddings
+            }
+        else:
+            # Build base fields for other schemas
+            fields = {
+                # document_id is used for the document ID in the put operation, not as a field
+                "creation_timestamp": int(time.time() * 1000),  # milliseconds
+                **processed_embeddings
+            }
         
-        # Add temporal info if present
-        if doc.temporal_info:
+        # Add temporal info if present (skip for video_chunks as it uses arrays)
+        if doc.temporal_info and self.schema_name != "video_chunks":
             fields.update({
                 "start_time": doc.temporal_info.start_time,
                 "end_time": doc.temporal_info.end_time
                 # duration is not in the schema, so don't add it
             })
         
-        # Add segment info if present
-        if doc.segment_info:
+        # Add segment info if present (skip for video_chunks)
+        if doc.segment_info and self.schema_name != "video_chunks":
             # Check if schema uses frame_id or segment_id
             # VideoPrism schemas use frame_id, ColQwen uses segment_id
             if "videoprism" in self.schema_name:
@@ -191,8 +207,8 @@ class VespaPyClient(BackendClient):
                     segment_duration = doc.temporal_info.end_time - doc.temporal_info.start_time
                     fields["segment_duration"] = float(segment_duration)
         
-        # Map universal fields to schema-specific fields
-        if doc.media_type in [MediaType.VIDEO_SEGMENT, MediaType.VIDEO_FRAME]:
+        # Map universal fields to schema-specific fields (skip for video_chunks)
+        if doc.media_type in [MediaType.VIDEO_SEGMENT, MediaType.VIDEO_FRAME] and self.schema_name != "video_chunks":
             fields["video_id"] = doc.metadata.get("source_id", doc.doc_id.split("_")[0])
             fields["video_title"] = doc.metadata.get("video_title", fields["video_id"])
         

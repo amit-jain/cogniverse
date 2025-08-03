@@ -132,10 +132,22 @@ class StructuredFilesystemBackend(CacheBackend):
                 # Descriptions: profile/descriptions/video_id.pkl
                 return self.base_path / profile / "descriptions" / f"{video_id}.{self._get_extension()}"
             
+            elif artifact_type == "segment_frames":
+                if len(parts) > 4 and parts[-1].startswith("frame_"):
+                    # Individual frame: profile/segments/video_id/segment_X/frame_Y.jpg
+                    segment_info = "_".join(parts[3:-1])  # Everything except the last frame_X part
+                    safe_segment = self._sanitize_path_component(segment_info)
+                    frame_name = parts[-1]
+                    return self.base_path / profile / "segments" / video_id / safe_segment / f"{frame_name}.jpg"
+                else:
+                    # Segment metadata: profile/segments/video_id/segment_X/metadata.pkl
+                    safe_key = self._sanitize_path_component("_".join(parts[3:]))
+                    return self.base_path / profile / "segments" / video_id / safe_key / f"metadata.{self._get_extension()}"
+            
             else:
-                # Other artifacts: profile/other/video_id_artifact.pkl
+                # Other artifacts: profile/other/video_id/artifact.pkl
                 safe_key = self._sanitize_path_component("_".join(parts[3:]))
-                return self.base_path / profile / "other" / f"{video_id}_{safe_key}.{self._get_extension()}"
+                return self.base_path / profile / "other" / video_id / f"{safe_key}.{self._get_extension()}"
         
         # Fallback for other key patterns
         safe_key = self._sanitize_path_component(key)

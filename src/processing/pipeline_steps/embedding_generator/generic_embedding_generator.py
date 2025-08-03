@@ -88,12 +88,20 @@ class GenericEmbeddingGenerator(BaseEmbeddingGenerator):
         self.logger.info(f"Model: {self.model_name}")
         
         try:
-            if self.process_type.startswith("direct_video"):
+            # Use explicit processing_type from video_data (set by pipeline)
+            processing_type = video_data.get("processing_type", self.process_type)
+            
+            if processing_type == "single_vector":
+                # Single vector processing with pre-segmented data
+                result = self._generate_single_vector_embeddings(video_data, output_dir)
+            elif processing_type == "direct_video" or processing_type.startswith("direct_video"):
+                # Direct video processing
                 result = self._generate_direct_video_embeddings(video_data, output_dir)
-            elif self.process_type == "frame_based":
+            elif processing_type == "frame_based":
+                # Frame-based processing
                 result = self._generate_frame_based_embeddings(video_data, output_dir)
             else:
-                raise ValueError(f"Unknown process type: {self.process_type}")
+                raise ValueError(f"Unknown processing type: {processing_type}")
             
             processing_time = time.time() - start_time
             result.processing_time = processing_time
@@ -270,6 +278,134 @@ class GenericEmbeddingGenerator(BaseEmbeddingGenerator):
                 "model": self.model_name
             }
         )
+    
+    def _generate_single_vector_embeddings(
+        self,
+        video_data: Dict[str, Any],
+        output_dir: Path
+    ) -> EmbeddingResult:
+        """Generate embeddings for single vector processing (pre-segmented data)"""
+        video_id = video_data.get('video_id', 'unknown')
+        segments = video_data.get('segments', [])
+        document_structure = video_data.get('document_structure', {})
+        
+        self.logger.info(
+            f"Processing {len(segments)} segments with {document_structure.get('type', 'unknown')} structure"
+        )
+        
+        # Get video path
+        video_path = self._get_video_path(video_data)
+        if not video_path:
+            return EmbeddingResult(
+                video_id=video_id,
+                total_documents=0,
+                documents_processed=0,
+                documents_fed=0,
+                processing_time=0,
+                errors=["Video file not found"],
+                metadata={}
+            )
+        
+        # Process all segments and collect embeddings
+        embeddings = []
+        errors = []
+        
+        for segment in segments:
+            try:
+                # Generate embeddings based on model type
+                if self.videoprism_loader:
+                    # Use VideoPrism
+                    result = self.embedding_processor.process_videoprism_segment(
+                        video_path,
+                        segment.start_time,
+                        segment.end_time,
+                        self.videoprism_loader
+                    )
+                    
+                    if result:
+                        embeddings.append(result.get("embeddings_np"))
+                    else:
+                        embeddings.append(None)
+                        errors.append(f"Failed to process segment {segment.segment_id}")
+                else:
+                    # Use ColQwen or other models
+                    embedding = self.embedding_processor.generate_embeddings_from_video_segment(
+                        video_path,
+                        segment.start_time,
+                        segment.end_time,
+                        self.model,
+                        self.processor
+                    )
+                    embeddings.append(embedding)
+                    
+            except Exception as e:
+                self.logger.error(f"Error processing segment {segment.segment_id}: {e}")
+                embeddings.append(None)
+                errors.append(f"Segment {segment.segment_id}: {str(e)}")
+        
+        # Filter out None embeddings
+        valid_embeddings = [e for e in embeddings if e is not None]
+        
+        # Create documents using SingleVectorDocumentBuilder
+        from .single_vector_document_builder import SingleVectorDocumentBuilder
+        
+        # Use storage mode from video_data (set by pipeline) or fallback to document structure
+        storage_mode = video_data.get("storage_mode")
+        if not storage_mode:
+            storage_mode = "single_doc" if document_structure.get('type') == 'single_document' else "multi_doc"
+        
+        builder = SingleVectorDocumentBuilder(
+            schema_name=self.schema_name,
+            storage_mode=storage_mode
+        )
+        
+        try:
+            documents = builder.build_documents(
+                video_data=video_data,
+                embeddings=valid_embeddings,
+                additional_metadata={
+                    "title": video_data.get("video_title", video_id),
+                    "keywords": video_data.get("keywords", ""),
+                    "url": video_data.get("url", "")
+                }
+            )
+            
+            # Feed documents
+            documents_fed = 0
+            for doc in documents:
+                if self.backend_client and self.backend_client.feed_document(doc):
+                    documents_fed += 1
+                    self.logger.info(f"✅ Successfully fed document for {video_id}")
+                else:
+                    self.logger.warning(f"⚠️ Failed to feed document for {video_id}")
+            
+            return EmbeddingResult(
+                video_id=video_id,
+                total_documents=len(documents),
+                documents_processed=len(valid_embeddings),
+                documents_fed=documents_fed,
+                processing_time=0,  # Will be set by caller
+                errors=errors,
+                metadata={
+                    "process_type": "single_vector",
+                    "storage_mode": storage_mode,
+                    "num_segments": len(segments),
+                    "model": self.model_name
+                }
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Error creating documents: {e}")
+            errors.append(f"Document creation: {str(e)}")
+            return EmbeddingResult(
+                video_id=video_id,
+                total_documents=0,
+                documents_processed=len(valid_embeddings),
+                documents_fed=0,
+                processing_time=0,
+                errors=errors,
+                metadata={}
+            )
     
     def _generate_frame_based_embeddings(
         self,

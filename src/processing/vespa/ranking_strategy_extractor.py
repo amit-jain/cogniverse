@@ -49,7 +49,7 @@ class RankingStrategyExtractor:
         with open(schema_path, 'r') as f:
             schema_json = json.load(f)
         
-        schema_name = schema_json["name"]
+        schema_name = schema_json.get("schema", schema_json.get("name", ""))
         is_global = "global" in schema_name
         
         # Extract field information
@@ -57,7 +57,7 @@ class RankingStrategyExtractor:
         
         strategies = {}
         
-        for profile in schema_json.get("rank_profiles", []):
+        for profile in schema_json.get("rank-profiles", schema_json.get("rank_profiles", [])):
             strategy_info = self._parse_ranking_profile(profile, fields, is_global)
             strategies[strategy_info.name] = strategy_info
         
@@ -84,11 +84,18 @@ class RankingStrategyExtractor:
         needs_binary_embeddings = any("int8" in t for t in inputs.values())
         
         # Detect if it needs text query based on profile name or first phase expression
-        first_phase = profile.get("first_phase", "")
+        first_phase = profile.get("first-phase", profile.get("first_phase", {}))
+        # Handle both string and dict formats
+        if isinstance(first_phase, dict):
+            first_phase_expr = first_phase.get("expression", "")
+        else:
+            first_phase_expr = str(first_phase)
+            
         needs_text_query = (
             "bm25" in profile_name.lower() or
-            "bm25(" in first_phase or
-            "userInput" in first_phase
+            "bm25(" in first_phase_expr or
+            "userInput" in first_phase_expr or
+            "text" in profile_name.lower()
         )
         
         # Determine strategy type
@@ -122,12 +129,15 @@ class RankingStrategyExtractor:
         embedding_field = None
         query_tensor_name = None
         
-        if "qt" in inputs:
+        if "q" in inputs:
+            query_tensor_name = "q"
+            embedding_field = "embeddings"  # Note: plural for chunks schema
+        elif "qt" in inputs:
             query_tensor_name = "qt"
             embedding_field = "embedding"
         elif "qtb" in inputs:
             query_tensor_name = "qtb"
-            embedding_field = "embedding_binary"
+            embedding_field = "embedding_binary" if "binary" in profile_name else "embeddings_binary"
         
         # Generate description
         description = self._generate_description(profile_name, strategy_type, needs_float_embeddings, needs_binary_embeddings)
@@ -193,6 +203,10 @@ def extract_all_ranking_strategies(schema_dir: Path) -> Dict[str, Dict[str, Rank
     all_strategies = {}
     
     for schema_file in schema_dir.glob("*.json"):
+        # Skip ranking_strategies.json
+        if schema_file.name == "ranking_strategies.json":
+            continue
+            
         try:
             schema_name = schema_file.stem.replace("_schema", "")
             strategies = extractor.extract_from_schema(schema_file)

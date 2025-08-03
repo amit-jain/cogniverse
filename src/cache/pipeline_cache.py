@@ -13,6 +13,7 @@ import aiofiles
 import cv2
 import numpy as np
 import logging
+import time
 
 from .base import CacheManager
 
@@ -296,6 +297,111 @@ class PipelineArtifactCache:
             )
         
         return artifacts
+    
+    async def get_segment_frames(
+        self,
+        video_path: str,
+        segment_id: int,
+        start_time: float,
+        end_time: float,
+        sampling_fps: float = 2.0,
+        max_frames: int = 12,
+        load_images: bool = True
+    ) -> Optional[Union[Dict[str, Any], Tuple[Dict[str, Any], List[np.ndarray]]]]:
+        """Get cached segment frames"""
+        video_key = self._generate_video_key(video_path)
+        
+        # Generate unique key for this segment configuration
+        params = {
+            "segment_id": segment_id,
+            "start_time": start_time,
+            "end_time": end_time,
+            "sampling_fps": sampling_fps,
+            "max_frames": max_frames
+        }
+        
+        artifact_key = self._generate_artifact_key(
+            video_key, 
+            "segment_frames",
+            **params
+        )
+        
+        metadata = await self.cache.get(artifact_key)
+        if metadata:
+            logger.info(f"Cache hit for segment {segment_id} frames: {Path(video_path).name}")
+            
+            # Load images if requested
+            if load_images:
+                frames = []
+                for i, timestamp in enumerate(metadata.get("timestamps", [])):
+                    image_key = f"{artifact_key}:frame_{i}"
+                    image_data = await self.cache.get(image_key)
+                    if image_data:
+                        # Decode image from bytes
+                        nparr = np.frombuffer(image_data, np.uint8)
+                        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                        if image is not None:
+                            frames.append(image)
+                
+                return metadata, frames
+            
+            return metadata
+            
+        logger.debug(f"Cache miss for segment {segment_id} frames: {Path(video_path).name}")
+        return None
+    
+    async def set_segment_frames(
+        self,
+        video_path: str,
+        segment_id: int,
+        start_time: float,
+        end_time: float,
+        frames: List[np.ndarray],
+        timestamps: List[float],
+        sampling_fps: float = 2.0,
+        max_frames: int = 12
+    ) -> bool:
+        """Cache segment frames with metadata"""
+        video_key = self._generate_video_key(video_path)
+        
+        # Generate unique key for this segment configuration
+        params = {
+            "segment_id": segment_id,
+            "start_time": start_time,
+            "end_time": end_time,
+            "sampling_fps": sampling_fps,
+            "max_frames": max_frames
+        }
+        
+        artifact_key = self._generate_artifact_key(
+            video_key,
+            "segment_frames",
+            **params
+        )
+        
+        # Store metadata
+        metadata = {
+            "segment_id": segment_id,
+            "start_time": start_time,
+            "end_time": end_time,
+            "timestamps": timestamps,
+            "num_frames": len(frames),
+            "sampling_fps": sampling_fps,
+            "max_frames": max_frames,
+            "cached_at": time.time()
+        }
+        
+        # Store individual frames
+        for i, frame in enumerate(frames):
+            # Encode frame as JPEG
+            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            image_data = buffer.tobytes()
+            
+            image_key = f"{artifact_key}:frame_{i}"
+            await self.cache.set(image_key, image_data, self.ttl)
+        
+        # Store metadata
+        return await self.cache.set(artifact_key, metadata, self.ttl)
     
     async def invalidate_video(self, video_path: str) -> int:
         """Invalidate all cached artifacts for a video"""

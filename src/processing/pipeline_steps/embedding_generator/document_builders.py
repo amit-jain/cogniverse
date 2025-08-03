@@ -12,7 +12,7 @@ import sys
 
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent.parent.parent))
-from src.processing.vespa.strategy_aware_processor import StrategyAwareProcessor
+from src.processing.strategy import StrategyConfig
 
 
 @dataclass
@@ -35,7 +35,7 @@ class BaseDocumentBuilder(ABC):
     
     def __init__(self, schema_name: str):
         self.schema_name = schema_name
-        self.strategy_processor = StrategyAwareProcessor()
+        self.strategy_config = StrategyConfig()
         self.field_names = self._get_field_names()
     
     @abstractmethod
@@ -57,13 +57,18 @@ class BaseDocumentBuilder(ABC):
         return f"id:video:{self.schema_name}::{doc_id}"
     
     def _get_field_names(self) -> Dict[str, str]:
-        """Get field names from schema strategy"""
+        """Get field names from unified strategy"""
         try:
-            field_names = self.strategy_processor.get_embedding_field_names(self.schema_name)
-            # Default field names if not found in strategy
+            # Find a profile that uses this schema
+            profiles = self.strategy_config.config.get("video_processing_profiles", {})
+            for profile_name, profile in profiles.items():
+                if profile.get("vespa_schema") == self.schema_name:
+                    return self.strategy_config.get_embedding_fields(profile_name)
+            
+            # Fallback to defaults
             return {
-                'float_field': field_names.get('float_field', 'embedding'),
-                'binary_field': field_names.get('binary_field', 'embedding_binary')
+                'float_field': 'embedding',
+                'binary_field': 'embedding_binary'
             }
         except Exception:
             # Fallback to default field names
@@ -190,7 +195,16 @@ class DocumentBuilderFactory:
         
         schema_lower = schema_name.lower()
         
-        if "colqwen" in schema_lower:
+        # Check for single vector schemas
+        if "single__" in schema_lower or "video_chunks" in schema_lower:
+            from .single_vector_document_builder import SingleVectorDocumentBuilder
+            # Determine storage mode based on schema
+            storage_mode = "single_doc" if "chunks" in schema_lower or "6s" in schema_lower else "multi_doc"
+            return SingleVectorDocumentBuilder(
+                schema_name=schema_name,
+                storage_mode=storage_mode
+            )
+        elif "colqwen" in schema_lower or "colvision__" in schema_lower:
             return ColQwenDocumentBuilder(schema_name)
         elif "videoprism" in schema_lower:
             return VideoPrismDocumentBuilder(schema_name)
