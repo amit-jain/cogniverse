@@ -35,6 +35,10 @@ class RankingStrategyInfo:
     query_tensor_name: Optional[str] = None
     timeout: float = 2.0
     description: str = ""
+    # New comprehensive fields
+    inputs: Dict[str, str] = field(default_factory=dict)  # Full input definitions
+    query_tensors_needed: List[str] = field(default_factory=list)  # List of tensor names needed
+    schema_name: str = ""  # Schema this strategy belongs to
 
 
 class RankingStrategyExtractor:
@@ -58,12 +62,12 @@ class RankingStrategyExtractor:
         strategies = {}
         
         for profile in schema_json.get("rank-profiles", schema_json.get("rank_profiles", [])):
-            strategy_info = self._parse_ranking_profile(profile, fields, is_global)
+            strategy_info = self._parse_ranking_profile(profile, fields, is_global, schema_json)
             strategies[strategy_info.name] = strategy_info
         
         return strategies
     
-    def _parse_ranking_profile(self, profile: Dict[str, Any], fields: Dict[str, Dict], is_global: bool) -> RankingStrategyInfo:
+    def _parse_ranking_profile(self, profile: Dict[str, Any], fields: Dict[str, Dict], is_global: bool, schema_json: Dict[str, Any]) -> RankingStrategyInfo:
         """Parse a single ranking profile"""
         
         profile_name = profile["name"]
@@ -106,19 +110,33 @@ class RankingStrategyExtractor:
         else:
             strategy_type = SearchStrategyType.HYBRID
         
-        # Determine if uses nearestNeighbor (only for global schemas)
+        # Determine if uses nearestNeighbor based on schema and strategy
         use_nearestneighbor = False
         nearestneighbor_field = None
         nearestneighbor_tensor = None
         
-        if is_global and strategy_type in [SearchStrategyType.PURE_VISUAL, SearchStrategyType.HYBRID]:
-            # For global schemas, visual search profiles typically use nearestNeighbor
+        # Check for video_chunks schema specifically
+        schema_name = schema_json.get("schema", "")
+        is_video_chunks = schema_name == "video_chunks"
+        
+        # For global schemas OR video_chunks, visual strategies use nearestNeighbor
+        if (is_global or is_video_chunks) and strategy_type in [SearchStrategyType.PURE_VISUAL, SearchStrategyType.HYBRID]:
             if profile_name in ["float_float", "binary_binary", "float_binary", "phased", 
                                "hybrid_float_bm25", "hybrid_binary_bm25"]:
                 use_nearestneighbor = True
                 
-                # Determine which field and tensor to use
-                if "qt" in inputs:
+                # Determine field and tensor based on profile AND schema
+                if profile_name == "float_binary" and is_video_chunks:
+                    # Special case: video_chunks float_binary uses float embeddings
+                    nearestneighbor_field = "embedding"
+                    nearestneighbor_tensor = "qt"
+                elif profile_name == "float_float":
+                    nearestneighbor_field = "embedding"
+                    nearestneighbor_tensor = "qt"
+                elif profile_name in ["binary_binary", "phased"]:
+                    nearestneighbor_field = "embedding_binary"
+                    nearestneighbor_tensor = "qtb"
+                elif "qt" in inputs and not ("qtb" in inputs and "binary" in profile_name):
                     nearestneighbor_field = "embedding"
                     nearestneighbor_tensor = "qt"
                 elif "qtb" in inputs:
@@ -142,6 +160,9 @@ class RankingStrategyExtractor:
         # Generate description
         description = self._generate_description(profile_name, strategy_type, needs_float_embeddings, needs_binary_embeddings)
         
+        # Build list of query tensors needed
+        query_tensors_needed = list(inputs.keys())
+        
         return RankingStrategyInfo(
             name=profile_name,
             strategy_type=strategy_type,
@@ -154,7 +175,10 @@ class RankingStrategyExtractor:
             embedding_field=embedding_field,
             query_tensor_name=query_tensor_name,
             timeout=profile.get("timeout", 2.0),
-            description=description
+            description=description,
+            inputs=inputs,
+            query_tensors_needed=query_tensors_needed,
+            schema_name=schema_name
         )
     
     def _generate_description(self, profile_name: str, strategy_type: SearchStrategyType, 
@@ -238,7 +262,10 @@ def save_ranking_strategies(strategies: Dict[str, Dict[str, RankingStrategyInfo]
                 "embedding_field": strategy_info.embedding_field,
                 "query_tensor_name": strategy_info.query_tensor_name,
                 "timeout": strategy_info.timeout,
-                "description": strategy_info.description
+                "description": strategy_info.description,
+                "inputs": strategy_info.inputs,
+                "query_tensors_needed": strategy_info.query_tensors_needed,
+                "schema_name": strategy_info.schema_name
             }
     
     with open(output_path, 'w') as f:

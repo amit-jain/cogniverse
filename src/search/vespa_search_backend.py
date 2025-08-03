@@ -30,10 +30,8 @@ from src.core import Document, MediaType, TemporalInfo, SegmentInfo
 from src.models.videoprism_text_encoder import (
     VideoPrismTextEncoder, create_text_encoder
 )
-from src.processing.vespa.strategy_aware_processor import StrategyAwareProcessor
-from src.processing.vespa.ranking_strategy_extractor import (
-    extract_all_ranking_strategies, save_ranking_strategies
-)
+from src.processing.strategy import Strategy
+from src.core.strategy_registry import get_registry
 from src.utils.retry import retry_with_backoff, RetryConfig
 from src.utils.output_manager import OutputManager
 from src.agents.query_encoders import QueryEncoderFactory, QueryEncoder
@@ -268,6 +266,7 @@ class VespaSearchBackend(SearchBackend):
         vespa_port: int,
         schema_name: str,
         profile: str,
+        strategy: Optional[Strategy] = None,
         query_encoder: Optional[Any] = None,
         enable_metrics: bool = True,
         enable_connection_pool: bool = True,
@@ -282,6 +281,7 @@ class VespaSearchBackend(SearchBackend):
             vespa_port: Vespa port
             schema_name: Name of the Vespa schema
             profile: Video processing profile
+            strategy: Optional Strategy object (will be loaded if not provided)
             query_encoder: Optional query encoder instance
             enable_metrics: Whether to collect metrics
             enable_connection_pool: Whether to use connection pooling
@@ -293,6 +293,13 @@ class VespaSearchBackend(SearchBackend):
         self.schema_name = schema_name
         self.profile = profile
         self.query_encoder = query_encoder
+        
+        # Get strategy from registry if not provided
+        if strategy is None:
+            registry = get_registry()
+            self.strategy = registry.get_strategy(profile)
+        else:
+            self.strategy = strategy
         
         # Combine URL and port
         full_url = f"{vespa_url}:{vespa_port}"
@@ -323,40 +330,10 @@ class VespaSearchBackend(SearchBackend):
         else:
             self.metrics = None
         
-        # Load ranking strategies
-        self._load_ranking_strategies()
-        
-        
         logger.info(
             f"VespaSearchBackend initialized for schema '{schema_name}' "
-            f"with pool={enable_connection_pool}, metrics={enable_metrics}"
-        )
-    
-    def _load_ranking_strategies(self):
-        """Load ranking strategies from JSON file"""
-        schemas_dir = Path("configs/schemas")
-        strategies_file = schemas_dir / "ranking_strategies.json"
-        
-        if not strategies_file.exists():
-            logger.info("Ranking strategies not found, auto-generating...")
-            strategies = extract_all_ranking_strategies(schemas_dir)
-            save_ranking_strategies(strategies, strategies_file)
-        
-        # Initialize strategy processor
-        self.strategy_processor = StrategyAwareProcessor()
-        
-        # Load strategies for this schema
-        if self.schema_name in self.strategy_processor.ranking_strategies:
-            self.ranking_strategies = self.strategy_processor.ranking_strategies[self.schema_name]
-        else:
-            self.ranking_strategies = {}
-        
-        if not self.ranking_strategies:
-            raise ValueError(f"No ranking strategies found for schema '{self.schema_name}'")
-            
-        logger.info(
-            f"Loaded {len(self.ranking_strategies)} ranking strategies "
-            f"for schema '{self.schema_name}'"
+            f"with pool={enable_connection_pool}, metrics={enable_metrics}, "
+            f"strategy={self.strategy.processing_type}/{self.strategy.segmentation}"
         )
     
     
@@ -452,29 +429,24 @@ class VespaSearchBackend(SearchBackend):
             
             # Determine ranking profile
             if ranking_strategy:
-                # Use provided ranking strategy
                 ranking_profile = ranking_strategy
             else:
-                # Use default based on profile type
-                if "global" in self.profile:
-                    ranking_profile = "float_float"
-                else:
-                    ranking_profile = "hybrid_binary_bm25"
+                ranking_profile = self.strategy.default_ranking
             
-            # Validate ranking profile
-            if ranking_profile not in self.ranking_strategies:
+            # Validate and get ranking strategy config
+            if ranking_profile not in self.strategy.ranking_strategies:
                 logger.warning(
                     f"[{correlation_id}] Unknown ranking profile '{ranking_profile}', "
-                    f"using default"
+                    f"using default: {self.strategy.default_ranking}"
                 )
-                ranking_profile = next(iter(self.ranking_strategies.keys()))
+                ranking_profile = self.strategy.default_ranking
             
-            strategy = self.ranking_strategies[ranking_profile]
+            rank_config = self.strategy.ranking_strategies[ranking_profile]
             
             # Check if strategy requires embeddings
             requires_embeddings = (
-                strategy.get("needs_float_embeddings", False) or 
-                strategy.get("needs_binary_embeddings", False)
+                rank_config.get("needs_float_embeddings", False) or 
+                rank_config.get("needs_binary_embeddings", False)
             )
             
             # Generate embeddings on-demand if needed and not provided
@@ -491,7 +463,7 @@ class VespaSearchBackend(SearchBackend):
                     )
             
             # Build query based on strategy
-            query_params = self._build_query(query_text, query_embeddings, strategy, top_k, correlation_id)
+            query_params = self._build_query(query_text, query_embeddings, rank_config, ranking_profile, top_k, correlation_id)
             
             # Execute search
             logger.info(f"[{correlation_id}] Executing query with ranking={query_params.get('ranking')}, keys={list(query_params.keys())}")
@@ -537,126 +509,73 @@ class VespaSearchBackend(SearchBackend):
         self,
         query_text: str,
         query_embeddings: Optional[np.ndarray],
-        strategy: Dict[str, Any],
+        rank_config: Dict[str, Any],
+        ranking_profile: str,
         limit: int,
         correlation_id: str
     ) -> Dict[str, Any]:
-        """Build Vespa query based on ranking strategy"""
-        ranking_profile = strategy["name"]
+        """Build Vespa query based on ranking strategy - NO HARDCODING!"""
         
-        # Build query based on ranking strategy and profile
-        # For pure visual search strategies, use nearestNeighbor
-        pure_visual_strategies = ["float_float", "binary_binary", "float_binary", "phased"]
+        # Initialize query params
+        query_params = {
+            "ranking.profile": ranking_profile,
+            "hits": limit,
+            "ranking": ranking_profile,
+        }
         
-        if ranking_profile in pure_visual_strategies:
-            # For global schemas and video_chunks, use nearestNeighbor
-            if "global" in self.profile or self.schema_name == "video_chunks":
-                # Determine which field and query tensor to use for nearestNeighbor
-                if ranking_profile == "float_float":
-                    nn_field = "embedding"
-                    query_tensor_name = "qt"
-                elif ranking_profile == "binary_binary":
-                    nn_field = "embedding_binary"
-                    query_tensor_name = "qtb"
-                elif ranking_profile == "float_binary":
-                    # For video_chunks, float_binary uses float embeddings
-                    if self.schema_name == "video_chunks":
-                        nn_field = "embedding"
-                        query_tensor_name = "qt"
-                    else:
-                        nn_field = "embedding_binary"
-                        query_tensor_name = "qtb"
-                elif ranking_profile == "phased":
-                    nn_field = "embedding_binary"
-                    query_tensor_name = "qtb"
-                else:
-                    nn_field = "embedding"
-                    query_tensor_name = "qt"
-                
-                # Global embeddings - use nearestNeighbor
-                query_params = {
-                    "yql": f"select * from {self.schema_name} where {{targetHits: {limit}}}nearestNeighbor({nn_field}, {query_tensor_name})",
-                    "ranking.profile": ranking_profile,
-                    "hits": limit,
-                    "ranking": ranking_profile,
-                }
-            else:
-                # Patch-based embeddings - use regular ranking without nearestNeighbor
-                query_params = {
-                    "yql": f"select * from {self.schema_name} where true",
-                    "ranking.profile": ranking_profile,
-                    "hits": limit,
-                    "ranking": ranking_profile,
-                }
-        else:
-            # Hybrid or text search
-            if self.schema_name == "video_chunks" and "hybrid" in ranking_profile and query_embeddings is not None:
-                # For video_chunks hybrid search, use TwelveLabs pattern
-                nn_field = "embedding_binary" if "binary" in ranking_profile else "embedding"
-                query_tensor_name = "qtb" if "binary" in ranking_profile else "qt"
-                query_params = {
-                    "yql": f"select * from {self.schema_name} where userInput(@userQuery) OR ({{targetHits: {limit}}}nearestNeighbor({nn_field}, {query_tensor_name}))",
-                    "userQuery": query_text,
-                    "ranking.profile": ranking_profile,
-                    "hits": limit,
-                }
-            else:
-                # Standard hybrid/text search
-                query_params = {
-                    "yql": f"select * from {self.schema_name} where userInput(@userQuery)",
-                    "userQuery": query_text,
-                    "ranking.profile": ranking_profile,
-                    "hits": limit,
-                }
-        
-        # Add tensor embeddings based on ranking profile
-        # Note: For video_chunks schema, float_binary only uses float embeddings, not binary
-        if self.schema_name == "video_chunks":
-            needs_binary = ranking_profile in ["binary_binary", "phased", "hybrid_binary_bm25", 
-                                              "hybrid_binary_bm25_no_description"]
-        else:
-            needs_binary = ranking_profile in ["binary_binary", "float_binary", "phased", "hybrid_binary_bm25", 
-                                              "hybrid_binary_bm25_no_description"]
-        
-        needs_float = ranking_profile in ["float_float", "float_binary", "phased", "hybrid_float_bm25"]
-        
-        logger.info(f"[{correlation_id}] Ranking profile: {ranking_profile}, needs_float: {needs_float}, needs_binary: {needs_binary}")
-        logger.info(f"[{correlation_id}] Schema: {self.schema_name}, Profile: {self.profile}")
-        
-        if needs_float and query_embeddings is not None:
-            # For global embeddings, use list format (like original code)
-            if "global" in self.profile:
-                logger.info(f"[{correlation_id}] Query embeddings shape: {query_embeddings.shape}, type: {type(query_embeddings)}")
-                embeddings_list = query_embeddings.tolist()
-                logger.info(f"[{correlation_id}] Embeddings list type: {type(embeddings_list)}, length: {len(embeddings_list) if isinstance(embeddings_list, list) else 'scalar'}")
-                query_params["input.query(qt)"] = embeddings_list
-            else:
-                # For patch-based models and video_chunks (mapped tensors), still use list format
-                # Vespa will match against all cells in the mapped dimension
-                logger.info(f"[{correlation_id}] Using list format for query tensor")
-                query_params["input.query(qt)"] = query_embeddings.tolist()
-        
-        if needs_binary and query_embeddings is not None:
-            # Generate binary embeddings from float embeddings
-            binary_embeddings = self._generate_binary_embeddings(query_embeddings)
-            binary_list = [int(x) for x in binary_embeddings.tolist()]  # Ensure pure Python ints
+        # Build YQL based on strategy configuration
+        if rank_config.get("use_nearestneighbor"):
+            # Use nearestNeighbor for visual search
+            nn_field = rank_config.get("nearestneighbor_field", "embedding")
+            nn_tensor = rank_config.get("nearestneighbor_tensor", "qt")
             
-            logger.info(f"[{correlation_id}] Binary embeddings shape: {binary_embeddings.shape}, dtype: {binary_embeddings.dtype}")
-            logger.info(f"[{correlation_id}] Binary list type: {type(binary_list)}, len: {len(binary_list)}, first 5: {binary_list[:5]}")
-            logger.info(f"[{correlation_id}] First element type: {type(binary_list[0]) if binary_list else 'empty'}")
-            
-            if "global" in self.profile:
-                query_params["input.query(qtb)"] = binary_list
+            if rank_config.get("needs_text_query") and query_text:
+                # Hybrid search with nearestNeighbor
+                query_params["yql"] = (
+                    f"select * from {self.schema_name} where "
+                    f"userInput(@userQuery) OR "
+                    f"({{targetHits: {limit}}}nearestNeighbor({nn_field}, {nn_tensor}))"
+                )
+                query_params["userQuery"] = query_text
             else:
-                # For all others including video_chunks, use list format for binary too
-                query_params["input.query(qtb)"] = binary_list
+                # Pure visual search with nearestNeighbor
+                query_params["yql"] = (
+                    f"select * from {self.schema_name} where "
+                    f"{{targetHits: {limit}}}nearestNeighbor({nn_field}, {nn_tensor})"
+                )
+        elif rank_config.get("needs_text_query"):
+            # Text or hybrid search without nearestNeighbor
+            query_params["yql"] = f"select * from {self.schema_name} where userInput(@userQuery)"
+            query_params["userQuery"] = query_text
+        else:
+            # Regular ranking without nearestNeighbor (patch-based models)
+            query_params["yql"] = f"select * from {self.schema_name} where true"
         
-        # Special handling for float_float with video_chunks
-        if ranking_profile == "float_float" and self.schema_name == "video_chunks":
-            # Don't send qtb at all for float_float
-            if "input.query(qtb)" in query_params:
-                logger.warning(f"[{correlation_id}] Removing qtb from float_float query")
-                del query_params["input.query(qtb)"]
+        # Add tensor embeddings based on what the strategy says it needs
+        # NO MORE HARDCODED CHECKS!
+        if query_embeddings is not None:
+            # Check what tensors this ranking strategy needs from its inputs
+            inputs_needed = rank_config.get("inputs", {})
+            
+            logger.info(f"[{correlation_id}] Strategy '{ranking_profile}' needs inputs: {list(inputs_needed.keys())}")
+            
+            for input_name, input_type in inputs_needed.items():
+                if "query(qt)" in input_name and "float" in input_type:
+                    # Float embeddings needed
+                    logger.info(f"[{correlation_id}] Adding float embeddings for {input_name}")
+                    query_params[input_name] = query_embeddings.tolist()
+                    
+                elif "query(qtb)" in input_name and "int8" in input_type:
+                    # Binary embeddings needed
+                    logger.info(f"[{correlation_id}] Adding binary embeddings for {input_name}")
+                    binary_embeddings = self._generate_binary_embeddings(query_embeddings)
+                    binary_list = [int(x) for x in binary_embeddings.tolist()]
+                    query_params[input_name] = binary_list
+                    
+                elif "query(q)" in input_name:
+                    # Generic query tensor (used by some schemas)
+                    logger.info(f"[{correlation_id}] Adding generic embeddings for {input_name}")
+                    query_params[input_name] = query_embeddings.tolist()
         
         # Add schema to query body to avoid conflicts with other schemas
         query_params["model.restrict"] = self.schema_name  # Must be string, not list!
