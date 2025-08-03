@@ -236,14 +236,24 @@ def test_profile_with_queries(profile: str, queries: List[Dict], test_multiple_s
                 strategy_results['queries'].append(query_result)
                 
             except Exception as e:
-                print(f"❌ Search failed for query '{query}' with strategy '{strategy}': {e}")
+                error_msg = str(e)
+                # Truncate long embedding arrays in error messages
+                if 'query(qtb)' in error_msg and len(error_msg) > 500:
+                    # Find the embedding array and truncate it
+                    start_idx = error_msg.find('[')
+                    end_idx = error_msg.find(']', start_idx)
+                    if start_idx != -1 and end_idx != -1 and end_idx - start_idx > 100:
+                        embedding_preview = error_msg[start_idx:start_idx+50] + "... (truncated) ..." + error_msg[end_idx-20:end_idx+1]
+                        error_msg = error_msg[:start_idx] + embedding_preview + error_msg[end_idx+1:]
+                
+                print(f"❌ Search failed for query '{query}' with strategy '{strategy}': {error_msg}")
                 query_result = {
                     'query': query,
                     'expected': expected_videos,
                     'results': [],
                     'metrics': {'recall@1': 0, 'recall@5': 0, 'recall@10': 0, 'mrr': 0},
                     'top_result_correct': False,
-                    'error': str(e)
+                    'error': error_msg
                 }
                 strategy_results['queries'].append(query_result)
         
@@ -281,7 +291,8 @@ def get_best_strategy_for_profile(profile: str) -> str:
         'frame_based_colpali': 'binary_binary',  # Changed to visual-only for fair comparison
         'direct_video_colqwen': 'float_binary',
         'direct_video_global': 'binary_binary',
-        'direct_video_global_large': 'binary_binary'
+        'direct_video_global_large': 'binary_binary',
+        'single__video_videoprism_large_6s': 'default'  # Use default for video_chunks
     }
     return best_strategies.get(profile, 'float_float')
 
@@ -391,7 +402,8 @@ def main():
     parser = argparse.ArgumentParser(description="Comprehensive video query test v2")
     parser.add_argument("--profiles", nargs="+", 
                        default=["frame_based_colpali", "direct_video_colqwen", 
-                               "direct_video_global", "direct_video_global_large"],
+                               "direct_video_global", "direct_video_global_large",
+                               "single__video_videoprism_large_6s"],
                        help="Profiles to test")
     parser.add_argument("--output-format", choices=["table", "html", "csv"], default="table",
                        help="Output format")

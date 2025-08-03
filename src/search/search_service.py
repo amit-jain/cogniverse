@@ -26,10 +26,10 @@ class SearchService:
         self.config = config
         self.profile = profile
         
-        # Initialize query encoder
+        # Initialize query encoder first
         self._init_query_encoder()
         
-        # Initialize search backend
+        # Initialize search backend with query encoder
         self._init_search_backend()
     
     def _init_query_encoder(self):
@@ -40,10 +40,12 @@ class SearchService:
         
         profile_config = profiles[self.profile]
         model_name = profile_config.get("embedding_model")
+        logger.info(f"Profile {self.profile} has embedding_model: {model_name}")
         
         # Create query encoder
+        logger.info(f"Creating query encoder for profile: {self.profile} with model: {model_name}")
         self.query_encoder = QueryEncoderFactory.create_encoder(self.profile, model_name)
-        logger.info(f"Initialized query encoder for profile: {self.profile}")
+        logger.info(f"Initialized query encoder type: {type(self.query_encoder).__name__} for profile: {self.profile}")
     
     def _init_search_backend(self):
         """Initialize search backend."""
@@ -63,7 +65,7 @@ class SearchService:
                 vespa_port=vespa_port,
                 schema_name=schema_name,
                 profile=self.profile,
-                query_encoder_factory=QueryEncoderFactory
+                query_encoder=self.query_encoder
             )
         else:
             raise ValueError(f"Unsupported search backend: {backend_type}")
@@ -89,17 +91,9 @@ class SearchService:
         Returns:
             List of SearchResult objects
         """
-        # Check if we should pre-generate embeddings (for backward compatibility)
-        # or let the backend handle it on-demand
-        if hasattr(self.search_backend, 'query_encoder_factory') and self.search_backend.query_encoder_factory:
-            # Backend has encoder factory, let it handle embeddings on-demand
-            logger.info(f"Searching with on-demand embedding generation")
-            query_embeddings = None
-        else:
-            # Legacy path: pre-generate embeddings
-            logger.info(f"Encoding query: '{query}'")
-            query_embeddings = self.query_encoder.encode(query)
-            logger.info(f"Query embeddings shape: {query_embeddings.shape}")
+        # Let backend decide if embeddings are needed based on ranking strategy
+        logger.info(f"Searching with backend...")
+        query_embeddings = None
         
         # Search
         logger.info(f"Searching with backend...")

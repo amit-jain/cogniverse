@@ -35,6 +35,7 @@ from src.processing.pipeline_steps.keyframe_extractor_fps import FPSKeyframeExtr
 from src.processing.pipeline_steps.embedding_generator import create_embedding_generator
 from src.cache import CacheManager, CacheConfig
 from src.cache.pipeline_cache import PipelineArtifactCache
+from src.processing.strategy import StrategyConfig
 
 
 class PipelineStep(Enum):
@@ -95,6 +96,7 @@ class VideoIngestionPipeline:
         self.config = config or PipelineConfig.from_config()
         self.app_config = get_config()
         self.active_profile = self.app_config.get_active_profile()
+        self.strategy_config = StrategyConfig()
         self.setup_directories()
         self.logger = self._setup_logging()
         self._initialize_cache()
@@ -194,26 +196,60 @@ class VideoIngestionPipeline:
     
     def _initialize_pipeline_steps(self):
         """Initialize all pipeline step handlers"""
-        # Initialize keyframe extractor only if needed
-        if self.config.extract_keyframes:
-            # Check if FPS-based extraction is configured
-            extraction_method = self.app_config.get("pipeline_config.keyframe_extraction_method", "histogram")
-            if extraction_method == "fps":
-                # FPS-based extraction
-                keyframe_fps = self.app_config.get("pipeline_config.keyframe_fps", 1.0)
-                self.keyframe_extractor = FPSKeyframeExtractor(
-                    fps=keyframe_fps,
-                    max_frames=self.config.max_frames_per_video
-                )
-                self.logger.info(f"Using FPS-based keyframe extraction at {keyframe_fps} FPS")
-            else:
-                self.keyframe_extractor = KeyframeExtractor(
-                    threshold=self.config.keyframe_threshold,
-                    max_frames=self.config.max_frames_per_video
-                )
-                self.logger.info("Using histogram-based keyframe extraction")
+        # Use StrategyConfig to get complete strategy
+        if self.active_profile:
+            try:
+                self.strategy = self.strategy_config.get_strategy(self.active_profile)
+                self.logger.info(f"Resolved strategy: {self.strategy}")
+            except Exception as e:
+                self.logger.error(f"Failed to resolve strategy: {e}")
+                self.strategy = None
         else:
+            self.strategy = None
+        
+        # Initialize processors based on strategy
+        if self.strategy and self.strategy.processing_type == "single_vector":
+            # Initialize SingleVectorVideoProcessor
+            from src.processing.pipeline_steps.single_vector_processor import SingleVectorVideoProcessor
+            
+            model_config = self.strategy.model_config
+            self.single_vector_processor = SingleVectorVideoProcessor(
+                strategy=self.strategy.segmentation,
+                segment_duration=model_config.get("chunk_duration", 6.0),
+                segment_overlap=model_config.get("chunk_overlap", 1.0),
+                sampling_fps=model_config.get("sampling_fps", 2.0),
+                max_frames_per_segment=model_config.get("max_frames_per_chunk", 12),
+                store_as_single_doc=(self.strategy.storage_mode == "single_doc"),
+                cache=self.cache
+            )
+            self.logger.info(
+                f"Using SingleVectorVideoProcessor - segmentation: {self.strategy.segmentation}, "
+                f"storage: {self.strategy.storage_mode}"
+            )
+            # For single vector processing, we handle frames differently
             self.keyframe_extractor = None
+        else:
+            self.single_vector_processor = None
+            # Initialize keyframe extractor only if needed
+            if self.config.extract_keyframes:
+                # Check if FPS-based extraction is configured
+                extraction_method = self.app_config.get("pipeline_config.keyframe_extraction_method", "histogram")
+                if extraction_method == "fps":
+                    # FPS-based extraction
+                    keyframe_fps = self.app_config.get("pipeline_config.keyframe_fps", 1.0)
+                    self.keyframe_extractor = FPSKeyframeExtractor(
+                        fps=keyframe_fps,
+                        max_frames=self.config.max_frames_per_video
+                    )
+                    self.logger.info(f"Using FPS-based keyframe extraction at {keyframe_fps} FPS")
+                else:
+                    self.keyframe_extractor = KeyframeExtractor(
+                        threshold=self.config.keyframe_threshold,
+                        max_frames=self.config.max_frames_per_video
+                    )
+                    self.logger.info("Using histogram-based keyframe extraction")
+            else:
+                self.keyframe_extractor = None
         
         # Initialize audio transcriber only if needed
         if self.config.transcribe_audio:
@@ -433,8 +469,25 @@ class VideoIngestionPipeline:
             "output_dir": str(self.profile_output_dir)
         }
         
+        # Add processing type from strategy
+        if self.strategy:
+            video_data["processing_type"] = self.strategy.processing_type
+            video_data["storage_mode"] = self.strategy.storage_mode
+            video_data["schema_name"] = self.strategy.schema_name
+        
+        # Check if we have single vector processing results
+        if "single_vector_processing" in results.get("results", {}):
+            # Add single vector processing data
+            processing_data = results["results"]["single_vector_processing"]
+            # Use raw segments if available (for embedding generation), otherwise use serialized
+            video_data["segments"] = results.get("_raw_segments", processing_data["segments"])
+            video_data["processing_metadata"] = processing_data["metadata"]
+            video_data["full_transcript"] = processing_data["full_transcript"]
+            video_data["document_structure"] = processing_data["document_structure"]
+            self.logger.info(f"Using single vector processing data with {len(video_data['segments'])} segments")
+        
         # For frame-based processing, add frame information if available
-        if "keyframes" in results.get("results", {}):
+        elif "keyframes" in results.get("results", {}):
             keyframes_data = results["results"]["keyframes"]
             if "keyframes" in keyframes_data:
                 # Convert keyframe data to frames format expected by v2
@@ -494,41 +547,77 @@ class VideoIngestionPipeline:
         }
         
         try:
-            # Step 1: Extract keyframes
-            if self.config.extract_keyframes:
+            # Check if we're using single vector processing
+            if self.single_vector_processor:
+                # Process video with single vector processor
                 step_start = time.time()
-                self.logger.info("Step 1: Starting keyframe extraction")
-                keyframes_data = self.extract_keyframes(video_path)
-                results["results"]["keyframes"] = keyframes_data
+                self.logger.info("Using SingleVectorVideoProcessor for video processing")
+                
+                # Transcribe audio first if enabled
+                transcript_data = None
+                if self.config.transcribe_audio:
+                    self.logger.info("Step 1: Starting audio transcription")
+                    transcript_data = self.transcribe_audio(video_path)
+                    results["results"]["transcript"] = transcript_data
+                
+                # Process video with single vector processor
+                self.logger.info("Step 2: Processing video with SingleVectorVideoProcessor")
+                processed_data = self.single_vector_processor.process_video(
+                    video_path=video_path,
+                    transcript_data=transcript_data
+                )
+                
+                # Convert VideoSegment objects to dicts for JSON serialization
+                processed_data_serializable = processed_data.copy()
+                processed_data_serializable["segments"] = [
+                    seg.to_dict() for seg in processed_data["segments"]
+                ]
+                results["results"]["single_vector_processing"] = processed_data_serializable
+                
+                # Store segments info for embedding generation (keep raw objects for processing)
+                # Note: These will be passed to embedding generator but not saved to JSON
+                results["_raw_segments"] = processed_data["segments"]
+                
                 step_time = time.time() - step_start
+                self.logger.info(f"Single vector processing completed in {step_time:.2f}s - {len(processed_data['segments'])} segments")
                 
-                if "error" in keyframes_data:
-                    self.logger.error(f"Keyframe extraction failed: {keyframes_data['error']}")
-                    raise Exception(f"Keyframe extraction failed: {keyframes_data['error']}")
-                else:
-                    keyframe_count = len(keyframes_data.get("keyframes", []))
-                    self.logger.info(f"Step 1 completed in {step_time:.2f}s - extracted {keyframe_count} keyframes")
             else:
-                self.logger.info("Step 1: Skipping keyframe extraction (disabled)")
-                print("⏭️ Skipping keyframe extraction (disabled)")
-                
-            # Step 2: Transcribe audio
-            if self.config.transcribe_audio:
-                step_start = time.time()
-                self.logger.info("Step 2: Starting audio transcription")
-                transcript_data = self.transcribe_audio(video_path)
-                results["results"]["transcript"] = transcript_data
-                step_time = time.time() - step_start
-                
-                if "error" in transcript_data:
-                    self.logger.error(f"Audio transcription failed: {transcript_data['error']}")
-                    raise Exception(f"Audio transcription failed: {transcript_data['error']}")
+                # Original frame-based processing
+                # Step 1: Extract keyframes
+                if self.config.extract_keyframes:
+                    step_start = time.time()
+                    self.logger.info("Step 1: Starting keyframe extraction")
+                    keyframes_data = self.extract_keyframes(video_path)
+                    results["results"]["keyframes"] = keyframes_data
+                    step_time = time.time() - step_start
+                    
+                    if "error" in keyframes_data:
+                        self.logger.error(f"Keyframe extraction failed: {keyframes_data['error']}")
+                        raise Exception(f"Keyframe extraction failed: {keyframes_data['error']}")
+                    else:
+                        keyframe_count = len(keyframes_data.get("keyframes", []))
+                        self.logger.info(f"Step 1 completed in {step_time:.2f}s - extracted {keyframe_count} keyframes")
                 else:
-                    segment_count = len(transcript_data.get("segments", []))
-                    self.logger.info(f"Step 2 completed in {step_time:.2f}s - transcribed {segment_count} segments")
-            else:
-                self.logger.info("Step 2: Skipping audio transcription (disabled)")
-                print("⏭️ Skipping audio transcription (disabled)")
+                    self.logger.info("Step 1: Skipping keyframe extraction (disabled)")
+                    print("⏭️ Skipping keyframe extraction (disabled)")
+                
+                # Step 2: Transcribe audio (for non-single vector processing)
+                if self.config.transcribe_audio:
+                    step_start = time.time()
+                    self.logger.info("Step 2: Starting audio transcription")
+                    transcript_data = self.transcribe_audio(video_path)
+                    results["results"]["transcript"] = transcript_data
+                    step_time = time.time() - step_start
+                    
+                    if "error" in transcript_data:
+                        self.logger.error(f"Audio transcription failed: {transcript_data['error']}")
+                        raise Exception(f"Audio transcription failed: {transcript_data['error']}")
+                    else:
+                        segment_count = len(transcript_data.get("segments", []))
+                        self.logger.info(f"Step 2 completed in {step_time:.2f}s - transcribed {segment_count} segments")
+                else:
+                    self.logger.info("Step 2: Skipping audio transcription (disabled)")
+                    print("⏭️ Skipping audio transcription (disabled)")
                 
             # Step 3: Generate descriptions
             if self.config.generate_descriptions and self.config.extract_keyframes:
@@ -664,10 +753,17 @@ class VideoIngestionPipeline:
         results["completed_at"] = time.time()
         results["total_processing_time"] = results["completed_at"] - results["started_at"]
         
-        # Save summary
+        # Save summary (clean up any non-serializable data first)
         summary_file = self.profile_output_dir / "pipeline_summary.json"
+        
+        # Remove any raw segments from processed videos before saving
+        results_to_save = results.copy()
+        for video_result in results_to_save.get("processed_videos", []):
+            if "_raw_segments" in video_result:
+                del video_result["_raw_segments"]
+        
         with open(summary_file, 'w') as f:
-            json.dump(results, f, indent=2)
+            json.dump(results_to_save, f, indent=2)
         
         # Log final summary
         self.logger.info("Batch processing completed!")

@@ -268,7 +268,7 @@ class VespaSearchBackend(SearchBackend):
         vespa_port: int,
         schema_name: str,
         profile: str,
-        query_encoder_factory: Optional[QueryEncoderFactory] = None,
+        query_encoder: Optional[Any] = None,
         enable_metrics: bool = True,
         enable_connection_pool: bool = True,
         pool_config: Optional[ConnectionPoolConfig] = None,
@@ -282,7 +282,7 @@ class VespaSearchBackend(SearchBackend):
             vespa_port: Vespa port
             schema_name: Name of the Vespa schema
             profile: Video processing profile
-            query_encoder_factory: Optional factory for creating query encoders on-demand
+            query_encoder: Optional query encoder instance
             enable_metrics: Whether to collect metrics
             enable_connection_pool: Whether to use connection pooling
             pool_config: Connection pool configuration
@@ -292,6 +292,7 @@ class VespaSearchBackend(SearchBackend):
         self.vespa_port = vespa_port
         self.schema_name = schema_name
         self.profile = profile
+        self.query_encoder = query_encoder
         
         # Combine URL and port
         full_url = f"{vespa_url}:{vespa_port}"
@@ -325,10 +326,6 @@ class VespaSearchBackend(SearchBackend):
         # Load ranking strategies
         self._load_ranking_strategies()
         
-        # Initialize query encoder factory and cache
-        self.query_encoder_factory = query_encoder_factory
-        self._query_encoder: Optional[QueryEncoder] = None
-        self._encoder_lock = threading.Lock()
         
         logger.info(
             f"VespaSearchBackend initialized for schema '{schema_name}' "
@@ -362,14 +359,6 @@ class VespaSearchBackend(SearchBackend):
             f"for schema '{self.schema_name}'"
         )
     
-    def _get_query_encoder(self) -> Optional[QueryEncoder]:
-        """Get or create query encoder lazily"""
-        if self._query_encoder is None and self.query_encoder_factory:
-            with self._encoder_lock:
-                if self._query_encoder is None:
-                    self._query_encoder = self.query_encoder_factory.create_encoder(self.profile)
-                    logger.info(f"Created query encoder for profile: {self.profile}")
-        return self._query_encoder
     
     def _embeddings_to_vespa_format(self, embeddings: np.ndarray, profile: str) -> Dict[str, Any]:
         """Convert embeddings to Vespa query format."""
@@ -490,10 +479,12 @@ class VespaSearchBackend(SearchBackend):
             
             # Generate embeddings on-demand if needed and not provided
             if requires_embeddings and query_embeddings is None:
-                encoder = self._get_query_encoder()
-                if encoder:
+                if self.query_encoder:
                     logger.info(f"[{correlation_id}] Generating embeddings on-demand for strategy '{ranking_profile}'")
-                    query_embeddings = encoder.encode(query_text)
+                    logger.info(f"[{correlation_id}] Query encoder type: {type(self.query_encoder).__name__}")
+                    logger.info(f"[{correlation_id}] Query text: '{query_text}'")
+                    query_embeddings = self.query_encoder.encode(query_text)
+                    logger.info(f"[{correlation_id}] Generated embeddings shape: {query_embeddings.shape}")
                 else:
                     logger.warning(
                         f"[{correlation_id}] Strategy '{ranking_profile}' requires embeddings but no encoder available"
@@ -503,6 +494,15 @@ class VespaSearchBackend(SearchBackend):
             query_params = self._build_query(query_text, query_embeddings, strategy, top_k, correlation_id)
             
             # Execute search
+            logger.info(f"[{correlation_id}] Executing query with ranking={query_params.get('ranking')}, keys={list(query_params.keys())}")
+            
+            # Debug qtb type right before sending
+            if "input.query(qtb)" in query_params:
+                qtb_val = query_params["input.query(qtb)"]
+                logger.info(f"[{correlation_id}] RIGHT BEFORE QUERY - qtb type: {type(qtb_val)}, is_list: {isinstance(qtb_val, list)}")
+                if isinstance(qtb_val, list) and len(qtb_val) > 0:
+                    logger.info(f"[{correlation_id}] qtb[0] type: {type(qtb_val[0])}, value: {qtb_val[0]}")
+            
             if self.pool:
                 with self.pool.get_connection() as conn:
                     response = conn.query(body=query_params)
@@ -549,8 +549,8 @@ class VespaSearchBackend(SearchBackend):
         pure_visual_strategies = ["float_float", "binary_binary", "float_binary", "phased"]
         
         if ranking_profile in pure_visual_strategies:
-            # For global schemas, use nearestNeighbor; for patch-based, use regular ranking
-            if "global" in self.profile:
+            # For global schemas and video_chunks, use nearestNeighbor
+            if "global" in self.profile or self.schema_name == "video_chunks":
                 # Determine which field and query tensor to use for nearestNeighbor
                 if ranking_profile == "float_float":
                     nn_field = "embedding"
@@ -558,7 +558,15 @@ class VespaSearchBackend(SearchBackend):
                 elif ranking_profile == "binary_binary":
                     nn_field = "embedding_binary"
                     query_tensor_name = "qtb"
-                elif ranking_profile in ["float_binary", "phased"]:
+                elif ranking_profile == "float_binary":
+                    # For video_chunks, float_binary uses float embeddings
+                    if self.schema_name == "video_chunks":
+                        nn_field = "embedding"
+                        query_tensor_name = "qt"
+                    else:
+                        nn_field = "embedding_binary"
+                        query_tensor_name = "qtb"
+                elif ranking_profile == "phased":
                     nn_field = "embedding_binary"
                     query_tensor_name = "qtb"
                 else:
@@ -570,7 +578,7 @@ class VespaSearchBackend(SearchBackend):
                     "yql": f"select * from {self.schema_name} where {{targetHits: {limit}}}nearestNeighbor({nn_field}, {query_tensor_name})",
                     "ranking.profile": ranking_profile,
                     "hits": limit,
-                    "ranking": ranking_profile
+                    "ranking": ranking_profile,
                 }
             else:
                 # Patch-based embeddings - use regular ranking without nearestNeighbor
@@ -578,21 +586,42 @@ class VespaSearchBackend(SearchBackend):
                     "yql": f"select * from {self.schema_name} where true",
                     "ranking.profile": ranking_profile,
                     "hits": limit,
-                    "ranking": ranking_profile
+                    "ranking": ranking_profile,
                 }
         else:
-            # Hybrid or text search - use userInput
-            query_params = {
-                "yql": f"select * from {self.schema_name} where userInput(@userQuery)",
-                "userQuery": query_text,
-                "ranking.profile": ranking_profile,
-                "hits": limit
-            }
+            # Hybrid or text search
+            if self.schema_name == "video_chunks" and "hybrid" in ranking_profile and query_embeddings is not None:
+                # For video_chunks hybrid search, use TwelveLabs pattern
+                nn_field = "embedding_binary" if "binary" in ranking_profile else "embedding"
+                query_tensor_name = "qtb" if "binary" in ranking_profile else "qt"
+                query_params = {
+                    "yql": f"select * from {self.schema_name} where userInput(@userQuery) OR ({{targetHits: {limit}}}nearestNeighbor({nn_field}, {query_tensor_name}))",
+                    "userQuery": query_text,
+                    "ranking.profile": ranking_profile,
+                    "hits": limit,
+                }
+            else:
+                # Standard hybrid/text search
+                query_params = {
+                    "yql": f"select * from {self.schema_name} where userInput(@userQuery)",
+                    "userQuery": query_text,
+                    "ranking.profile": ranking_profile,
+                    "hits": limit,
+                }
         
         # Add tensor embeddings based on ranking profile
-        needs_binary = ranking_profile in ["binary_binary", "float_binary", "phased", "hybrid_binary_bm25", 
-                                          "hybrid_binary_bm25_no_description", "default"]
+        # Note: For video_chunks schema, float_binary only uses float embeddings, not binary
+        if self.schema_name == "video_chunks":
+            needs_binary = ranking_profile in ["binary_binary", "phased", "hybrid_binary_bm25", 
+                                              "hybrid_binary_bm25_no_description"]
+        else:
+            needs_binary = ranking_profile in ["binary_binary", "float_binary", "phased", "hybrid_binary_bm25", 
+                                              "hybrid_binary_bm25_no_description"]
+        
         needs_float = ranking_profile in ["float_float", "float_binary", "phased", "hybrid_float_bm25"]
+        
+        logger.info(f"[{correlation_id}] Ranking profile: {ranking_profile}, needs_float: {needs_float}, needs_binary: {needs_binary}")
+        logger.info(f"[{correlation_id}] Schema: {self.schema_name}, Profile: {self.profile}")
         
         if needs_float and query_embeddings is not None:
             # For global embeddings, use list format (like original code)
@@ -602,18 +631,32 @@ class VespaSearchBackend(SearchBackend):
                 logger.info(f"[{correlation_id}] Embeddings list type: {type(embeddings_list)}, length: {len(embeddings_list) if isinstance(embeddings_list, list) else 'scalar'}")
                 query_params["input.query(qt)"] = embeddings_list
             else:
-                # For patch-based models, use dict format
-                query_tensor = self._embeddings_to_vespa_format(query_embeddings, self.profile)
-                query_params["input.query(qt)"] = query_tensor
+                # For patch-based models and video_chunks (mapped tensors), still use list format
+                # Vespa will match against all cells in the mapped dimension
+                logger.info(f"[{correlation_id}] Using list format for query tensor")
+                query_params["input.query(qt)"] = query_embeddings.tolist()
         
         if needs_binary and query_embeddings is not None:
             # Generate binary embeddings from float embeddings
             binary_embeddings = self._generate_binary_embeddings(query_embeddings)
+            binary_list = [int(x) for x in binary_embeddings.tolist()]  # Ensure pure Python ints
+            
+            logger.info(f"[{correlation_id}] Binary embeddings shape: {binary_embeddings.shape}, dtype: {binary_embeddings.dtype}")
+            logger.info(f"[{correlation_id}] Binary list type: {type(binary_list)}, len: {len(binary_list)}, first 5: {binary_list[:5]}")
+            logger.info(f"[{correlation_id}] First element type: {type(binary_list[0]) if binary_list else 'empty'}")
+            
             if "global" in self.profile:
-                query_params["input.query(qtb)"] = binary_embeddings.tolist()
+                query_params["input.query(qtb)"] = binary_list
             else:
-                binary_tensor = self._embeddings_to_vespa_format(binary_embeddings, self.profile + "_binary")
-                query_params["input.query(qtb)"] = binary_tensor
+                # For all others including video_chunks, use list format for binary too
+                query_params["input.query(qtb)"] = binary_list
+        
+        # Special handling for float_float with video_chunks
+        if ranking_profile == "float_float" and self.schema_name == "video_chunks":
+            # Don't send qtb at all for float_float
+            if "input.query(qtb)" in query_params:
+                logger.warning(f"[{correlation_id}] Removing qtb from float_float query")
+                del query_params["input.query(qtb)"]
         
         # Add schema to query body to avoid conflicts with other schemas
         query_params["model.restrict"] = self.schema_name  # Must be string, not list!
@@ -624,7 +667,12 @@ class VespaSearchBackend(SearchBackend):
             qt_value = query_params["input.query(qt)"]
             logger.info(f"[{correlation_id}] input.query(qt) type: {type(qt_value)}, is list: {isinstance(qt_value, list)}")
             if isinstance(qt_value, list):
-                logger.info(f"[{correlation_id}] input.query(qt) length: {len(qt_value)}, first value: {qt_value[0] if qt_value else 'empty'}")
+                logger.info(f"[{correlation_id}] input.query(qt) length: {len(qt_value)}, first 5 values: {qt_value[:5] if qt_value else 'empty'}...")
+        if "input.query(qtb)" in query_params:
+            qtb_value = query_params["input.query(qtb)"]
+            logger.info(f"[{correlation_id}] input.query(qtb) type: {type(qtb_value)}, is list: {isinstance(qtb_value, list)}")
+            if isinstance(qtb_value, list):
+                logger.info(f"[{correlation_id}] input.query(qtb) length: {len(qtb_value)}, first 5 values: {qtb_value[:5] if qtb_value else 'empty'}...")
         
         return query_params
     
@@ -754,10 +802,6 @@ class VespaSearchBackend(SearchBackend):
                 "error_types": dict(self.metrics.error_types)
             }
         
-        # Encoder metrics
-        with self._encoder_lock:
-            for key, encoder in self._text_encoders.items():
-                metrics["encoder_metrics"][key] = encoder.get_metrics()
         
         # Connection pool metrics
         if self.pool:
@@ -793,12 +837,6 @@ class VespaSearchBackend(SearchBackend):
             health["status"] = "degraded"
             health["components"]["vespa"] = f"unhealthy: {e}"
         
-        # Check encoders
-        encoder_health = {}
-        with self._encoder_lock:
-            for key, encoder in self._text_encoders.items():
-                encoder_health[key] = encoder.health_check()
-        health["components"]["encoders"] = encoder_health
         
         # Add metrics
         health["metrics"] = self.get_metrics()
@@ -857,9 +895,6 @@ class VespaSearchBackend(SearchBackend):
         if self.pool:
             self.pool.close()
         
-        # Clear encoder cache
-        with self._encoder_lock:
-            self._text_encoders.clear()
         
         logger.info("VespaSearchBackend closed")
 

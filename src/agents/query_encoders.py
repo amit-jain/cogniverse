@@ -97,7 +97,11 @@ class VideoPrismQueryEncoder(QueryEncoder):
         
         # Use v2 model loader - it returns the videoprism loader instance
         config = {"colpali_model": model_name, "model_name": model_name}
+        logger.info(f"Creating VideoPrism loader for model: {model_name}")
         self.videoprism_loader, _ = get_or_load_model(model_name, config, logger)
+        logger.info(f"Got loader type: {type(self.videoprism_loader).__name__}")
+        logger.info(f"Loader has encode_text: {hasattr(self.videoprism_loader, 'encode_text')}")
+        logger.info(f"Loader has text_tokenizer: {hasattr(self.videoprism_loader, 'text_tokenizer')}")
         
         # Get text encoding components from the loader
         if hasattr(self.videoprism_loader, 'text_tokenizer'):
@@ -171,6 +175,12 @@ class QueryEncoderFactory:
             # VideoPrism Global (LVT) Large
             return VideoPrismQueryEncoder(model_name or "videoprism_lvt_public_v1_large")
         
+        elif profile.startswith("single__video_videoprism"):
+            # Single vector VideoPrism profiles (e.g., single__video_videoprism_large_6s)
+            if not model_name:
+                raise ValueError(f"No embedding_model specified for profile: {profile}")
+            return VideoPrismQueryEncoder(model_name)
+        
         else:
             raise ValueError(f"Unknown profile: {profile}")
     
@@ -183,5 +193,6 @@ class QueryEncoderFactory:
             "direct_video_frame",
             "direct_video_frame_large",
             "direct_video_global",
-            "direct_video_global_large"
+            "direct_video_global_large",
+            "single__video_videoprism_large_6s"  # TwelveLabs-style chunking
         ]

@@ -5,7 +5,7 @@ Converts JSON schema definitions to PyVespa objects
 
 import json
 from typing import Dict, List, Any, Optional
-from vespa.package import Schema, Document, Field, RankProfile, Function, SecondPhaseRanking, FieldSet
+from vespa.package import Schema, Document, Field, RankProfile, Function, FirstPhaseRanking, SecondPhaseRanking, FieldSet
 import logging
 
 class JsonSchemaParser:
@@ -72,7 +72,19 @@ class JsonSchemaParser:
         
         # Parse first phase
         if 'first_phase' in rp_config:
-            rank_params['first_phase'] = rp_config['first_phase']
+            first_phase = rp_config['first_phase']
+            if isinstance(first_phase, dict):
+                # Complex first phase with expression
+                rank_params['first_phase'] = FirstPhaseRanking(
+                    expression=first_phase['expression'],
+                    keep_rank_count=first_phase.get('keep_rank_count'),
+                    rank_score_drop_limit=first_phase.get('rank_score_drop_limit')
+                )
+            else:
+                # Simple first phase expression
+                rank_params['first_phase'] = FirstPhaseRanking(
+                    expression=first_phase
+                )
         
         # Parse second phase
         if 'second_phase' in rp_config:
@@ -95,7 +107,7 @@ class JsonSchemaParser:
             rank_params['inherits'] = rp_config['inherits']
         
         # Parse other optional parameters
-        for param in ['constants', 'summary_features', 'match_features', 'num_threads_per_search']:
+        for param in ['constants', 'summary_features', 'match_features', 'num_threads_per_search', 'timeout']:
             if param in rp_config:
                 rank_params[param] = rp_config[param]
         
