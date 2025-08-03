@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 from enum import Enum
+import asyncio
 
 # Add project root to path
 import sys
@@ -32,6 +33,8 @@ from src.processing.pipeline_steps import (
 )
 from src.processing.pipeline_steps.keyframe_extractor_fps import FPSKeyframeExtractor
 from src.processing.pipeline_steps.embedding_generator import create_embedding_generator
+from src.cache import CacheManager, CacheConfig
+from src.cache.pipeline_cache import PipelineArtifactCache
 
 
 class PipelineStep(Enum):
@@ -91,8 +94,10 @@ class VideoIngestionPipeline:
     def __init__(self, config: Optional[PipelineConfig] = None):
         self.config = config or PipelineConfig.from_config()
         self.app_config = get_config()
+        self.active_profile = self.app_config.get_active_profile()
         self.setup_directories()
         self.logger = self._setup_logging()
+        self._initialize_cache()
         self._initialize_pipeline_steps()
         
     def setup_directories(self):
@@ -160,6 +165,32 @@ class VideoIngestionPipeline:
         logger.info(f"Pipeline config: {self.config}")
         
         return logger
+    
+    def _initialize_cache(self):
+        """Initialize cache from configuration"""
+        cache_config_dict = self.app_config.get("pipeline_cache", {})
+        
+        if not cache_config_dict.get("enabled", False):
+            self.logger.info("Pipeline cache is disabled")
+            self.cache = None
+            return
+        
+        # Create cache configuration
+        cache_config = CacheConfig(
+            backends=cache_config_dict.get("backends", []),
+            default_ttl=cache_config_dict.get("default_ttl", 0),
+            enable_compression=cache_config_dict.get("enable_compression", True),
+            serialization_format=cache_config_dict.get("serialization_format", "pickle")
+        )
+        
+        # Initialize cache
+        self.cache_manager = CacheManager(cache_config)
+        self.cache = PipelineArtifactCache(
+            self.cache_manager,
+            ttl=cache_config_dict.get("default_ttl", 0),
+            profile=self.active_profile  # Include profile for namespacing
+        )
+        self.logger.info(f"Initialized pipeline cache for profile: {self.active_profile}")
     
     def _initialize_pipeline_steps(self):
         """Initialize all pipeline step handlers"""
@@ -242,19 +273,148 @@ class VideoIngestionPipeline:
     
     def extract_keyframes(self, video_path: Path) -> Dict[str, Any]:
         """Extract keyframes from video using KeyframeExtractor"""
-        return self.keyframe_extractor.extract_keyframes(video_path, self.profile_output_dir)
+        # Track if we used cache
+        used_cache = False
+        
+        # Check cache first if enabled
+        if self.cache:
+            # Get profile configuration to determine strategy
+            profiles = self.app_config.get("video_processing_profiles", {})
+            profile_config = profiles.get(self.active_profile, {})
+            pipeline_config = profile_config.get("pipeline_config", {})
+            
+            strategy = pipeline_config.get("keyframe_strategy", "similarity")
+            
+            # Try to get from cache
+            cached_result = asyncio.run(self.cache.get_keyframes(
+                str(video_path),
+                strategy=strategy,
+                threshold=pipeline_config.get("keyframe_threshold", self.config.keyframe_threshold),
+                fps=pipeline_config.get("keyframe_fps", 1.0),
+                max_frames=self.config.max_frames_per_video,
+                load_images=True  # Load images for processing
+            ))
+            
+            if cached_result:
+                self.logger.info(f"Using cached keyframes for {video_path.name}")
+                # Convert cache format to expected format
+                if isinstance(cached_result, tuple):
+                    metadata, images = cached_result
+                else:
+                    metadata = cached_result
+                    images = None
+                
+                # Save images to output directory for compatibility
+                if images:
+                    video_id = video_path.stem
+                    keyframes_dir = self.profile_output_dir / "keyframes" / video_id
+                    keyframes_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    import cv2
+                    for frame_id, image in images.items():
+                        frame_path = keyframes_dir / f"frame_{int(frame_id):04d}.jpg"
+                        cv2.imwrite(str(frame_path), image)
+                
+                return metadata
+        
+        # No cache or cache miss - extract keyframes
+        result = self.keyframe_extractor.extract_keyframes(video_path, self.profile_output_dir)
+        
+        # Cache the result if cache is enabled
+        if self.cache and result and "keyframes" in result:
+            # Load images for caching
+            video_id = video_path.stem
+            keyframes_dir = self.profile_output_dir / "keyframes" / video_id
+            images = {}
+            
+            import cv2
+            for kf in result.get("keyframes", []):
+                if "filename" in kf:
+                    frame_path = keyframes_dir / kf["filename"]
+                    if frame_path.exists():
+                        image = cv2.imread(str(frame_path))
+                        if image is not None:
+                            images[str(kf["frame_id"])] = image
+            
+            # Get strategy parameters
+            profile_config = self.app_config.get_profile_config(self.active_profile)
+            pipeline_config = profile_config.get("pipeline_config", {})
+            strategy = pipeline_config.get("keyframe_strategy", "similarity")
+            
+            asyncio.run(self.cache.set_keyframes(
+                str(video_path),
+                result,
+                images,
+                strategy=strategy,
+                threshold=pipeline_config.get("keyframe_threshold", self.config.keyframe_threshold),
+                fps=pipeline_config.get("keyframe_fps", 1.0),
+                max_frames=self.config.max_frames_per_video
+            ))
+            self.logger.info(f"Cached keyframes for {video_path.name}")
+        
+        return result
     
     def transcribe_audio(self, video_path: Path) -> Dict[str, Any]:
         """Extract and transcribe audio from video using AudioTranscriber"""
-        return self.audio_transcriber.transcribe_audio(video_path, self.profile_output_dir)
+        # Check cache first if enabled
+        if self.cache:
+            cached_result = asyncio.run(self.cache.get_transcript(
+                str(video_path),
+                model_size=self.audio_transcriber.model_size if hasattr(self.audio_transcriber, 'model_size') else "base",
+                language=None  # Auto-detect
+            ))
+            
+            if cached_result:
+                self.logger.info(f"Using cached transcript for {video_path.name}")
+                return cached_result
+        
+        # No cache or cache miss - transcribe audio
+        result = self.audio_transcriber.transcribe_audio(video_path, self.profile_output_dir)
+        
+        # Cache the result if cache is enabled
+        if self.cache and result:
+            asyncio.run(self.cache.set_transcript(
+                str(video_path),
+                result,
+                model_size=self.audio_transcriber.model_size if hasattr(self.audio_transcriber, 'model_size') else "base",
+                language=result.get("language")
+            ))
+            self.logger.info(f"Cached transcript for {video_path.name}")
+        
+        return result
     
-    def generate_descriptions(self, keyframes_metadata: Dict[str, Any]) -> Dict[str, Any]:
+    def generate_descriptions(self, keyframes_metadata: Dict[str, Any], video_path: Optional[Path] = None) -> Dict[str, Any]:
         """Generate VLM descriptions for keyframes using VLMDescriptor"""
         if not self.vlm_descriptor:
             print("  ⚠️ No VLM endpoint configured, skipping description generation")
             return {}
         
-        return self.vlm_descriptor.generate_descriptions(keyframes_metadata, self.profile_output_dir)
+        # Check cache first if enabled and video_path provided
+        if self.cache and video_path:
+            cached_result = asyncio.run(self.cache.get_descriptions(
+                str(video_path),
+                model_name=self.vlm_descriptor.model_name if hasattr(self.vlm_descriptor, 'model_name') else "Qwen/Qwen2-VL-2B-Instruct",
+                batch_size=self.config.vlm_batch_size
+            ))
+            
+            if cached_result:
+                self.logger.info(f"Using cached descriptions for {video_path.name}")
+                return {"descriptions": cached_result}
+        
+        # No cache or cache miss - generate descriptions
+        result = self.vlm_descriptor.generate_descriptions(keyframes_metadata, self.profile_output_dir)
+        
+        # Cache the result if cache is enabled
+        if self.cache and video_path and result and "descriptions" in result:
+            asyncio.run(self.cache.set_descriptions(
+                str(video_path),
+                result["descriptions"],
+                model_name=self.vlm_descriptor.model_name if hasattr(self.vlm_descriptor, 'model_name') else "Qwen/Qwen2-VL-2B-Instruct",
+                batch_size=self.config.vlm_batch_size
+            ))
+            self.logger.info(f"Cached descriptions for {video_path.name}")
+        
+        return result
     
     
     def generate_embeddings(self, results: Dict[str, Any]) -> Dict[str, Any]:
@@ -375,7 +535,7 @@ class VideoIngestionPipeline:
                 step_start = time.time()
                 self.logger.info("Step 3: Starting description generation")
                 keyframes_data = results["results"].get("keyframes", {})
-                descriptions_data = self.generate_descriptions(keyframes_data)
+                descriptions_data = self.generate_descriptions(keyframes_data, video_path)
                 results["results"]["descriptions"] = descriptions_data
                 step_time = time.time() - step_start
                 
