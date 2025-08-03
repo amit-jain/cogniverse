@@ -1,0 +1,118 @@
+version: '3.8'
+
+services:
+  phoenix:
+    container_name: cogniverse-phoenix
+    image: arizephoenix/phoenix:latest
+    ports:
+      - "6006:6006"      # Phoenix UI
+      - "9090:9090"      # Prometheus metrics (optional)
+    
+    environment:
+      # Phoenix configuration
+      - PHOENIX_PORT=6006
+      - PHOENIX_HOST=0.0.0.0
+      - PHOENIX_WORKING_DIR=/data/phoenix
+      
+      # Performance settings
+      - PHOENIX_MAX_TRACES=100000
+      - PHOENIX_ENABLE_PROMETHEUS=true
+      - PHOENIX_ENABLE_CORS=true
+      - PHOENIX_ENABLE_DATASET_VERSIONING=true
+      
+      # Logging
+      - PHOENIX_LOG_LEVEL=INFO
+      - PHOENIX_LOG_FILE=/data/phoenix/logs/phoenix.log
+      
+      # Storage settings
+      - PHOENIX_STORAGE_TYPE=filesystem
+      - PHOENIX_RETENTION_DAYS=30
+      
+    volumes:
+      # Main data volume for Phoenix persistence
+      - phoenix-data:/data/phoenix
+      
+      # Mount local data directory for easy access
+      - ./data/phoenix:/data/phoenix-local
+      
+      # Mount evaluation datasets
+      - ./data/eval:/data/eval:ro
+      
+      # Logs
+      - ./data/phoenix/logs:/data/phoenix/logs
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    restart: unless-stopped
+    
+    networks:
+      - cogniverse-net
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+
+  # Optional: PostgreSQL for Phoenix (for production use)
+  postgres:
+    container_name: cogniverse-postgres
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=phoenix
+      - POSTGRES_PASSWORD=phoenix_secret
+      - POSTGRES_DB=phoenix_db
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - cogniverse-net
+    restart: unless-stopped
+    profiles:
+      - production  # Only start with --profile production
+
+  # Optional: Redis for caching
+  redis:
+    container_name: cogniverse-redis
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - cogniverse-net
+    restart: unless-stopped
+    profiles:
+      - production  # Only start with --profile production
+
+volumes:
+  phoenix-data:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${PWD}/data/phoenix
+      o: bind
+  
+  postgres-data:
+    driver: local
+  
+  redis-data:
+    driver: local
+
+networks:
+  cogniverse-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
