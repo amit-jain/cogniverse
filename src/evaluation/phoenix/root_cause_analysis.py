@@ -115,6 +115,20 @@ class RootCauseAnalyzer:
                 t for t in successful_traces 
                 if t.duration_ms > threshold
             ]
+            
+            # Log threshold info for debugging
+            logger.info(f"RCA Performance Analysis Debug:")
+            logger.info(f"  Total traces analyzed: {len(traces)}")
+            logger.info(f"  Successful traces: {len(successful_traces)}")
+            logger.info(f"  Duration range: {min(durations):.2f}ms - {max(durations):.2f}ms")
+            logger.info(f"  Duration percentiles: P50={np.percentile(durations, 50):.2f}ms, P95={np.percentile(durations, 95):.2f}ms, P99={np.percentile(durations, 99):.2f}ms")
+            logger.info(f"  Performance threshold (P{performance_threshold_percentile}): {threshold:.2f}ms")
+            logger.info(f"  Found {len(performance_degraded)} slow traces")
+            
+            if performance_degraded:
+                sample_slow = performance_degraded[:3]
+                for trace in sample_slow:
+                    logger.info(f"    - {trace.operation}: {trace.duration_ms:.2f}ms (>{threshold:.2f}ms)")
         
         analysis = {
             "summary": {
@@ -145,6 +159,9 @@ class RootCauseAnalyzer:
             analysis["performance_analysis"] = self._analyze_performance_patterns(
                 performance_degraded, successful_traces
             )
+            # Add threshold info
+            analysis["performance_analysis"]["threshold"] = threshold
+            analysis["performance_analysis"]["threshold_percentile"] = performance_threshold_percentile
             perf_hypotheses = self._generate_performance_hypotheses(
                 performance_degraded, analysis["performance_analysis"]
             )
@@ -214,19 +231,31 @@ class RootCauseAnalyzer:
     ) -> Dict[str, Any]:
         """Analyze patterns in performance-degraded traces"""
         patterns = {
-            "slow_operations": Counter(),
+            "slow_operations": {},  # Changed from Counter to dict for detailed stats
             "slow_profiles": Counter(),
             "slow_strategies": Counter(),
             "latency_distribution": {},
             "resource_correlation": []
         }
         
+        # Collect detailed stats for slow operations
+        operation_durations = defaultdict(list)
         for trace in slow_traces:
-            patterns["slow_operations"][trace.operation] += 1
+            operation_durations[trace.operation].append(trace.duration_ms)
             if trace.profile:
                 patterns["slow_profiles"][trace.profile] += 1
             if trace.strategy:
                 patterns["slow_strategies"][trace.strategy] += 1
+        
+        # Calculate stats for each slow operation
+        for operation, durations in operation_durations.items():
+            patterns["slow_operations"][operation] = {
+                "count": len(durations),
+                "avg_duration": np.mean(durations),
+                "min_duration": np.min(durations),
+                "max_duration": np.max(durations),
+                "durations": durations[:5]  # Sample of actual durations
+            }
         
         # Analyze latency distribution
         slow_durations = [t.duration_ms for t in slow_traces]
@@ -501,20 +530,33 @@ class RootCauseAnalyzer:
         
         # Hypothesis 1: Specific operations are slow
         if performance_analysis["slow_operations"]:
-            slowest_op = performance_analysis["slow_operations"].most_common(1)[0]
-            op_name, count = slowest_op
+            # Find the operation with the most occurrences
+            slowest_op = None
+            max_count = 0
+            for op_name, op_stats in performance_analysis["slow_operations"].items():
+                count = op_stats["count"]
+                if count > max_count:
+                    max_count = count
+                    slowest_op = (op_name, op_stats)
             
-            hypotheses.append(RootCauseHypothesis(
-                hypothesis=f"Operation '{op_name}' experiencing performance degradation",
-                confidence=min(count / len(slow_traces), 0.9),
-                evidence=[
-                    f"{count} slow traces for this operation",
-                    f"Slowdown factor: {performance_analysis['latency_distribution']['slowdown_factor']:.1f}x"
-                ],
-                affected_traces=[t.trace_id for t in slow_traces if t.operation == op_name][:5],
-                suggested_action=f"Optimize '{op_name}' operation or increase resources",
-                category="performance"
-            ))
+            if slowest_op:
+                op_name, op_stats = slowest_op
+                count = op_stats["count"]
+                avg_duration = op_stats["avg_duration"]
+                
+                hypotheses.append(RootCauseHypothesis(
+                    hypothesis=f"Operation '{op_name}' experiencing performance degradation",
+                    confidence=min(count / len(slow_traces), 0.9),
+                    evidence=[
+                        f"{count} slow traces for this operation",
+                        f"Average duration: {avg_duration:.1f}ms",
+                        f"Duration range: {op_stats['min_duration']:.1f}-{op_stats['max_duration']:.1f}ms",
+                        f"Slowdown factor: {performance_analysis['latency_distribution']['slowdown_factor']:.1f}x"
+                    ],
+                    affected_traces=[t.trace_id for t in slow_traces if t.operation == op_name][:5],
+                    suggested_action=f"Optimize '{op_name}' operation or increase resources",
+                    category="performance"
+                ))
         
         # Hypothesis 2: Profile-specific slowness
         if performance_analysis["slow_profiles"]:

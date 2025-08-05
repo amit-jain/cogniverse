@@ -74,23 +74,63 @@ class PhoenixAnalytics:
         if operation_filter:
             filter_dict["name"] = operation_filter
         
-        # Fetch traces
-        traces = self.client.get_traces(filter=filter_dict, limit=limit)
+        # Fetch spans using the new Phoenix API
+        try:
+            spans_df = self.client.get_spans_dataframe(
+                start_time=start_time,
+                end_time=end_time,
+                limit=limit
+            )
+        except Exception as e:
+            logger.error(f"Failed to fetch spans: {e}")
+            return []
+        
+        if spans_df.empty:
+            return []
+        
+        # Filter by operation if specified
+        if operation_filter:
+            import re
+            pattern = re.compile(operation_filter)
+            spans_df = spans_df[spans_df['name'].apply(lambda x: bool(pattern.search(str(x))) if pd.notna(x) else False)]
+        
+        # Group by trace to get trace-level metrics
+        # Use parent_id to identify root spans (traces)
+        root_spans = spans_df[spans_df['parent_id'].isna()].copy()
         
         # Convert to TraceMetrics
         metrics = []
-        for trace in traces:
+        for _, span in root_spans.iterrows():
             try:
+                # Calculate duration
+                if pd.notna(span.get('end_time')) and pd.notna(span.get('start_time')):
+                    duration_ms = (span['end_time'] - span['start_time']).total_seconds() * 1000
+                else:
+                    duration_ms = 0
+                
+                # Extract attributes/metadata
+                attributes = span.get('attributes', {})
+                if isinstance(attributes, str):
+                    try:
+                        import json
+                        attributes = json.loads(attributes)
+                    except:
+                        attributes = {}
+                
+                # Get status
+                status_code = span.get('status_code', 'OK')
+                status = "success" if status_code in ['OK', 'UNSET', None] else "error"
+                
                 metric = TraceMetrics(
-                    trace_id=trace.get("trace_id", ""),
-                    timestamp=datetime.fromisoformat(trace.get("timestamp", datetime.now().isoformat())),
-                    duration_ms=trace.get("duration_ms", 0.0),
-                    operation=trace.get("name", "unknown"),
-                    status=trace.get("status", "success"),
-                    profile=trace.get("metadata", {}).get("profile"),
-                    strategy=trace.get("metadata", {}).get("strategy"),
-                    error=trace.get("error", None),
-                    metadata=trace.get("metadata", {})
+                    trace_id=str(span.get('trace_id', span.get('context.trace_id', ''))),
+                    timestamp=span.get('start_time', datetime.now()),
+                    duration_ms=duration_ms,
+                    operation=str(span.get('name', 'unknown')),
+                    status=status,
+                    profile=attributes.get('profile', attributes.get('metadata.profile')),
+                    strategy=attributes.get('strategy', attributes.get('ranking_strategy', attributes.get('metadata.strategy'))),
+                    error=span.get('status_message') if status == "error" else None,
+                    metadata=attributes
                 )
                 metrics.append(metric)
             except Exception as e:
@@ -124,8 +164,8 @@ class PhoenixAnalytics:
                 "duration_ms": t.duration_ms,
                 "operation": t.operation,
                 "status": t.status,
-                "profile": t.profile,
-                "strategy": t.strategy,
+                "profile": t.profile or "unknown",
+                "strategy": t.strategy or "unknown",
                 "hour": t.timestamp.hour,
                 "day": t.timestamp.date()
             }
@@ -405,12 +445,28 @@ class PhoenixAnalytics:
             for group_name in df[group_by].unique():
                 group_data = df[df[group_by] == group_name][metric]
                 fig.add_trace(
-                    go.Violin(y=group_data, name=str(group_name), box_visible=True),
+                    go.Violin(
+                        y=group_data, 
+                        name=str(group_name), 
+                        box_visible=True,
+                        meanline_visible=True,
+                        points='outliers',  # Show outlier points
+                        pointpos=-1.8,  # Position points to the left
+                        jitter=0.05  # Add some jitter to see overlapping points
+                    ),
                     row=2, col=1
                 )
         else:
             fig.add_trace(
-                go.Violin(y=df[metric], name=metric, box_visible=True),
+                go.Violin(
+                    y=df[metric], 
+                    name=metric, 
+                    box_visible=True,
+                    meanline_visible=True,
+                    points='outliers',  # Show outlier points
+                    pointpos=-1.8,  # Position points to the left
+                    jitter=0.05  # Add some jitter to see overlapping points
+                ),
                 row=2, col=1
             )
         
@@ -467,8 +523,11 @@ class PhoenixAnalytics:
                 "hour": t.timestamp.hour,
                 "day": t.timestamp.strftime("%Y-%m-%d"),
                 "weekday": t.timestamp.strftime("%A"),
+                "day_of_week": t.timestamp.strftime("%A"),  # alias for weekday
                 "profile": t.profile or "unknown",
-                "strategy": t.strategy or "unknown"
+                "strategy": t.strategy or "unknown",
+                "operation": t.operation or "unknown",
+                "status": t.status or "unknown"
             }
             for t in traces
         ])
@@ -536,7 +595,9 @@ class PhoenixAnalytics:
                 "timestamp": t.timestamp,
                 "duration_ms": t.duration_ms,
                 "trace_id": t.trace_id,
-                "operation": t.operation
+                "operation": t.operation,
+                "status": t.status,
+                "has_error": t.status == "error" or bool(t.error)
             }
             for t in traces
         ])
@@ -546,12 +607,37 @@ class PhoenixAnalytics:
             fig.add_annotation(text="No data available", x=0.5, y=0.5)
             return fig
         
+        # Handle error_rate metric
+        if metric == "error_rate":
+            # Calculate error rate by time window (e.g., hourly)
+            df['hour'] = df['timestamp'].dt.floor('h')
+            error_rates = df.groupby('hour').agg({
+                'has_error': 'mean',
+                'timestamp': 'first',
+                'operation': lambda x: 'mixed'
+            }).reset_index(drop=True)
+            error_rates['error_rate'] = error_rates['has_error'] * 100
+            error_rates['trace_id'] = 'aggregated'
+            df = error_rates
+            metric = 'error_rate'
+        
         # Detect outliers
+        if metric not in df.columns:
+            raise ValueError(f"Metric '{metric}' not found in data")
+        
         outlier_mask = self._is_outlier(df[metric].values)
         normal_points = df[~outlier_mask]
         outlier_points = df[outlier_mask]
         
         fig = go.Figure()
+        
+        # Format hover template based on metric
+        if metric == 'error_rate':
+            hover_format = '<b>%{text}</b><br>Time: %{x}<br>Error Rate: %{y:.1f}%<extra></extra>'
+            outlier_hover_format = '<b>OUTLIER: %{text}</b><br>Time: %{x}<br>Error Rate: %{y:.1f}%<br>Trace: %{customdata}<extra></extra>'
+        else:
+            hover_format = '<b>%{text}</b><br>Time: %{x}<br>Duration: %{y:.2f}ms<extra></extra>'
+            outlier_hover_format = '<b>OUTLIER: %{text}</b><br>Time: %{x}<br>Duration: %{y:.2f}ms<br>Trace: %{customdata}<extra></extra>'
         
         # Normal points
         fig.add_trace(go.Scatter(
@@ -561,7 +647,7 @@ class PhoenixAnalytics:
             name='Normal',
             marker=dict(color='blue', size=6, opacity=0.6),
             text=normal_points["operation"],
-            hovertemplate='<b>%{text}</b><br>Time: %{x}<br>Duration: %{y:.2f}ms<extra></extra>'
+            hovertemplate=hover_format
         ))
         
         # Outlier points
@@ -572,7 +658,7 @@ class PhoenixAnalytics:
             name='Outliers',
             marker=dict(color='red', size=10, symbol='x'),
             text=outlier_points["operation"],
-            hovertemplate='<b>OUTLIER: %{text}</b><br>Time: %{x}<br>Duration: %{y:.2f}ms<br>Trace: %{customdata}<extra></extra>',
+            hovertemplate=outlier_hover_format,
             customdata=outlier_points["trace_id"]
         ))
         
@@ -582,19 +668,35 @@ class PhoenixAnalytics:
         IQR = Q3 - Q1
         upper_bound = Q3 + 1.5 * IQR
         
+        # Format annotation text based on metric
+        if metric == 'error_rate':
+            threshold_text = f"Outlier Threshold ({upper_bound:.1f}%)"
+            unit = "%"
+        else:
+            threshold_text = f"Outlier Threshold ({upper_bound:.2f}ms)"
+            unit = "ms"
+        
         fig.add_hline(y=upper_bound, line_dash="dash", line_color="orange",
-                     annotation_text=f"Outlier Threshold ({upper_bound:.2f}ms)")
+                     annotation_text=threshold_text)
         
         # Add percentile lines
         for p in [50, 95, 99]:
             val = df[metric].quantile(p/100)
             fig.add_hline(y=val, line_dash="dot", line_color="gray",
-                         annotation_text=f"P{p} ({val:.2f}ms)")
+                         annotation_text=f"P{p} ({val:.2f}{unit})")
+        
+        # Set appropriate title and y-axis label
+        if metric == 'error_rate':
+            title = "Error Rate Outlier Detection"
+            y_title = "Error Rate (%)"
+        else:
+            title = f"Response Time Outlier Detection ({metric})"
+            y_title = f"{metric.replace('_', ' ').title()}"
         
         fig.update_layout(
-            title=f"Outlier Detection: {metric}",
+            title=title,
             xaxis_title="Time",
-            yaxis_title=f"{metric} (ms)",
+            yaxis_title=y_title,
             hovermode='closest',
             showlegend=True,
             height=600
