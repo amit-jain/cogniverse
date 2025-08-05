@@ -17,7 +17,7 @@ import pandas as pd
 import numpy as np
 import phoenix as px
 from phoenix.evals import (
-    RetrievalEvaluator,
+    RelevanceEvaluator,  # Changed from RetrievalEvaluator
     run_evals,
     default_templates
 )
