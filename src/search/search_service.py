@@ -1,8 +1,9 @@
 """Unified search service that coordinates query encoding and backend search."""
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
+import os
 
 from src.models import get_or_load_model
 from src.agents.query_encoders import QueryEncoderFactory
@@ -11,6 +12,58 @@ from .search import SearchBackend, SearchResult
 from .vespa_search_backend import VespaSearchBackend
 
 logger = logging.getLogger(__name__)
+
+# Initialize Phoenix instrumentation if available
+PHOENIX_ENABLED = False
+tracer = None
+
+def _init_phoenix_instrumentation():
+    """Initialize Phoenix instrumentation - called lazily to avoid circular imports"""
+    global PHOENIX_ENABLED, tracer
+    
+    if PHOENIX_ENABLED:  # Already initialized
+        return
+        
+    try:
+        import phoenix as px
+        from opentelemetry import trace
+        from opentelemetry.trace import SpanKind, Status, StatusCode
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        
+        # Set up Phoenix as the trace collector
+        if os.getenv("PHOENIX_COLLECTOR_ENDPOINT"):
+            endpoint = os.getenv("PHOENIX_COLLECTOR_ENDPOINT")
+        else:
+            endpoint = "http://localhost:6006/v1/traces"
+        
+        # Configure tracer provider
+        tracer_provider = TracerProvider()
+        # Use gRPC endpoint format (without http://)
+        grpc_endpoint = "localhost:4317"  # Phoenix's OTLP gRPC endpoint
+        span_processor = BatchSpanProcessor(
+            OTLPSpanExporter(endpoint=grpc_endpoint, insecure=True)
+        )
+        tracer_provider.add_span_processor(span_processor)
+        trace.set_tracer_provider(tracer_provider)
+        
+        # Get tracer
+        tracer = trace.get_tracer(__name__)
+        
+        # Initialize Cogniverse instrumentation
+        from src.evaluation.phoenix.instrumentation import CogniverseInstrumentor
+        instrumentor = CogniverseInstrumentor()
+        instrumentor.instrument(tracer_provider=tracer_provider)
+        
+        logger.info(f"Phoenix instrumentation initialized with endpoint: {endpoint}")
+        PHOENIX_ENABLED = True
+    except Exception as e:
+        import traceback
+        logger.warning(f"Phoenix instrumentation not available: {e}")
+        traceback.print_exc()
+        PHOENIX_ENABLED = False
+        tracer = None
 
 
 class SearchService:
@@ -26,6 +79,9 @@ class SearchService:
         """
         self.config = config
         self.profile = profile
+        
+        # Initialize Phoenix instrumentation on first use
+        _init_phoenix_instrumentation()
         
         # Get strategy from registry
         self.registry = get_registry()
@@ -91,17 +147,13 @@ class SearchService:
         Returns:
             List of SearchResult objects
         """
-        # Let backend decide if embeddings are needed based on ranking strategy
         logger.info(f"Searching with backend...")
-        query_embeddings = None
         
-        # Search
-        logger.info(f"Searching with backend...")
         if ranking_strategy:
             logger.info(f"Using ranking strategy: {ranking_strategy}")
         
         results = self.search_backend.search(
-            query_embeddings=query_embeddings,
+            query_embeddings=None,
             query_text=query,
             top_k=top_k,
             filters=filters,
