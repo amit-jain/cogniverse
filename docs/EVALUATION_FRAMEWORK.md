@@ -525,3 +525,130 @@ monitor.log_retrieval_event({
 # Get metrics summary
 summary = monitor.get_metrics_summary()
 ```
+
+## Analytics and Visualization
+
+The framework provides comprehensive analytics capabilities for analyzing collected traces:
+
+### Command-Line Analytics
+
+```bash
+# Analyze traces from the last 24 hours
+python scripts/analyze_traces.py analyze --hours 24
+
+# Real-time monitoring dashboard
+python scripts/analyze_traces.py monitor --refresh 30 --window 60
+
+# Generate comprehensive report
+python scripts/analyze_traces.py report --format all
+```
+
+### Available Analytics
+
+- **Request Statistics**: Total requests, requests per time period
+- **Response Time Analysis**: Mean, median, percentiles (P50, P75, P90, P95, P99)
+- **Outlier Detection**: Identify and visualize response time outliers
+- **Temporal Patterns**: Request distribution by hour, day
+- **Profile Comparison**: Compare performance across different profiles
+- **Error Analysis**: Error rates and types
+
+### Visualization Types
+
+1. **Time Series Plots**: Response times over time with percentile bands
+2. **Distribution Plots**: Histograms, box plots, violin plots, ECDF
+3. **Heatmaps**: Request patterns by hour and day
+4. **Outlier Plots**: Highlight and analyze outliers
+5. **Comparison Charts**: Compare metrics across profiles and strategies
+
+### Programmatic Analytics
+
+```python
+from src.evaluation.phoenix.analytics import PhoenixAnalytics
+from datetime import datetime, timedelta
+
+# Initialize analytics
+analytics = PhoenixAnalytics()
+
+# Get traces from last hour
+end_time = datetime.now()
+start_time = end_time - timedelta(hours=1)
+traces = analytics.get_traces(start_time, end_time)
+
+# Calculate statistics
+stats = analytics.calculate_statistics(traces)
+print(f"Mean response time: {stats['response_time']['mean']:.2f}ms")
+print(f"P95 response time: {stats['response_time']['p95']:.2f}ms")
+print(f"Outlier percentage: {stats['outliers']['percentage']:.2f}%")
+
+# Create visualizations
+time_series_fig = analytics.create_time_series_plot(traces)
+outlier_fig = analytics.create_outlier_plot(traces)
+
+# Generate comprehensive report
+report = analytics.generate_report(start_time, end_time, "report.json")
+```
+
+### Real-Time Monitoring
+
+Monitor traces in real-time with automatic refresh:
+
+```bash
+# Start real-time monitoring with 30-second refresh
+python scripts/analyze_traces.py monitor --refresh 30 --window 60
+```
+
+This displays:
+- Current request rate
+- Response time statistics
+- Recent traces
+- Active alerts
+- Auto-refreshes every 30 seconds
+
+### Interactive Dashboard
+
+For a comprehensive web-based dashboard with real-time visualizations:
+
+```bash
+# Start the Streamlit dashboard
+streamlit run scripts/phoenix_dashboard.py
+
+# Access at http://localhost:8501
+```
+
+The dashboard provides:
+- **Real-time analytics** with auto-refresh
+- **Interactive visualizations** (time series, distributions, heatmaps)
+- **Root Cause Analysis** for automatic failure diagnosis
+- **Export capabilities** (JSON, CSV, HTML reports)
+
+See [Phoenix Dashboard Documentation](PHOENIX_DASHBOARD.md) for detailed information.
+
+### Root Cause Analysis
+
+The framework includes automated root cause analysis for failures:
+
+```python
+from src.evaluation.phoenix.root_cause_analysis import RootCauseAnalyzer
+
+# Initialize analyzer
+rca = RootCauseAnalyzer()
+
+# Analyze failures
+analysis = rca.analyze_failures(
+    traces,
+    include_performance=True,
+    performance_threshold_percentile=95
+)
+
+# Get top root causes
+for hypothesis in analysis['root_causes'][:3]:
+    print(f"{hypothesis.hypothesis} (Confidence: {hypothesis.confidence:.0%})")
+    print(f"Suggested Action: {hypothesis.suggested_action}")
+```
+
+RCA features:
+- Automated error classification
+- Pattern detection and correlation analysis
+- Temporal pattern analysis (burst detection)
+- Performance degradation analysis
+- Prioritized recommendations
