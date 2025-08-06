@@ -28,25 +28,30 @@ def _init_phoenix_instrumentation():
         import phoenix as px
         from opentelemetry import trace
         from opentelemetry.trace import SpanKind, Status, StatusCode
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
         
-        # Set up Phoenix as the trace collector
-        if os.getenv("PHOENIX_COLLECTOR_ENDPOINT"):
-            endpoint = os.getenv("PHOENIX_COLLECTOR_ENDPOINT")
-        else:
-            endpoint = "http://localhost:6006/v1/traces"
+        # Check if tracer provider is already set (e.g., by experiments)
+        current_provider = trace.get_tracer_provider()
         
-        # Configure tracer provider
-        tracer_provider = TracerProvider()
-        # Use gRPC endpoint format (without http://)
-        grpc_endpoint = "localhost:4317"  # Phoenix's OTLP gRPC endpoint
-        span_processor = BatchSpanProcessor(
-            OTLPSpanExporter(endpoint=grpc_endpoint, insecure=True)
-        )
-        tracer_provider.add_span_processor(span_processor)
-        trace.set_tracer_provider(tracer_provider)
+        # Check if we have a real tracer provider (not the default no-op one)
+        if current_provider is not None and \
+           str(type(current_provider)) != "<class 'opentelemetry.trace._DefaultTracerProvider'>":
+            # Reuse existing tracer provider
+            tracer_provider = current_provider
+            logger.info("Reusing existing tracer provider")
+        else:
+            # Create new tracer provider
+            endpoint = os.getenv("PHOENIX_COLLECTOR_ENDPOINT", "http://localhost:6006") + "/v1/traces"
+            
+            tracer_provider = TracerProvider()
+            span_processor = BatchSpanProcessor(
+                OTLPSpanExporter(endpoint=endpoint)
+            )
+            tracer_provider.add_span_processor(span_processor)
+            trace.set_tracer_provider(tracer_provider)
+            logger.info(f"Created new tracer provider with endpoint: {endpoint}")
         
         # Get tracer
         tracer = trace.get_tracer(__name__)
@@ -56,7 +61,7 @@ def _init_phoenix_instrumentation():
         instrumentor = CogniverseInstrumentor()
         instrumentor.instrument(tracer_provider=tracer_provider)
         
-        logger.info(f"Phoenix instrumentation initialized with endpoint: {endpoint}")
+        logger.info("Phoenix instrumentation initialized")
         PHOENIX_ENABLED = True
     except Exception as e:
         import traceback

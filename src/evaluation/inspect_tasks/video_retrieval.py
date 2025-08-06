@@ -248,7 +248,7 @@ def load_video_retrieval_dataset(dataset_path: Optional[str] = None) -> Dataset:
             )
             samples.append(sample)
         
-        return Dataset(samples=samples)
+        return Dataset(name="video_retrieval", samples=samples)
     else:
         # Load from file
         import json
@@ -270,7 +270,7 @@ def load_video_retrieval_dataset(dataset_path: Optional[str] = None) -> Dataset:
             )
             samples.append(sample)
         
-        return Dataset(samples=samples)
+        return Dataset(name="video_retrieval", samples=samples)
 
 
 def load_temporal_dataset(dataset_path: Optional[str] = None) -> Dataset:
@@ -307,7 +307,7 @@ def load_temporal_dataset(dataset_path: Optional[str] = None) -> Dataset:
             )
             samples.append(sample)
         
-        return Dataset(samples=samples)
+        return Dataset(name="video_retrieval", samples=samples)
     else:
         # Load from file
         import json
@@ -329,7 +329,7 @@ def load_temporal_dataset(dataset_path: Optional[str] = None) -> Dataset:
             )
             samples.append(sample)
         
-        return Dataset(samples=samples)
+        return Dataset(name="video_retrieval", samples=samples)
 
 
 def load_multimodal_dataset(dataset_path: Optional[str] = None) -> Dataset:
@@ -371,7 +371,7 @@ def load_multimodal_dataset(dataset_path: Optional[str] = None) -> Dataset:
             )
             samples.append(sample)
         
-        return Dataset(samples=samples)
+        return Dataset(name="video_retrieval", samples=samples)
     else:
         # Load from file
         import json
@@ -395,4 +395,4 @@ def load_multimodal_dataset(dataset_path: Optional[str] = None) -> Dataset:
             )
             samples.append(sample)
         
-        return Dataset(samples=samples)
+        return Dataset(name="video_retrieval", samples=samples)

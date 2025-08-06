@@ -191,7 +191,7 @@ class ExperimentOrchestrator:
         logger.info(f"Starting experiment '{config.name}' (ID: {experiment_id})")
         
         # Load dataset
-        dataset = self.client.get_dataset(config.dataset_name)
+        dataset = self.client.get_dataset(name=config.dataset_name)
         if dataset is None:
             raise ValueError(f"Dataset '{config.dataset_name}' not found")
         
@@ -239,15 +239,65 @@ class ExperimentOrchestrator:
         results = []
         
         # Process dataset in batches
-        for batch_start in range(0, len(dataset), config.batch_size):
-            batch_end = min(batch_start + config.batch_size, len(dataset))
-            batch = dataset.iloc[batch_start:batch_end]
+        # Get examples from dataset
+        if hasattr(dataset, 'examples'):
+            # Phoenix Dataset object
+            example_items = list(dataset.examples.items())
+        else:
+            # Assume it's a DataFrame or similar
+            if hasattr(dataset, 'as_dataframe'):
+                dataset_df = dataset.as_dataframe()
+            elif hasattr(dataset, 'to_pandas'):
+                dataset_df = dataset.to_pandas()
+            elif isinstance(dataset, pd.DataFrame):
+                dataset_df = dataset
+            else:
+                dataset_df = pd.DataFrame(dataset)
+            
+            # Convert DataFrame to example items format
+            example_items = []
+            for idx, row in dataset_df.iterrows():
+                example_id = row.get("id", f"example_{idx}")
+                example_items.append((example_id, row))
+        
+        for batch_start in range(0, len(example_items), config.batch_size):
+            batch_end = min(batch_start + config.batch_size, len(example_items))
+            batch = example_items[batch_start:batch_end]
             
             # Run evaluations in parallel for this batch
             tasks = []
-            for _, row in batch.iterrows():
-                query = row["input"]["query"]
-                expected_output = row["expected_output"]
+            for example_id, example in batch:
+                # Handle Phoenix Example object
+                if hasattr(example, 'input') and hasattr(example, 'output'):
+                    # Phoenix Example object
+                    input_data = example.input
+                    output_data = example.output
+                    
+                    # Extract query and expected output
+                    query = input_data.get("query", "")
+                    
+                    # Parse expected videos from string representation
+                    import ast
+                    expected_videos_str = output_data.get("expected_videos", "[]")
+                    try:
+                        expected_videos = ast.literal_eval(expected_videos_str) if isinstance(expected_videos_str, str) else expected_videos_str
+                    except:
+                        expected_videos = []
+                    
+                    expected_output = {
+                        "expected_videos": expected_videos,
+                        "relevance_scores": {}
+                    }
+                else:
+                    # DataFrame row
+                    if isinstance(example.get("input"), dict) and "input" in example["input"]:
+                        # Nested structure
+                        query = example["input"]["input"]["query"]
+                        expected_output = example["output"]["expected_output"]
+                    else:
+                        # Direct structure
+                        query = example["input"]["query"]
+                        expected_output = example["expected_output"]
                 
                 for profile in config.profiles:
                     for strategy in config.strategies:
@@ -257,7 +307,7 @@ class ExperimentOrchestrator:
                         # Create evaluation task
                         task = self._create_evaluation_task(
                             evaluator, query, expected_output,
-                            experiment_id, iteration, row["id"]
+                            experiment_id, iteration, example_id
                         )
                         tasks.append(task)
             
@@ -293,33 +343,39 @@ class ExperimentOrchestrator:
         """Create an evaluation task with tracing"""
         
         # Create Phoenix trace
-        with px.trace(
+        from phoenix.trace import using_project
+        from opentelemetry import trace as otel_trace
+        
+        tracer = otel_trace.get_tracer(__name__)
+        
+        with tracer.start_as_current_span(
             name="experiment_evaluation",
-            kind="EVALUATION"
-        ) as trace:
-            trace.set_metadata({
+            kind=otel_trace.SpanKind.CLIENT
+        ) as span:
+            span.set_attributes({
                 "experiment_id": experiment_id,
                 "iteration": iteration,
                 "example_id": example_id,
                 "profile": evaluator.profile,
-                "strategy": evaluator.strategy
+                "strategy": evaluator.strategy,
+                "query": query
             })
-            trace.set_inputs({"query": query})
             
             # Run evaluation
             result = await evaluator.evaluate(query, expected_output)
             
-            # Add trace outputs
+            # Add span outputs
             if result["status"] == "success":
-                trace.set_outputs({
-                    "results": result.get("results", [])[:5],
-                    "metrics": result.get("metrics", {})
+                span.set_attributes({
+                    "num_results": len(result.get("results", [])),
+                    "mrr": result.get("metrics", {}).get("mrr", 0.0),
+                    "latency_ms": result.get("latency_ms", 0)
                 })
             else:
-                trace.set_outputs({"error": result.get("error", "Unknown error")})
+                span.set_status(otel_trace.Status(otel_trace.StatusCode.ERROR, result.get("error", "Unknown error")))
             
             # Add trace ID to result
-            result["trace_id"] = trace.trace_id
+            result["trace_id"] = format(span.get_span_context().trace_id, '032x')
             result["experiment_id"] = experiment_id
             result["iteration"] = iteration
             result["example_id"] = example_id
@@ -401,25 +457,34 @@ class ExperimentOrchestrator:
     def _log_experiment_to_phoenix(self, experiment_id: str, summary: Dict[str, Any]):
         """Log experiment summary to Phoenix"""
         try:
-            # Create experiment record
-            px.log_experiment(
-                experiment_id=experiment_id,
-                metadata={
-                    "summary": summary,
-                    "timestamp": datetime.now().isoformat()
-                }
-            )
+            # Phoenix doesn't have a direct log_experiment API
+            # Instead, we'll use OpenTelemetry to create experiment spans
+            from opentelemetry import trace as otel_trace
             
-            # Log configuration comparisons
-            for config_key, config_summary in summary.get("configurations", {}).items():
-                px.log_metrics(
-                    name=f"experiment_{experiment_id}_{config_key}",
-                    metrics=config_summary.get("metrics", {}),
-                    metadata={
-                        "experiment_id": experiment_id,
-                        "configuration": config_key
-                    }
-                )
+            tracer = otel_trace.get_tracer(__name__)
+            
+            # Create experiment summary span
+            with tracer.start_as_current_span(
+                name=f"experiment_{experiment_id}_summary",
+                kind=otel_trace.SpanKind.CLIENT
+            ) as span:
+                span.set_attributes({
+                    "experiment_id": experiment_id,
+                    "total_evaluations": summary.get("total_evaluations", 0),
+                    "successful_evaluations": summary.get("successful_evaluations", 0),
+                    "failed_evaluations": summary.get("failed_evaluations", 0),
+                    "timestamp": datetime.now().isoformat()
+                })
+                
+                # Log configuration metrics
+                for config_key, config_summary in summary.get("configurations", {}).items():
+                    if "metrics" in config_summary:
+                        for metric_name, metric_stats in config_summary["metrics"].items():
+                            if isinstance(metric_stats, dict):
+                                span.set_attributes({
+                                    f"{config_key}.{metric_name}.mean": metric_stats.get("mean", 0),
+                                    f"{config_key}.{metric_name}.std": metric_stats.get("std", 0)
+                                })
                 
         except Exception as e:
             logger.error(f"Failed to log experiment to Phoenix: {e}")

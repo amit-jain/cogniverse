@@ -37,6 +37,7 @@ start_phoenix() {
     docker run -d \
         --name "$CONTAINER_NAME" \
         -p "${PORT}:6006" \
+        -p "4317:4317" \
         -v "$(realpath "$DATA_DIR"):/data" \
         -e PHOENIX_WORKING_DIR=/data \
         -e PHOENIX_ENABLE_PROMETHEUS=true \
