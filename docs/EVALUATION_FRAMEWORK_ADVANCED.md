@@ -437,6 +437,252 @@ print(df.pivot_table(
 ))
 ```
 
+## Automatic Golden Dataset Creation
+
+### Overview
+
+The framework can automatically identify challenging queries from historical traces and create golden datasets for continuous improvement.
+
+### How It Works
+
+1. **Trace Analysis**: Examines Phoenix traces over a specified time period
+2. **Performance Scoring**: Identifies queries with consistently low evaluation scores
+3. **Pattern Recognition**: Groups similar failing queries
+4. **Dataset Generation**: Creates golden datasets with expected results
+
+### Usage
+
+#### Generate Golden Dataset from Traces
+
+```bash
+# Basic usage - analyze last 48 hours
+uv run python scripts/create_golden_dataset_from_traces.py
+
+# Custom parameters
+uv run python scripts/create_golden_dataset_from_traces.py \
+    --hours 72 \                    # Look back 72 hours
+    --min-occurrences 3 \            # Query must appear 3+ times
+    --score-threshold 0.4 \          # Max avg score for inclusion
+    --top-n 30 \                     # Include top 30 queries
+    --csv                            # Also export as CSV
+```
+
+#### Command-Line Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--hours` | 48 | Hours back to analyze |
+| `--min-occurrences` | 2 | Minimum query occurrences |
+| `--score-threshold` | 0.5 | Maximum avg score for challenging queries |
+| `--top-n` | 20 | Number of queries to include |
+| `--output` | auto | Output file path |
+| `--csv` | False | Also save as CSV |
+| `--dry-run` | False | Preview without saving |
+
+### Dataset Management
+
+#### List Available Datasets
+
+```bash
+uv run python scripts/manage_golden_datasets.py list
+```
+
+Output:
+```
+Available golden datasets:
+  auto_golden_dataset_20240106_143022.json     12.3KB  2024-01-06 14:30
+  manual_golden_dataset.json                    8.5KB  2024-01-05 10:15
+  merged_dataset_20240105.json                 20.1KB  2024-01-05 16:22
+```
+
+#### Merge Multiple Datasets
+
+```bash
+# Union strategy (combine all queries)
+uv run python scripts/manage_golden_datasets.py merge \
+    dataset1.json dataset2.json \
+    --strategy union \
+    --output merged.json
+
+# Intersection (only common queries)
+uv run python scripts/manage_golden_datasets.py merge \
+    dataset1.json dataset2.json \
+    --strategy intersection
+```
+
+#### Filter Datasets
+
+```bash
+# Filter by score and difficulty
+uv run python scripts/manage_golden_datasets.py filter \
+    dataset.json \
+    --max-score 0.3 \
+    --difficulty challenging \
+    --min-videos 2
+```
+
+#### View Statistics
+
+```bash
+uv run python scripts/manage_golden_datasets.py stats dataset.json
+```
+
+Output:
+```
+Dataset Statistics for auto_golden_dataset.json
+==================================================
+Total queries: 20
+Total expected videos: 85
+Avg videos per query: 4.2
+Queries with scores: 15
+
+Score Statistics:
+  Average: 0.342
+  Min: 0.125
+  Max: 0.498
+
+Difficulty Distribution:
+  challenging: 15
+  medium: 5
+```
+
+#### Update Existing Dataset
+
+```bash
+# Add new queries to existing dataset
+uv run python scripts/manage_golden_datasets.py update \
+    base_dataset.json \
+    new_queries.json \
+    --output updated.json
+
+# Overwrite existing queries
+uv run python scripts/manage_golden_datasets.py update \
+    base_dataset.json \
+    new_queries.json \
+    --overwrite
+```
+
+#### Export as Python Code
+
+```bash
+# Generate Python code for integration
+uv run python scripts/manage_golden_datasets.py export \
+    dataset.json \
+    --output golden_dataset.py
+```
+
+### Integration with Evaluators
+
+The golden dataset evaluator automatically loads generated datasets:
+
+```python
+from src.evaluation.evaluators.golden_dataset import load_golden_dataset_from_file
+
+# Automatically loads latest generated dataset
+dataset = load_golden_dataset_from_file()
+
+# Or specify a specific file
+dataset = load_golden_dataset_from_file("data/golden_datasets/custom.json")
+```
+
+### Automated Workflow
+
+#### Continuous Improvement Pipeline
+
+1. **Run experiments** with current configuration
+2. **Analyze traces** to find low-scoring queries
+3. **Generate golden dataset** from failures
+4. **Update evaluators** with new challenging queries
+5. **Re-run experiments** to validate improvements
+
+#### Example Automation Script
+
+```bash
+#!/bin/bash
+# Weekly golden dataset update
+
+# 1. Generate dataset from last week's traces
+uv run python scripts/create_golden_dataset_from_traces.py \
+    --hours 168 \
+    --score-threshold 0.4 \
+    --output data/golden_datasets/weekly_$(date +%Y%m%d).json
+
+# 2. Merge with existing master dataset
+uv run python scripts/manage_golden_datasets.py merge \
+    data/golden_datasets/master.json \
+    data/golden_datasets/weekly_*.json \
+    --strategy union \
+    --output data/golden_datasets/master_new.json
+
+# 3. Run experiments with new dataset
+uv run python scripts/run_experiments_with_visualization.py \
+    --dataset-path data/golden_datasets/master_new.json
+```
+
+### Best Practices
+
+#### 1. Regular Updates
+- Generate golden datasets weekly or after major changes
+- Review and curate automatically generated queries
+- Track dataset evolution over time
+
+#### 2. Score Thresholds
+- **< 0.3**: Very challenging queries (system limitations)
+- **0.3-0.5**: Moderately challenging (improvement targets)
+- **0.5-0.7**: Edge cases (refinement opportunities)
+
+#### 3. Dataset Curation
+- Review auto-generated queries for relevance
+- Remove queries that are genuinely ambiguous
+- Add manual annotations for expected results
+- Balance dataset across different query types
+
+#### 4. Version Control
+- Track golden datasets in git for history
+- Document changes and rationale
+- Tag datasets with experiment results
+
+### Troubleshooting
+
+#### No Traces Found
+```bash
+# Check Phoenix is running and has data
+curl http://localhost:6006/api/traces
+
+# Increase time window
+--hours 168  # Look back 1 week
+
+# Lower occurrence threshold
+--min-occurrences 1
+```
+
+#### Empty Golden Dataset
+```bash
+# Increase score threshold (include higher scores)
+--score-threshold 0.7
+
+# Reduce minimum occurrences
+--min-occurrences 1
+
+# Check evaluation scores exist
+uv run python -c "import phoenix as px; print(px.Client().get_evaluations_dataframe())"
+```
+
+#### Dataset Too Large
+```bash
+# Limit number of queries
+--top-n 10
+
+# Filter by score
+--score-threshold 0.3  # Only very low scores
+
+# Filter after generation
+uv run python scripts/manage_golden_datasets.py filter \
+    large_dataset.json \
+    --max-score 0.4 \
+    --output filtered.json
+```
+
 ## Appendix
 
 ### Supported LLM Models
