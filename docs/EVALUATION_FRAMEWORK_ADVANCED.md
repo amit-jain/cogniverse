@@ -1,0 +1,467 @@
+# Advanced Evaluation Framework Documentation
+
+## Table of Contents
+1. [Overview](#overview)
+2. [Evaluator Types](#evaluator-types)
+3. [Quality Evaluators](#quality-evaluators)
+4. [LLM-as-Judge Evaluators](#llm-as-judge-evaluators)
+5. [Running Experiments](#running-experiments)
+6. [Configuration](#configuration)
+7. [Results Analysis](#results-analysis)
+8. [Best Practices](#best-practices)
+
+## Overview
+
+The advanced evaluation framework provides comprehensive assessment of video retrieval quality through multiple evaluator types:
+
+- **Statistical Evaluators**: Fast, deterministic metrics (relevance, diversity, distribution)
+- **LLM Evaluators**: Deep semantic understanding using language models
+- **Golden Dataset Evaluators**: Comparison against ground truth
+- **Hybrid Approaches**: Combining multiple evaluation strategies
+
+## Evaluator Types
+
+### 1. Reference-Free Evaluators
+
+Evaluate retrieval quality without ground truth data:
+
+```python
+# Quality evaluators (statistical)
+- SyncQueryResultRelevanceEvaluator  # Score distribution analysis
+- SyncResultDiversityEvaluator       # Unique video ratio
+- SyncResultDistributionEvaluator    # Statistical properties
+- SyncTemporalCoverageEvaluator      # Video segment coverage
+
+# LLM evaluators
+- SyncLLMReferenceFreeEvaluator      # Semantic relevance judgment
+```
+
+### 2. Reference-Based Evaluators
+
+Compare against expected results:
+
+```python
+- SyncGoldenDatasetEvaluator         # Exact match against golden set
+- SyncLLMReferenceBasedEvaluator     # LLM comparison with ground truth
+```
+
+### 3. Hybrid Evaluators
+
+```python
+- SyncLLMHybridEvaluator             # Combines reference-free and reference-based
+```
+
+## Quality Evaluators
+
+### Relevance Evaluator
+Analyzes the score distribution of top results:
+- **High relevance**: Average score ≥ 0.8
+- **Relevant**: Average score ≥ 0.5
+- **Low relevance**: Average score < 0.5
+
+### Diversity Evaluator
+Measures result variety:
+- Calculates ratio of unique videos to total results
+- High diversity (≥0.8) indicates good coverage
+- Low diversity may indicate redundant results
+
+### Distribution Evaluator
+Evaluates score distribution quality:
+- Prefers high mean with low variance
+- Quality score = mean × (1 - std/2)
+- Indicates consistency of retrieval quality
+
+### Temporal Coverage Evaluator
+For video search with temporal information:
+- Merges overlapping time segments
+- Calculates total temporal coverage
+- Useful for video moment retrieval
+
+## LLM-as-Judge Evaluators
+
+### Prerequisites
+
+1. Install Ollama:
+```bash
+# macOS
+brew install ollama
+
+# Linux
+curl -fsSL https://ollama.ai/install.sh | sh
+```
+
+2. Pull a model:
+```bash
+ollama pull deepseek-r1:7b  # Recommended
+# or
+ollama pull llama2:7b
+# or
+ollama pull mistral:7b
+```
+
+3. Start Ollama service:
+```bash
+ollama serve  # Default: http://localhost:11434
+```
+
+### Reference-Free LLM Evaluation
+
+Evaluates query-result relevance using LLM judgment:
+
+```python
+evaluator = SyncLLMReferenceFreeEvaluator(
+    model_name="deepseek-r1:7b",
+    base_url="http://localhost:11434"
+)
+```
+
+**What it evaluates:**
+- Semantic relevance of results to query
+- Ranking quality
+- Result diversity
+- Overall search quality
+
+**Example prompt sent to LLM:**
+```
+Query: "person playing sports outdoors"
+
+Search Results:
+1. Video: sports_001 (Score: 0.920)
+2. Video: outdoor_activity (Score: 0.850)
+3. Video: sports_002 (Score: 0.780)
+
+Please evaluate these search results...
+```
+
+### Reference-Based LLM Evaluation
+
+Compares results against ground truth:
+
+```python
+evaluator = SyncLLMReferenceBasedEvaluator(
+    model_name="deepseek-r1:7b",
+    fetch_metadata=True  # Fetch video metadata from Vespa
+)
+```
+
+**What it evaluates:**
+- Precision: Retrieved videos that are relevant
+- Recall: Relevant videos that were retrieved
+- Ranking: Are expected videos ranked highly?
+- F1 Score: Harmonic mean of precision and recall
+
+**Metadata Integration:**
+- Fetches video titles, descriptions from Vespa
+- Enriches LLM context for better judgment
+- Caches metadata for performance
+
+### Hybrid LLM Evaluation
+
+Combines both approaches:
+
+```python
+evaluator = SyncLLMHybridEvaluator(
+    model_name="deepseek-r1:7b",
+    reference_weight=0.5  # 50% reference, 50% relevance
+)
+```
+
+**Benefits:**
+- Comprehensive evaluation
+- Balances semantic relevance with correctness
+- Configurable weighting
+
+## Running Experiments
+
+### Basic Usage
+
+```bash
+# With quality evaluators only (default)
+uv run python scripts/run_experiments_with_visualization.py
+
+# With LLM evaluators
+uv run python scripts/run_experiments_with_visualization.py --llm-evaluators
+
+# Specific configuration
+uv run python scripts/run_experiments_with_visualization.py \
+    --llm-evaluators \
+    --llm-model "llama2:7b" \
+    --llm-base-url "http://localhost:11434" \
+    --profiles frame_based_colpali direct_video_global \
+    --strategies binary_binary float_float
+```
+
+### Command-Line Options
+
+```bash
+# Evaluator Options
+--quality-evaluators          # Enable quality evaluators (default: True)
+--no-quality-evaluators       # Disable quality evaluators
+--llm-evaluators             # Enable LLM evaluators (default: False)
+--llm-model MODEL            # LLM model to use (default: deepseek-r1:7b)
+--llm-base-url URL           # LLM API endpoint (default: http://localhost:11434)
+
+# Experiment Options
+--profiles PROFILE [...]      # Specific profiles to test
+--strategies STRATEGY [...]   # Specific strategies to test
+--all-strategies             # Test all available strategies
+--dataset-name NAME          # Use specific dataset
+--csv-path PATH              # Load queries from CSV
+--force-new                  # Force create new dataset
+```
+
+### Example Workflows
+
+#### 1. Quick Quality Assessment
+```bash
+# Fast statistical evaluation
+uv run python scripts/run_experiments_with_visualization.py \
+    --no-llm-evaluators \
+    --profiles frame_based_colpali
+```
+
+#### 2. Deep Semantic Evaluation
+```bash
+# Comprehensive LLM-based evaluation
+uv run python scripts/run_experiments_with_visualization.py \
+    --llm-evaluators \
+    --llm-model "deepseek-r1:7b"
+```
+
+#### 3. A/B Testing Configurations
+```bash
+# Compare multiple strategies
+uv run python scripts/run_experiments_with_visualization.py \
+    --llm-evaluators \
+    --profiles direct_video_global \
+    --strategies binary_binary float_float phased
+```
+
+## Configuration
+
+### Phoenix Experiment Runner
+
+```python
+from src.evaluation.phoenix_experiments_final import PhoenixExperimentRunner
+
+runner = PhoenixExperimentRunner(
+    experiment_project_name="experiments",
+    enable_quality_evaluators=True,
+    enable_llm_evaluators=True,
+    llm_model="deepseek-r1:7b",
+    llm_base_url="http://localhost:11434"
+)
+```
+
+### Custom Evaluator Configuration
+
+```python
+from src.evaluation.evaluators.llm_judge import create_llm_evaluators
+
+# Create custom evaluators
+evaluators = create_llm_evaluators(
+    model_name="mistral:7b",
+    base_url="http://remote-ollama:11434",
+    include_hybrid=True
+)
+
+# Use in experiments
+runner.run_experiment(
+    profile="frame_based_colpali",
+    strategy="binary_binary",
+    dataset=dataset,
+    evaluators=evaluators
+)
+```
+
+## Results Analysis
+
+### Viewing Results
+
+1. **Console Output**: Immediate feedback during experiments
+2. **Phoenix UI**: http://localhost:6006/projects/experiments
+3. **CSV Export**: `outputs/experiment_results/`
+4. **JSON Details**: `outputs/experiment_results/experiment_details_*.json`
+5. **HTML Report**: Generated integrated report with visualizations
+
+### Understanding Scores
+
+#### Quality Evaluator Scores (0-1 scale):
+- **0.8-1.0**: Excellent
+- **0.6-0.8**: Good
+- **0.4-0.6**: Fair
+- **0.0-0.4**: Poor
+
+#### LLM Evaluator Labels:
+- **Reference-Free**: `highly_relevant`, `relevant`, `partially_relevant`, `not_relevant`
+- **Reference-Based**: `excellent_match`, `good_match`, `partial_match`, `poor_match`
+- **Hybrid**: `excellent`, `good`, `fair`, `poor`
+
+### Metrics Interpretation
+
+| Metric | Description | Good Range |
+|--------|-------------|------------|
+| Relevance | Query-result match | > 0.7 |
+| Diversity | Unique results ratio | > 0.6 |
+| Distribution | Score consistency | > 0.6 |
+| Temporal Coverage | Time segment coverage | > 0.5 |
+| Precision | Correct retrievals | > 0.7 |
+| Recall | Found relevant items | > 0.6 |
+| F1 Score | Balance of P & R | > 0.65 |
+
+## Best Practices
+
+### 1. Evaluator Selection
+
+**Use Quality Evaluators when:**
+- Need fast, deterministic results
+- Running many experiments
+- Initial configuration testing
+
+**Use LLM Evaluators when:**
+- Need semantic understanding
+- Final quality assessment
+- Comparing subtle differences
+- Have ground truth available
+
+### 2. Performance Optimization
+
+```bash
+# For faster experiments
+--no-llm-evaluators  # Skip LLM calls
+--profiles frame_based_colpali  # Test single profile
+--strategies binary_binary  # Test single strategy
+
+# For comprehensive analysis
+--llm-evaluators
+--all-strategies
+```
+
+### 3. Dataset Management
+
+```bash
+# List available datasets
+uv run python scripts/run_experiments_with_visualization.py --list-datasets
+
+# Create custom dataset
+uv run python scripts/run_experiments_with_visualization.py \
+    --csv-path data/custom_queries.csv \
+    --dataset-name custom_eval_v1
+```
+
+### 4. Troubleshooting
+
+**LLM Evaluator Issues:**
+```bash
+# Check Ollama is running
+curl http://localhost:11434/api/tags
+
+# Test with mock responses
+# (Evaluators fall back to mock when Ollama unavailable)
+
+# Use different model
+--llm-model "llama2:7b"
+
+# Use remote Ollama
+--llm-base-url "http://remote-server:11434"
+```
+
+**Memory Issues:**
+```bash
+# Reduce concurrent evaluations
+# Edit src/evaluation/phoenix_experiments_final.py
+# Set concurrency=1 in run_experiment()
+```
+
+### 5. Production Recommendations
+
+1. **Development**: Use quality evaluators for rapid iteration
+2. **Staging**: Add LLM evaluators for semantic validation
+3. **Production**: Monitor with quality evaluators, periodic LLM audits
+4. **CI/CD**: Quality evaluators in PR checks, LLM evaluators in nightly tests
+
+## Advanced Usage
+
+### Custom Evaluator Implementation
+
+```python
+from phoenix.experiments.evaluators.base import Evaluator
+from phoenix.experiments.types import EvaluationResult
+
+class CustomEvaluator(Evaluator):
+    def evaluate(self, *, input=None, output=None, **kwargs):
+        # Your evaluation logic
+        score = calculate_custom_metric(output)
+        
+        return EvaluationResult(
+            score=score,
+            label="custom_label",
+            explanation="Custom evaluation logic",
+            metadata={"custom_field": "value"}
+        )
+```
+
+### Batch Evaluation
+
+```python
+# Evaluate multiple datasets
+datasets = ["golden_eval_v1", "challenging_queries_v2"]
+
+for dataset_name in datasets:
+    runner.run_experiment(
+        profile="frame_based_colpali",
+        strategy="binary_binary",
+        dataset_name=dataset_name
+    )
+```
+
+### Export for Analysis
+
+```python
+import pandas as pd
+import json
+
+# Load experiment results
+with open("outputs/experiment_results/latest.json") as f:
+    results = json.load(f)
+
+# Convert to DataFrame
+df = pd.DataFrame(results["experiments"])
+
+# Analyze
+print(df.groupby("profile")["score"].mean())
+print(df.pivot_table(
+    values="score",
+    index="profile",
+    columns="strategy"
+))
+```
+
+## Appendix
+
+### Supported LLM Models
+
+Tested with Ollama:
+- `deepseek-r1:7b` (Recommended)
+- `llama2:7b`, `llama2:13b`
+- `mistral:7b`
+- `mixtral:8x7b`
+- `phi:2.7b` (Lightweight)
+
+### Environment Variables
+
+```bash
+# Phoenix configuration
+export PHOENIX_COLLECTOR_ENDPOINT="http://localhost:6006"
+export PHOENIX_PROJECT_NAME="experiments"
+
+# Ollama configuration
+export OLLAMA_HOST="http://localhost:11434"
+export OLLAMA_MODEL="deepseek-r1:7b"
+```
+
+### Related Documentation
+
+- [EVALUATION_FRAMEWORK.md](./EVALUATION_FRAMEWORK.md) - Basic framework overview
+- [PHOENIX_DASHBOARD.md](./PHOENIX_DASHBOARD.md) - Phoenix UI guide
+- [Phoenix Experiments](https://docs.arize.com/phoenix/experiments) - Official Phoenix docs
