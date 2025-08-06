@@ -73,13 +73,12 @@ uv sync
 
 ```bash
 # Basic usage
-streamlit run scripts/phoenix_dashboard.py
+uv run streamlit run scripts/phoenix_dashboard_standalone.py
 
 # With custom port
-streamlit run scripts/phoenix_dashboard.py --server.port 8501
+uv run streamlit run scripts/phoenix_dashboard_standalone.py --server.port 8501
 
-# With custom Phoenix URL
-streamlit run scripts/phoenix_dashboard.py -- --phoenix-url http://localhost:6007
+# Note: Phoenix URL is hardcoded to http://localhost:6006
 ```
 
 ### Access the Dashboard
@@ -116,8 +115,10 @@ Once started, the dashboard will be available at:
 
 ### Main Content Area
 
-The dashboard is organized into 6 tabs (7 with RCA enabled):
+The dashboard has two main tabs:
 
+#### 📊 Analytics Tab
+Contains 6 sub-tabs (7 with RCA enabled):
 1. **Overview**: High-level metrics and summary statistics
 2. **Time Series**: Temporal analysis and trends
 3. **Distributions**: Statistical distributions and comparisons
@@ -125,6 +126,18 @@ The dashboard is organized into 6 tabs (7 with RCA enabled):
 5. **Outliers**: Anomaly detection and analysis
 6. **Trace Explorer**: Detailed trace inspection
 7. **Root Cause Analysis** (optional): Automated failure diagnosis
+
+#### 🧪 Evaluation Tab
+Displays Phoenix experiment results:
+- **Dataset Selection**: Choose from all available Phoenix datasets
+- **Automatic Experiment Loading**: Uses `/v1/datasets/{id}/experiments` API
+- **Profile/Strategy Tabs**: Dynamic nested tabs based on actual experiments run
+- **Query Results Table**: Horizontal layout with:
+  - Query text
+  - Expected videos
+  - Retrieved results with ✅/❌ evaluation
+  - Colored metric badges (MRR, R@1, R@5)
+- **Success Matrix Heatmap**: Visual overview of experiment performance
 
 ## Key Features
 
