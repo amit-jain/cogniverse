@@ -29,16 +29,18 @@ class PhoenixExperimentRunner:
     Final experiment runner with proper project separation and scoring
     """
     
-    def __init__(self, experiment_project_name: str = "experiments"):
+    def __init__(self, experiment_project_name: str = "experiments", enable_quality_evaluators: bool = True):
         """
         Initialize with separate project for experiments
         
         Args:
             experiment_project_name: Phoenix project name for experiments
+            enable_quality_evaluators: Whether to include additional quality evaluators
         """
         self.client = px.Client()
         self.config = get_config()
         self.experiment_project = experiment_project_name
+        self.enable_quality_evaluators = enable_quality_evaluators
         
         # Save original project name to restore later
         self.original_project = os.environ.get("PHOENIX_PROJECT_NAME", "default")
@@ -342,7 +344,17 @@ class PhoenixExperimentRunner:
             task = self.create_retrieval_task(profile, strategy)
             
             # Get evaluators
-            evaluators = create_sync_evaluators()
+            evaluators = []
+            
+            # Add quality evaluators if enabled
+            if self.enable_quality_evaluators:
+                from .evaluators.sync_reference_free import create_quality_evaluators
+                evaluators = create_quality_evaluators()
+                logger.info(f"Added {len(evaluators)} quality evaluators: relevance, diversity, distribution, temporal coverage")
+            else:
+                # Use basic evaluators only
+                evaluators = create_sync_evaluators()
+                logger.info("Using basic evaluators only (relevance and diversity)")
             
             # Add golden dataset evaluator with the actual queries from the dataset
             from .evaluators.sync_golden_dataset import SyncGoldenDatasetEvaluator

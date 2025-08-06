@@ -96,7 +96,7 @@ def get_experiment_configurations(args=None):
 # Note: EXPERIMENT_CONFIGURATIONS will be set in main() with args
 
 
-def create_visualization_tables(experiments: List[Dict]) -> Dict[str, pd.DataFrame]:
+def create_visualization_tables(experiments: List[Dict], include_quality_metrics: bool = True) -> Dict[str, pd.DataFrame]:
     """
     Create visualization tables similar to comprehensive test output
     
@@ -132,13 +132,24 @@ def create_visualization_tables(experiments: List[Dict]) -> Dict[str, pd.DataFra
     # 2. Detailed experiment results
     detailed_results = []
     for exp in experiments:
-        detailed_results.append({
+        row = {
             "Profile": exp.get("profile", ""),
             "Strategy": exp.get("strategy", ""),
             "Description": exp.get("description", ""),
             "Status": "✅" if exp["status"] == "success" else "❌",
             "Experiment Name": exp.get("experiment_name", "")
-        })
+        }
+        
+        # Add quality metrics if available and requested
+        if include_quality_metrics and exp["status"] == "success":
+            # Extract evaluation metrics from experiment result if available
+            result = exp.get("result", {})
+            if isinstance(result, dict):
+                # Placeholder for extracting actual metrics from Phoenix experiment results
+                # These would come from the evaluators' output
+                row["Quality Score"] = "-"  # Would be extracted from evaluators
+        
+        detailed_results.append(row)
     
     # 3. Strategy comparison (grouped by profile)
     strategy_comparison = []
@@ -183,10 +194,21 @@ def main(args=None):
     print("PHOENIX EXPERIMENTS WITH VISUALIZATION")
     print("=" * 80)
     print(f"\nTimestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Experiment Project: experiments (separate from default traces)\n")
+    print(f"Experiment Project: experiments (separate from default traces)")
+    
+    # Show quality evaluator status
+    quality_enabled = args.quality_evaluators if args else True
+    if quality_enabled:
+        print(f"Quality Evaluators: ✅ ENABLED (relevance, diversity, distribution, temporal coverage)")
+    else:
+        print(f"Quality Evaluators: ❌ DISABLED (using basic evaluators only)")
+    print()
     
     # Use context manager to ensure project is restored after experiments
-    with PhoenixExperimentRunner(experiment_project_name="experiments") as runner:
+    with PhoenixExperimentRunner(
+        experiment_project_name="experiments",
+        enable_quality_evaluators=args.quality_evaluators if args else True
+    ) as runner:
         # List datasets if requested
         if args and args.list_datasets:
             print("\nAvailable datasets:")
@@ -257,7 +279,10 @@ def main(args=None):
     print("EXPERIMENT RESULTS VISUALIZATION")
     print("="*80)
     
-    tables = create_visualization_tables(all_experiments)
+    tables = create_visualization_tables(
+        all_experiments, 
+        include_quality_metrics=args.quality_evaluators if args else True
+    )
     
     # 1. Profile Summary
     print("\n📊 PROFILE SUMMARY")
@@ -367,6 +392,10 @@ if __name__ == "__main__":
                        help="Specific profiles to test (default: all)")
     parser.add_argument("--strategies", nargs="+",
                        help="Specific strategies to test (default: filtered list)")
+    parser.add_argument("--quality-evaluators", action="store_true", default=True,
+                       help="Enable additional quality evaluators (default: True)")
+    parser.add_argument("--no-quality-evaluators", dest="quality_evaluators", action="store_false",
+                       help="Disable additional quality evaluators")
     args = parser.parse_args()
     
     # Pass args to main
