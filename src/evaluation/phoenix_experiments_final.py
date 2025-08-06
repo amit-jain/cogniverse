@@ -29,18 +29,29 @@ class PhoenixExperimentRunner:
     Final experiment runner with proper project separation and scoring
     """
     
-    def __init__(self, experiment_project_name: str = "experiments", enable_quality_evaluators: bool = True):
+    def __init__(self, 
+                 experiment_project_name: str = "experiments", 
+                 enable_quality_evaluators: bool = True,
+                 enable_llm_evaluators: bool = False,
+                 llm_model: str = "deepseek-r1:7b",
+                 llm_base_url: str = "http://localhost:11434"):
         """
         Initialize with separate project for experiments
         
         Args:
             experiment_project_name: Phoenix project name for experiments
             enable_quality_evaluators: Whether to include additional quality evaluators
+            enable_llm_evaluators: Whether to include LLM-based evaluators
+            llm_model: LLM model to use for evaluation
+            llm_base_url: Base URL for LLM API
         """
         self.client = px.Client()
         self.config = get_config()
         self.experiment_project = experiment_project_name
         self.enable_quality_evaluators = enable_quality_evaluators
+        self.enable_llm_evaluators = enable_llm_evaluators
+        self.llm_model = llm_model
+        self.llm_base_url = llm_base_url
         
         # Save original project name to restore later
         self.original_project = os.environ.get("PHOENIX_PROJECT_NAME", "default")
@@ -355,6 +366,17 @@ class PhoenixExperimentRunner:
                 # Use basic evaluators only
                 evaluators = create_sync_evaluators()
                 logger.info("Using basic evaluators only (relevance and diversity)")
+            
+            # Add LLM evaluators if enabled
+            if self.enable_llm_evaluators:
+                from .evaluators.llm_judge import create_llm_evaluators
+                llm_evaluators = create_llm_evaluators(
+                    model_name=self.llm_model,
+                    base_url=self.llm_base_url,
+                    include_hybrid=True
+                )
+                evaluators.extend(llm_evaluators)
+                logger.info(f"Added {len(llm_evaluators)} LLM evaluators: reference-free, reference-based, hybrid")
             
             # Add golden dataset evaluator with the actual queries from the dataset
             from .evaluators.sync_golden_dataset import SyncGoldenDatasetEvaluator

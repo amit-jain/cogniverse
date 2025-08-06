@@ -196,18 +196,32 @@ def main(args=None):
     print(f"\nTimestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Experiment Project: experiments (separate from default traces)")
     
-    # Show quality evaluator status
+    # Show evaluator status
     quality_enabled = args.quality_evaluators if args else True
+    llm_enabled = args.llm_evaluators if args else False
+    
     if quality_enabled:
         print(f"Quality Evaluators: ✅ ENABLED (relevance, diversity, distribution, temporal coverage)")
     else:
         print(f"Quality Evaluators: ❌ DISABLED (using basic evaluators only)")
+    
+    if llm_enabled:
+        llm_model = args.llm_model if args else "deepseek-r1:7b"
+        print(f"LLM Evaluators: ✅ ENABLED (model: {llm_model})")
+        print(f"  - Reference-free: Query-result relevance judged by LLM")
+        print(f"  - Reference-based: Comparison with ground truth")
+        print(f"  - Hybrid: Combined evaluation approach")
+    else:
+        print(f"LLM Evaluators: ❌ DISABLED")
     print()
     
     # Use context manager to ensure project is restored after experiments
     with PhoenixExperimentRunner(
         experiment_project_name="experiments",
-        enable_quality_evaluators=args.quality_evaluators if args else True
+        enable_quality_evaluators=args.quality_evaluators if args else True,
+        enable_llm_evaluators=args.llm_evaluators if args else False,
+        llm_model=args.llm_model if args else "deepseek-r1:7b",
+        llm_base_url=args.llm_base_url if args else "http://localhost:11434"
     ) as runner:
         # List datasets if requested
         if args and args.list_datasets:
@@ -396,6 +410,12 @@ if __name__ == "__main__":
                        help="Enable additional quality evaluators (default: True)")
     parser.add_argument("--no-quality-evaluators", dest="quality_evaluators", action="store_false",
                        help="Disable additional quality evaluators")
+    parser.add_argument("--llm-evaluators", action="store_true", default=False,
+                       help="Enable LLM-based evaluators (requires Ollama)")
+    parser.add_argument("--llm-model", default="deepseek-r1:7b",
+                       help="LLM model to use for evaluation (default: deepseek-r1:7b)")
+    parser.add_argument("--llm-base-url", default="http://localhost:11434",
+                       help="Base URL for LLM API (default: http://localhost:11434)")
     args = parser.parse_args()
     
     # Pass args to main
