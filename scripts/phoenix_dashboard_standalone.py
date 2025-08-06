@@ -36,7 +36,7 @@ RootCauseAnalyzer = rca_module.RootCauseAnalyzer
 
 # Page configuration
 st.set_page_config(
-    page_title="Phoenix Analytics Dashboard",
+    page_title="Phoenix Dashboard",
     page_icon="🔥",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -122,7 +122,7 @@ if 'auto_refresh' not in st.session_state:
 
 # Sidebar configuration
 with st.sidebar:
-    st.title("🔥 Phoenix Analytics")
+    st.title("🔥 Phoenix Dashboard")
     st.markdown("---")
     
     # Time range selection
@@ -215,70 +215,75 @@ with st.sidebar:
         )
 
 # Main content area
-st.title("Phoenix Analytics Dashboard")
+st.title("Phoenix Dashboard")
 
 # Last refresh time
 st.caption(f"Last refreshed: {st.session_state.last_refresh.strftime('%Y-%m-%d %H:%M:%S')}")
 
-# Fetch traces
-with st.spinner("Fetching traces..."):
-    traces = st.session_state.analytics.get_traces(
-        start_time=start_datetime,
-        end_time=end_datetime,
-        operation_filter=operation_filter if operation_filter else None,
-        limit=10000
-    )
+# Create main tabs
+main_tabs = st.tabs(["📊 Analytics", "🧪 Evaluation"])
 
-if not traces:
-    st.warning("No traces found for the selected time range and filters.")
-    st.stop()
+# Analytics Tab
+with main_tabs[0]:
+    # Fetch traces
+    with st.spinner("Fetching traces..."):
+        traces = st.session_state.analytics.get_traces(
+            start_time=start_datetime,
+            end_time=end_datetime,
+            operation_filter=operation_filter if operation_filter else None,
+            limit=10000
+        )
 
-# Convert to DataFrame for easier manipulation
-traces_df = pd.DataFrame([{
-    'trace_id': t.trace_id,
-    'timestamp': t.timestamp,
-    'duration_ms': t.duration_ms,
-    'operation': t.operation,
-    'status': t.status,
-    'profile': t.profile,
-    'strategy': t.strategy,
-    'error': t.error
-} for t in traces])
+    if not traces:
+        st.warning("No traces found for the selected time range and filters.")
+        st.stop()
 
-# Apply profile and strategy filters
-if "all" not in profile_filter:
-    traces_df = traces_df[traces_df['profile'].isin(profile_filter)]
+    # Convert to DataFrame for easier manipulation
+    traces_df = pd.DataFrame([{
+        'trace_id': t.trace_id,
+        'timestamp': t.timestamp,
+        'duration_ms': t.duration_ms,
+        'operation': t.operation,
+        'status': t.status,
+        'profile': t.profile,
+        'strategy': t.strategy,
+        'error': t.error
+    } for t in traces])
 
-if "all" not in strategy_filter:
-    traces_df = traces_df[traces_df['strategy'].isin(strategy_filter)]
+    # Apply profile and strategy filters
+    if "all" not in profile_filter:
+        traces_df = traces_df[traces_df['profile'].isin(profile_filter)]
 
-# Calculate statistics with operation grouping
-if not traces_df.empty:
-    stats = st.session_state.analytics.calculate_statistics(
-        [analytics_module.TraceMetrics(**row) for _, row in traces_df.iterrows()],
-        group_by="operation"
-    )
-else:
-    # Default stats when no data
-    stats = {
-        'total_requests': 0,
-        'status': {'success_rate': 0, 'error_rate': 0},
-        'response_time': {
-            'mean': 0, 'median': 0, 'p95': 0, 'p99': 0,
-            'min': 0, 'max': 0, 'std': 0
-        },
-        'by_operation': {}
-    }
+    if "all" not in strategy_filter:
+        traces_df = traces_df[traces_df['strategy'].isin(strategy_filter)]
 
-# Create tabs
-tabs = st.tabs([
-    "📊 Overview", 
-    "📈 Time Series", 
-    "📊 Distributions", 
-    "🗺️ Heatmaps", 
-    "🎯 Outliers", 
-    "🔍 Trace Explorer"
-] + (["🔬 Root Cause Analysis"] if enable_rca else []))
+    # Calculate statistics with operation grouping
+    if not traces_df.empty:
+        stats = st.session_state.analytics.calculate_statistics(
+            [analytics_module.TraceMetrics(**row) for _, row in traces_df.iterrows()],
+            group_by="operation"
+        )
+    else:
+        # Default stats when no data
+        stats = {
+            'total_requests': 0,
+            'status': {'success_rate': 0, 'error_rate': 0},
+            'response_time': {
+                'mean': 0, 'median': 0, 'p95': 0, 'p99': 0,
+                'min': 0, 'max': 0, 'std': 0
+            },
+            'by_operation': {}
+        }
+
+    # Create sub-tabs for analytics
+    tabs = st.tabs([
+        "📊 Overview", 
+        "📈 Time Series", 
+        "📊 Distributions", 
+        "🗺️ Heatmaps", 
+        "🎯 Outliers", 
+        "🔍 Trace Explorer"
+    ] + (["🔬 Root Cause Analysis"] if enable_rca else []))
 
 # Tab 1: Overview
 with tabs[0]:
@@ -765,6 +770,7 @@ def create_phoenix_link(trace_id, text="View in Phoenix"):
     # Include the trace ID query format
     return f"[{text}]({phoenix_base_url}/projects/{project_encoded}/traces)"
 
+
 # Tab 7: Root Cause Analysis (if enabled)
 if enable_rca and len(tabs) > 6:
     with tabs[6]:
@@ -1227,6 +1233,12 @@ if show_raw_data:
     st.subheader("Raw Data")
     st.dataframe(traces_df)
 
+# Evaluation Tab
+with main_tabs[1]:
+    # Import and use the tabbed evaluation tab (like HTML report)
+    from phoenix_dashboard_evaluation_tab_tabbed import render_evaluation_tab
+    render_evaluation_tab()
+
 # Auto-refresh logic
 if st.session_state.auto_refresh:
     time.sleep(refresh_interval)
@@ -1234,4 +1246,4 @@ if st.session_state.auto_refresh:
 
 # Footer
 st.markdown("---")
-st.caption("🔥 Phoenix Analytics Dashboard - Cogniverse Evaluation Framework")
+st.caption("🔥 Phoenix Dashboard - Cogniverse Evaluation Framework")
