@@ -59,21 +59,16 @@ class PhoenixDatasetManager:
         # Convert queries to Phoenix dataset format
         dataset_records = []
         for i, query_data in enumerate(queries):
+            # Flatten the structure for Phoenix
             record = {
                 "id": f"{dataset_name}_{i}",
-                "input": {
-                    "query": query_data["query"],
-                    "category": query_data.get("category", "general")
-                },
-                "expected_output": {
-                    "expected_videos": query_data["expected_videos"],
-                    "relevance_scores": query_data.get("relevance_scores", {})
-                },
-                "metadata": {
-                    "query_type": query_data.get("category", "general"),
-                    "created_at": datetime.now().isoformat(),
-                    "version": version
-                }
+                "query": query_data["query"],
+                "category": query_data.get("category", "general"),
+                "expected_videos": str(query_data["expected_videos"]),  # Convert list to string
+                "relevance_scores": str(query_data.get("relevance_scores", {})),  # Convert dict to string
+                "query_type": query_data.get("category", "general"),
+                "created_at": datetime.now().isoformat(),
+                "version": version
             }
             dataset_records.append(record)
         
@@ -81,17 +76,17 @@ class PhoenixDatasetManager:
         df = pd.DataFrame(dataset_records)
         
         # Upload to Phoenix
-        dataset_id = self.client.upload_dataset(
+        dataset = self.client.upload_dataset(
             dataset_name=dataset_name,
             dataframe=df,
-            input_keys=["input"],
-            output_keys=["expected_output"],
-            metadata_keys=["metadata"]
+            input_keys=["query", "category"],
+            output_keys=["expected_videos", "relevance_scores"],
+            metadata_keys=["query_type", "created_at", "version"]
         )
         
         # Store reference
         self.datasets[dataset_name] = {
-            "id": dataset_id,
+            "id": dataset.id,
             "name": dataset_name,
             "version": version,
             "description": description,
@@ -100,12 +95,12 @@ class PhoenixDatasetManager:
         }
         
         logger.info(f"Created Phoenix dataset '{dataset_name}' with {len(dataset_records)} examples")
-        return dataset_id
+        return dataset.id
     
     def load_dataset(self, dataset_name: str) -> pd.DataFrame:
         """Load a dataset from Phoenix"""
         try:
-            dataset = self.client.get_dataset(dataset_name)
+            dataset = self.client.get_dataset(name=dataset_name)
             logger.info(f"Loaded dataset '{dataset_name}' with {len(dataset)} examples")
             return dataset
         except Exception as e:

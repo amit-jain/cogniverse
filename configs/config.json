@@ -18,6 +18,10 @@
   "local_llm_model": "deepseek-r1:7b",
   "base_url": "http://localhost:11434",
   "remote_inference_url": null,
+  "evaluation_datasets": {
+    "default": "visual_test_queries",
+    "registry_path": "configs/dataset_registry.json"
+  },
   "remote_inference_api_key": null,
   "remote_inference_provider": null,
   "videoprism_repo_path": "/Users/amjain/source/hobby/videoprism",

@@ -10,7 +10,7 @@ This module orchestrates the complete evaluation pipeline, combining:
 import asyncio
 import json
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 from pathlib import Path
 import yaml
@@ -131,10 +131,16 @@ class EvaluationPipeline:
         
         # Start instrumentation and monitoring
         if self.config["phoenix"]["instrumentation"]:
-            self.instrumentor.instrument()
+            try:
+                self.instrumentor.instrument()
+            except Exception as e:
+                logger.warning(f"Instrumentation already active or failed: {e}")
         
         if self.config["phoenix"]["monitoring"]:
-            self.monitor.start()
+            try:
+                self.monitor.start()
+            except Exception as e:
+                logger.warning(f"Monitoring already active or failed: {e}")
         
         # Initialize evaluation state
         self.current_evaluation = {
@@ -345,11 +351,11 @@ class EvaluationPipeline:
     async def _analyze_traces(self, evaluation_name: str) -> Dict[str, Any]:
         """Analyze traces collected during evaluation"""
         try:
-            # Get traces from Phoenix
-            traces = self.client.get_traces(
-                filter={"metadata.evaluation_name": evaluation_name},
-                limit=10000
-            )
+            # Get traces from Phoenix using the correct API
+            # Note: Phoenix Client doesn't have get_traces method
+            # We would need to use the REST API or query spans differently
+            traces = []
+            logger.warning("Trace analysis not implemented yet - Phoenix Client API doesn't support get_traces")
             
             if not traces:
                 return {"num_traces": 0}
