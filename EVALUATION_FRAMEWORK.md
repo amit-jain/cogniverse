@@ -1,5 +1,7 @@
 # Evaluation Framework for Cogniverse
 
+> **📚 Advanced Documentation**: For comprehensive documentation including LLM evaluators, quality metrics, and best practices, see [docs/EVALUATION_FRAMEWORK_ADVANCED.md](docs/EVALUATION_FRAMEWORK_ADVANCED.md)
+
 ## Overview
 
 The evaluation framework provides comprehensive assessment of the video retrieval system through three complementary approaches:
@@ -70,6 +72,23 @@ span.set_attributes({
 - **Tracing**: All evaluations are traced for observability
 
 ## Usage
+
+### Run Experiments with Evaluators
+
+```bash
+# With quality evaluators (default - fast, statistical)
+uv run python scripts/run_experiments_with_visualization.py
+
+# With LLM evaluators (requires Ollama)
+ollama pull deepseek-r1:7b  # One-time setup
+uv run python scripts/run_experiments_with_visualization.py --llm-evaluators
+
+# Combined with specific configurations
+uv run python scripts/run_experiments_with_visualization.py \
+  --llm-evaluators \
+  --profiles frame_based_colpali \
+  --strategies binary_binary float_float
+```
 
 ### Evaluate Existing Spans
 
