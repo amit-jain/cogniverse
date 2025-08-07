@@ -33,8 +33,9 @@ class PhoenixExperimentRunner:
                  experiment_project_name: str = "experiments", 
                  enable_quality_evaluators: bool = True,
                  enable_llm_evaluators: bool = False,
-                 llm_model: str = "deepseek-r1:7b",
-                 llm_base_url: str = "http://localhost:11434"):
+                 evaluator_name: str = "visual_judge",
+                 llm_model: str = None,
+                 llm_base_url: str = None):
         """
         Initialize with separate project for experiments
         
@@ -42,14 +43,18 @@ class PhoenixExperimentRunner:
             experiment_project_name: Phoenix project name for experiments
             enable_quality_evaluators: Whether to include additional quality evaluators
             enable_llm_evaluators: Whether to include LLM-based evaluators
-            llm_model: LLM model to use for evaluation
-            llm_base_url: Base URL for LLM API
+            evaluator_name: Name of evaluator config from config.json
+            llm_model: Deprecated - use evaluator_name
+            llm_base_url: Deprecated - use config.json
         """
         self.client = px.Client()
         self.config = get_config()
         self.experiment_project = experiment_project_name
         self.enable_quality_evaluators = enable_quality_evaluators
         self.enable_llm_evaluators = enable_llm_evaluators
+        self.evaluator_name = evaluator_name
+        
+        # For backward compatibility
         self.llm_model = llm_model
         self.llm_base_url = llm_base_url
         
@@ -372,16 +377,14 @@ class PhoenixExperimentRunner:
                 # Use configurable visual judge that reads from config
                 from .evaluators.configurable_visual_judge import create_configurable_visual_evaluators
                 
-                # Map llm_model to evaluator config name
-                evaluator_name = "visual_judge"  # Default
-                if self.llm_model == "modal":
-                    evaluator_name = "modal_visual_judge"
-                elif self.llm_model in ["llm", "text"]:
-                    evaluator_name = "llm_judge"
-                
-                visual_evaluators = create_configurable_visual_evaluators(evaluator_name)
+                visual_evaluators = create_configurable_visual_evaluators(self.evaluator_name)
                 evaluators.extend(visual_evaluators)
-                logger.info(f"Added configurable visual evaluator using config '{evaluator_name}'")
+                
+                # Log which evaluator is being used
+                evaluator_config = self.config.get("evaluators", {}).get(self.evaluator_name, {})
+                provider = evaluator_config.get("provider", "unknown")
+                model = evaluator_config.get("model", "unknown")
+                logger.info(f"Added visual evaluator '{self.evaluator_name}' using {provider}/{model}")
             
             # Add golden dataset evaluator with the actual queries from the dataset
             from .evaluators.sync_golden_dataset import SyncGoldenDatasetEvaluator

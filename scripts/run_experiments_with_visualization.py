@@ -220,8 +220,9 @@ def main(args=None):
         experiment_project_name="experiments",
         enable_quality_evaluators=args.quality_evaluators if args else True,
         enable_llm_evaluators=args.llm_evaluators if args else False,
-        llm_model=args.llm_model if args else "deepseek-r1:7b",
-        llm_base_url=args.llm_base_url if args else "http://localhost:11434"
+        evaluator_name=args.evaluator if args else "visual_judge",
+        llm_model=args.llm_model if args else None,
+        llm_base_url=args.llm_base_url if args else None
     ) as runner:
         # List datasets if requested
         if args and args.list_datasets:
@@ -411,11 +412,13 @@ if __name__ == "__main__":
     parser.add_argument("--no-quality-evaluators", dest="quality_evaluators", action="store_false",
                        help="Disable additional quality evaluators")
     parser.add_argument("--llm-evaluators", action="store_true", default=False,
-                       help="Enable LLM-based evaluators (requires Ollama)")
-    parser.add_argument("--llm-model", default="deepseek-r1:7b",
-                       help="LLM model to use for evaluation (default: deepseek-r1:7b)")
-    parser.add_argument("--llm-base-url", default="http://localhost:11434",
-                       help="Base URL for LLM API (default: http://localhost:11434)")
+                       help="Enable LLM-based evaluators")
+    parser.add_argument("--evaluator", default="visual_judge",
+                       help="Evaluator config to use from config.json (visual_judge, llm_judge, modal_visual_judge)")
+    parser.add_argument("--llm-model", default=None,
+                       help="Override LLM model (deprecated - use --evaluator instead)")
+    parser.add_argument("--llm-base-url", default=None,
+                       help="Override LLM base URL (deprecated - use config.json instead)")
     args = parser.parse_args()
     
     # Pass args to main
