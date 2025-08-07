@@ -65,7 +65,7 @@ class LLMJudgeBase:
         Args:
             prompt: User prompt
             system_prompt: System prompt for context
-            images: List of image paths or base64 encoded images
+            images: List of image file paths to load and encode
             
         Returns:
             LLM response text
@@ -77,6 +77,21 @@ class LLMJudgeBase:
             raise RuntimeError("Ollama client not available. Please install ollama and start the service.")
         
         try:
+            # Load and encode images if provided
+            encoded_images = []
+            if images:
+                import base64
+                from pathlib import Path
+                
+                for img_path in images:
+                    if isinstance(img_path, str) and Path(img_path).exists():
+                        with open(img_path, 'rb') as img_file:
+                            # Read and base64 encode the image
+                            img_data = base64.b64encode(img_file.read()).decode('utf-8')
+                            encoded_images.append(img_data)
+                    else:
+                        logger.warning(f"Image not found or invalid: {img_path}")
+            
             # For async compatibility, run in executor
             import asyncio
             loop = asyncio.get_event_loop()
@@ -87,8 +102,8 @@ class LLMJudgeBase:
             
             # Add images if provided (for multimodal models like llava, bakllava)
             user_message = {"role": "user", "content": prompt}
-            if images:
-                user_message["images"] = images
+            if encoded_images:
+                user_message["images"] = encoded_images
             messages.append(user_message)
             
             response = await loop.run_in_executor(
