@@ -369,30 +369,19 @@ class PhoenixExperimentRunner:
             
             # Add LLM/Visual evaluators if enabled
             if self.enable_llm_evaluators:
-                # Check model type for appropriate evaluator
-                if self.llm_model in ["qwen2-vl", "qwen", "visual"]:
-                    # Use Qwen2-VL for actual visual understanding
-                    from .evaluators.qwen_visual_judge import create_qwen_visual_evaluators
-                    visual_evaluators = create_qwen_visual_evaluators()
-                    evaluators.extend(visual_evaluators)
-                    logger.info(f"Added Qwen2-VL visual evaluator for visual understanding")
-                elif self.llm_model.startswith("visual:") or self.llm_model == "colpali":
-                    # Use ColPali visual similarity evaluator (for retrieval testing)
-                    from .evaluators.visual_judge import create_visual_evaluators
-                    model_name = self.llm_model.replace("visual:", "") if self.llm_model.startswith("visual:") else "vidore/colsmol-500m"
-                    visual_evaluators = create_visual_evaluators(model_name)
-                    evaluators.extend(visual_evaluators)
-                    logger.info(f"Added ColPali similarity evaluator: {model_name}")
-                else:
-                    # Use traditional LLM evaluators
-                    from .evaluators.llm_judge import create_llm_evaluators
-                    llm_evaluators = create_llm_evaluators(
-                        model_name=self.llm_model,
-                        base_url=self.llm_base_url,
-                        include_hybrid=True
-                    )
-                    evaluators.extend(llm_evaluators)
-                    logger.info(f"Added {len(llm_evaluators)} LLM evaluators: reference-free, reference-based, hybrid")
+                # Use configurable visual judge that reads from config
+                from .evaluators.configurable_visual_judge import create_configurable_visual_evaluators
+                
+                # Map llm_model to evaluator config name
+                evaluator_name = "visual_judge"  # Default
+                if self.llm_model == "modal":
+                    evaluator_name = "modal_visual_judge"
+                elif self.llm_model in ["llm", "text"]:
+                    evaluator_name = "llm_judge"
+                
+                visual_evaluators = create_configurable_visual_evaluators(evaluator_name)
+                evaluators.extend(visual_evaluators)
+                logger.info(f"Added configurable visual evaluator using config '{evaluator_name}'")
             
             # Add golden dataset evaluator with the actual queries from the dataset
             from .evaluators.sync_golden_dataset import SyncGoldenDatasetEvaluator
