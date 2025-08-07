@@ -73,18 +73,30 @@ class ConfigurableVisualJudge(Evaluator):
                 explanation="No results to evaluate"
             )
         
-        # Get frame paths for top results
+        # Get frames from videos for top results
         frame_paths = []
         for i, result in enumerate(results[:3], 1):  # Top 3 for evaluation
-            frame_path = self._get_frame_path(result)
-            if frame_path and Path(frame_path).exists():
-                frame_paths.append(frame_path)
-        
+            # First try to get video path
+            video_path = self._get_video_path(result)
+            if video_path:
+                # Extract frame from video
+                # Use timestamp from result if available
+                timestamp = 0
+                if isinstance(result, dict):
+                    timestamp = result.get("start_time", 0)
+                
+                frame_path = self._extract_frame_from_video(video_path, timestamp)
+                if frame_path:
+                    frame_paths.append(frame_path)
+                    logger.info(f"Extracted frame from video {video_path} at {timestamp}s")
+            
         if not frame_paths:
+            # Log what we tried to find
+            logger.warning(f"No videos found for evaluation. Searched results: {[r.get('video_id', r.get('source_id')) if isinstance(r, dict) else str(r) for r in results[:3]]}")
             return EvaluationResult(
                 score=0.0,
                 label="no_frames",
-                explanation="No frame images found for evaluation"
+                explanation="No video frames could be extracted for evaluation"
             )
         
         # Evaluate based on provider
@@ -127,28 +139,55 @@ class ConfigurableVisualJudge(Evaluator):
                 explanation=f"Visual evaluation failed: {str(e)}"
             )
     
-    def _get_frame_path(self, result: Dict) -> Optional[str]:
-        """Extract frame path from result"""
+    def _get_video_path(self, result: Dict) -> Optional[str]:
+        """Extract video path from result"""
         if isinstance(result, dict):
             video_id = result.get("video_id", result.get("source_id"))
-            frame_id = result.get("frame_id", 0)
             
-            # Check if frame_path is provided
-            frame_path = result.get("frame_path")
-            
-            # If not, try to construct it
-            if not frame_path and video_id:
+            # Common video storage locations
+            if video_id:
                 possible_paths = [
-                    f"data/frames/{video_id}/frame_{frame_id}.jpg",
-                    f"data/frames/{video_id}/frame_{frame_id}.png",
-                    f"outputs/frames/{video_id}/frame_{frame_id}.jpg",
+                    f"data/testset/evaluation/sample_videos/{video_id}.mp4",
+                    f"data/testset/evaluation/sample_videos/{video_id}.avi",
+                    f"data/testset/evaluation/sample_videos/{video_id}.mov",
+                    f"data/videos/{video_id}.mp4",
+                    f"outputs/videos/{video_id}.mp4",
                 ]
                 
                 for path in possible_paths:
                     if Path(path).exists():
                         return path
+                        
+                # Try without extension (video_id might already include it)
+                if Path(f"data/testset/evaluation/sample_videos/{video_id}").exists():
+                    return f"data/testset/evaluation/sample_videos/{video_id}"
             
-            return frame_path
+        return None
+    
+    def _extract_frame_from_video(self, video_path: str, timestamp: float = 0) -> Optional[str]:
+        """Extract a frame from video at given timestamp"""
+        import cv2
+        import tempfile
+        
+        try:
+            cap = cv2.VideoCapture(video_path)
+            
+            # Set position
+            if timestamp > 0:
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                frame_number = int(timestamp * fps)
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+            
+            ret, frame = cap.read()
+            cap.release()
+            
+            if ret:
+                # Save frame to temp file
+                with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+                    cv2.imwrite(tmp.name, frame)
+                    return tmp.name
+        except Exception as e:
+            logger.error(f"Could not extract frame from video: {e}")
         
         return None
     
