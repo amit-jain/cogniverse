@@ -369,14 +369,20 @@ class PhoenixExperimentRunner:
             
             # Add LLM/Visual evaluators if enabled
             if self.enable_llm_evaluators:
-                # Check if we should use visual evaluation with ColPali
-                if self.llm_model.startswith("visual:") or self.llm_model == "colpali":
-                    # Use ColPali visual evaluator
+                # Check model type for appropriate evaluator
+                if self.llm_model in ["qwen2-vl", "qwen", "visual"]:
+                    # Use Qwen2-VL for actual visual understanding
+                    from .evaluators.qwen_visual_judge import create_qwen_visual_evaluators
+                    visual_evaluators = create_qwen_visual_evaluators()
+                    evaluators.extend(visual_evaluators)
+                    logger.info(f"Added Qwen2-VL visual evaluator for visual understanding")
+                elif self.llm_model.startswith("visual:") or self.llm_model == "colpali":
+                    # Use ColPali visual similarity evaluator (for retrieval testing)
                     from .evaluators.visual_judge import create_visual_evaluators
                     model_name = self.llm_model.replace("visual:", "") if self.llm_model.startswith("visual:") else "vidore/colsmol-500m"
                     visual_evaluators = create_visual_evaluators(model_name)
                     evaluators.extend(visual_evaluators)
-                    logger.info(f"Added visual evaluator using ColPali model: {model_name}")
+                    logger.info(f"Added ColPali similarity evaluator: {model_name}")
                 else:
                     # Use traditional LLM evaluators
                     from .evaluators.llm_judge import create_llm_evaluators
