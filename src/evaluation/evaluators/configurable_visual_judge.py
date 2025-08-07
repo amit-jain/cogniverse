@@ -31,6 +31,7 @@ class ConfigurableVisualJudge(Evaluator):
             evaluator_name: Name of evaluator config to use
         """
         config = get_config()
+        self.evaluator_name = evaluator_name
         
         # Get evaluator config
         evaluator_config = config.get("evaluators", {}).get(evaluator_name, {})
@@ -75,20 +76,27 @@ class ConfigurableVisualJudge(Evaluator):
         
         # Get frames from videos for top results
         frame_paths = []
-        for i, result in enumerate(results[:3], 1):  # Top 3 for evaluation
+        
+        # Determine how many frames to extract based on config
+        config = get_config()
+        evaluator_config = config.get("evaluators", {}).get(self.evaluator_name, {})
+        frames_per_video = evaluator_config.get("frames_per_video", 3)
+        max_videos = evaluator_config.get("max_videos", 2)
+        
+        for i, result in enumerate(results[:max_videos], 1):  # Top N videos
             # First try to get video path
             video_path = self._get_video_path(result)
             if video_path:
-                # Extract frame from video
+                # Extract multiple frames from video
                 # Use timestamp from result if available
                 timestamp = 0
                 if isinstance(result, dict):
                     timestamp = result.get("start_time", 0)
                 
-                frame_path = self._extract_frame_from_video(video_path, timestamp)
-                if frame_path:
-                    frame_paths.append(frame_path)
-                    logger.info(f"Extracted frame from video {video_path} at {timestamp}s")
+                extracted_frames = self._extract_frames_from_video(video_path, frames_per_video, timestamp)
+                if extracted_frames:
+                    frame_paths.extend(extracted_frames)
+                    logger.info(f"Extracted {len(extracted_frames)} frames from video {video_path}")
             
         if not frame_paths:
             # Log what we tried to find
@@ -164,32 +172,54 @@ class ConfigurableVisualJudge(Evaluator):
             
         return None
     
-    def _extract_frame_from_video(self, video_path: str, timestamp: float = 0) -> Optional[str]:
-        """Extract a frame from video at given timestamp"""
+    def _extract_frames_from_video(self, video_path: str, num_frames: int = 4, timestamp: float = 0) -> List[str]:
+        """Extract multiple frames from video
+        
+        Args:
+            video_path: Path to video file
+            num_frames: Number of frames to extract (evenly spaced)
+            timestamp: Starting timestamp
+            
+        Returns:
+            List of paths to extracted frame images
+        """
         import cv2
         import tempfile
         
+        frames = []
         try:
             cap = cv2.VideoCapture(video_path)
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            fps = cap.get(cv2.CAP_PROP_FPS)
             
-            # Set position
             if timestamp > 0:
-                fps = cap.get(cv2.CAP_PROP_FPS)
-                frame_number = int(timestamp * fps)
-                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+                start_frame = int(timestamp * fps)
+            else:
+                start_frame = 0
             
-            ret, frame = cap.read()
+            # Calculate frame interval
+            interval = max(1, (total_frames - start_frame) // num_frames)
+            
+            for i in range(num_frames):
+                frame_number = start_frame + (i * interval)
+                if frame_number >= total_frames:
+                    break
+                    
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+                ret, frame = cap.read()
+                
+                if ret:
+                    # Save frame to temp file
+                    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+                        cv2.imwrite(tmp.name, frame)
+                        frames.append(tmp.name)
+            
             cap.release()
             
-            if ret:
-                # Save frame to temp file
-                with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
-                    cv2.imwrite(tmp.name, frame)
-                    return tmp.name
         except Exception as e:
-            logger.error(f"Could not extract frame from video: {e}")
+            logger.error(f"Could not extract frames from video: {e}")
         
-        return None
+        return frames
     
     def _encode_image(self, image_path: str) -> str:
         """Encode image to base64"""
