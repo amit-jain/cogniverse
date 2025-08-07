@@ -58,13 +58,14 @@ class LLMJudgeBase:
                 self._client = None
         return self._client
     
-    async def _call_llm(self, prompt: str, system_prompt: str = None) -> str:
+    async def _call_llm(self, prompt: str, system_prompt: str = None, images: list = None) -> str:
         """
-        Call LLM with prompt
+        Call LLM with prompt and optional images for multimodal evaluation
         
         Args:
             prompt: User prompt
             system_prompt: System prompt for context
+            images: List of image paths or base64 encoded images
             
         Returns:
             LLM response text
@@ -83,7 +84,12 @@ class LLMJudgeBase:
             messages = []
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})
-            messages.append({"role": "user", "content": prompt})
+            
+            # Add images if provided (for multimodal models like llava, bakllava)
+            user_message = {"role": "user", "content": prompt}
+            if images:
+                user_message["images"] = images
+            messages.append(user_message)
             
             response = await loop.run_in_executor(
                 None,
@@ -145,50 +151,18 @@ class LLMJudgeBase:
 class SyncLLMReferenceFreeEvaluator(Evaluator, LLMJudgeBase):
     """
     LLM-based reference-free evaluator
-    Evaluates query-result relevance without ground truth
+    Evaluates query-result relevance without ground truth using multimodal models
     """
     
-    def __init__(self, model_name: str = "deepseek-r1:7b", base_url: str = "http://localhost:11434"):
-        LLMJudgeBase.__init__(self, model_name, base_url)
-        self._metadata_cache = {}  # Cache for metadata
-    
-    async def _fetch_video_metadata(self, video_id: str) -> VideoMetadata:
+    def __init__(self, model_name: str = "llava:7b", base_url: str = "http://localhost:11434"):
         """
-        Fetch video metadata from database or cache
+        Initialize with multimodal model for visual evaluation
         
         Args:
-            video_id: Video ID to fetch
-            
-        Returns:
-            VideoMetadata object with title, description, etc.
+            model_name: Multimodal model (llava, bakllava, etc.)
+            base_url: Ollama API URL
         """
-        if video_id in self._metadata_cache:
-            return self._metadata_cache[video_id]
-        
-        try:
-            # Try to fetch from Vespa or other backend
-            from .metadata_fetcher import VideoMetadataFetcher
-            
-            if not hasattr(self, '_metadata_fetcher'):
-                self._metadata_fetcher = VideoMetadataFetcher()
-            
-            metadata = await self._metadata_fetcher.fetch_metadata(video_id)
-            
-            if metadata:
-                video_meta = VideoMetadata(
-                    video_id=video_id,
-                    title=metadata.get("title"),
-                    description=metadata.get("description"),
-                    transcript=metadata.get("transcript"),
-                    tags=metadata.get("tags", [])
-                )
-                self._metadata_cache[video_id] = video_meta
-                return video_meta
-        except Exception as e:
-            logger.debug(f"Could not fetch metadata for {video_id}: {e}")
-        
-        # Return minimal metadata if fetch fails
-        return VideoMetadata(video_id=video_id)
+        LLMJudgeBase.__init__(self, model_name, base_url)
     
     def evaluate(self, *, input=None, output=None, **kwargs) -> EvaluationResult:
         """
@@ -227,48 +201,63 @@ class SyncLLMReferenceFreeEvaluator(Evaluator, LLMJudgeBase):
                 explanation="No results to evaluate"
             )
         
-        # Prepare prompt for LLM
+        # Prepare prompt for multimodal LLM
         system_prompt = """You are an expert evaluator for video search systems. 
-Your task is to evaluate how well the search results match the user's query.
+You will be shown video frames from search results and need to evaluate how well they match the query.
 Provide a score from 0 to 10 and a brief explanation.
-Consider relevance, ranking quality, and result diversity."""
+Consider visual relevance, content match, and result quality."""
         
-        # Fetch metadata for videos to provide context
-        results_text = []
-        for i, result in enumerate(results[:5], 1):  # Top 5 results
+        # Extract frame paths from results
+        frame_paths = []
+        results_info = []
+        
+        for i, result in enumerate(results[:3], 1):  # Top 3 results for multimodal eval
             if isinstance(result, dict):
-                video_id = result.get("video_id", "unknown")
+                video_id = result.get("video_id", result.get("source_id", "unknown"))
                 score = result.get("score", 0)
+                frame_path = result.get("frame_path")  # Path to actual frame image
+                
+                # If we have frame embeddings, we might have frame paths
+                if not frame_path and "frame_id" in result:
+                    # Construct frame path from video_id and frame_id
+                    frame_path = f"data/frames/{video_id}/frame_{result.get('frame_id', 0)}.jpg"
             else:
-                video_id = getattr(result, "video_id", "unknown")
+                video_id = getattr(result, "video_id", getattr(result, "source_id", "unknown"))
                 score = getattr(result, "score", 0)
+                frame_path = getattr(result, "frame_path", None)
             
-            # Try to fetch metadata for meaningful context
-            metadata = await self._fetch_video_metadata(video_id)
-            if metadata and metadata.title:
-                results_text.append(f"{i}. {metadata.title or video_id} (Score: {score:.3f})")
-                if metadata.description:
-                    results_text.append(f"   Description: {metadata.description[:100]}...")
-            else:
-                results_text.append(f"{i}. Video: {video_id} (Score: {score:.3f})")
-                results_text.append(f"   [No metadata available - evaluation may be limited]")
+            results_info.append(f"Result {i}: Video {video_id} (Score: {score:.3f})")
+            
+            # Add frame path if it exists and is accessible
+            if frame_path:
+                from pathlib import Path
+                if Path(frame_path).exists():
+                    frame_paths.append(frame_path)
+                else:
+                    logger.debug(f"Frame path not found: {frame_path}")
         
         prompt = f"""Query: "{query}"
 
-Search Results:
-{chr(10).join(results_text)}
+I'm showing you {len(frame_paths)} video frames from the top search results.
+{chr(10).join(results_info)}
 
-Please evaluate these search results. Consider:
-1. How relevant are the top results to the query?
-2. Are the scores reasonable?
-3. Is there good diversity in the results?
+Please evaluate:
+1. How well do these video frames match the query "{query}"?
+2. Are they visually relevant to what was searched for?
+3. Do they show appropriate content?
 
-Provide a score from 0-10 and explanation.
+Provide a score from 0-10 where:
+- 10 = Perfect match, exactly what was searched for
+- 7-9 = Good match, clearly relevant
+- 4-6 = Partial match, somewhat relevant  
+- 1-3 = Poor match, barely relevant
+- 0 = No match at all
+
 Format: Score: X/10
-Explanation: Your reasoning here"""
+Explanation: Your visual assessment"""
         
-        # Call LLM
-        response = await self._call_llm(prompt, system_prompt)
+        # Call multimodal LLM with images
+        response = await self._call_llm(prompt, system_prompt, images=frame_paths if frame_paths else None)
         
         # Parse response
         score, explanation = self._extract_score_from_response(response)
@@ -618,7 +607,7 @@ class SyncLLMHybridEvaluator(Evaluator, LLMJudgeBase):
 
 
 def create_llm_evaluators(
-    model_name: str = "deepseek-r1:7b",
+    model_name: str = "llava:7b",
     base_url: str = "http://localhost:11434",
     include_hybrid: bool = True
 ) -> List[Evaluator]:
@@ -626,7 +615,7 @@ def create_llm_evaluators(
     Create LLM-based evaluators for Phoenix experiments
     
     Args:
-        model_name: LLM model to use
+        model_name: LLM model to use (llava:7b for multimodal)
         base_url: LLM API base URL
         include_hybrid: Whether to include hybrid evaluator
         
