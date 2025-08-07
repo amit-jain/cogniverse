@@ -72,8 +72,8 @@ class LLMJudgeBase:
         client = self._get_client()
         
         if client is None:
-            # Return mock response if Ollama not available
-            return "Mock evaluation: Results appear relevant to query (score: 0.75)"
+            # Fail properly if Ollama not available
+            raise RuntimeError("Ollama client not available. Please install ollama and start the service.")
         
         try:
             # For async compatibility, run in executor
@@ -150,6 +150,45 @@ class SyncLLMReferenceFreeEvaluator(Evaluator, LLMJudgeBase):
     
     def __init__(self, model_name: str = "deepseek-r1:7b", base_url: str = "http://localhost:11434"):
         LLMJudgeBase.__init__(self, model_name, base_url)
+        self._metadata_cache = {}  # Cache for metadata
+    
+    async def _fetch_video_metadata(self, video_id: str) -> VideoMetadata:
+        """
+        Fetch video metadata from database or cache
+        
+        Args:
+            video_id: Video ID to fetch
+            
+        Returns:
+            VideoMetadata object with title, description, etc.
+        """
+        if video_id in self._metadata_cache:
+            return self._metadata_cache[video_id]
+        
+        try:
+            # Try to fetch from Vespa or other backend
+            from .metadata_fetcher import VideoMetadataFetcher
+            
+            if not hasattr(self, '_metadata_fetcher'):
+                self._metadata_fetcher = VideoMetadataFetcher()
+            
+            metadata = await self._metadata_fetcher.fetch_metadata(video_id)
+            
+            if metadata:
+                video_meta = VideoMetadata(
+                    video_id=video_id,
+                    title=metadata.get("title"),
+                    description=metadata.get("description"),
+                    transcript=metadata.get("transcript"),
+                    tags=metadata.get("tags", [])
+                )
+                self._metadata_cache[video_id] = video_meta
+                return video_meta
+        except Exception as e:
+            logger.debug(f"Could not fetch metadata for {video_id}: {e}")
+        
+        # Return minimal metadata if fetch fails
+        return VideoMetadata(video_id=video_id)
     
     def evaluate(self, *, input=None, output=None, **kwargs) -> EvaluationResult:
         """
@@ -194,7 +233,7 @@ Your task is to evaluate how well the search results match the user's query.
 Provide a score from 0 to 10 and a brief explanation.
 Consider relevance, ranking quality, and result diversity."""
         
-        # Format results for prompt
+        # Fetch metadata for videos to provide context
         results_text = []
         for i, result in enumerate(results[:5], 1):  # Top 5 results
             if isinstance(result, dict):
@@ -204,7 +243,15 @@ Consider relevance, ranking quality, and result diversity."""
                 video_id = getattr(result, "video_id", "unknown")
                 score = getattr(result, "score", 0)
             
-            results_text.append(f"{i}. Video: {video_id} (Score: {score:.3f})")
+            # Try to fetch metadata for meaningful context
+            metadata = await self._fetch_video_metadata(video_id)
+            if metadata and metadata.title:
+                results_text.append(f"{i}. {metadata.title or video_id} (Score: {score:.3f})")
+                if metadata.description:
+                    results_text.append(f"   Description: {metadata.description[:100]}...")
+            else:
+                results_text.append(f"{i}. Video: {video_id} (Score: {score:.3f})")
+                results_text.append(f"   [No metadata available - evaluation may be limited]")
         
         prompt = f"""Query: "{query}"
 
@@ -251,18 +298,16 @@ class SyncLLMReferenceBasedEvaluator(Evaluator, LLMJudgeBase):
     
     def __init__(self, 
                  model_name: str = "deepseek-r1:7b",
-                 base_url: str = "http://localhost:11434",
-                 fetch_metadata: bool = True):
+                 base_url: str = "http://localhost:11434"):
         """
         Initialize reference-based evaluator
         
         Args:
             model_name: LLM model to use
             base_url: LLM API base URL
-            fetch_metadata: Whether to fetch video metadata from database
         """
         LLMJudgeBase.__init__(self, model_name, base_url)
-        self.fetch_metadata = fetch_metadata
+        self.fetch_metadata = True  # Always fetch metadata for meaningful evaluation
     
     def evaluate(self, *, input=None, output=None, expected=None, **kwargs) -> EvaluationResult:
         """
