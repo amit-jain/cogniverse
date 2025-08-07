@@ -78,8 +78,8 @@ class VideoMetadataFetcher:
             # Create a temporary backend instance
             backend = VespaSearchBackend(self.config)
             
-            # Query Vespa for the specific video
-            query = f'select * from sources * where source_id contains "{video_id}"'
+            # Query Vespa for the specific video - use correct field names!
+            query = f'select * from sources * where video_id contains "{video_id}"'
             response = backend.app.query(
                 yql=query,
                 hits=1
@@ -91,12 +91,12 @@ class VideoMetadataFetcher:
                 
                 return {
                     "video_id": video_id,
-                    "title": fields.get("title", f"Video {video_id}"),
-                    "description": fields.get("description", ""),
-                    "transcript": fields.get("transcript", ""),
-                    "frame_descriptions": fields.get("frame_descriptions", []),
-                    "duration": fields.get("duration", 0),
-                    "tags": fields.get("tags", []),
+                    "title": fields.get("video_title", f"Video {video_id}"),  # Correct field name
+                    "description": fields.get("frame_description", ""),  # Using frame_description
+                    "transcript": fields.get("audio_transcript", ""),  # Correct field name
+                    "frame_descriptions": [fields.get("frame_description", "")],  # Single frame desc
+                    "duration": fields.get("end_time", 0) - fields.get("start_time", 0),  # Calculate from times
+                    "tags": [],  # Not available in schema
                     "source": "vespa"
                 }
                 
