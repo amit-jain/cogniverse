@@ -367,16 +367,26 @@ class PhoenixExperimentRunner:
                 evaluators = create_sync_evaluators()
                 logger.info("Using basic evaluators only (relevance and diversity)")
             
-            # Add LLM evaluators if enabled
+            # Add LLM/Visual evaluators if enabled
             if self.enable_llm_evaluators:
-                from .evaluators.llm_judge import create_llm_evaluators
-                llm_evaluators = create_llm_evaluators(
-                    model_name=self.llm_model,
-                    base_url=self.llm_base_url,
-                    include_hybrid=True
-                )
-                evaluators.extend(llm_evaluators)
-                logger.info(f"Added {len(llm_evaluators)} LLM evaluators: reference-free, reference-based, hybrid")
+                # Check if we should use visual evaluation with ColPali
+                if self.llm_model.startswith("visual:") or self.llm_model == "colpali":
+                    # Use ColPali visual evaluator
+                    from .evaluators.visual_judge import create_visual_evaluators
+                    model_name = self.llm_model.replace("visual:", "") if self.llm_model.startswith("visual:") else "vidore/colsmol-500m"
+                    visual_evaluators = create_visual_evaluators(model_name)
+                    evaluators.extend(visual_evaluators)
+                    logger.info(f"Added visual evaluator using ColPali model: {model_name}")
+                else:
+                    # Use traditional LLM evaluators
+                    from .evaluators.llm_judge import create_llm_evaluators
+                    llm_evaluators = create_llm_evaluators(
+                        model_name=self.llm_model,
+                        base_url=self.llm_base_url,
+                        include_hybrid=True
+                    )
+                    evaluators.extend(llm_evaluators)
+                    logger.info(f"Added {len(llm_evaluators)} LLM evaluators: reference-free, reference-based, hybrid")
             
             # Add golden dataset evaluator with the actual queries from the dataset
             from .evaluators.sync_golden_dataset import SyncGoldenDatasetEvaluator
