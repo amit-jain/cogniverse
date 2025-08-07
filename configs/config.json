@@ -22,6 +22,26 @@
     "default": "visual_test_queries",
     "registry_path": "configs/dataset_registry.json"
   },
+  "evaluators": {
+    "visual_judge": {
+      "provider": "ollama",
+      "model": "llava:7b",
+      "base_url": "http://localhost:11434",
+      "api_key": null
+    },
+    "llm_judge": {
+      "provider": "ollama",
+      "model": "deepseek-r1:7b",
+      "base_url": "http://localhost:11434",
+      "api_key": null
+    },
+    "modal_visual_judge": {
+      "provider": "modal",
+      "model": "qwen2-vl",
+      "base_url": "https://your-modal-endpoint.modal.run/",
+      "api_key": "your-modal-api-key"
+    }
+  },
   "remote_inference_api_key": null,
   "remote_inference_provider": null,
   "videoprism_repo_path": "/Users/amjain/source/hobby/videoprism",
