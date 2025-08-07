@@ -27,7 +27,9 @@
       "provider": "ollama",
       "model": "llava:7b",
       "base_url": "http://localhost:11434",
-      "api_key": null
+      "api_key": null,
+      "frames_per_video": 4,
+      "max_videos": 3
     },
     "llm_judge": {
       "provider": "ollama",
