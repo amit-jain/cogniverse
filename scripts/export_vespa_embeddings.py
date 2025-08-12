@@ -171,7 +171,12 @@ class VespaEmbeddingExporter:
         conditions = []
         
         if video_id:
-            conditions.append(f'video_id contains "{video_id}"')
+            # Handle strategy-based filtering
+            if video_id.startswith("strategy:"):
+                strategy = video_id.replace("strategy:", "")
+                conditions.append(f'ranking_strategy contains "{strategy}" or search_profile contains "{strategy}"')
+            else:
+                conditions.append(f'video_id contains "{video_id}"')
         
         if query:
             conditions.append(f'userQuery("{query}")')
