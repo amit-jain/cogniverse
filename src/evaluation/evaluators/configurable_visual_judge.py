@@ -80,23 +80,33 @@ class ConfigurableVisualJudge(Evaluator):
         # Determine how many frames to extract based on config
         config = get_config()
         evaluator_config = config.get("evaluators", {}).get(self.evaluator_name, {})
-        frames_per_video = evaluator_config.get("frames_per_video", 3)
+        frames_per_video = evaluator_config.get("frames_per_video", 30)
         max_videos = evaluator_config.get("max_videos", 2)
+        sample_all = evaluator_config.get("sample_all_frames", False)
+        max_total_frames = evaluator_config.get("max_total_frames", 60)
         
         for i, result in enumerate(results[:max_videos], 1):  # Top N videos
             # First try to get video path
             video_path = self._get_video_path(result)
             if video_path:
-                # Extract multiple frames from video
-                # Use timestamp from result if available
-                timestamp = 0
-                if isinstance(result, dict):
-                    timestamp = result.get("start_time", 0)
+                # Calculate how many frames to extract from this video
+                remaining_budget = max_total_frames - len(frame_paths)
+                frames_to_extract = min(frames_per_video, remaining_budget)
                 
-                extracted_frames = self._extract_frames_from_video(video_path, frames_per_video, timestamp)
-                if extracted_frames:
-                    frame_paths.extend(extracted_frames)
-                    logger.info(f"Extracted {len(extracted_frames)} frames from video {video_path}")
+                if frames_to_extract > 0:
+                    # Use timestamp from result if available
+                    timestamp = 0
+                    if isinstance(result, dict):
+                        timestamp = result.get("start_time", 0)
+                    
+                    extracted_frames = self._extract_frames_from_video(
+                        video_path, 
+                        num_frames=frames_to_extract,
+                        timestamp=timestamp,
+                        sample_all=sample_all
+                    )
+                    if extracted_frames:
+                        frame_paths.extend(extracted_frames)
             
         if not frame_paths:
             # Log what we tried to find
@@ -172,13 +182,14 @@ class ConfigurableVisualJudge(Evaluator):
             
         return None
     
-    def _extract_frames_from_video(self, video_path: str, num_frames: int = 4, timestamp: float = 0) -> List[str]:
+    def _extract_frames_from_video(self, video_path: str, num_frames: int = 30, timestamp: float = 0, sample_all: bool = False) -> List[str]:
         """Extract multiple frames from video
         
         Args:
             video_path: Path to video file
             num_frames: Number of frames to extract (evenly spaced)
             timestamp: Starting timestamp
+            sample_all: If True, extract all frames (up to max_total_frames limit)
             
         Returns:
             List of paths to extracted frame images
@@ -197,8 +208,19 @@ class ConfigurableVisualJudge(Evaluator):
             else:
                 start_frame = 0
             
-            # Calculate frame interval
-            interval = max(1, (total_frames - start_frame) // num_frames)
+            # If sample_all, extract every frame (with limit)
+            if sample_all:
+                # Get max_total_frames from config
+                config = get_config()
+                evaluator_config = config.get("evaluators", {}).get(self.evaluator_name, {})
+                max_total = evaluator_config.get("max_total_frames", 60)
+                
+                # Extract frames at regular intervals to stay within limit
+                num_frames = min(total_frames - start_frame, max_total)
+                interval = max(1, (total_frames - start_frame) // num_frames)
+            else:
+                # Calculate frame interval for evenly spaced frames
+                interval = max(1, (total_frames - start_frame) // num_frames)
             
             for i in range(num_frames):
                 frame_number = start_frame + (i * interval)
@@ -215,6 +237,7 @@ class ConfigurableVisualJudge(Evaluator):
                         frames.append(tmp.name)
             
             cap.release()
+            logger.info(f"Extracted {len(frames)} frames from video {video_path}")
             
         except Exception as e:
             logger.error(f"Could not extract frames from video: {e}")

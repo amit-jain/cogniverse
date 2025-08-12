@@ -28,8 +28,10 @@
       "model": "llava:7b",
       "base_url": "http://localhost:11434",
       "api_key": null,
-      "frames_per_video": 4,
-      "max_videos": 3
+      "frames_per_video": 30,
+      "max_videos": 2,
+      "sample_all_frames": false,
+      "max_total_frames": 60
     },
     "llm_judge": {
       "provider": "ollama",
