@@ -69,3 +69,25 @@ class SearchBackend(ABC):
     def get_document(self, document_id: str) -> Optional[Document]:
         """Retrieve a specific document by ID."""
         pass
+    
+    @abstractmethod
+    def export_embeddings(
+        self,
+        schema: str = "video_frame",
+        max_documents: Optional[int] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        include_embeddings: bool = True
+    ) -> List[Dict[str, Any]]:
+        """
+        Export documents with embeddings from the backend.
+        
+        Args:
+            schema: Schema/index to export from
+            max_documents: Maximum number of documents to export
+            filters: Optional filters (e.g., video_id, date range)
+            include_embeddings: Whether to include embedding vectors
+            
+        Returns:
+            List of document dictionaries with embeddings and metadata
+        """
+        pass

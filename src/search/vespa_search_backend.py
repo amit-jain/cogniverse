@@ -265,7 +265,7 @@ class VespaSearchBackend(SearchBackend):
         vespa_url: str,
         vespa_port: int,
         schema_name: str,
-        profile: str,
+        profile: str = None,  # Make profile optional
         strategy: Optional[Strategy] = None,
         query_encoder: Optional[Any] = None,
         enable_metrics: bool = True,
@@ -294,12 +294,12 @@ class VespaSearchBackend(SearchBackend):
         self.profile = profile
         self.query_encoder = query_encoder
         
-        # Get strategy from registry if not provided
-        if strategy is None:
+        # Get strategy from registry if profile provided
+        if strategy is None and profile is not None:
             registry = get_registry()
             self.strategy = registry.get_strategy(profile)
         else:
-            self.strategy = strategy
+            self.strategy = strategy  # Can be None for export-only usage
         
         # Combine URL and port
         full_url = f"{vespa_url}:{vespa_port}"
@@ -330,11 +330,18 @@ class VespaSearchBackend(SearchBackend):
         else:
             self.metrics = None
         
-        logger.info(
-            f"VespaSearchBackend initialized for schema '{schema_name}' "
-            f"with pool={enable_connection_pool}, metrics={enable_metrics}, "
-            f"strategy={self.strategy.processing_type}/{self.strategy.segmentation}"
-        )
+        if self.strategy:
+            logger.info(
+                f"VespaSearchBackend initialized for schema '{schema_name}' "
+                f"with pool={enable_connection_pool}, metrics={enable_metrics}, "
+                f"strategy={self.strategy.processing_type}/{self.strategy.segmentation}"
+            )
+        else:
+            logger.info(
+                f"VespaSearchBackend initialized for schema '{schema_name}' "
+                f"with pool={enable_connection_pool}, metrics={enable_metrics}, "
+                f"strategy=None (export-only mode)"
+            )
     
     
     def _embeddings_to_vespa_format(self, embeddings: np.ndarray, profile: str) -> Dict[str, Any]:
@@ -404,6 +411,14 @@ class VespaSearchBackend(SearchBackend):
         filters: Optional[Dict[str, Any]] = None,
         ranking_strategy: Optional[str] = None
     ) -> List[SearchResult]:
+        """
+        Search for documents. Requires strategy to be configured.
+        """
+        if self.strategy is None:
+            raise RuntimeError(
+                "Search not available: VespaSearchBackend was initialized without a strategy. "
+                "This instance is configured for export-only operations."
+            )
         """
         Search for documents matching the query.
         
@@ -808,6 +823,121 @@ class VespaSearchBackend(SearchBackend):
             return doc
         
         return None
+    
+    def export_embeddings(
+        self,
+        schema: str = "video_frame",
+        max_documents: Optional[int] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        include_embeddings: bool = True
+    ) -> List[Dict[str, Any]]:
+        """
+        Export documents with embeddings from Vespa.
+        
+        Args:
+            schema: Schema to export from (overrides default)
+            max_documents: Maximum number of documents to export
+            filters: Optional filters (e.g., {'video_id': 'xyz'})
+            include_embeddings: Whether to include embedding vectors
+            
+        Returns:
+            List of document dictionaries with embeddings and metadata
+        """
+        documents = []
+        
+        # Build YQL query
+        yql = f"select * from {schema or self.schema_name} where true"
+        
+        # Add filters if provided
+        if filters:
+            conditions = []
+            for key, value in filters.items():
+                if isinstance(value, str):
+                    conditions.append(f"{key} contains '{value}'")
+                else:
+                    conditions.append(f"{key} = {value}")
+            if conditions:
+                yql = f"select * from {schema or self.schema_name} where {' and '.join(conditions)}"
+        
+        # Add limit
+        if max_documents:
+            yql += f" limit {max_documents}"
+        
+        # Use visit API for bulk export
+        namespace = "video"  # Default namespace for video schemas
+        visit_url = f"{self.vespa_url}:{self.vespa_port}/document/v1/{namespace}/{schema or self.schema_name}/docid"
+        
+        try:
+            import requests
+            response = requests.get(
+                visit_url,
+                params={
+                    "selection": "true" if not filters else None,
+                    "continuation": None,
+                    "wantedDocumentCount": max_documents or 1000
+                },
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                for doc in data.get("documents", []):
+                    fields = doc.get("fields", {})
+                    doc_data = {
+                        "id": doc.get("id", ""),
+                        **fields
+                    }
+                    
+                    # Extract embeddings if present and requested
+                    if include_embeddings:
+                        for emb_field in ["embedding", "frame_embedding", "video_embedding", 
+                                         "text_embedding", "colpali_embedding"]:
+                            if emb_field in fields:
+                                doc_data[emb_field] = fields[emb_field]
+                    
+                    documents.append(doc_data)
+                
+                # Handle continuation token for large datasets
+                continuation = data.get("continuation")
+                while continuation and len(documents) < (max_documents or float('inf')):
+                    response = requests.get(
+                        visit_url,
+                        params={
+                            "continuation": continuation,
+                            "wantedDocumentCount": min(1000, (max_documents or 1000) - len(documents))
+                        },
+                        timeout=30
+                    )
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        for doc in data.get("documents", []):
+                            fields = doc.get("fields", {})
+                            doc_data = {
+                                "id": doc.get("id", ""),
+                                **fields
+                            }
+                            
+                            if include_embeddings:
+                                for emb_field in ["embedding", "frame_embedding", "video_embedding",
+                                                 "text_embedding", "colpali_embedding"]:
+                                    if emb_field in fields:
+                                        doc_data[emb_field] = fields[emb_field]
+                            
+                            documents.append(doc_data)
+                        
+                        continuation = data.get("continuation")
+                        if not data.get("documents"):
+                            break
+                    else:
+                        break
+                        
+        except Exception as e:
+            logger.error(f"Failed to export embeddings: {e}")
+            raise
+        
+        return documents[:max_documents] if max_documents else documents
     
     def close(self):
         """Clean up resources"""
