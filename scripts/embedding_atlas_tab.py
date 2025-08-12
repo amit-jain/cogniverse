@@ -12,9 +12,116 @@ import json
 import time
 from datetime import datetime
 import sys
+from typing import Dict, Optional
 
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
+
+# Import Vespa backend
+try:
+    from src.search.backends.vespa_backend import VespaSearchBackend
+    from src.utils.config import get_config
+    VESPA_AVAILABLE = True
+except ImportError:
+    VESPA_AVAILABLE = False
+
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def get_available_videos() -> Dict[str, Dict]:
+    """
+    Query Vespa to get available videos with metadata
+    Returns dict: {video_id: {frame_count, duration, strategy, profile}}
+    """
+    if not VESPA_AVAILABLE:
+        return {}
+    
+    try:
+        config = get_config()
+        vespa = VespaSearchBackend(
+            url=config.get("vespa_url", "http://localhost"),
+            port=config.get("vespa_port", 8080),
+            schema=config.get("vespa_schema", "video_frame")
+        )
+        
+        # Query to get unique videos with aggregation
+        yql = """
+        select video_id, video_title, source_type, 
+               count(*) as frame_count,
+               max(timestamp) as duration
+        from video_frame 
+        where true
+        limit 0 | 
+        all(group(video_id) max(100) each(
+            output(count() as frame_count)
+            max(1) each(output(summary()))
+        ))
+        """
+        
+        # Simpler query if aggregation fails
+        simple_yql = "select video_id, video_title, timestamp, frame_number from video_frame where true limit 1000"
+        
+        try:
+            response = vespa.app.query(yql=yql)
+        except:
+            # Fallback to simple query
+            response = vespa.app.query(yql=simple_yql)
+        
+        videos = {}
+        
+        # Process response to extract unique videos
+        if hasattr(response, 'hits'):
+            video_data = {}
+            for hit in response.hits:
+                fields = hit.get("fields", {})
+                vid = fields.get("video_id")
+                if vid and vid not in video_data:
+                    video_data[vid] = {
+                        "frame_count": 1,
+                        "duration": fields.get("timestamp", 0),
+                        "title": fields.get("video_title", vid),
+                        "strategy": fields.get("ranking_strategy", "default"),
+                        "profile": fields.get("search_profile", "unknown")
+                    }
+                elif vid:
+                    video_data[vid]["frame_count"] += 1
+                    video_data[vid]["duration"] = max(
+                        video_data[vid]["duration"],
+                        fields.get("timestamp", 0)
+                    )
+            
+            videos = video_data
+        
+        return videos
+    
+    except Exception as e:
+        st.error(f"Error fetching videos from Vespa: {str(e)}")
+        return {}
+
+
+@st.cache_data(ttl=300)
+def get_available_strategies() -> Dict[str, list]:
+    """
+    Get available search strategies/profiles from Vespa
+    Returns dict: {strategy: [video_ids]}
+    """
+    if not VESPA_AVAILABLE:
+        return {}
+    
+    try:
+        videos = get_available_videos()
+        
+        # Group by strategy
+        strategies = {}
+        for video_id, info in videos.items():
+            strategy = info.get("strategy", "default")
+            if strategy not in strategies:
+                strategies[strategy] = []
+            strategies[strategy].append(video_id)
+        
+        return strategies
+    
+    except Exception as e:
+        return {}
 
 
 def render_embedding_atlas_tab():
@@ -53,11 +160,102 @@ def render_embedding_atlas_tab():
                 help="Number of random documents to sample"
             )
         elif export_type == "Filtered":
-            video_id = st.text_input(
-                "Video ID (optional)",
-                placeholder="e.g., sample_video_001",
-                help="Filter by specific video ID"
+            # Video selection with dropdown
+            video_selection_mode = st.radio(
+                "Video Selection",
+                ["Browse Available", "Manual Entry"],
+                horizontal=True,
+                help="Browse videos from Vespa or enter manually"
             )
+            
+            if video_selection_mode == "Browse Available":
+                # Get available videos from Vespa
+                available_videos = get_available_videos()
+                available_strategies = get_available_strategies()
+                
+                if available_videos:
+                    # First, let user select filtering approach
+                    filter_by = st.radio(
+                        "Filter by",
+                        ["Individual Video", "Strategy/Profile", "All Videos"],
+                        horizontal=True
+                    )
+                    
+                    if filter_by == "Individual Video":
+                        # Create formatted options with metadata
+                        video_options = []
+                        video_map = {}
+                        
+                        for vid, info in available_videos.items():
+                            display_name = f"{info.get('title', vid)} ({info.get('frame_count', 0)} frames)"
+                            video_options.append(display_name)
+                            video_map[display_name] = vid
+                        
+                        selected_display = st.selectbox(
+                            "Select Video",
+                            sorted(video_options),
+                            help="Choose from videos indexed in Vespa"
+                        )
+                        
+                        video_id = video_map.get(selected_display)
+                        
+                        # Show video metadata
+                        if video_id and video_id in available_videos:
+                            video_info = available_videos[video_id]
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Frames", video_info.get('frame_count', 'N/A'))
+                            with col2:
+                                st.metric("Duration", f"{video_info.get('duration', 0):.1f}s")
+                            with col3:
+                                st.metric("Strategy", video_info.get('strategy', 'default'))
+                    
+                    elif filter_by == "Strategy/Profile":
+                        if available_strategies:
+                            selected_strategy = st.selectbox(
+                                "Select Strategy/Profile",
+                                sorted(available_strategies.keys()),
+                                help="Filter by indexing strategy or search profile"
+                            )
+                            
+                            # Show videos in this strategy
+                            strategy_videos = available_strategies.get(selected_strategy, [])
+                            st.info(f"Found {len(strategy_videos)} videos with strategy: {selected_strategy}")
+                            
+                            # Option to select specific video from strategy
+                            video_in_strategy = st.selectbox(
+                                "Select specific video (optional)",
+                                ["All in Strategy"] + sorted(strategy_videos)
+                            )
+                            
+                            if video_in_strategy != "All in Strategy":
+                                video_id = video_in_strategy
+                            else:
+                                # We'll handle multiple videos in export
+                                video_id = f"strategy:{selected_strategy}"
+                        else:
+                            st.warning("No strategy information available")
+                            video_id = None
+                    
+                    else:  # All Videos
+                        video_id = None
+                        total_videos = len(available_videos)
+                        total_frames = sum(v.get('frame_count', 0) for v in available_videos.values())
+                        st.info(f"Will export from all {total_videos} videos ({total_frames} total frames)")
+                    
+                else:
+                    st.warning("Could not fetch video list from Vespa")
+                    video_id = st.text_input(
+                        "Video ID (manual)",
+                        placeholder="e.g., sample_video_001",
+                        help="Enter video ID manually"
+                    )
+            else:
+                video_id = st.text_input(
+                    "Video ID (optional)",
+                    placeholder="e.g., sample_video_001",
+                    help="Filter by specific video ID"
+                )
             
             query = st.text_input(
                 "Search Query (optional)",
