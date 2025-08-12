@@ -221,7 +221,7 @@ st.title("Phoenix Dashboard")
 st.caption(f"Last refreshed: {st.session_state.last_refresh.strftime('%Y-%m-%d %H:%M:%S')}")
 
 # Create main tabs
-main_tabs = st.tabs(["📊 Analytics", "🧪 Evaluation"])
+main_tabs = st.tabs(["📊 Analytics", "🧪 Evaluation", "🗺️ Embedding Atlas"])
 
 # Analytics Tab
 with main_tabs[0]:
@@ -1238,6 +1238,14 @@ with main_tabs[1]:
     # Import and use the tabbed evaluation tab (like HTML report)
     from phoenix_dashboard_evaluation_tab_tabbed import render_evaluation_tab
     render_evaluation_tab()
+
+# Embedding Atlas Tab
+with main_tabs[2]:
+    st.header("🗺️ Embedding Visualization")
+    
+    # Import the embedding visualization module
+    from embedding_atlas_tab import render_embedding_atlas_tab
+    render_embedding_atlas_tab()
 
 # Auto-refresh logic
 if st.session_state.auto_refresh:
