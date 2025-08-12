@@ -5,6 +5,30 @@
 The Cogniverse Evaluation Framework provides comprehensive evaluation capabilities for the video RAG system using:
 - **Inspect AI**: Structured task-based evaluation with custom solvers and scorers
 - **Arize Phoenix**: Real-time tracing, observability, dataset management, and experiment tracking
+- **Custom Evaluators**: Quality metrics, LLM judges, and visual evaluation
+
+### Evaluation Capabilities
+
+#### 1. Quality Evaluators (Reference-Free)
+- **Relevance Score**: Semantic similarity between query and results
+- **Diversity**: Measures variety in search results
+- **Distribution**: Analyzes score patterns and ranking
+- **Temporal Coverage**: Checks video segment coverage
+
+#### 2. LLM-as-Judge Evaluators
+- **Visual Judge**: Multimodal evaluation using LLaVA/Qwen2-VL (30 frames/video × 2 videos)
+- **Text Judge**: Reference-free, reference-based, and hybrid text evaluation
+- **Configurable Providers**: Ollama, Modal, OpenAI support
+
+#### 3. Dataset Management
+- **Golden Dataset Creation**: Auto-generate from low-scoring traces
+- **Dataset Registry**: Central management with merge/filter/export
+- **Phoenix Integration**: Automatic dataset versioning and tracking
+
+#### 4. Experiment Execution
+- **Multiple Profiles**: ColPali, ColQwen, VideoPrism models
+- **Search Strategies**: Binary, float, maxsim scoring
+- **Phoenix Experiments**: Full tracking and comparison
 
 ## Table of Contents
 1. [Installation & Setup](#installation--setup)
@@ -149,6 +173,35 @@ python scripts/run_evaluation.py full \
   --strategies binary_binary float_float hybrid_binary_bm25 \
   --tasks video_retrieval_accuracy temporal_understanding \
   --config configs/evaluation/eval_config.yaml
+```
+
+### Phoenix Experiments with Custom Evaluators
+
+Run experiments with quality and LLM evaluators:
+
+```bash
+# With quality evaluators only
+uv run python scripts/run_experiments_with_visualization.py \
+  --profiles frame_based_colpali \
+  --strategies binary_binary \
+  --quality-evaluators \
+  --dataset-name golden_eval_v1
+
+# With visual evaluation
+uv run python scripts/run_experiments_with_visualization.py \
+  --profiles frame_based_colpali \
+  --strategies binary_binary \
+  --llm-evaluators \
+  --evaluator visual_judge \
+  --dataset-name test_visual_eval
+
+# Full suite
+uv run python scripts/run_experiments_with_visualization.py \
+  --profiles frame_based_colpali direct_video_global \
+  --strategies binary_binary maxsim \
+  --quality-evaluators \
+  --llm-evaluators \
+  --evaluator visual_judge
 ```
 
 ### Batch Evaluation on Existing Traces
