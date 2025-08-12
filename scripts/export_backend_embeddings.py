@@ -45,6 +45,7 @@ class BackendEmbeddingExporter:
         self,
         output_path: str,
         schema: str = "video_frame",
+        profile: Optional[str] = None,
         max_documents: Optional[int] = None,
         filters: Optional[Dict[str, Any]] = None,
         reduce_dims: bool = True,
@@ -106,6 +107,16 @@ class BackendEmbeddingExporter:
         # Add embeddings
         embeddings_array = np.array(embeddings)
         logger.info(f"Embeddings shape: {embeddings_array.shape}")
+        
+        # Add metadata about the encoder/profile used
+        # This helps with query comparison later
+        df["embedding_dim"] = embeddings_array.shape[1]
+        df["export_schema"] = schema
+        
+        # Store the profile if provided - CRITICAL for query encoding
+        if profile:
+            df["encoder_profile"] = profile
+            logger.info(f"Stored encoder profile: {profile}")
         
         # Reduce dimensions if requested
         if reduce_dims and len(embeddings) >= 3:  # Need at least 3 points
@@ -374,6 +385,10 @@ def main():
         help="Filter field value"
     )
     parser.add_argument(
+        "--profile",
+        help="Strategy profile used for encoding (e.g., frame_based_colpali, direct_video_frame)"
+    )
+    parser.add_argument(
         "--reduction-method",
         choices=["umap", "tsne", "pca"],
         default="umap",
@@ -406,6 +421,7 @@ def main():
     output_path = exporter.export_embeddings(
         output_path=args.output,
         schema=args.schema,
+        profile=args.profile,
         max_documents=args.max_documents,
         filters=filters,
         reduce_dims=not args.no_reduction,

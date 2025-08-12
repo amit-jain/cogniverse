@@ -11,6 +11,7 @@ A sophisticated AI system that can search through video content using natural la
 - [Modal VLM Deployment](docs/modal/deploy_modal_vlm.md) - Vision-language model setup
 - [Pipeline Documentation](docs/pipeline/README.md) - Video processing pipeline details
 - [Testing Guide](docs/testing/) - Testing strategies and benchmarks
+- [ColPali Architecture](docs/colpali_architecture.md) - Deep dive into ColPali/SmolVLM token handling and visualization
 
 ### **📁 System Architecture**
 

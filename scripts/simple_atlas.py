@@ -120,11 +120,21 @@ if file_path and file_path.exists():
     
     # Display useful info about the data
     file_size = file_path.stat().st_size / (1024 * 1024)  # MB
-    st.info(f"""
+    # Count queries if present
+    num_queries = df["is_query"].sum() if "is_query" in df.columns else 0
+    
+    info_text = f"""
     **Features:** 3D scatter with rotation • 2D UMAP projection • Rich hover details • Cluster visualization
     
-    **Data:** {len(df):,} points • UMAP reduction • {file_path.name} ({file_size:.2f} MB)
-    """)
+    **Data:** {len(df):,} points
+    """
+    
+    if num_queries > 0:
+        info_text += f" • **{num_queries} queries** projected"
+    
+    info_text += f" • UMAP reduction • {file_path.name} ({file_size:.2f} MB)"
+    
+    st.info(info_text)
 else:
     st.error(f"File not found: {file_path}")
     st.stop()
@@ -261,28 +271,196 @@ with tab1:
         
         hover_texts.append("<br>".join(hover_parts))
     
-    fig = go.Figure(data=[go.Scatter3d(
-        x=df['x'],
-        y=df['y'],
-        z=df['z'],
-        mode='markers',
-        marker=dict(
-            size=point_size,
-            color=color_values,  # Use pre-computed color values
-            colorscale='Turbo',  # More vibrant color scale
-            showscale=True,
-            colorbar=dict(
-                title=colorbar_title,
-                thickness=15,
-                len=0.7,
-                x=1.02
+    # Check if there's a query point to highlight
+    has_query = "is_query" in df.columns and df["is_query"].any()
+    
+    if has_query:
+        # Separate query and document points
+        doc_mask = df["is_query"] == False
+        query_mask = df["is_query"] == True
+        
+        doc_df = df[doc_mask].copy()  # Make explicit copies
+        query_df = df[query_mask].copy()
+        
+        # Ensure query has z-coordinate
+        if 'z' not in query_df.columns or query_df['z'].isna().any():
+            # Place query slightly above the mean z-level for visibility
+            mean_z = doc_df['z'].mean() if 'z' in doc_df.columns and len(doc_df) > 0 else 0
+            query_df['z'] = mean_z + 1.0  # Slightly elevated for visibility
+        
+        # Get hover texts for documents
+        doc_hover_texts = [hover_texts[i] for i, is_doc in enumerate(doc_mask) if is_doc]
+        doc_color_values = [color_values[i] for i, is_doc in enumerate(doc_mask) if is_doc]
+        
+        # Debug info
+        if len(doc_df) == 0:
+            st.warning("No documents found in the data!")
+            fig = go.Figure()  # Empty figure if no documents
+        else:
+            # Ensure doc_df has required columns with proper types
+            if 'x' not in doc_df.columns or 'y' not in doc_df.columns:
+                st.error("Document data missing x,y coordinates!")
+                fig = go.Figure()
+            else:
+                # Create figure with document points
+                fig = go.Figure(data=[
+                    go.Scatter3d(
+                        x=doc_df['x'],
+                        y=doc_df['y'],
+                        z=doc_df['z'],
+                        mode='markers',
+                        marker=dict(
+                            size=point_size,
+                            color=doc_color_values,
+                            colorscale='Turbo',
+                            showscale=True,
+                            colorbar=dict(
+                                title=colorbar_title,
+                                thickness=15,
+                                len=0.7,
+                                x=1.02
+                            ),
+                            opacity=0.7,  # Slightly transparent for documents
+                            line=dict(width=0.5, color='white')
+                        ),
+                        text=doc_hover_texts,
+                        hovertemplate='%{text}<extra></extra>',
+                        name='Documents'
+                    )
+                ])
+        
+        # Add query point(s) with different colors for each
+        if not query_df.empty:
+            # Define colors for multiple queries
+            query_colors = ['red', 'blue', 'green', 'purple', 'orange', 'cyan', 'magenta', 'yellow']
+            # Use only valid 3D scatter symbols
+            query_symbols = ['diamond', 'square', 'circle', 'x', 'cross', 'diamond-open', 'square-open', 'circle-open']
+            
+            for q_idx, (idx, row) in enumerate(query_df.iterrows()):
+                query_text = row.get('text', 'Query').replace('QUERY: ', '')
+                # Truncate long queries for display
+                display_text = query_text[:30] + '...' if len(query_text) > 30 else query_text
+                
+                # Build hover text with similarity info if available
+                hover_parts = [f"<b>🎯 QUERY {q_idx + 1}</b>", query_text]
+                
+                # Add similarity scores if available
+                similarity_cols = [col for col in row.index if col.startswith('query_similarity_')]
+                if similarity_cols:
+                    for col in similarity_cols:
+                        if pd.notna(row[col]):
+                            hover_parts.append(f"Self-similarity: {row[col]:.3f}")
+                            break
+                
+                hover_text = "<br>".join(hover_parts)
+                
+                # Get color and symbol for this query
+                color = query_colors[q_idx % len(query_colors)]
+                symbol = query_symbols[q_idx % len(query_symbols)]
+                
+                # Map colors to valid darker versions for borders
+                if color == 'red':
+                    border_color = 'darkred'
+                elif color == 'blue':
+                    border_color = 'darkblue'
+                elif color == 'green':
+                    border_color = 'darkgreen'
+                elif color == 'purple':
+                    border_color = 'indigo'  # Use indigo instead of darkpurple
+                elif color == 'orange':
+                    border_color = 'darkorange'
+                elif color == 'cyan':
+                    border_color = 'darkcyan'
+                elif color == 'magenta':
+                    border_color = 'darkmagenta'
+                else:  # yellow
+                    border_color = 'gold'
+                
+                fig.add_trace(go.Scatter3d(
+                    x=[row['x']],
+                    y=[row['y']],
+                    z=[row['z']],
+                    mode='markers+text',
+                    marker=dict(
+                        size=15,
+                        color=color,
+                        symbol=symbol,
+                        line=dict(color=border_color, width=2)
+                    ),
+                    text=[f'Q{q_idx + 1}'],
+                    textposition="top center",
+                    textfont=dict(size=12, color=color),
+                    hovertext=[hover_text],
+                    hovertemplate='%{hovertext}<extra></extra>',
+                    name=f'Query {q_idx + 1}: {display_text}'
+                ))
+                
+                # Add connecting lines to top similar documents for each query
+                similarity_col = f'query_similarity_{idx}'
+                if similarity_col in doc_df.columns:
+                    top_k = min(3, len(doc_df))  # Show top 3 for each query to avoid clutter
+                    top_similar = doc_df.nlargest(top_k, similarity_col)
+                    
+                    for doc_idx, doc_row in top_similar.iterrows():
+                        similarity = doc_row[similarity_col]
+                        # Line opacity based on similarity
+                        line_opacity = min(0.4, similarity * 0.5)
+                        
+                        # Convert color to RGB for transparency
+                        if color == 'red':
+                            rgba = f'rgba(255, 0, 0, {line_opacity})'
+                        elif color == 'blue':
+                            rgba = f'rgba(0, 0, 255, {line_opacity})'
+                        elif color == 'green':
+                            rgba = f'rgba(0, 255, 0, {line_opacity})'
+                        elif color == 'purple':
+                            rgba = f'rgba(128, 0, 128, {line_opacity})'
+                        elif color == 'orange':
+                            rgba = f'rgba(255, 165, 0, {line_opacity})'
+                        elif color == 'cyan':
+                            rgba = f'rgba(0, 255, 255, {line_opacity})'
+                        elif color == 'magenta':
+                            rgba = f'rgba(255, 0, 255, {line_opacity})'
+                        else:  # yellow
+                            rgba = f'rgba(255, 255, 0, {line_opacity})'
+                        
+                        fig.add_trace(go.Scatter3d(
+                            x=[row['x'], doc_row['x']],
+                            y=[row['y'], doc_row['y']],
+                            z=[row['z'], doc_row['z']],
+                            mode='lines',
+                            line=dict(
+                                color=rgba,
+                                width=1.5 * similarity,  # Thicker lines for higher similarity
+                                dash='dot'
+                            ),
+                            showlegend=False,
+                            hoverinfo='skip'
+                        ))
+    else:
+        # Standard visualization without query
+        fig = go.Figure(data=[go.Scatter3d(
+            x=df['x'],
+            y=df['y'],
+            z=df['z'],
+            mode='markers',
+            marker=dict(
+                size=point_size,
+                color=color_values,  # Use pre-computed color values
+                colorscale='Turbo',  # More vibrant color scale
+                showscale=True,
+                colorbar=dict(
+                    title=colorbar_title,
+                    thickness=15,
+                    len=0.7,
+                    x=1.02
+                ),
+                opacity=0.9,
+                line=dict(width=0.5, color='white')  # Add white outline for better visibility
             ),
-            opacity=0.9,
-            line=dict(width=0.5, color='white')  # Add white outline for better visibility
-        ),
-        text=hover_texts,
-        hovertemplate='%{text}<extra></extra>'
-    )])
+            text=hover_texts,
+            hovertemplate='%{text}<extra></extra>'
+        )])
     
     # Better 3D layout with improved aesthetics
     fig.update_layout(
@@ -331,22 +509,93 @@ with tab1:
     st.info("🖱️ Drag to rotate • Scroll to zoom • Hover for details")
 
 with tab2:
-    # 2D scatter plot - reuse pre-computed color values and hover texts
-    fig2 = go.Figure(data=[go.Scatter(
-        x=df['x'],
-        y=df['y'],
-        mode='markers',
-        marker=dict(
-            size=point_size,
-            color=color_values,  # Use pre-computed color values
-            colorscale='Viridis',
-            showscale=True,
-            colorbar=dict(title=colorbar_title),
-            opacity=0.7
-        ),
-        text=hover_texts,  # Reuse the same rich hover texts from 3D view
-        hovertemplate='%{text}<extra></extra>'
-    )])
+    # 2D scatter plot - handle queries separately if present
+    if has_query:
+        # Plot documents
+        doc_hover_texts_2d = [hover_texts[i] for i, is_doc in enumerate(doc_mask) if is_doc]
+        doc_color_values_2d = [color_values[i] for i, is_doc in enumerate(doc_mask) if is_doc]
+        
+        fig2 = go.Figure(data=[go.Scatter(
+            x=doc_df['x'],
+            y=doc_df['y'],
+            mode='markers',
+            marker=dict(
+                size=point_size,
+                color=doc_color_values_2d,
+                colorscale='Viridis',
+                showscale=True,
+                colorbar=dict(title=colorbar_title),
+                opacity=0.7
+            ),
+            text=doc_hover_texts_2d,
+            hovertemplate='%{text}<extra></extra>',
+            name='Documents'
+        )])
+        
+        # Add query points with different colors
+        query_colors = ['red', 'blue', 'green', 'purple', 'orange', 'cyan', 'magenta', 'yellow']
+        # Use valid 2D scatter symbols
+        query_symbols = ['diamond', 'star', 'square', 'circle', 'x', 'cross', 'triangle-up', 'pentagon']
+        
+        for q_idx, (idx, row) in enumerate(query_df.iterrows()):
+            query_text = row.get('text', 'Query').replace('QUERY: ', '')
+            display_text = query_text[:30] + '...' if len(query_text) > 30 else query_text
+            
+            color = query_colors[q_idx % len(query_colors)]
+            symbol = query_symbols[q_idx % len(query_symbols)]
+            
+            # Map colors to valid darker versions for borders (2D)
+            if color == 'red':
+                border_color_2d = 'darkred'
+            elif color == 'blue':
+                border_color_2d = 'darkblue'
+            elif color == 'green':
+                border_color_2d = 'darkgreen'
+            elif color == 'purple':
+                border_color_2d = 'indigo'
+            elif color == 'orange':
+                border_color_2d = 'darkorange'
+            elif color == 'cyan':
+                border_color_2d = 'darkcyan'
+            elif color == 'magenta':
+                border_color_2d = 'darkmagenta'
+            else:  # yellow
+                border_color_2d = 'gold'
+            
+            fig2.add_trace(go.Scatter(
+                x=[row['x']],
+                y=[row['y']],
+                mode='markers+text',
+                marker=dict(
+                    size=12,
+                    color=color,
+                    symbol=symbol,
+                    line=dict(color=border_color_2d, width=2)
+                ),
+                text=[f'Q{q_idx + 1}'],
+                textposition="top center",
+                textfont=dict(size=10, color=color),
+                hovertext=[f"<b>🎯 QUERY {q_idx + 1}</b><br>{query_text}"],
+                hovertemplate='%{hovertext}<extra></extra>',
+                name=f'Query {q_idx + 1}: {display_text}'
+            ))
+    else:
+        # Standard visualization without queries
+        fig2 = go.Figure(data=[go.Scatter(
+            x=df['x'],
+            y=df['y'],
+            mode='markers',
+            marker=dict(
+                size=point_size,
+                color=color_values,  # Use pre-computed color values
+                colorscale='Viridis',
+                showscale=True,
+                colorbar=dict(title=colorbar_title),
+                opacity=0.7
+            ),
+            text=hover_texts,  # Reuse the same rich hover texts from 3D view
+            hovertemplate='%{text}<extra></extra>'
+        )])
     
     fig2.update_layout(
         xaxis=dict(showgrid=False, zeroline=False),

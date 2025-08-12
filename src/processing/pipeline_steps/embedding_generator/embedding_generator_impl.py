@@ -395,16 +395,32 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
             # Process image with model
             batch_inputs = self.processor.process_images([image]).to(self.model.device)
             
+            # Debug: Log input shape
+            if hasattr(batch_inputs, 'input_ids'):
+                self.logger.info(f"[DEBUG] Input shape: {batch_inputs.input_ids.shape if hasattr(batch_inputs.input_ids, 'shape') else 'unknown'}")
+            
             with torch.no_grad():
                 embeddings = self.model(**batch_inputs)
             
+            # Debug: Check what type embeddings is
+            self.logger.info(f"[DEBUG] Embeddings type: {type(embeddings)}")
+            self.logger.info(f"[DEBUG] Embeddings shape before numpy: {embeddings.shape if hasattr(embeddings, 'shape') else 'no shape attr'}")
+            
             # Convert to numpy
             embeddings_np = embeddings.cpu().to(torch.float32).numpy()
+            
+            # DEBUG: Log embedding dimensions
+            self.logger.info(f"[DEBUG] Raw embeddings shape from model: {embeddings_np.shape}")
+            self.logger.info(f"[DEBUG] Frame: {frame_path.name}")
             
             # Handle different output shapes
             if len(embeddings_np.shape) == 3:
                 # (batch, patches, dim) - squeeze batch dimension
                 embeddings_np = embeddings_np.squeeze(0)
+                self.logger.info(f"[DEBUG] After squeeze: {embeddings_np.shape}")
+            
+            # Final shape before returning
+            self.logger.info(f"[DEBUG] Final shape being returned: {embeddings_np.shape}")
             
             return embeddings_np
             
