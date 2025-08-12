@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """
-Interactive Phoenix Analytics Dashboard using Streamlit
+Interactive Analytics Dashboard
 Standalone version that avoids videoprism dependencies
 """
+
+# Fix protobuf issue - must be before other imports
+import os
+os.environ['PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION'] = 'python'
 
 import streamlit as st
 import pandas as pd
@@ -31,12 +35,26 @@ def import_module_directly(module_path):
 analytics_module = import_module_directly(project_root / "src/evaluation/phoenix/analytics.py")
 rca_module = import_module_directly(project_root / "src/evaluation/phoenix/root_cause_analysis.py")
 
-PhoenixAnalytics = analytics_module.PhoenixAnalytics
+Analytics = analytics_module.PhoenixAnalytics
 RootCauseAnalyzer = rca_module.RootCauseAnalyzer
+
+# Import tab modules early
+try:
+    from phoenix_dashboard_evaluation_tab_tabbed import render_evaluation_tab
+    evaluation_tab_available = True
+except ImportError:
+    evaluation_tab_available = False
+
+try:
+    from embedding_atlas_tab import render_embedding_atlas_tab
+    embedding_atlas_available = True
+except ImportError as e:
+    embedding_atlas_available = False
+    embedding_atlas_error = str(e)
 
 # Page configuration
 st.set_page_config(
-    page_title="Phoenix Dashboard",
+    page_title="Analytics Dashboard",
     page_icon="🔥",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -112,7 +130,7 @@ st.markdown("""
 
 # Initialize session state
 if 'analytics' not in st.session_state:
-    st.session_state.analytics = PhoenixAnalytics()
+    st.session_state.analytics = Analytics()
 
 if 'last_refresh' not in st.session_state:
     st.session_state.last_refresh = datetime.now()
@@ -122,7 +140,7 @@ if 'auto_refresh' not in st.session_state:
 
 # Sidebar configuration
 with st.sidebar:
-    st.title("🔥 Phoenix Dashboard")
+    st.title("🔥 Analytics Dashboard")
     st.markdown("---")
     
     # Time range selection
@@ -215,7 +233,7 @@ with st.sidebar:
         )
 
 # Main content area
-st.title("Phoenix Dashboard")
+st.title("Analytics Dashboard")
 
 # Last refresh time
 st.caption(f"Last refreshed: {st.session_state.last_refresh.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -236,10 +254,10 @@ with main_tabs[0]:
 
     if not traces:
         st.warning("No traces found for the selected time range and filters.")
-        st.stop()
-
-    # Convert to DataFrame for easier manipulation
-    traces_df = pd.DataFrame([{
+        traces_df = pd.DataFrame()  # Create empty dataframe
+    else:
+        # Convert to DataFrame for easier manipulation
+        traces_df = pd.DataFrame([{
         'trace_id': t.trace_id,
         'timestamp': t.timestamp,
         'duration_ms': t.duration_ms,
@@ -251,10 +269,10 @@ with main_tabs[0]:
     } for t in traces])
 
     # Apply profile and strategy filters
-    if "all" not in profile_filter:
+    if "all" not in profile_filter and not traces_df.empty and 'profile' in traces_df.columns:
         traces_df = traces_df[traces_df['profile'].isin(profile_filter)]
 
-    if "all" not in strategy_filter:
+    if "all" not in strategy_filter and not traces_df.empty and 'strategy' in traces_df.columns:
         traces_df = traces_df[traces_df['strategy'].isin(strategy_filter)]
 
     # Calculate statistics with operation grouping
@@ -430,7 +448,7 @@ with tabs[0]:
                 title=dict(text="Operations Breakdown", x=0.5, xanchor='center')
             )
             
-            st.plotly_chart(fig_ops, use_container_width=True)
+            st.plotly_chart(fig_ops, use_container_width=True, key=f"operation_breakdown_{id(fig_ops)}")
             
             # Add a small table below showing the exact counts
             st.markdown("##### Operation Details")
@@ -442,7 +460,11 @@ with tabs[0]:
                     st.text(f"{row['Count']} ({row['Percentage']:.1f}%)")
         else:
             # Show operation counts from traces directly if by_operation is not available
-            operation_counts = traces_df['operation'].value_counts()
+            if not traces_df.empty and 'operation' in traces_df.columns:
+                operation_counts = traces_df['operation'].value_counts()
+            else:
+                operation_counts = pd.Series()
+            
             if not operation_counts.empty:
                 op_df = pd.DataFrame({
                     'Operation': operation_counts.index,
@@ -468,7 +490,7 @@ with tabs[0]:
                     title=dict(text="Operations Breakdown", x=0.5, xanchor='center')
                 )
                 
-                st.plotly_chart(fig_ops, use_container_width=True)
+                st.plotly_chart(fig_ops, use_container_width=True, key=f"operation_breakdown_{id(fig_ops)}")
                 
                 # Show details
                 st.markdown("##### Operation Details")
@@ -501,7 +523,7 @@ with tabs[1]:
     )
     
     if fig_ts:
-        st.plotly_chart(fig_ts, use_container_width=True)
+        st.plotly_chart(fig_ts, use_container_width=True, key="time_series_main")
     
     # Request volume over time
     fig_volume = st.session_state.analytics.create_time_series_plot(
@@ -512,7 +534,7 @@ with tabs[1]:
     )
     
     if fig_volume:
-        st.plotly_chart(fig_volume, use_container_width=True)
+        st.plotly_chart(fig_volume, use_container_width=True, key=f"time_series_volume_{id(fig_volume)}")
 
 # Tab 3: Distributions
 with tabs[2]:
@@ -571,7 +593,7 @@ with tabs[2]:
     )
     
     if fig_dist:
-        st.plotly_chart(fig_dist, use_container_width=True)
+        st.plotly_chart(fig_dist, use_container_width=True, key="distribution_plots")
 
 # Tab 4: Heatmaps
 with tabs[3]:
@@ -616,7 +638,7 @@ with tabs[3]:
         )
         
         if fig_heatmap:
-            st.plotly_chart(fig_heatmap, use_container_width=True)
+            st.plotly_chart(fig_heatmap, use_container_width=True, key="performance_heatmap")
     else:
         st.warning("Please select different values for X and Y axes.")
 
@@ -655,19 +677,22 @@ with tabs[4]:
     )
     
     if fig_outliers:
-        st.plotly_chart(fig_outliers, use_container_width=True)
+        st.plotly_chart(fig_outliers, use_container_width=True, key="outliers_plot")
         
         # Show outlier details
         if outlier_metric == "duration_ms":
             # Calculate IQR-based outlier threshold to match the plot
-            Q1 = traces_df['duration_ms'].quantile(0.25)
-            Q3 = traces_df['duration_ms'].quantile(0.75)
+            Q1 = traces_df['duration_ms'].quantile(0.25) if 'duration_ms' in traces_df.columns else 0
+            Q3 = traces_df['duration_ms'].quantile(0.75) if 'duration_ms' in traces_df.columns else 0
             IQR = Q3 - Q1
             upper_bound = Q3 + 1.5 * IQR
             lower_bound = Q1 - 1.5 * IQR
             
             # Get outliers using the same method as the plot
-            outliers_df = traces_df[(traces_df['duration_ms'] > upper_bound) | (traces_df['duration_ms'] < lower_bound)]
+            if 'duration_ms' in traces_df.columns:
+                outliers_df = traces_df[(traces_df['duration_ms'] > upper_bound) | (traces_df['duration_ms'] < lower_bound)]
+            else:
+                outliers_df = pd.DataFrame()
             
             if not outliers_df.empty:
                 st.subheader(f"Outlier Details")
@@ -718,10 +743,11 @@ with tabs[5]:
         sort_order = st.selectbox("Order", ["Descending", "Ascending"])
     
     # Apply sorting
-    filtered_df = filtered_df.sort_values(
-        sort_by, 
-        ascending=(sort_order == "Ascending")
-    )
+    if not filtered_df.empty and sort_by in filtered_df.columns:
+        filtered_df = filtered_df.sort_values(
+            sort_by, 
+            ascending=(sort_order == "Ascending")
+        )
     
     # Display traces
     st.write(f"Showing {len(filtered_df)} traces")
@@ -1227,7 +1253,7 @@ if enable_rca and len(tabs) > 6:
         else:
             st.info("No data available for root cause analysis. Ensure there are traces in the selected time range.")
 
-# Export functionality
+# Export functionality (this should be back in main_tabs[0])
 if show_raw_data:
     st.markdown("---")
     st.subheader("Raw Data")
@@ -1235,17 +1261,23 @@ if show_raw_data:
 
 # Evaluation Tab
 with main_tabs[1]:
-    # Import and use the tabbed evaluation tab (like HTML report)
-    from phoenix_dashboard_evaluation_tab_tabbed import render_evaluation_tab
-    render_evaluation_tab()
+    if evaluation_tab_available:
+        render_evaluation_tab()
+    else:
+        st.error("Evaluation tab module not found")
 
 # Embedding Atlas Tab
 with main_tabs[2]:
-    st.header("🗺️ Embedding Visualization")
-    
-    # Import the embedding visualization module
-    from embedding_atlas_tab import render_embedding_atlas_tab
-    render_embedding_atlas_tab()
+    if embedding_atlas_available:
+        try:
+            render_embedding_atlas_tab()
+        except Exception as e:
+            st.error(f"Error loading Embedding Atlas tab: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+    else:
+        st.error(f"Failed to import embedding atlas tab: {embedding_atlas_error}")
+        st.info("Please ensure all dependencies are installed: uv pip install umap-learn pyarrow scikit-learn")
 
 # Auto-refresh logic
 if st.session_state.auto_refresh:
@@ -1254,4 +1286,4 @@ if st.session_state.auto_refresh:
 
 # Footer
 st.markdown("---")
-st.caption("🔥 Phoenix Dashboard - Cogniverse Evaluation Framework")
+st.caption("🔥 Analytics Dashboard - Cogniverse Evaluation Framework")
