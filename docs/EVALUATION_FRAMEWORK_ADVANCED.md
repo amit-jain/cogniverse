@@ -53,29 +53,40 @@ Compare against expected results:
 
 ## Quality Evaluators
 
-### Relevance Evaluator
-Analyzes the score distribution of top results:
-- **High relevance**: Average score ≥ 0.8
-- **Relevant**: Average score ≥ 0.5
-- **Low relevance**: Average score < 0.5
+Quality evaluators assess search results without requiring ground truth labels. Located in `src/evaluation/evaluators/sync_reference_free.py`.
 
-### Diversity Evaluator
-Measures result variety:
-- Calculates ratio of unique videos to total results
-- High diversity (≥0.8) indicates good coverage
-- Low diversity may indicate redundant results
+### Relevance Evaluator (`SyncRelevanceScoreEvaluator`)
+Measures semantic similarity between query and results:
+- **Method**: Cosine similarity using sentence transformers
+- **Score Range**: 0-1 (higher is better)
+- **Thresholds**:
+  - High relevance: ≥ 0.8
+  - Relevant: ≥ 0.5
+  - Low relevance: < 0.5
+- **Usage**: Automatically included with `--quality-evaluators` flag
 
-### Distribution Evaluator
-Evaluates score distribution quality:
-- Prefers high mean with low variance
-- Quality score = mean × (1 - std/2)
-- Indicates consistency of retrieval quality
+### Diversity Evaluator (`SyncDiversityEvaluator`)
+Measures variety in search results:
+- **Method**: Average pairwise distance between result embeddings
+- **Score Range**: 0-1 (higher indicates more diverse results)
+- **Benefits**: Identifies redundant or overly similar results
+- **Calculation**: `1 - avg(cosine_similarity(result_i, result_j))`
 
-### Temporal Coverage Evaluator
-For video search with temporal information:
-- Merges overlapping time segments
-- Calculates total temporal coverage
-- Useful for video moment retrieval
+### Distribution Evaluator (`SyncResultDistributionEvaluator`)
+Analyzes statistical properties of result scores:
+- **Metrics**:
+  - Score spread (max - min)
+  - Standard deviation
+  - Rank correlation
+- **Quality Score**: `mean × (1 - std/2)`
+- **Purpose**: Identifies retrieval consistency issues
+
+### Temporal Coverage Evaluator (`SyncTemporalCoverageEvaluator`)
+Evaluates temporal distribution for video segments:
+- **Method**: Analyzes timestamp coverage across video duration
+- **Score**: Ratio of covered time to total video duration
+- **Use Case**: Video moment retrieval evaluation
+- **Merging**: Overlapping segments are merged before calculation
 
 ## LLM-as-Judge Evaluators
 
@@ -90,19 +101,54 @@ brew install ollama
 curl -fsSL https://ollama.ai/install.sh | sh
 ```
 
-2. Pull a model:
+2. Pull models:
 ```bash
-ollama pull deepseek-r1:7b  # Recommended
+# For text evaluation
+ollama pull deepseek-r1:7b
+
+# For visual evaluation
+ollama pull llava:7b        # Multimodal vision model
 # or
-ollama pull llama2:7b
-# or
-ollama pull mistral:7b
+ollama pull qwen2-vl:7b     # Alternative vision model
 ```
 
 3. Start Ollama service:
 ```bash
 ollama serve  # Default: http://localhost:11434
 ```
+
+### Visual Judge Evaluator
+
+The most advanced evaluator that analyzes actual video frames using multimodal LLMs.
+
+**Configuration** (`configs/config.json`):
+```json
+"evaluators": {
+  "visual_judge": {
+    "provider": "ollama",
+    "model": "llava:7b",
+    "base_url": "http://localhost:11434",
+    "frames_per_video": 30,
+    "max_videos": 2,
+    "max_total_frames": 60
+  }
+}
+```
+
+**Features**:
+- Extracts up to 60 frames from top videos
+- Supports multiple providers (Ollama, Modal, OpenAI)
+- Configurable frame extraction strategy
+- Actual visual understanding of content
+
+**Usage**:
+```bash
+uv run python scripts/run_experiments_with_visualization.py \
+  --llm-evaluators \
+  --evaluator visual_judge
+```
+
+**Location**: `src/evaluation/evaluators/configurable_visual_judge.py`
 
 ### Reference-Free LLM Evaluation
 
@@ -683,16 +729,73 @@ uv run python scripts/manage_golden_datasets.py filter \
     --output filtered.json
 ```
 
+## Dataset Management
+
+### Golden Dataset Creation
+
+Automatically generate evaluation datasets from Phoenix traces:
+
+```bash
+# Create from low-scoring traces
+uv run python scripts/create_golden_dataset_from_traces.py \
+  --hours 24 \
+  --min-score 0.7 \
+  --output data/golden_datasets/high_quality.csv
+
+# Create from specific queries
+uv run python scripts/create_golden_dataset_from_traces.py \
+  --query-pattern "outdoor*" \
+  --min-occurrences 3 \
+  --output data/golden_datasets/outdoor_queries.csv
+```
+
+**Location**: `scripts/create_golden_dataset_from_traces.py`
+
+### Dataset Registry
+
+Central management for all evaluation datasets:
+
+```bash
+# List all datasets
+uv run python scripts/manage_golden_datasets.py list
+
+# Merge datasets
+uv run python scripts/manage_golden_datasets.py merge \
+  dataset1.csv dataset2.csv \
+  --output merged.csv
+
+# Filter datasets
+uv run python scripts/manage_golden_datasets.py filter \
+  dataset.csv \
+  --max-score 0.5 \
+  --output filtered.csv
+
+# Get statistics
+uv run python scripts/manage_golden_datasets.py stats dataset.csv
+
+# Export for sharing
+uv run python scripts/manage_golden_datasets.py export \
+  dataset.csv \
+  --format json \
+  --output dataset.json
+```
+
+**Registry Location**: `configs/dataset_registry.json`
+
 ## Appendix
 
-### Supported LLM Models
+### Supported Models
 
-Tested with Ollama:
-- `deepseek-r1:7b` (Recommended)
+#### Text Evaluation Models (Ollama)
+- `deepseek-r1:7b` (Recommended for text)
 - `llama2:7b`, `llama2:13b`
 - `mistral:7b`
 - `mixtral:8x7b`
-- `phi:2.7b` (Lightweight)
+
+#### Visual Evaluation Models (Ollama)
+- `llava:7b` (Recommended for vision)
+- `qwen2-vl:7b`
+- `bakllava:7b`
 
 ### Environment Variables
 
@@ -704,10 +807,24 @@ export PHOENIX_PROJECT_NAME="experiments"
 # Ollama configuration
 export OLLAMA_HOST="http://localhost:11434"
 export OLLAMA_MODEL="deepseek-r1:7b"
+
+# Visual evaluation
+export FRAMES_PER_VIDEO=30
+export MAX_VIDEOS=2
 ```
+
+### Performance Characteristics
+
+| Evaluator Type | Speed | Accuracy | Resource Usage |
+|---------------|-------|----------|----------------|
+| Quality Evaluators | ~100ms | Medium | Low (CPU only) |
+| Text LLM Judge | ~2s | High | Medium |
+| Visual Judge (60 frames) | ~10s | Highest | High (GPU recommended) |
+| Phoenix Upload | ~50ms | N/A | Low |
 
 ### Related Documentation
 
 - [EVALUATION_FRAMEWORK.md](./EVALUATION_FRAMEWORK.md) - Basic framework overview
+- [VISUAL_EVALUATOR_CONFIG.md](./VISUAL_EVALUATOR_CONFIG.md) - Visual evaluation details
 - [PHOENIX_DASHBOARD.md](./PHOENIX_DASHBOARD.md) - Phoenix UI guide
 - [Phoenix Experiments](https://docs.arize.com/phoenix/experiments) - Official Phoenix docs
