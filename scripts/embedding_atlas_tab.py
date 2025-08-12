@@ -393,21 +393,26 @@ def export_and_visualize(
     output_dir.mkdir(parents=True, exist_ok=True)
     output_file = output_dir / f"vespa_embeddings_{timestamp}.parquet"
     
-    # Build export command with fixed settings
+    # Set reduction method
+    reduction_method = "umap"  # Default to UMAP for dimension reduction
+    
+    # Build export command using backend abstraction
     cmd = [
-        "uv", "run", "python", "scripts/export_vespa_embeddings.py",
+        "uv", "run", "python", "scripts/export_backend_embeddings.py",
+        "--backend", "vespa",  # Can be made configurable
+        "--backend-url", "http://localhost:8080",
         "--output", str(output_file),
         "--schema", schema,
         "--max-documents", str(max_docs),
-        "--reduction-method", "umap"  # Always use UMAP
+        "--reduction-method", reduction_method
         # Note: dimension reduction is enabled by default (no --no-reduction flag)
     ]
     
     if video_id:
-        cmd.extend(["--video-id", video_id])
+        cmd.extend(["--filter-key", "video_id", "--filter-value", video_id])
     
-    if query:
-        cmd.extend(["--query", query])
+    # Note: query-based filtering would need to be handled differently
+    # For now, we'll skip text query filtering in export
     
     # Show progress
     with st.spinner(f"Exporting {max_docs} documents from backend..."):
@@ -419,8 +424,8 @@ def export_and_visualize(
             status_text.text("Downloading embeddings...")
             progress_bar.progress(20)
             
-            # Run export with timeout
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            # Run export without timeout by default (wait for completion)
+            result = subprocess.run(cmd, capture_output=True, text=True)
             
             if result.returncode != 0:
                 error_msg = result.stderr or result.stdout
@@ -435,14 +440,6 @@ def export_and_visualize(
             
             # Load the exported data
             df = pd.read_parquet(output_file)
-        except subprocess.TimeoutExpired:
-            st.error("❌ Export timed out after 30 seconds")
-            st.warning("This usually means backend is not responding. Please check:")
-            st.info("1. Is backend running? Check with: `docker ps`")
-            st.info("2. Is backend accessible? Test with: `curl http://localhost:8080/ApplicationStatus`")
-            progress_bar.empty()
-            status_text.empty()
-            return
             
             progress_bar.progress(80)
             status_text.text("Preparing visualization...")
@@ -466,21 +463,24 @@ def export_and_visualize(
             
             st.success(f"Successfully exported {len(df)} documents to {output_file.name}")
             
-            # Show quick stats
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Documents", f"{len(df):,}")
-            with col2:
-                unique_videos = df['video_id'].nunique() if 'video_id' in df.columns else 0
-                st.metric("Unique Videos", f"{unique_videos:,}")
-            with col3:
-                if 'cluster' in df.columns:
-                    st.metric("Clusters", f"{df['cluster'].nunique():,}")
-            with col4:
-                if 'embedding' in df.columns and len(df) > 0:
-                    embed_dim = len(df.iloc[0]['embedding'])
-                    st.metric("Embedding Dim", embed_dim)
+            # Show export statistics in a cleaner format
+            st.markdown("### 📊 Export Statistics")
             
+            # Use wider columns for better display
+            col1, col2 = st.columns(2)
+            with col1:
+                st.info(f"""
+                **📄 Documents Exported:** {len(df):,}  
+                **🎬 Unique Videos:** {df['video_id'].nunique() if 'video_id' in df.columns else 0:,}
+                """)
+            with col2:
+                cluster_count = df['cluster'].nunique() if 'cluster' in df.columns else 0
+                embed_dim = len(df.iloc[0]['embedding']) if 'embedding' in df.columns and len(df) > 0 else 0
+                st.info(f"""
+                **🎯 Clusters Generated:** {cluster_count:,}  
+                **📏 Embedding Dimensions:** {embed_dim:,}
+                """)
+                    
         except Exception as e:
             st.error(f"Error during export: {str(e)}")
             progress_bar.empty()
