@@ -172,7 +172,7 @@ python scripts/run_evaluation.py full \
   --profiles frame_based_colpali direct_video_global \
   --strategies binary_binary float_float hybrid_binary_bm25 \
   --tasks video_retrieval_accuracy temporal_understanding \
-  --config configs/evaluation/eval_config.yaml
+  --config configs/config.json
 ```
 
 ### Phoenix Experiments with Custom Evaluators
@@ -225,7 +225,7 @@ python scripts/run_evaluation.py batch \
 Run a minimal evaluation for testing:
 
 ```bash
-python scripts/run_evaluation.py test --config configs/evaluation/eval_config.yaml
+python scripts/run_evaluation.py test --config config.json
 ```
 
 ### Using Configuration Files
@@ -516,7 +516,7 @@ For large-scale evaluations:
 from src.evaluation.pipeline.orchestrator import EvaluationPipeline
 
 # Initialize pipeline
-pipeline = EvaluationPipeline(config_path="configs/evaluation/eval_config.yaml")
+pipeline = EvaluationPipeline(config_path="config.json")
 
 # Run evaluation
 results = await pipeline.run_comprehensive_evaluation(
