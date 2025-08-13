@@ -14,7 +14,7 @@ from tabulate import tabulate
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.evaluation.phoenix_experiments_final import PhoenixExperimentRunner
+from src.evaluation.experiments import PhoenixExperimentRunner
 
 # Configure logging
 logging.basicConfig(
