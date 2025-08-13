@@ -8,6 +8,7 @@ dependencies = [
     "modal>=1.0.5",
     # Evaluation Framework Dependencies
     "inspect-ai>=0.3.0",
+    "ragas>=0.1.0",
     "arize-phoenix>=4.0.0",
     "arize-phoenix-evals>=0.4.0",
     "opentelemetry-api>=1.20.0",
