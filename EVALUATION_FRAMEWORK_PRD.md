@@ -555,7 +555,7 @@ class EvaluationPipeline:
 
 #### 3.3.2 Evaluation Configuration
 ```yaml
-# configs/evaluation/eval_config.yaml
+# config.json - evaluation section
 evaluation:
   name: "Cogniverse Video RAG Evaluation v1"
   
@@ -891,7 +891,7 @@ Generated: 2024-01-15
 ### C. Configuration Examples
 ```python
 # Example: Running evaluation
-evaluator = EvaluationPipeline("configs/evaluation/eval_config.yaml")
+evaluator = EvaluationPipeline("config.json")
 
 results = await evaluator.run_comprehensive_evaluation(
     evaluation_name="Q1_2024_Video_RAG_Eval",
