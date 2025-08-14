@@ -180,3 +180,156 @@ class TraceManager:
         
         logger.info(f"Grouped traces into {len(grouped)} configurations")
         return grouped
+    
+    def get_traces_by_experiment(
+        self,
+        profile: str,
+        strategy: str,
+        hours_back: int = 24
+    ) -> pd.DataFrame:
+        """
+        Get traces for a specific experiment configuration.
+        
+        Args:
+            profile: Processing profile
+            strategy: Ranking strategy  
+            hours_back: Number of hours to look back
+            
+        Returns:
+            DataFrame with trace data
+        """
+        start_time = datetime.now() - timedelta(hours=hours_back)
+        
+        # Build filter for specific experiment
+        filter_condition = f"attributes.metadata.profile == '{profile}' AND attributes.metadata.strategy == '{strategy}'"
+        
+        df = self.storage.get_traces_for_evaluation(
+            start_time=start_time,
+            filter_condition=filter_condition,
+            limit=1000
+        )
+        
+        logger.info(f"Retrieved {len(df)} traces for {profile}/{strategy}")
+        return df
+    
+    def get_unevaluated_traces(
+        self,
+        hours_back: int = 24
+    ) -> List[Dict[str, Any]]:
+        """
+        Get traces that haven't been evaluated yet.
+        
+        Args:
+            hours_back: Number of hours to look back
+            
+        Returns:
+            List of unevaluated trace data
+        """
+        df = self.get_recent_traces(hours_back=hours_back, limit=1000)
+        traces = self.extract_trace_data(df)
+        
+        # Filter for unevaluated traces
+        unevaluated = []
+        for trace in traces:
+            # Check if evaluated flag exists and is False/None
+            if not trace.get("evaluated", False):
+                unevaluated.append(trace)
+        
+        logger.info(f"Found {len(unevaluated)} unevaluated traces")
+        return unevaluated
+    
+    def mark_trace_evaluated(
+        self,
+        trace_id: str,
+        evaluation_scores: Dict[str, float]
+    ) -> bool:
+        """
+        Mark a trace as evaluated.
+        
+        Args:
+            trace_id: Trace ID to mark
+            evaluation_scores: Evaluation scores
+            
+        Returns:
+            True if successful
+        """
+        metadata = {
+            "evaluated": True,
+            "evaluation_scores": evaluation_scores,
+            "evaluated_at": datetime.now().isoformat()
+        }
+        
+        return self.storage.update_trace_metadata(trace_id, metadata)
+    
+    def get_trace_statistics(
+        self,
+        hours_back: int = 24
+    ) -> Dict[str, Any]:
+        """
+        Get statistics about traces.
+        
+        Args:
+            hours_back: Number of hours to look back
+            
+        Returns:
+            Dictionary with statistics
+        """
+        df = self.get_recent_traces(hours_back=hours_back, limit=1000)
+        
+        if df.empty:
+            return {
+                "total_traces": 0,
+                "average_duration_ms": 0,
+                "profiles": {},
+                "strategies": {}
+            }
+        
+        # Calculate statistics
+        stats = {
+            "total_traces": len(df),
+            "average_duration_ms": df.get("duration_ms", pd.Series([0])).mean(),
+            "profiles": {},
+            "strategies": {}
+        }
+        
+        # Count by profile
+        if "attributes.metadata.profile" in df.columns:
+            profile_counts = df["attributes.metadata.profile"].value_counts()
+            stats["profiles"] = profile_counts.to_dict()
+        
+        # Count by strategy
+        if "attributes.metadata.strategy" in df.columns:
+            strategy_counts = df["attributes.metadata.strategy"].value_counts()
+            stats["strategies"] = strategy_counts.to_dict()
+        
+        return stats
+    
+    def export_traces(
+        self,
+        output_path: str,
+        hours_back: int = 24
+    ) -> bool:
+        """
+        Export traces to JSON file.
+        
+        Args:
+            output_path: Path for output file
+            hours_back: Number of hours to look back
+            
+        Returns:
+            True if successful
+        """
+        try:
+            df = self.get_recent_traces(hours_back=hours_back, limit=1000)
+            traces = self.extract_trace_data(df)
+            
+            import json
+            with open(output_path, 'w') as f:
+                json.dump(traces, f, indent=2, default=str)
+            
+            logger.info(f"Exported {len(traces)} traces to {output_path}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to export traces: {e}")
+            return False

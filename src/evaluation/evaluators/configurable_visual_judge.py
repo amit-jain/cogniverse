@@ -393,8 +393,9 @@ Format: SCORE: X/10, REASONING: explanation"""
                 score = float(score_match.group(1))
                 score = score / 10.0  # Normalize to 0-1
                 score = min(max(score, 0.0), 1.0)
-            except:
-                pass
+            except (ValueError, AttributeError) as e:
+                logger.warning(f"Failed to parse score from match: {e}")
+                score = 0.0
         
         # Try to extract reasoning
         reasoning_match = re.search(r'REASONING:\s*(.+)', response_text, re.IGNORECASE | re.DOTALL)

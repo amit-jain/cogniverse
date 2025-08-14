@@ -149,7 +149,7 @@ echo -e "${GREEN}✓ Sample dataset created${NC}"
 # Step 6: Run quick test
 echo -e "\n${YELLOW}Step 6: Running quick test evaluation...${NC}"
 
-python scripts/run_evaluation.py test
+uv run python scripts/run_experiments_with_visualization.py --dataset-name sample_eval --profiles frame_based_colpali --strategies binary_binary --max-queries 3
 
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}✓ Test evaluation completed successfully${NC}"
@@ -167,7 +167,7 @@ echo "Data Directory: $PHOENIX_DATA_DIR"
 echo ""
 echo "Next steps:"
 echo "  1. View Phoenix dashboard: http://localhost:$PHOENIX_PORT"
-echo "  2. Run full evaluation: python scripts/run_evaluation.py full --name my_eval"
+echo "  2. Run full evaluation: uv run python scripts/run_experiments_with_visualization.py --dataset-name sample_eval"
 echo "  3. Check documentation: docs/EVALUATION_FRAMEWORK.md"
 echo ""
 echo "To stop Phoenix:"

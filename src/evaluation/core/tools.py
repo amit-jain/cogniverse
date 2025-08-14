@@ -36,7 +36,12 @@ def video_search_tool():
         try:
             # Import here to avoid circular dependencies
             from src.search.search_service import SearchService
-            from src.tools.config import get_config
+            
+            # Try to get config from common module first, fallback to src.tools
+            try:
+                from cogniverse_common import get_config
+            except ImportError:
+                from src.tools.config import get_config
             
             config = get_config()
             
@@ -88,8 +93,8 @@ def video_search_tool():
             
         except Exception as e:
             logger.error(f"Search failed: {e}")
-            # Return empty results on failure
-            return []
+            # Raise the error to properly signal failure
+            raise RuntimeError(f"Search tool failed: {e}") from e
     
     return run
 
@@ -138,18 +143,48 @@ def phoenix_query_tool():
                         "num_examples": len(dataset.examples),
                         "examples": [ex.to_dict() for ex in dataset.examples[:10]]
                     }
-                return []
+                else:
+                    raise ValueError("Dataset name is required for dataset queries")
                 
             elif query_type == "experiments":
-                # Query experiments (placeholder)
-                logger.warning("Experiment querying not yet implemented")
-                return []
+                # Query experiments through spans with experiment metadata
+                experiment_name = kwargs.get("name")
+                if not experiment_name:
+                    # List all experiments by finding unique experiment names in spans
+                    df = client.get_spans_dataframe(limit=1000)
+                    if not df.empty and 'attributes.metadata.experiment_name' in df.columns:
+                        experiments = df['attributes.metadata.experiment_name'].dropna().unique().tolist()
+                        return {
+                            "experiments": experiments,
+                            "count": len(experiments)
+                        }
+                    else:
+                        return {"experiments": [], "count": 0}
+                else:
+                    # Get specific experiment data
+                    df = client.get_spans_dataframe(
+                        filter_condition=f"attributes.metadata.experiment_name == '{experiment_name}'",
+                        limit=kwargs.get("limit", 1000)
+                    )
+                    if not df.empty:
+                        return {
+                            "experiment_name": experiment_name,
+                            "traces": df.to_dict(orient='records'),
+                            "count": len(df)
+                        }
+                    else:
+                        return {
+                            "experiment_name": experiment_name,
+                            "traces": [],
+                            "count": 0
+                        }
                 
             else:
                 raise ValueError(f"Unknown query type: {query_type}")
                 
         except Exception as e:
             logger.error(f"Phoenix query failed: {e}")
-            return []
+            # Re-raise with context
+            raise RuntimeError(f"Phoenix query tool failed: {e}") from e
     
     return run
