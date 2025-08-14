@@ -328,6 +328,103 @@
       "model": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
     }
   },
+  "routing": {
+    "routing_mode": "tiered",
+    "tier_config": {
+      "enable_fast_path": true,
+      "enable_slow_path": true,
+      "enable_langextract": true,
+      "enable_fallback": true,
+      "fast_path_confidence_threshold": 0.7,
+      "slow_path_confidence_threshold": 0.6,
+      "langextract_confidence_threshold": 0.5,
+      "max_routing_time_ms": 5000
+    },
+    "gliner_config": {
+      "gliner_model": "urchade/gliner_multi-v2.1",
+      "gliner_threshold": 0.3,
+      "gliner_labels": [
+        "video_content", "visual_content", "media_content",
+        "document_content", "text_information", "written_content",
+        "summary_request", "detailed_analysis", "report_request",
+        "time_reference", "date_pattern", "temporal_context",
+        "purchase_intent", "comparison_intent", "query_intent", "complaint_intent"
+      ],
+      "device": "cpu",
+      "batch_size": 32,
+      "max_length": 512
+    },
+    "llm_config": {
+      "provider": "local",
+      "model": "smollm2:1.7b",
+      "endpoint": "http://localhost:11434",
+      "temperature": 0.1,
+      "max_tokens": 150,
+      "use_chain_of_thought": true,
+      "timeout": 30,
+      "system_prompt": "You are a routing agent. Classify queries using these examples:\n\nGENERATION TYPES:\nraw_results: extract timestamps, get IDs, list items, parse data, JSON output, specific values\nsummary: main points, key takeaways, brief overview, gist, recap\ndetailed_report: detailed analysis, comprehensive breakdown, full report, in-depth review\n\nExamples:\n\"extract timestamps from video\" → {\"search_modality\":\"video\",\"generation_type\":\"raw_results\"}\n\"summarize the main points\" → {\"search_modality\":\"both\",\"generation_type\":\"summary\"}\n\"detailed analysis of issues\" → {\"search_modality\":\"both\",\"generation_type\":\"detailed_report\"}\n\nRESPOND WITH ONLY JSON:\n{\"search_modality\":\"video\" or \"text\" or \"both\",\"generation_type\":\"raw_results\" or \"summary\" or \"detailed_report\",\"reasoning\":\"brief explanation\"}"
+    },
+    "langextract_config": {
+      "langextract_model": "qwen2.5:7b",
+      "ollama_url": "http://localhost:11434",
+      "timeout": 30,
+      "use_structured_extraction": true
+    },
+    "keyword_config": {
+      "video_keywords": [
+        "video", "clip", "scene", "recording", "footage", "show me", "visual",
+        "watch", "frame", "moment", "demonstration", "presentation", "meeting",
+        "tutorial", "screencast", "webinar", "stream", "broadcast"
+      ],
+      "text_keywords": [
+        "document", "report", "text", "article", "information", "data",
+        "details", "analysis", "research", "study", "paper", "blog",
+        "documentation", "guide", "manual", "whitepaper", "book"
+      ],
+      "summary_keywords": [
+        "summary", "summarize", "brief", "overview", "main points",
+        "key takeaways", "tldr", "gist", "essence", "highlights"
+      ],
+      "report_keywords": [
+        "detailed report", "comprehensive analysis", "full report",
+        "in-depth", "thorough", "extensive", "complete analysis",
+        "deep dive", "exhaustive"
+      ]
+    },
+    "ensemble_config": {
+      "enabled_strategies": ["gliner", "keyword"],
+      "voting_method": "weighted",
+      "weights": {
+        "gliner": 2.0,
+        "keyword": 1.0
+      }
+    },
+    "optimization_config": {
+      "enable_auto_optimization": false,
+      "optimization_interval_seconds": 3600,
+      "min_samples_for_optimization": 100,
+      "performance_degradation_threshold": 0.1,
+      "min_accuracy": 0.8,
+      "max_acceptable_latency_ms": 1000,
+      "dspy_enabled": false,
+      "gliner_threshold_optimization": true,
+      "gliner_label_optimization": false
+    },
+    "monitoring_config": {
+      "enable_metrics": true,
+      "metrics_batch_size": 100,
+      "export_metrics": true,
+      "metrics_export_dir": "outputs/routing_metrics",
+      "enable_tracing": false
+    },
+    "cache_config": {
+      "enable_caching": true,
+      "cache_ttl_seconds": 300,
+      "max_cache_size": 1000,
+      "backend": "integrated",
+      "use_pipeline_cache": true
+    }
+  },
   "optimization": {
     "enabled": true,
     "type": "dspy",
