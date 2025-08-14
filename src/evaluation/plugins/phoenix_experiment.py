@@ -42,7 +42,7 @@ class PhoenixExperimentPlugin:
             
             # Import search service
             from src.search.search_service import SearchService
-            from src.tools.config import get_config
+            from src.common.config import get_config
             
             main_config = get_config()
             all_results = {}

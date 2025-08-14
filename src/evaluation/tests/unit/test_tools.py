@@ -29,7 +29,7 @@ class TestVideoSearchTool:
     async def test_video_search_tool_execution(self):
         """Test video search tool execution."""
         with patch('src.search.search_service.SearchService') as mock_service_cls, \
-             patch('src.tools.config.get_config') as mock_config:
+             patch('src.common.config.get_config') as mock_config:
             
             # Setup mocks
             mock_config.return_value = {"test": "config"}
@@ -73,7 +73,7 @@ class TestVideoSearchTool:
     async def test_video_search_tool_no_source_id(self):
         """Test video search tool when source_id is missing."""
         with patch('src.search.search_service.SearchService') as mock_service_cls, \
-             patch('src.tools.config.get_config') as mock_config:
+             patch('src.common.config.get_config') as mock_config:
             
             mock_config.return_value = {"test": "config"}
             mock_service = Mock()
@@ -100,7 +100,7 @@ class TestVideoSearchTool:
     async def test_video_search_tool_no_score(self):
         """Test video search tool when score is missing."""
         with patch('src.search.search_service.SearchService') as mock_service_cls, \
-             patch('src.tools.config.get_config') as mock_config:
+             patch('src.common.config.get_config') as mock_config:
             
             mock_config.return_value = {"test": "config"}
             mock_service = Mock()
@@ -133,7 +133,7 @@ class TestVideoSearchTool:
     async def test_video_search_tool_error_handling(self):
         """Test video search tool error handling."""
         with patch('src.search.search_service.SearchService') as mock_service_cls, \
-             patch('src.tools.config.get_config') as mock_config:
+             patch('src.common.config.get_config') as mock_config:
             
             mock_config.return_value = {"test": "config"}
             mock_service_cls.side_effect = Exception("Search service error")

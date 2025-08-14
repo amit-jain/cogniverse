@@ -68,7 +68,7 @@ class TestVisualEvaluatorPlugin:
         state.input = {"query": "test query"}
         state.outputs = {}
         
-        with patch('src.tools.config.get_config') as mock_config:
+        with patch('src.common.config.get_config') as mock_config:
             mock_config.return_value = {"evaluators": {}}
             
             score = await scorer(state, None)
@@ -94,7 +94,7 @@ class TestVisualEvaluatorPlugin:
             }
         }
         
-        with patch('src.tools.config.get_config') as mock_config, \
+        with patch('src.common.config.get_config') as mock_config, \
              patch('src.evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge') as mock_judge_class:
             
             mock_config.return_value = {
