@@ -1,0 +1,924 @@
+# src/routing/strategies.py
+"""
+Implementation of various routing strategies for the comprehensive routing system.
+"""
+
+import logging
+import time
+import json
+import re
+from typing import Dict, Any, Optional, List, Tuple
+from dataclasses import dataclass
+import asyncio
+import numpy as np
+
+from .base import (
+    RoutingStrategy, 
+    RoutingDecision, 
+    SearchModality, 
+    GenerationType,
+    TemporalExtractor
+)
+
+logger = logging.getLogger(__name__)
+
+
+class GLiNERRoutingStrategy(RoutingStrategy):
+    """
+    Routing strategy using GLiNER for named entity recognition.
+    Fast and efficient for entity-based routing.
+    """
+    
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        super().__init__(config)
+        self.model = None
+        self.labels = config.get("gliner_labels", [
+            "video_content", "visual_content", "media_content",
+            "document_content", "text_information", "written_content",
+            "summary_request", "detailed_analysis", "report_request",
+            "time_reference", "date_pattern", "temporal_context"
+        ])
+        self.threshold = config.get("gliner_threshold", 0.3)
+        self.model_name = config.get("gliner_model", "urchade/gliner_large-v2.1")
+        self._initialize_model()
+    
+    def _initialize_model(self):
+        """Initialize the GLiNER model."""
+        try:
+            from gliner import GLiNER
+            print(f"🔍 Attempting to load GLiNER model: {self.model_name}")
+            logger.info(f"Loading GLiNER model: {self.model_name}")
+            self.model = GLiNER.from_pretrained(self.model_name)
+            print(f"✅ GLiNER model loaded successfully: {self.model_name}")
+            logger.info("GLiNER model loaded successfully")
+        except ImportError as e:
+            print(f"❌ GLiNER import error: {e}")
+            logger.warning("GLiNER not available, strategy will be disabled")
+            self.model = None
+        except Exception as e:
+            print(f"❌ Failed to load GLiNER model: {e}")
+            logger.error(f"Failed to load GLiNER model: {e}")
+            self.model = None
+    
+    async def route(self, query: str, context: Optional[Dict[str, Any]] = None) -> RoutingDecision:
+        """Route using GLiNER entity extraction."""
+        start_time = time.time()
+        
+        if not self.model:
+            # Fallback if model not available
+            return RoutingDecision(
+                search_modality=SearchModality.BOTH,
+                generation_type=GenerationType.RAW_RESULTS,
+                confidence_score=0.0,
+                routing_method="gliner_unavailable",
+                reasoning="GLiNER model not available"
+            )
+        
+        try:
+            # Extract entities
+            entities = self.model.predict_entities(query, self.labels, threshold=self.threshold)
+            
+            # Debug output
+            if entities:
+                print(f"🔍 GLiNER entities: {[(e['label'], round(e.get('score', 0), 2)) for e in entities]}")
+            
+            # Analyze entities for routing decision
+            decision = self._analyze_entities(query, entities)
+            
+            # Extract temporal information
+            temporal_info = TemporalExtractor.extract_temporal_info(query)
+            if temporal_info:
+                decision.temporal_info = temporal_info
+            
+            # Don't override the carefully calculated confidence from _analyze_entities
+            print(f"🎯 GLiNER confidence: {decision.confidence_score:.2f}")
+            
+            execution_time = time.time() - start_time
+            self.record_metrics(query, decision, execution_time, True)
+            
+            return decision
+            
+        except Exception as e:
+            logger.error(f"GLiNER routing failed: {e}")
+            execution_time = time.time() - start_time
+            fallback_decision = RoutingDecision(
+                search_modality=SearchModality.BOTH,
+                generation_type=GenerationType.RAW_RESULTS,
+                confidence_score=0.0,
+                routing_method="gliner_error",
+                reasoning=f"Error: {str(e)}"
+            )
+            self.record_metrics(query, fallback_decision, execution_time, False, str(e))
+            return fallback_decision
+    
+    def _analyze_entities(self, query: str, entities: List[Dict]) -> RoutingDecision:
+        """Analyze extracted entities to make routing decision."""
+        video_score = 0
+        text_score = 0
+        generation_type = GenerationType.RAW_RESULTS
+        
+        entity_types = [e["label"] for e in entities]
+        
+        # Count entity types
+        for entity in entities:
+            label = entity["label"]
+            if label in ["video_content", "visual_content", "media_content"]:
+                video_score += entity.get("score", 1.0)
+            elif label in ["document_content", "text_information", "written_content"]:
+                text_score += entity.get("score", 1.0)
+            elif label in ["summary_request"]:
+                generation_type = GenerationType.SUMMARY
+            elif label in ["detailed_analysis", "report_request"]:
+                generation_type = GenerationType.DETAILED_REPORT
+        
+        # Determine search modality
+        if video_score > 0 and text_score > 0:
+            search_modality = SearchModality.BOTH
+        elif video_score > text_score:
+            search_modality = SearchModality.VIDEO
+        elif text_score > video_score:
+            search_modality = SearchModality.TEXT
+        else:
+            # Default based on query keywords if no clear entities
+            search_modality = self._fallback_modality_detection(query)
+        
+        # Check for relationship indicators that GLiNER cannot handle well
+        relationship_indicators = [
+            "relate", "related", "connection", "between", "compare", "correlation",
+            "similar", "difference", "contrast", "versus", "vs", "how does",
+            "what's the", "evolved", "changed", "pattern", "trend", "analyze",
+            "synthesize", "infer", "underlying", "philosophical", "implications",
+            "yesterday", "previous", "last", "evolution", "contradiction"
+        ]
+        
+        query_lower = query.lower()
+        has_relationship = any(indicator in query_lower for indicator in relationship_indicators)
+        
+        # Calculate confidence based on entity scores
+        total_score = video_score + text_score
+        
+        # Base confidence from entity detection
+        if len(entities) > 0:
+            # If query requires relationship extraction, GLiNER should have lower confidence
+            if has_relationship:
+                # GLiNER detected entities but can't handle relationships well
+                confidence = 0.4 + (0.2 * min(total_score, 1.0))  # 0.4-0.6 range - below threshold
+            elif video_score > 0 or text_score > 0:
+                # Simple entity queries - GLiNER handles these well
+                confidence = 0.7 + (0.3 * min(total_score, 1.0))  # 0.7-1.0 range
+            elif any(e["label"] in ["summary_request", "detailed_analysis", "report_request"] for e in entities):
+                # Generation type entities also give good confidence
+                confidence = 0.75
+            else:
+                # Other entities provide moderate confidence
+                confidence = 0.5 + (0.2 * len(entities))
+        else:
+            # No entities detected
+            if has_relationship:
+                confidence = 0.2  # Very low confidence for relationship queries without entities
+            else:
+                confidence = 0.3  # Low confidence if no entities
+        
+        return RoutingDecision(
+            search_modality=search_modality,
+            generation_type=generation_type,
+            confidence_score=confidence,
+            routing_method="gliner",
+            entities_detected=entities,
+            reasoning=f"Detected entities: {entity_types}"
+        )
+    
+    def _fallback_modality_detection(self, query: str) -> SearchModality:
+        """Simple keyword-based fallback for modality detection."""
+        query_lower = query.lower()
+        video_keywords = ["video", "show", "watch", "visual", "demonstration"]
+        text_keywords = ["document", "article", "text", "paper", "report"]
+        
+        has_video = any(kw in query_lower for kw in video_keywords)
+        has_text = any(kw in query_lower for kw in text_keywords)
+        
+        if has_video and has_text:
+            return SearchModality.BOTH
+        elif has_video:
+            return SearchModality.VIDEO
+        elif has_text:
+            return SearchModality.TEXT
+        else:
+            return SearchModality.BOTH
+    
+    def get_confidence(self, query: str, decision: RoutingDecision) -> float:
+        """Calculate confidence based on entity scores."""
+        if not decision.entities_detected:
+            return 0.3
+        
+        scores = [e.get("score", 0.5) for e in decision.entities_detected]
+        if not scores:
+            return 0.3
+        
+        # Average score weighted by number of entities
+        avg_score = sum(scores) / len(scores)
+        entity_count_factor = min(len(scores) / 3, 1.0)  # More entities = higher confidence
+        
+        return min(avg_score * (0.7 + 0.3 * entity_count_factor), 1.0)
+
+
+class LLMRoutingStrategy(RoutingStrategy):
+    """
+    Routing strategy using Large Language Models.
+    More sophisticated but slower than other methods.
+    """
+    
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        super().__init__(config)
+        self.provider = config.get("provider", "local")
+        self.model = config.get("model", "gemma2:2b")
+        self.endpoint = config.get("endpoint", "http://localhost:11434")
+        self.temperature = config.get("temperature", 0.1)
+        self.max_tokens = config.get("max_tokens", 150)
+        self.system_prompt = self._get_system_prompt()
+    
+    def _get_system_prompt(self) -> str:
+        """Get the system prompt for routing."""
+        return """You are a precise routing agent for a multi-modal search system.
+Analyze the user query and determine:
+1. search_modality: "video", "text", or "both"
+2. generation_type: "raw_results", "summary", or "detailed_report"
+
+Rules:
+- Use "video" for visual content, demonstrations, tutorials, presentations
+- Use "text" for documents, articles, written information, reports
+- Use "both" when unclear or when both might be relevant
+- Use "raw_results" for simple searches
+- Use "summary" for brief overviews
+- Use "detailed_report" for comprehensive analysis
+
+Respond ONLY with a JSON object in this format:
+{
+  "search_modality": "video|text|both",
+  "generation_type": "raw_results|summary|detailed_report",
+  "reasoning": "brief explanation"
+}"""
+    
+    async def route(self, query: str, context: Optional[Dict[str, Any]] = None) -> RoutingDecision:
+        """Route using LLM inference."""
+        start_time = time.time()
+        
+        try:
+            # Build the prompt
+            prompt = self._build_prompt(query, context)
+            # Call LLM
+            response = await self._call_llm(prompt)
+            
+            # Parse response
+            decision = self._parse_llm_response(response, query)
+            
+            # Extract temporal information
+            temporal_info = TemporalExtractor.extract_temporal_info(query)
+            if temporal_info:
+                decision.temporal_info = temporal_info
+            
+            # Calculate confidence
+            decision.confidence_score = self.get_confidence(query, decision)
+            
+            execution_time = time.time() - start_time
+            self.record_metrics(query, decision, execution_time, True)
+            
+            return decision
+            
+        except Exception as e:
+            logger.error(f"LLM routing failed: {e}")
+            execution_time = time.time() - start_time
+            fallback_decision = RoutingDecision(
+                search_modality=SearchModality.BOTH,
+                generation_type=GenerationType.RAW_RESULTS,
+                confidence_score=0.0,
+                routing_method="llm_error",
+                reasoning=f"Error: {str(e)}"
+            )
+            self.record_metrics(query, fallback_decision, execution_time, False, str(e))
+            return fallback_decision
+    
+    def _build_prompt(self, query: str, context: Optional[Dict[str, Any]]) -> str:
+        """Build the prompt for the LLM."""
+        conversation_history = ""
+        if context and "conversation_history" in context:
+            conversation_history = f"\nConversation history:\n{context['conversation_history']}\n"
+        
+        return f"{self.system_prompt}\n{conversation_history}\nUser query: {query}\n\nResponse:"
+    
+    async def _call_llm(self, prompt: str) -> str:
+        """Call the LLM endpoint."""
+        import aiohttp
+        
+        if self.provider == "local":
+            url = f"{self.endpoint}/api/generate"
+            payload = {
+                "model": self.model,
+                "prompt": prompt,
+                "options": {
+                    "temperature": self.temperature,
+                    "num_predict": self.max_tokens
+                },
+                "stream": False
+            }
+        else:  # modal or other providers
+            url = self.endpoint
+            payload = {
+                "prompt": prompt,
+                "model": self.model,
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens
+            }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                result = await response.json()
+                
+                if self.provider == "local":
+                    return result.get("response", "")
+                else:
+                    return result.get("text", "")
+    
+    def _parse_llm_response(self, response: str, query: str) -> RoutingDecision:
+        """Parse the LLM response to extract routing decision."""
+        try:
+            # Extract JSON from response
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if not json_match:
+                raise ValueError("No JSON found in response")
+            
+            routing_data = json.loads(json_match.group())
+            
+            # Map to enums
+            search_modality = SearchModality(routing_data.get("search_modality", "both"))
+            generation_type = GenerationType(routing_data.get("generation_type", "raw_results"))
+            reasoning = routing_data.get("reasoning", "")
+            
+            return RoutingDecision(
+                search_modality=search_modality,
+                generation_type=generation_type,
+                routing_method="llm",
+                reasoning=reasoning
+            )
+            
+        except Exception as e:
+            logger.warning(f"Failed to parse LLM response: {e}")
+            # Fallback parsing based on keywords in response
+            response_lower = response.lower()
+            
+            if "video" in response_lower and "text" in response_lower:
+                search_modality = SearchModality.BOTH
+            elif "video" in response_lower:
+                search_modality = SearchModality.VIDEO
+            elif "text" in response_lower:
+                search_modality = SearchModality.TEXT
+            else:
+                search_modality = SearchModality.BOTH
+            
+            if "detailed" in response_lower or "report" in response_lower:
+                generation_type = GenerationType.DETAILED_REPORT
+            elif "summary" in response_lower:
+                generation_type = GenerationType.SUMMARY
+            else:
+                generation_type = GenerationType.RAW_RESULTS
+            
+            return RoutingDecision(
+                search_modality=search_modality,
+                generation_type=generation_type,
+                routing_method="llm_parsed",
+                reasoning="Parsed from non-JSON response"
+            )
+    
+    def get_confidence(self, query: str, decision: RoutingDecision) -> float:
+        """Calculate confidence for LLM decisions."""
+        query_lower = query.lower()
+        
+        # Queries that LLM is less confident about (will escalate to Tier 3)
+        low_confidence_indicators = [
+            "extract specific", "parse", "structured data", "schema",
+            "exact format", "json", "api response", "technical specification",
+            "regulatory compliance", "legal requirements", "medical diagnosis",
+            "precise extraction", "strict format", "validate against"
+        ]
+        
+        if any(indicator in query_lower for indicator in low_confidence_indicators):
+            # Lower confidence for structured/technical queries that need Tier 3
+            return 0.55  # Below 0.6 threshold, will escalate to LangExtract
+        elif decision.reasoning and len(decision.reasoning) > 20:
+            return 0.85
+        elif decision.reasoning:
+            return 0.75
+        else:
+            return 0.6
+
+
+class KeywordRoutingStrategy(RoutingStrategy):
+    """
+    Simple keyword-based routing strategy.
+    Fast and deterministic but less sophisticated.
+    """
+    
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        super().__init__(config)
+        self.video_keywords = config.get("video_keywords", [
+            "video", "clip", "scene", "recording", "footage", "show me", "visual",
+            "watch", "frame", "moment", "demonstration", "presentation", "meeting",
+            "tutorial", "screencast", "webinar"
+        ])
+        self.text_keywords = config.get("text_keywords", [
+            "document", "report", "text", "article", "information", "data",
+            "details", "analysis", "research", "study", "paper", "blog",
+            "documentation", "guide", "manual"
+        ])
+        self.summary_keywords = config.get("summary_keywords", [
+            "summary", "summarize", "brief", "overview", "main points",
+            "key takeaways", "tldr", "gist", "essence"
+        ])
+        self.report_keywords = config.get("report_keywords", [
+            "detailed report", "comprehensive analysis", "full report",
+            "in-depth", "thorough", "extensive", "complete analysis"
+        ])
+    
+    async def route(self, query: str, context: Optional[Dict[str, Any]] = None) -> RoutingDecision:
+        """Route based on keyword matching."""
+        start_time = time.time()
+        query_lower = query.lower()
+        
+        # Detect search modality
+        has_video = any(kw in query_lower for kw in self.video_keywords)
+        has_text = any(kw in query_lower for kw in self.text_keywords)
+        
+        if has_video and has_text:
+            search_modality = SearchModality.BOTH
+        elif has_video:
+            search_modality = SearchModality.VIDEO
+        elif has_text:
+            search_modality = SearchModality.TEXT
+        else:
+            # Default to both if no clear indicators
+            search_modality = SearchModality.BOTH
+        
+        # Detect generation type
+        if any(kw in query_lower for kw in self.report_keywords):
+            generation_type = GenerationType.DETAILED_REPORT
+        elif any(kw in query_lower for kw in self.summary_keywords):
+            generation_type = GenerationType.SUMMARY
+        else:
+            generation_type = GenerationType.RAW_RESULTS
+        
+        # Extract temporal information
+        temporal_info = TemporalExtractor.extract_temporal_info(query)
+        
+        decision = RoutingDecision(
+            search_modality=search_modality,
+            generation_type=generation_type,
+            routing_method="keyword",
+            temporal_info=temporal_info,
+            reasoning=f"Matched keywords: video={has_video}, text={has_text}"
+        )
+        
+        decision.confidence_score = self.get_confidence(query, decision)
+        
+        execution_time = time.time() - start_time
+        self.record_metrics(query, decision, execution_time, True)
+        
+        return decision
+    
+    def get_confidence(self, query: str, decision: RoutingDecision) -> float:
+        """Calculate confidence based on keyword matches."""
+        query_lower = query.lower()
+        match_count = 0
+        total_keywords = len(self.video_keywords) + len(self.text_keywords)
+        
+        for kw in self.video_keywords + self.text_keywords:
+            if kw in query_lower:
+                match_count += 1
+        
+        # More matches = higher confidence
+        if match_count == 0:
+            return 0.3  # No matches, low confidence
+        elif match_count == 1:
+            return 0.6  # Single match, moderate confidence
+        elif match_count == 2:
+            return 0.75  # Two matches, good confidence
+        else:
+            return 0.85  # Multiple matches, high confidence
+
+
+class HybridRoutingStrategy(RoutingStrategy):
+    """
+    Hybrid routing strategy that combines multiple strategies.
+    Uses GLiNER first, falls back to LLM for low confidence, and uses keywords as final fallback.
+    """
+    
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        super().__init__(config)
+        self.gliner_strategy = GLiNERRoutingStrategy(config)
+        self.llm_strategy = LLMRoutingStrategy(config)
+        self.keyword_strategy = KeywordRoutingStrategy(config)
+        self.confidence_threshold = config.get("confidence_threshold", 0.6)
+        self.use_llm_fallback = config.get("use_llm_fallback", True)
+    
+    async def route(self, query: str, context: Optional[Dict[str, Any]] = None) -> RoutingDecision:
+        """Route using hybrid approach."""
+        start_time = time.time()
+        
+        # Try GLiNER first (fast)
+        gliner_decision = await self.gliner_strategy.route(query, context)
+        
+        # If GLiNER has high confidence, use it
+        if gliner_decision.confidence_score >= self.confidence_threshold:
+            gliner_decision.routing_method = "hybrid_gliner"
+            execution_time = time.time() - start_time
+            self.record_metrics(query, gliner_decision, execution_time, True)
+            return gliner_decision
+        
+        # If GLiNER confidence is low and LLM is enabled, try LLM
+        if self.use_llm_fallback:
+            try:
+                llm_decision = await self.llm_strategy.route(query, context)
+                if llm_decision.confidence_score >= self.confidence_threshold:
+                    llm_decision.routing_method = "hybrid_llm"
+                    execution_time = time.time() - start_time
+                    self.record_metrics(query, llm_decision, execution_time, True)
+                    return llm_decision
+            except Exception as e:
+                logger.warning(f"LLM fallback failed: {e}")
+        
+        # Final fallback to keywords
+        keyword_decision = await self.keyword_strategy.route(query, context)
+        keyword_decision.routing_method = "hybrid_keyword"
+        
+        execution_time = time.time() - start_time
+        self.record_metrics(query, keyword_decision, execution_time, True)
+        
+        return keyword_decision
+    
+    def get_confidence(self, query: str, decision: RoutingDecision) -> float:
+        """Return the confidence from the underlying strategy."""
+        return decision.confidence_score
+
+
+class EnsembleRoutingStrategy(RoutingStrategy):
+    """
+    Ensemble routing strategy that combines predictions from multiple strategies.
+    Uses voting or weighted averaging to make final decision.
+    """
+    
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        super().__init__(config)
+        self.strategies = []
+        self.weights = config.get("weights", {})
+        self.voting_method = config.get("voting_method", "weighted")  # "weighted" or "majority"
+        self._initialize_strategies(config)
+    
+    def _initialize_strategies(self, config: Dict[str, Any]):
+        """Initialize the ensemble strategies."""
+        enabled_strategies = config.get("enabled_strategies", ["gliner", "keyword"])
+        
+        if "gliner" in enabled_strategies:
+            self.strategies.append(("gliner", GLiNERRoutingStrategy(config)))
+        if "llm" in enabled_strategies:
+            self.strategies.append(("llm", LLMRoutingStrategy(config)))
+        if "keyword" in enabled_strategies:
+            self.strategies.append(("keyword", KeywordRoutingStrategy(config)))
+        
+        # Set default weights if not provided
+        for name, _ in self.strategies:
+            if name not in self.weights:
+                self.weights[name] = 1.0
+    
+    async def route(self, query: str, context: Optional[Dict[str, Any]] = None) -> RoutingDecision:
+        """Route using ensemble of strategies."""
+        start_time = time.time()
+        
+        # Collect decisions from all strategies
+        decisions = []
+        tasks = []
+        
+        for name, strategy in self.strategies:
+            tasks.append(strategy.route(query, context))
+        
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        for (name, strategy), result in zip(self.strategies, results):
+            if isinstance(result, Exception):
+                logger.warning(f"Strategy {name} failed: {result}")
+                continue
+            decisions.append((name, result))
+        
+        if not decisions:
+            # No strategies succeeded, return fallback
+            fallback_decision = RoutingDecision(
+                search_modality=SearchModality.BOTH,
+                generation_type=GenerationType.RAW_RESULTS,
+                confidence_score=0.0,
+                routing_method="ensemble_fallback",
+                reasoning="All strategies failed"
+            )
+            execution_time = time.time() - start_time
+            self.record_metrics(query, fallback_decision, execution_time, False, "All strategies failed")
+            return fallback_decision
+        
+        # Combine decisions
+        final_decision = self._combine_decisions(decisions)
+        final_decision.routing_method = "ensemble"
+        
+        # Extract temporal information (use first non-None)
+        for _, decision in decisions:
+            if decision.temporal_info:
+                final_decision.temporal_info = decision.temporal_info
+                break
+        
+        execution_time = time.time() - start_time
+        self.record_metrics(query, final_decision, execution_time, True)
+        
+        return final_decision
+    
+    def _combine_decisions(self, decisions: List[Tuple[str, RoutingDecision]]) -> RoutingDecision:
+        """Combine multiple decisions into a final decision."""
+        if self.voting_method == "majority":
+            return self._majority_voting(decisions)
+        else:
+            return self._weighted_voting(decisions)
+    
+    def _majority_voting(self, decisions: List[Tuple[str, RoutingDecision]]) -> RoutingDecision:
+        """Use majority voting to combine decisions."""
+        from collections import Counter
+        
+        modality_votes = Counter()
+        generation_votes = Counter()
+        
+        for name, decision in decisions:
+            modality_votes[decision.search_modality] += 1
+            generation_votes[decision.generation_type] += 1
+        
+        # Get most common choices
+        search_modality = modality_votes.most_common(1)[0][0]
+        generation_type = generation_votes.most_common(1)[0][0]
+        
+        # Average confidence scores
+        avg_confidence = sum(d.confidence_score for _, d in decisions) / len(decisions)
+        
+        # Combine reasoning
+        reasoning = "; ".join(f"{name}: {d.reasoning}" for name, d in decisions if d.reasoning)
+        
+        return RoutingDecision(
+            search_modality=search_modality,
+            generation_type=generation_type,
+            confidence_score=avg_confidence,
+            reasoning=reasoning
+        )
+    
+    def _weighted_voting(self, decisions: List[Tuple[str, RoutingDecision]]) -> RoutingDecision:
+        """Use weighted voting to combine decisions."""
+        from collections import defaultdict
+        
+        modality_scores = defaultdict(float)
+        generation_scores = defaultdict(float)
+        total_weight = 0
+        
+        for name, decision in decisions:
+            weight = self.weights.get(name, 1.0) * decision.confidence_score
+            modality_scores[decision.search_modality] += weight
+            generation_scores[decision.generation_type] += weight
+            total_weight += weight
+        
+        if total_weight == 0:
+            # Fallback to majority voting if weights are all zero
+            return self._majority_voting(decisions)
+        
+        # Get highest scoring choices
+        search_modality = max(modality_scores.items(), key=lambda x: x[1])[0]
+        generation_type = max(generation_scores.items(), key=lambda x: x[1])[0]
+        
+        # Weighted average confidence
+        weighted_confidence = sum(
+            d.confidence_score * self.weights.get(name, 1.0) 
+            for name, d in decisions
+        ) / sum(self.weights.get(name, 1.0) for name, _ in decisions)
+        
+        # Combine reasoning
+        reasoning = "; ".join(f"{name}: {d.reasoning}" for name, d in decisions if d.reasoning)
+        
+        return RoutingDecision(
+            search_modality=search_modality,
+            generation_type=generation_type,
+            confidence_score=weighted_confidence,
+            reasoning=reasoning
+        )
+    
+    def get_confidence(self, query: str, decision: RoutingDecision) -> float:
+        """Return the combined confidence score."""
+        return decision.confidence_score
+
+
+class LangExtractRoutingStrategy(RoutingStrategy):
+    """
+    Routing strategy using structured extraction with local LLM (via Ollama).
+    Provides more structured extraction than basic LLM but uses local models.
+    """
+    
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        super().__init__(config)
+        # Use local Ollama model instead of Gemini
+        self.model_name = config.get("langextract_model", "smollm2:1.7b")
+        self.ollama_url = config.get("ollama_url", "http://localhost:11434")
+        self.extractor = None
+        self.schema_prompt = """
+        Classify query generation type by looking for EXACT keywords:
+        
+        If query contains these words → use "raw":
+        - extract, get, list, parse
+        - timestamps, IDs, JSON, fields
+        - specific, exact, all
+        
+        If query contains these words → use "summary":  
+        - summarize, summary
+        - brief, overview, gist
+        - key, main, points, takeaways
+        - quick, recap
+        
+        If query contains these words → use "detailed":
+        - detailed, comprehensive
+        - full, complete, thorough
+        - in-depth, analysis, breakdown
+        - report, investigation
+        
+        DEFAULT: If no keywords match → use "raw"
+        
+        Video/Text detection:
+        - needs_video: true if mentions video/visual/watch/show
+        - needs_text: true if mentions text/document/article/report
+        - If neither mentioned: both = true
+        """
+        self._initialize_extractor()
+    
+    def _initialize_extractor(self):
+        """Initialize the structured extraction using Ollama."""
+        try:
+            import httpx
+            
+            # Check if Ollama is running and model is available
+            client = httpx.Client(timeout=5.0)
+            response = client.get(f"{self.ollama_url}/api/tags")
+            
+            if response.status_code == 200:
+                models = response.json().get("models", [])
+                model_names = [m["name"] for m in models]
+                
+                if self.model_name not in model_names:
+                    logger.warning(f"Model {self.model_name} not found in Ollama")
+                    print(f"⚠️ Model {self.model_name} not found, available: {model_names}")
+                    self.extractor = None
+                    return
+                
+                print(f"🔧 Initializing structured extraction with Ollama model: {self.model_name}")
+                self.extractor = True  # Just mark as available
+                print(f"✅ Structured extraction initialized successfully")
+                logger.info("Structured extraction initialized successfully")
+            else:
+                logger.warning("Ollama not responding")
+                self.extractor = None
+                
+        except Exception as e:
+            print(f"❌ Failed to initialize structured extraction: {e}")
+            logger.error(f"Failed to initialize structured extraction: {e}")
+            self.extractor = None
+    
+    async def route(self, query: str, context: Optional[Dict[str, Any]] = None) -> RoutingDecision:
+        """Route using structured extraction with local LLM."""
+        start_time = time.time()
+        
+        if not self.extractor:
+            # Fallback if extractor not available
+            logger.info(f"Structured extraction unavailable, using fallback")
+            return RoutingDecision(
+                search_modality=SearchModality.BOTH,
+                generation_type=GenerationType.RAW_RESULTS,
+                confidence_score=0.1,
+                routing_method="langextract_unavailable",
+                reasoning="Structured extraction unavailable"
+            )
+        
+        try:
+            # Create a structured prompt for Ollama
+            structured_prompt = f"""{self.schema_prompt}
+
+Query: {query}
+
+IMPORTANT: You must respond with ONLY a JSON object in this exact format:
+{{
+    "needs_video": true or false,
+    "needs_text": true or false,
+    "generation_type": "raw" or "summary" or "detailed",
+    "confidence": 0.0 to 1.0,
+    "reasoning": "brief explanation"
+}}
+
+STRICT RULES - Check in this order:
+1. If query has "extract" or "get" or "list" → generation_type: "raw"
+2. If query has "summarize" or "summary" → generation_type: "summary"
+3. If query has "detailed" or "comprehensive" → generation_type: "detailed"
+4. Otherwise → generation_type: "raw"
+
+Do not include any explanation or text outside the JSON object."""
+            
+            logger.debug(f"Structured extraction with model: {self.model_name}")
+            
+            # Call Ollama API
+            import httpx
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{self.ollama_url}/api/generate",
+                    json={
+                        "model": self.model_name,
+                        "prompt": structured_prompt,
+                        "stream": False,
+                        "temperature": 0.3,  # Lower temperature for more consistent structured output
+                        "format": "json"  # Request JSON format
+                    }
+                )
+                
+                if response.status_code != 200:
+                    raise Exception(f"Ollama API error: {response.status_code}")
+                
+                result_text = response.json().get("response", "{}")
+                logger.debug(f"Structured extraction raw response: {result_text[:200]}")
+                
+                # Parse the JSON response
+                try:
+                    result = json.loads(result_text)
+                except json.JSONDecodeError:
+                    # Try to extract JSON from the response
+                    json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
+                    if json_match:
+                        result = json.loads(json_match.group())
+                    else:
+                        raise ValueError("Could not parse LangExtract response")
+            
+            # Determine search modality
+            needs_video = result.get("needs_video", False)
+            needs_text = result.get("needs_text", False)
+            
+            if needs_video and needs_text:
+                search_modality = SearchModality.BOTH
+            elif needs_video:
+                search_modality = SearchModality.VIDEO
+            elif needs_text:
+                search_modality = SearchModality.TEXT
+            else:
+                search_modality = SearchModality.BOTH  # Default to both if unclear
+            
+            # Determine generation type
+            gen_type_str = result.get("generation_type", "raw").lower()
+            if gen_type_str == "summary":
+                generation_type = GenerationType.SUMMARY
+            elif gen_type_str == "detailed" or gen_type_str == "detailed_report":
+                generation_type = GenerationType.DETAILED_REPORT
+            else:
+                generation_type = GenerationType.RAW_RESULTS
+            
+            # Get confidence and reasoning
+            confidence = float(result.get("confidence", 0.5))
+            reasoning = result.get("reasoning", "LangExtract analysis")
+            
+            # Extract temporal information
+            temporal_info = TemporalExtractor.extract_temporal_info(query)
+            
+            decision = RoutingDecision(
+                search_modality=search_modality,
+                generation_type=generation_type,
+                confidence_score=confidence,
+                routing_method="langextract",
+                reasoning=reasoning,
+                temporal_info=temporal_info
+            )
+            
+            execution_time = time.time() - start_time
+            self.record_metrics(query, decision, execution_time, True)
+            
+            logger.debug(f"LangExtract routing: {search_modality.value}, {generation_type.value}, confidence: {confidence:.2f}")
+            
+            return decision
+            
+        except Exception as e:
+            logger.error(f"LangExtract routing failed: {e}")
+            
+            # Return fallback decision
+            fallback_decision = RoutingDecision(
+                search_modality=SearchModality.BOTH,
+                generation_type=GenerationType.RAW_RESULTS,
+                confidence_score=0.0,
+                routing_method="langextract_error",
+                reasoning=f"LangExtract failed: {str(e)}"
+            )
+            
+            execution_time = time.time() - start_time
+            self.record_metrics(query, fallback_decision, execution_time, False, str(e))
+            
+            return fallback_decision
+    
+    def get_confidence(self, query: str, decision: RoutingDecision) -> float:
+        """Return the confidence score from LangExtract."""
+        return decision.confidence_score
