@@ -22,7 +22,7 @@ class TestRetrievalSolver:
     async def test_retrieval_solver_basic(self, mock_search_service):
         """Test basic retrieval solver functionality."""
         with patch('src.search.search_service.SearchService', return_value=mock_search_service):
-            with patch('src.tools.config.get_config', return_value={"vespa_url": "http://localhost"}):
+            with patch('src.common.config.get_config', return_value={"vespa_url": "http://localhost"}):
                 solver = create_retrieval_solver(
                     profiles=["profile1"],
                     strategies=["strategy1"],
@@ -49,7 +49,7 @@ class TestRetrievalSolver:
     async def test_retrieval_solver_multiple_configs(self, mock_search_service):
         """Test retrieval solver with multiple profiles and strategies."""
         with patch('src.search.search_service.SearchService', return_value=mock_search_service):
-            with patch('src.tools.config.get_config', return_value={"vespa_url": "http://localhost"}):
+            with patch('src.common.config.get_config', return_value={"vespa_url": "http://localhost"}):
                 solver = create_retrieval_solver(
                     profiles=["profile1", "profile2"],
                     strategies=["strategy1", "strategy2"],
@@ -83,7 +83,7 @@ class TestRetrievalSolver:
     async def test_retrieval_solver_with_tracing_config(self, mock_search_service):
         """Test retrieval solver with tracing config (tracing not actually implemented)."""
         with patch('src.search.search_service.SearchService', return_value=mock_search_service):
-            with patch('src.tools.config.get_config', return_value={"vespa_url": "http://localhost"}):
+            with patch('src.common.config.get_config', return_value={"vespa_url": "http://localhost"}):
                 # Note: enable_tracing config is accepted but not used in current implementation
                 solver = create_retrieval_solver(
                     profiles=["profile1"],
@@ -108,7 +108,7 @@ class TestRetrievalSolver:
     async def test_retrieval_solver_error_handling(self):
         """Test retrieval solver error handling."""
         with patch('src.search.search_service.SearchService') as mock_service:
-            with patch('src.tools.config.get_config', return_value={"vespa_url": "http://localhost"}):
+            with patch('src.common.config.get_config', return_value={"vespa_url": "http://localhost"}):
                 # Simulate search failure
                 mock_service.return_value.search.side_effect = Exception("Search failed")
                 

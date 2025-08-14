@@ -12,7 +12,7 @@ from inspect_ai.solver import Solver, solver
 from inspect_ai.model import GenerateConfig
 
 from src.search.search_service import SearchService
-from src.tools.config import get_config
+from src.common.config import get_config
 
 logger = logging.getLogger(__name__)
 

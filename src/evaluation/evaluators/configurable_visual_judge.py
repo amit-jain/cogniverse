@@ -13,7 +13,7 @@ import json
 
 from phoenix.experiments.evaluators.base import Evaluator
 from phoenix.experiments.types import EvaluationResult
-from src.tools.config import get_config
+from src.common.config import get_config
 
 logger = logging.getLogger(__name__)
 
