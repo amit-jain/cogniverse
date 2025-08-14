@@ -1,112 +1,120 @@
 """
-Scorers for evaluation including RAGAS metrics and custom metrics.
+Schema-driven evaluation scorers that work with any data type.
+
+These scorers use the schema analyzer to understand the data structure
+and extract relevant fields without hardcoded assumptions.
 """
 
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any, List, Optional, Set
 import logging
+from inspect_ai.scorer import scorer, Score, mean
 
-from inspect_ai.scorer import scorer, Score
-from ragas.metrics import context_relevancy, context_precision, context_recall
+from src.evaluation.core.schema_analyzer import get_schema_analyzer
 
 logger = logging.getLogger(__name__)
 
 
-def get_configured_scorers(config: Optional[Dict[str, Any]] = None) -> List:
-    """
-    Get list of scorers based on configuration.
+def get_configured_scorers(config: Dict[str, Any]) -> List:
+    """Get list of scorers based on configuration.
     
     Args:
-        config: Configuration dictionary specifying which scorers to use
+        config: Configuration dictionary with scorer settings
         
     Returns:
-        List of configured scorer functions
+        List of configured scorers
+        
+    Raises:
+        ValueError: If config is None or invalid
     """
-    if not config:
-        # Default scorers if no config provided
-        return [
-            ragas_context_relevancy_scorer(),
-            custom_diversity_scorer(),
-            custom_temporal_coherence_scorer()
-        ]
+    if config is None:
+        raise ValueError("config is required for scorer configuration")
     
     scorers = []
     
-    # Add RAGAS scorers
-    if config.get("use_ragas", True):
-        ragas_metrics = config.get("ragas_metrics", ["context_relevancy"])
-        if "context_relevancy" in ragas_metrics:
-            scorers.append(ragas_context_relevancy_scorer())
-        if "context_precision" in ragas_metrics:
-            scorers.append(ragas_context_precision_scorer())
-        if "context_recall" in ragas_metrics:
-            scorers.append(ragas_context_recall_scorer())
+    # Add scorers based on config
+    if config.get("use_relevance", True):
+        scorers.append(relevance_scorer())
     
-    # Add custom scorers
-    if config.get("use_custom", True):
-        custom_metrics = config.get("custom_metrics", ["diversity", "temporal_coherence"])
-        if "diversity" in custom_metrics:
-            scorers.append(custom_diversity_scorer())
-        if "temporal_coherence" in custom_metrics:
-            scorers.append(custom_temporal_coherence_scorer())
-        if "result_count" in custom_metrics:
-            scorers.append(custom_result_count_scorer())
+    if config.get("use_diversity", True):
+        scorers.append(diversity_scorer())
     
-    # Add visual/LLM scorers if configured
-    if config.get("use_visual", False):
-        scorers.append(visual_quality_scorer(config.get("visual_config", {})))
+    if config.get("use_temporal", False):
+        scorers.append(schema_aware_temporal_scorer())
     
-    logger.info(f"Configured {len(scorers)} scorers")
+    if config.get("use_precision_recall", False):
+        scorers.extend([precision_scorer(), recall_scorer()])
+    
+    # Add visual/LLM evaluators from plugin if configured
+    if config.get("enable_llm_evaluators", False) or config.get("enable_quality_evaluators", False):
+        try:
+            from src.evaluation.plugins.visual_evaluator import get_visual_scorers
+            visual_scorers = get_visual_scorers(config)
+            scorers.extend(visual_scorers)
+        except ImportError:
+            logger.warning("Visual evaluator plugin not available")
+    
+    if not scorers:
+        logger.warning("No scorers configured, using default relevance scorer")
+        scorers.append(relevance_scorer())
+    
     return scorers
 
 
-@scorer
-def ragas_context_relevancy_scorer():
+@scorer(metrics=[mean()])
+def relevance_scorer():
     """
-    RAGAS context relevancy scorer - works WITHOUT ground truth!
-    Evaluates how relevant the retrieved contexts are to the query.
+    Schema-agnostic relevance scorer using keyword matching.
+    Works with any schema by extracting text content from results.
     """
-    def score(state) -> Score:
+    async def score(state, target=None) -> Score:
         query = state.input.get("query", "")
         
-        # Aggregate results from all configurations
+        if not query:
+            return Score(
+                value=0.0,
+                explanation="No query provided",
+                metadata={}
+            )
+        
         all_scores = {}
         
         for config_key, output in state.outputs.items():
             if not output.get("success", False):
                 all_scores[config_key] = 0.0
                 continue
-                
-            results = output.get("results", [])
             
+            results = output.get("results", [])
             if not results:
                 all_scores[config_key] = 0.0
                 continue
             
-            try:
-                # Extract contexts from results
-                contexts = [r.get("content", "") for r in results if r.get("content")]
-                
-                if not contexts:
-                    all_scores[config_key] = 0.0
-                    continue
-                
-                # Use RAGAS to evaluate relevancy
-                # Note: In production, this would use an LLM to judge relevancy
-                # For now, we'll use a simplified heuristic
-                relevancy_score = calculate_simple_relevancy(query, contexts)
-                all_scores[config_key] = relevancy_score
-                
-            except Exception as e:
-                logger.error(f"Failed to calculate relevancy for {config_key}: {e}")
+            # Extract text content from results
+            contexts = []
+            for r in results:
+                # Try multiple content fields
+                content = (
+                    r.get("content") or 
+                    r.get("text") or 
+                    r.get("description") or 
+                    r.get("transcript") or 
+                    r.get("caption") or
+                    ""
+                )
+                if content:
+                    contexts.append(str(content))
+            
+            # Calculate relevance
+            if contexts:
+                relevancy = _calculate_keyword_relevance(query, contexts)
+                all_scores[config_key] = relevancy
+            else:
                 all_scores[config_key] = 0.0
         
-        # Calculate overall score
-        if all_scores:
-            avg_score = sum(all_scores.values()) / len(all_scores)
-            explanation = f"Context relevancy scores: {', '.join(f'{k}={v:.3f}' for k, v in all_scores.items())}"
-        else:
-            avg_score = 0.0
-            explanation = "No results to evaluate"
+        avg_score = sum(all_scores.values()) / len(all_scores) if all_scores else 0.0
+        
+        explanation = "Relevance scores: " + ", ".join(
+            f"{k}={v:.3f}" for k, v in all_scores.items()
+        )
         
         return Score(
             value=avg_score,
@@ -117,20 +125,53 @@ def ragas_context_relevancy_scorer():
     return score
 
 
-@scorer
-def ragas_context_precision_scorer():
+@scorer(metrics=[mean()])
+def precision_scorer():
     """
-    RAGAS context precision scorer - requires ground truth.
-    Measures what fraction of retrieved contexts are relevant.
+    Precision scorer that requires ground truth and uses schema analyzer.
+    
+    Precision = |retrieved ∩ relevant| / |retrieved|
     """
-    def score(state) -> Score:
-        # Get expected results if available
-        expected = state.output.get("expected_videos", []) if hasattr(state, 'output') else []
-        
-        if not expected:
+    async def score(state, target=None) -> Score:
+        # Check for ground truth in state.output
+        if not hasattr(state, 'output') or not state.output:
             return Score(
-                value=None,
-                explanation="No ground truth available for precision calculation"
+                value=0.0,
+                explanation="No ground truth available for precision calculation",
+                metadata={}
+            )
+        
+        # Get expected items - must be explicit, no fallbacks
+        expected_items = state.output.get("expected_items")
+        if expected_items is None:
+            return Score(
+                value=0.0,
+                explanation="No expected_items field in ground truth",
+                metadata={}
+            )
+        
+        expected_set = set(expected_items) if expected_items else set()
+        
+        # Get schema info from metadata
+        metadata = getattr(state, 'metadata', {})
+        schema_name = metadata.get("schema_name")
+        schema_fields = metadata.get("schema_fields", {})
+        
+        if not schema_name:
+            return Score(
+                value=0.0,
+                explanation="No schema information available",
+                metadata={}
+            )
+        
+        # Get schema analyzer
+        try:
+            analyzer = get_schema_analyzer(schema_name, schema_fields)
+        except Exception as e:
+            return Score(
+                value=0.0,
+                explanation=f"Failed to get schema analyzer: {e}",
+                metadata={}
             )
         
         all_scores = {}
@@ -139,43 +180,104 @@ def ragas_context_precision_scorer():
             if not output.get("success", False):
                 all_scores[config_key] = 0.0
                 continue
-                
+            
             results = output.get("results", [])
-            retrieved_videos = [r.get("video_id") for r in results]
+            if not results:
+                all_scores[config_key] = 0.0 if expected_set else 1.0  # Perfect if both empty
+                continue
+            
+            # Extract item IDs using schema analyzer
+            retrieved_ids = set()
+            for r in results:
+                try:
+                    item_id = analyzer.extract_item_id(r)
+                    if item_id:
+                        retrieved_ids.add(item_id)
+                except Exception as e:
+                    logger.warning(f"Failed to extract item ID: {e}")
             
             # Calculate precision
-            if retrieved_videos:
-                relevant_retrieved = len([v for v in retrieved_videos if v in expected])
-                precision = relevant_retrieved / len(retrieved_videos)
+            if retrieved_ids:
+                relevant_retrieved = retrieved_ids.intersection(expected_set)
+                precision = len(relevant_retrieved) / len(retrieved_ids)
                 all_scores[config_key] = precision
             else:
                 all_scores[config_key] = 0.0
         
         avg_score = sum(all_scores.values()) / len(all_scores) if all_scores else 0.0
         
+        explanation = f"Precision scores (schema: {schema_name}): " + ", ".join(
+            f"{k}={v:.3f}" for k, v in all_scores.items()
+        )
+        
         return Score(
             value=avg_score,
-            explanation=f"Context precision: {avg_score:.3f}",
-            metadata={"individual_scores": all_scores}
+            explanation=explanation,
+            metadata={
+                "individual_scores": all_scores,
+                "schema": schema_name,
+                "expected_count": len(expected_set)
+            }
         )
     
     return score
 
 
-@scorer
-def ragas_context_recall_scorer():
+@scorer(metrics=[mean()])
+def recall_scorer():
     """
-    RAGAS context recall scorer - requires ground truth.
-    Measures what fraction of relevant contexts were retrieved.
+    Recall scorer that requires ground truth and uses schema analyzer.
+    
+    Recall = |retrieved ∩ relevant| / |relevant|
     """
-    def score(state) -> Score:
-        # Get expected results if available
-        expected = state.output.get("expected_videos", []) if hasattr(state, 'output') else []
-        
-        if not expected:
+    async def score(state, target=None) -> Score:
+        # Check for ground truth in state.output
+        if not hasattr(state, 'output') or not state.output:
             return Score(
-                value=None,
-                explanation="No ground truth available for recall calculation"
+                value=0.0,
+                explanation="No ground truth available for recall calculation",
+                metadata={}
+            )
+        
+        # Get expected items - must be explicit, no fallbacks
+        expected_items = state.output.get("expected_items")
+        if expected_items is None:
+            return Score(
+                value=0.0,
+                explanation="No expected_items field in ground truth",
+                metadata={}
+            )
+        
+        expected_set = set(expected_items) if expected_items else set()
+        
+        # Early return if no expected items
+        if not expected_set:
+            return Score(
+                value=1.0,  # Perfect recall if nothing expected
+                explanation="No items expected",
+                metadata={}
+            )
+        
+        # Get schema info from metadata
+        metadata = getattr(state, 'metadata', {})
+        schema_name = metadata.get("schema_name")
+        schema_fields = metadata.get("schema_fields", {})
+        
+        if not schema_name:
+            return Score(
+                value=0.0,
+                explanation="No schema information available",
+                metadata={}
+            )
+        
+        # Get schema analyzer
+        try:
+            analyzer = get_schema_analyzer(schema_name, schema_fields)
+        except Exception as e:
+            return Score(
+                value=0.0,
+                explanation=f"Failed to get schema analyzer: {e}",
+                metadata={}
             )
         
         all_scores = {}
@@ -184,84 +286,147 @@ def ragas_context_recall_scorer():
             if not output.get("success", False):
                 all_scores[config_key] = 0.0
                 continue
-                
+            
             results = output.get("results", [])
-            retrieved_videos = [r.get("video_id") for r in results]
+            
+            # Extract item IDs using schema analyzer
+            retrieved_ids = set()
+            for r in results:
+                try:
+                    item_id = analyzer.extract_item_id(r)
+                    if item_id:
+                        retrieved_ids.add(item_id)
+                except Exception as e:
+                    logger.warning(f"Failed to extract item ID: {e}")
             
             # Calculate recall
-            if expected:
-                relevant_retrieved = len([v for v in expected if v in retrieved_videos])
-                recall = relevant_retrieved / len(expected)
-                all_scores[config_key] = recall
-            else:
-                all_scores[config_key] = 0.0
+            relevant_retrieved = retrieved_ids.intersection(expected_set)
+            recall = len(relevant_retrieved) / len(expected_set)
+            all_scores[config_key] = recall
         
         avg_score = sum(all_scores.values()) / len(all_scores) if all_scores else 0.0
         
+        explanation = f"Recall scores (schema: {schema_name}): " + ", ".join(
+            f"{k}={v:.3f}" for k, v in all_scores.items()
+        )
+        
         return Score(
             value=avg_score,
-            explanation=f"Context recall: {avg_score:.3f}",
-            metadata={"individual_scores": all_scores}
+            explanation=explanation,
+            metadata={
+                "individual_scores": all_scores,
+                "schema": schema_name,
+                "expected_count": len(expected_set)
+            }
         )
     
     return score
 
 
-@scorer
-def custom_diversity_scorer():
+@scorer(metrics=[mean()])
+def diversity_scorer():
     """
-    Custom diversity metric - evaluates result diversity without ground truth.
+    Diversity scorer using schema analyzer to extract item IDs.
+    Measures uniqueness of results.
     """
-    def score(state) -> Score:
+    async def score(state, target=None) -> Score:
+        # Get schema info from metadata
+        metadata = getattr(state, 'metadata', {})
+        schema_name = metadata.get("schema_name", "unknown")
+        schema_fields = metadata.get("schema_fields", {})
+        
+        # Get schema analyzer - use default if none specified
+        try:
+            analyzer = get_schema_analyzer(schema_name, schema_fields)
+        except Exception as e:
+            logger.warning(f"Using default analyzer due to: {e}")
+            from src.evaluation.core.schema_analyzer import DefaultSchemaAnalyzer
+            analyzer = DefaultSchemaAnalyzer()
+        
         all_scores = {}
         
         for config_key, output in state.outputs.items():
             if not output.get("success", False):
                 all_scores[config_key] = 0.0
                 continue
-                
-            results = output.get("results", [])
             
+            results = output.get("results", [])
             if not results:
                 all_scores[config_key] = 0.0
                 continue
             
-            # Calculate diversity as ratio of unique videos
-            video_ids = [r.get("video_id") for r in results if r.get("video_id")]
-            if video_ids:
-                unique_videos = len(set(video_ids))
-                diversity = unique_videos / len(video_ids)
+            # Extract item IDs using schema analyzer
+            item_ids = []
+            for r in results:
+                try:
+                    item_id = analyzer.extract_item_id(r)
+                    if item_id:
+                        item_ids.append(item_id)
+                except Exception as e:
+                    logger.warning(f"Failed to extract item ID: {e}")
+            
+            # Calculate diversity
+            if item_ids:
+                unique_ids = set(item_ids)
+                diversity = len(unique_ids) / len(item_ids)
                 all_scores[config_key] = diversity
             else:
                 all_scores[config_key] = 0.0
         
         avg_score = sum(all_scores.values()) / len(all_scores) if all_scores else 0.0
         
+        explanation = f"Result diversity (schema: {schema_name}): " + ", ".join(
+            f"{k}={v:.3f}" for k, v in all_scores.items()
+        )
+        
         return Score(
             value=avg_score,
-            explanation=f"Result diversity: {avg_score:.3f} (unique/total ratio)",
-            metadata={"individual_scores": all_scores}
+            explanation=explanation,
+            metadata={
+                "individual_scores": all_scores,
+                "schema": schema_name
+            }
         )
     
     return score
 
 
-@scorer
-def custom_temporal_coherence_scorer():
+@scorer(metrics=[mean()])
+def schema_aware_temporal_scorer():
     """
-    Evaluate temporal coherence for time-based queries.
+    Temporal coherence scorer that checks if the schema has temporal fields.
+    Only applies to schemas with temporal data.
     """
-    def score(state) -> Score:
-        query = state.input.get("query", "").lower()
+    async def score(state, target=None) -> Score:
+        query = state.input.get("query", "")
         
-        # Check if this is a temporal query
-        temporal_keywords = ['when', 'after', 'before', 'during', 'timeline', 'first', 'last', 'then']
-        is_temporal = any(kw in query for kw in temporal_keywords)
+        # Check if query has temporal intent
+        temporal_keywords = [
+            "when", "after", "before", "during", "timeline", 
+            "sequence", "order", "first", "last", "then"
+        ]
         
-        if not is_temporal:
+        is_temporal_query = any(kw in query.lower() for kw in temporal_keywords)
+        
+        if not is_temporal_query:
             return Score(
-                value=None,
-                explanation="Not a temporal query"
+                value=1.0,  # N/A - perfect score
+                explanation="Not a temporal query",
+                metadata={"temporal_query": False}
+            )
+        
+        # Get schema info
+        metadata = getattr(state, 'metadata', {})
+        schema_fields = metadata.get("schema_fields", {})
+        
+        # Check if schema has temporal fields
+        temporal_fields = schema_fields.get("temporal_fields", [])
+        
+        if not temporal_fields:
+            return Score(
+                value=1.0,  # N/A - perfect score
+                explanation="Not a temporal schema",
+                metadata={"temporal_schema": False}
             )
         
         all_scores = {}
@@ -270,95 +435,70 @@ def custom_temporal_coherence_scorer():
             if not output.get("success", False):
                 all_scores[config_key] = 0.0
                 continue
-                
+            
             results = output.get("results", [])
+            if not results:
+                all_scores[config_key] = 0.0
+                continue
             
-            # Check if results have temporal information
-            timestamps = []
+            # Extract temporal values
+            temporal_values = []
             for r in results:
-                temporal_info = r.get("temporal_info", {})
-                if "timestamp" in temporal_info:
-                    timestamps.append(temporal_info["timestamp"])
+                for field in temporal_fields:
+                    if field in r:
+                        temporal_values.append(r[field])
+                        break  # Use first temporal field found
             
-            if timestamps and len(timestamps) > 1:
-                # Check if timestamps are properly ordered
-                is_ordered = all(timestamps[i] <= timestamps[i+1] for i in range(len(timestamps)-1))
+            # Check if properly ordered
+            if temporal_values and len(temporal_values) > 1:
+                is_ordered = all(
+                    temporal_values[i] <= temporal_values[i+1] 
+                    for i in range(len(temporal_values)-1)
+                )
                 all_scores[config_key] = 1.0 if is_ordered else 0.0
             else:
-                all_scores[config_key] = 0.5  # Neutral if no temporal info
+                all_scores[config_key] = 1.0  # Single or no temporal values
         
         avg_score = sum(all_scores.values()) / len(all_scores) if all_scores else 0.0
         
-        return Score(
-            value=avg_score,
-            explanation=f"Temporal coherence: {avg_score:.3f}",
-            metadata={"individual_scores": all_scores}
+        explanation = f"Temporal coherence: " + ", ".join(
+            f"{k}={v:.1f}" for k, v in all_scores.items()
         )
-    
-    return score
-
-
-@scorer
-def custom_result_count_scorer():
-    """
-    Simple scorer that checks if we got enough results.
-    """
-    def score(state) -> Score:
-        all_counts = {}
-        
-        for config_key, output in state.outputs.items():
-            if not output.get("success", False):
-                all_counts[config_key] = 0
-                continue
-                
-            results = output.get("results", [])
-            all_counts[config_key] = len(results)
-        
-        # Score based on whether we got at least 5 results
-        all_scores = {k: min(1.0, v/5.0) for k, v in all_counts.items()}
-        avg_score = sum(all_scores.values()) / len(all_scores) if all_scores else 0.0
         
         return Score(
             value=avg_score,
-            explanation=f"Result counts: {all_counts}",
-            metadata={"counts": all_counts, "scores": all_scores}
+            explanation=explanation,
+            metadata={
+                "individual_scores": all_scores,
+                "temporal_fields": temporal_fields
+            }
         )
     
     return score
 
 
-@scorer
-def visual_quality_scorer(visual_config: Dict[str, Any]):
-    """
-    LLM-based visual quality scorer.
-    """
-    def score(state) -> Score:
-        # This would use an LLM to evaluate visual quality
-        # For now, return a placeholder
-        return Score(
-            value=None,
-            explanation="Visual quality scoring not yet implemented"
-        )
+def _calculate_keyword_relevance(query: str, contexts: List[str]) -> float:
+    """Calculate keyword-based relevance score.
     
-    return score
-
-
-def calculate_simple_relevancy(query: str, contexts: List[str]) -> float:
+    Args:
+        query: Search query
+        contexts: List of text contexts from results
+        
+    Returns:
+        Relevance score between 0 and 1
     """
-    Simple heuristic for relevancy calculation.
-    In production, this would use an LLM or embedding similarity.
-    """
-    if not contexts:
+    if not query or not contexts:
         return 0.0
     
-    # Simple keyword overlap heuristic
+    # Simple keyword matching
     query_words = set(query.lower().split())
     
-    relevancy_scores = []
+    scores = []
     for context in contexts:
         context_words = set(context.lower().split())
-        overlap = len(query_words & context_words)
-        relevancy = overlap / len(query_words) if query_words else 0.0
-        relevancy_scores.append(min(1.0, relevancy))
+        if context_words:
+            overlap = len(query_words.intersection(context_words))
+            score = overlap / len(query_words)
+            scores.append(score)
     
-    return sum(relevancy_scores) / len(relevancy_scores)
+    return sum(scores) / len(scores) if scores else 0.0

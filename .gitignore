@@ -66,6 +66,9 @@ test_float_*.py
 temp/
 
 # Test outputs
+.coverage
+coverage.xml
+htmlcov/
 
 # Claude configuration
 CLAUDE.md
