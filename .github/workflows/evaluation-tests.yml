@@ -1,0 +1,208 @@
+name: Evaluation Framework Tests
+
+on:
+  push:
+    branches: [ main, develop, feature/* ]
+    paths:
+      - 'src/evaluation/**'
+      - 'tests/**'
+      - 'pytest.ini'
+      - '.github/workflows/evaluation-tests.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'src/evaluation/**'
+      - 'tests/**'
+      - 'pytest.ini'
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11']
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+    
+    - name: Install dependencies
+      run: |
+        uv pip install -e .
+        uv pip install pytest pytest-cov pytest-mock
+    
+    - name: Run unit tests
+      run: |
+        pytest src/evaluation/tests/unit -v -m unit --cov=src/evaluation --cov-report=xml --cov-report=term-missing
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+    
+    - name: Install dependencies
+      run: |
+        uv pip install -e .
+        uv pip install pytest pytest-cov pytest-mock
+    
+    - name: Start Phoenix (mock)
+      run: |
+        # For CI, we'll run integration tests with mocked Phoenix
+        # In a real setup, you'd start Phoenix here
+        echo "Skipping Phoenix startup for CI"
+    
+    - name: Run integration tests
+      run: |
+        pytest src/evaluation/tests/integration -v -m integration --cov=src/evaluation --cov-append
+      continue-on-error: true  # Integration tests may fail without real Phoenix
+    
+    - name: Upload coverage
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: integration
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+  lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+    
+    - name: Install linting tools
+      run: |
+        uv pip install ruff black isort mypy
+    
+    - name: Run ruff
+      run: ruff check src/evaluation
+      continue-on-error: true
+    
+    - name: Check formatting with black
+      run: black --check src/evaluation
+      continue-on-error: true
+    
+    - name: Check import sorting
+      run: isort --check-only src/evaluation
+      continue-on-error: true
+    
+    - name: Run mypy
+      run: mypy src/evaluation --ignore-missing-imports
+      continue-on-error: true
+
+  test-cli:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+    
+    - name: Install package
+      run: |
+        uv pip install -e .
+    
+    - name: Test CLI help
+      run: |
+        python -m src.evaluation.cli --help
+    
+    - name: Test CLI commands
+      run: |
+        python -m src.evaluation.cli evaluate --help
+        python -m src.evaluation.cli create-dataset --help
+        python -m src.evaluation.cli list-traces --help
+        python -m src.evaluation.cli test --help
+
+  coverage-check:
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests]
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+    
+    - name: Install dependencies
+      run: |
+        uv pip install -e .
+        uv pip install pytest pytest-cov
+    
+    - name: Run all tests with coverage
+      run: |
+        pytest src/evaluation/tests -v --cov=src/evaluation --cov-report=term-missing --cov-fail-under=80
+      continue-on-error: true  # Don't fail build on coverage, just report
+    
+    - name: Generate coverage report
+      run: |
+        pytest src/evaluation/tests -v --cov=src/evaluation --cov-report=html
+      continue-on-error: true
+    
+    - name: Upload coverage HTML report
+      uses: actions/upload-artifact@v3
+      with:
+        name: coverage-report
+        path: htmlcov/

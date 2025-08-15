@@ -35,15 +35,15 @@ def main():
     args = parser.parse_args()
     
     # Get profiles to process
-    from src.tools.config import get_config
+    from src.common.config import get_config
     app_config = get_config()
     
     if args.profile:
         profiles_to_process = args.profile
     else:
         # If no profiles specified, use the active one
-        active = app_config.get_active_profile()
-        profiles_to_process = [active] if active else ["frame_based_colpali"]
+        active = app_config.get("active_video_profile", "frame_based_colpali")
+        profiles_to_process = [active]
     
     # Process each profile
     all_results = {}
@@ -55,7 +55,7 @@ def main():
         # Set the profile
         import os
         os.environ["VIDEO_PROFILE"] = profile
-        app_config.reload()
+        # Reload config is not needed for dict
         
         # Create pipeline config
         config = PipelineConfig.from_config()

@@ -94,6 +94,9 @@ class GenericEmbeddingGenerator(BaseEmbeddingGenerator):
             if processing_type == "single_vector":
                 # Single vector processing with pre-segmented data
                 result = self._generate_single_vector_embeddings(video_data, output_dir)
+            elif processing_type == "video_chunks":
+                # Video chunks processing - all segments in one document
+                result = self._generate_video_chunks_embeddings(video_data, output_dir)
             elif processing_type == "direct_video" or processing_type.startswith("direct_video"):
                 # Direct video processing
                 result = self._generate_direct_video_embeddings(video_data, output_dir)
@@ -404,6 +407,135 @@ class GenericEmbeddingGenerator(BaseEmbeddingGenerator):
                 documents_fed=0,
                 processing_time=0,
                 errors=errors,
+                metadata={}
+            )
+    
+    def _generate_video_chunks_embeddings(
+        self,
+        video_data: Dict[str, Any],
+        output_dir: Path
+    ) -> EmbeddingResult:
+        """Generate embeddings for video chunks - all segments in one document"""
+        video_id = video_data.get('video_id', 'unknown')
+        
+        # Get video path
+        video_path = self._get_video_path(video_data)
+        if not video_path:
+            return EmbeddingResult(
+                video_id=video_id,
+                total_documents=0,
+                documents_processed=0,
+                documents_fed=0,
+                processing_time=0,
+                errors=["Video file not found"],
+                metadata={}
+            )
+        
+        # Get video info
+        video_info = self._get_video_info(video_path)
+        duration = video_info["duration"]
+        
+        # Calculate segments
+        segment_duration = self.config.get("model_specific", {}).get("segment_duration", 30.0)
+        num_segments = max(1, int(np.ceil(duration / segment_duration)))
+        
+        self.logger.info(
+            f"Processing video with {num_segments} segments of {segment_duration}s for chunks document"
+        )
+        
+        # Process all segments and collect embeddings
+        segments = []
+        embeddings_list = []
+        errors = []
+        
+        for segment_idx in range(num_segments):
+            start_time = segment_idx * segment_duration
+            end_time = min((segment_idx + 1) * segment_duration, duration)
+            
+            segments.append({
+                'segment_id': segment_idx,
+                'start_time': start_time,
+                'end_time': end_time
+            })
+            
+            try:
+                # Process segment to get embeddings
+                if self.videoprism_loader:
+                    result = self.embedding_processor.process_videoprism_segment(
+                        video_path,
+                        start_time,
+                        end_time,
+                        self.videoprism_loader
+                    )
+                    if result:
+                        embeddings_list.append(result.get("embeddings_np"))
+                    else:
+                        embeddings_list.append(None)
+                else:
+                    embeddings = self.embedding_processor.generate_embeddings_from_video_segment(
+                        video_path,
+                        start_time,
+                        end_time,
+                        self.model,
+                        self.processor
+                    )
+                    embeddings_list.append(embeddings)
+                    
+            except Exception as e:
+                self.logger.error(f"Error processing segment {segment_idx}: {e}")
+                embeddings_list.append(None)
+                errors.append(f"Segment {segment_idx}: {str(e)}")
+        
+        # Filter out None embeddings
+        valid_embeddings = [e for e in embeddings_list if e is not None]
+        
+        # Build single document with all segments using chunks builder
+        if self.document_builder.__class__.__name__ == 'ColQwenChunksBuilder':
+            # Use the chunks builder
+            document = self.document_builder.build_document(
+                video_id=video_id,
+                video_title=video_data.get('video_title', video_id),
+                video_path=video_path,
+                segments=segments,
+                embeddings_list=valid_embeddings,
+                extract_audio=self.config.get("model_specific", {}).get("extract_audio", True),
+                video_description=video_data.get('video_description', ''),
+                creation_timestamp=int(time.time() * 1000)
+            )
+            
+            # Feed the single document
+            documents_fed = 0
+            if self.backend_client and self.backend_client.feed_document(document):
+                documents_fed = 1
+                self.logger.info(f"✅ Successfully fed chunks document for {video_id}")
+            else:
+                self.logger.warning(f"⚠️ Failed to feed chunks document for {video_id}")
+            
+            return EmbeddingResult(
+                video_id=video_id,
+                total_documents=1,  # Single document for all chunks
+                documents_processed=1,
+                documents_fed=documents_fed,
+                processing_time=0,  # Will be set by caller
+                errors=errors,
+                metadata={
+                    "video_duration": duration,
+                    "segment_duration": segment_duration,
+                    "num_segments": num_segments,
+                    "valid_segments": len(valid_embeddings),
+                    "process_type": "video_chunks",
+                    "model": self.model_name
+                }
+            )
+        else:
+            # Fallback error
+            return EmbeddingResult(
+                video_id=video_id,
+                total_documents=0,
+                documents_processed=0,
+                documents_fed=0,
+                processing_time=0,
+                errors=["Document builder does not support chunks mode"],
                 metadata={}
             )
     

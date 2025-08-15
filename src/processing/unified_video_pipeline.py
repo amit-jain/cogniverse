@@ -25,7 +25,7 @@ import asyncio
 import sys
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from src.tools.config import get_config
+from src.common.config import get_config
 from src.processing.pipeline_steps import (
     KeyframeExtractor,
     AudioTranscriber,
@@ -95,7 +95,9 @@ class VideoIngestionPipeline:
     def __init__(self, config: Optional[PipelineConfig] = None):
         self.config = config or PipelineConfig.from_config()
         self.app_config = get_config()
-        self.active_profile = self.app_config.get_active_profile()
+        # Check environment variable first, then config
+        import os
+        self.active_profile = os.environ.get("VIDEO_PROFILE") or self.app_config.get("active_video_profile", "frame_based_colpali")
         self.strategy_config = StrategyConfig()
         self.setup_directories()
         self.logger = self._setup_logging()
@@ -104,11 +106,10 @@ class VideoIngestionPipeline:
         
     def setup_directories(self):
         """Create necessary directories with profile-specific organization"""
-        # Get active profile name
-        active_profile = self.app_config.get_active_profile()
-        if active_profile:
+        # Use the active profile we already set
+        if self.active_profile:
             # Use profile-specific directory
-            self.profile_output_dir = self.config.output_dir / f"profile_{active_profile}"
+            self.profile_output_dir = self.config.output_dir / f"profile_{self.active_profile}"
         else:
             # Fallback to default
             self.profile_output_dir = self.config.output_dir / "default"
@@ -137,7 +138,7 @@ class VideoIngestionPipeline:
         from src.utils.output_manager import get_output_manager
         output_manager = get_output_manager()
         timestamp = int(time.time())
-        active_profile = self.app_config.get_active_profile() or "default"
+        active_profile = self.app_config.get("active_video_profile", "default")
         log_file = output_manager.get_logs_dir() / f"video_processing_{active_profile}_{timestamp}.log"
         
         # File handler with detailed formatting
@@ -279,10 +280,10 @@ class VideoIngestionPipeline:
         # Initialize embedding generator v2
         if self.config.generate_embeddings:
             try:
-                # Get the config data from the Config object
-                generator_config = self.app_config.config_data.copy()
+                # Get the config data (app_config is already a dict)
+                generator_config = self.app_config.copy()
                 generator_config["embedding_backend"] = self.config.search_backend
-                generator_config["active_profile"] = self.app_config.get_active_profile()
+                generator_config["active_profile"] = self.active_profile
                 
                 # Create embedding generator v2
                 self.embedding_generator = create_embedding_generator(
@@ -373,7 +374,8 @@ class VideoIngestionPipeline:
                             images[str(kf["frame_id"])] = image
             
             # Get strategy parameters
-            profile_config = self.app_config.get_profile_config(self.active_profile)
+            profiles = self.app_config.get("video_processing_profiles", {})
+            profile_config = profiles.get(self.active_profile, {})
             pipeline_config = profile_config.get("pipeline_config", {})
             strategy = pipeline_config.get("keyframe_strategy", "similarity")
             
@@ -718,7 +720,7 @@ class VideoIngestionPipeline:
         config_dict["video_dir"] = str(config_dict["video_dir"])
         config_dict["output_dir"] = str(config_dict["output_dir"])
         
-        active_profile = self.app_config.get_active_profile() or "default"
+        active_profile = self.app_config.get("active_video_profile", "default")
         results = {
             "profile": active_profile,
             "pipeline_config": config_dict,
