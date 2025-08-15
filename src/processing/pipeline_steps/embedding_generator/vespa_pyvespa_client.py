@@ -221,7 +221,7 @@ class VespaPyClient(BackendClient):
                 "frame_description": "frame_description",
                 "audio_transcript": "audio_transcript"
             },
-            "video_colqwen": {
+            "video_colqwen_chunks": {
                 "segment_description": "segment_description", 
                 "audio_transcript": "audio_transcript"
             }

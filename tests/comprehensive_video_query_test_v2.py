@@ -289,7 +289,7 @@ def get_best_strategy_for_profile(profile: str) -> str:
     """Get the best ranking strategy for a profile based on previous results"""
     best_strategies = {
         'frame_based_colpali': 'binary_binary',  # Changed to visual-only for fair comparison
-        'direct_video_colqwen': 'float_binary',
+        'colqwen_chunks': 'hybrid_binary_bm25',
         'direct_video_global': 'binary_binary',
         'direct_video_global_large': 'binary_binary',
         'single__video_videoprism_large_6s': 'default'  # Use default for video_chunks
@@ -401,7 +401,7 @@ def create_metrics_summary_table(all_results: List[Dict]) -> pd.DataFrame:
 def main():
     parser = argparse.ArgumentParser(description="Comprehensive video query test v2")
     parser.add_argument("--profiles", nargs="+", 
-                       default=["frame_based_colpali", "direct_video_colqwen", 
+                       default=["frame_based_colpali", "colqwen_chunks", 
                                "direct_video_global", "direct_video_global_large",
                                "single__video_videoprism_large_6s"],
                        help="Profiles to test")

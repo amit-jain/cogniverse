@@ -97,7 +97,9 @@ class VideoIngestionPipeline:
         self.app_config = get_config()
         # Check environment variable first, then config
         import os
-        self.active_profile = os.environ.get("VIDEO_PROFILE") or self.app_config.get("active_video_profile", "frame_based_colpali")
+        env_profile = os.environ.get("VIDEO_PROFILE")
+        config_profile = self.app_config.get("active_video_profile", "frame_based_colpali")
+        self.active_profile = env_profile or config_profile
         self.strategy_config = StrategyConfig()
         self.setup_directories()
         self.logger = self._setup_logging()
@@ -470,6 +472,7 @@ class VideoIngestionPipeline:
             "duration": results.get("duration", 0),
             "output_dir": str(self.profile_output_dir)
         }
+        self.logger.info(f"Results keys: {list(results.keys())}")
         
         # Add processing type from strategy
         if self.strategy:
@@ -489,7 +492,7 @@ class VideoIngestionPipeline:
             self.logger.info(f"Using single vector processing data with {len(video_data['segments'])} segments")
         
         # For frame-based processing, add frame information if available
-        elif "keyframes" in results.get("results", {}):
+        elif "keyframes" in results.get("results", {}) and video_data.get("processing_type") != "video_chunks":
             keyframes_data = results["results"]["keyframes"]
             if "keyframes" in keyframes_data:
                 # Convert keyframe data to frames format expected by v2
@@ -501,6 +504,39 @@ class VideoIngestionPipeline:
                         "timestamp": kf.get("timestamp", 0.0)
                     })
                 video_data["frames"] = frames
+        
+        # For video_chunks processing, always create segments
+        if video_data.get("processing_type") == "video_chunks" and "segments" not in video_data:
+            self.logger.info(f"Creating segments for video_chunks processing")
+            # Get video duration and segment configuration
+            video_path = Path(video_data["video_path"])
+            duration = video_data.get("duration", 0)
+            self.logger.info(f"Video duration: {duration}")
+            
+            if duration > 0:
+                # Get segment duration from profile config
+                profiles = self.app_config.get("video_processing_profiles", {})
+                profile = profiles.get(self.active_profile, {})
+                segment_duration = profile.get("model_specific", {}).get("segment_duration", 30.0)
+                
+                # Calculate segments
+                import math
+                num_segments = max(1, math.ceil(duration / segment_duration))
+                
+                # Create segment list
+                segments = []
+                for i in range(num_segments):
+                    start_time = i * segment_duration
+                    end_time = min((i + 1) * segment_duration, duration)
+                    segments.append({
+                        "segment_id": i,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "duration": end_time - start_time
+                    })
+                
+                video_data["segments"] = segments
+                self.logger.info(f"Created {len(segments)} segments of {segment_duration}s for video_chunks processing")
         
         self.logger.info(f"Data extracted - Video ID: {video_data['video_id']}")
         self.logger.info(f"Output directory: {video_data['output_dir']}")

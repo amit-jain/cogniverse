@@ -55,7 +55,7 @@ def generate_html_report(test_results_file: str = None):
     # Define profiles with display names
     profiles = [
         ("frame_based_colpali", "ColPali"),
-        ("direct_video_colqwen", "ColQwen"), 
+        ("colqwen_chunks", "ColQwen Chunks"), 
         ("direct_video_global", "VideoPrism Base"),
         ("direct_video_global_large", "VideoPrism Large")
     ]
@@ -70,10 +70,10 @@ def generate_html_report(test_results_file: str = None):
             ("float_float", "Float"),
             ("phased", "Phased")
         ],
-        "direct_video_colqwen": [
+        "colqwen_chunks": [
             ("float_float", "Float"),
             ("binary_binary", "Binary"),
-            ("float_binary", "Float+Binary"),
+            ("hybrid_binary_bm25", "Hybrid"),
             ("phased", "Phased")
         ],
         "direct_video_global": [

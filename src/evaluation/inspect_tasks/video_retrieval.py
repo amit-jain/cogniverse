@@ -152,7 +152,7 @@ def multimodal_alignment(
     
     # Default profiles if not specified
     if profiles is None:
-        profiles = ["direct_video_global", "frame_based_colpali", "direct_video_colqwen"]
+        profiles = ["direct_video_global", "frame_based_colpali", "colqwen_chunks"]
     
     # Load dataset
     dataset = load_multimodal_dataset(dataset_path)

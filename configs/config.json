@@ -87,34 +87,10 @@
         "binary_dim": 16
       }
     },
-    "direct_video_colqwen": {
-      "vespa_schema": "video_colqwen",
-      "embedding_model": "vidore/colqwen-omni-v0.1",
-      "pipeline_config": {
-        "extract_keyframes": false,
-        "transcribe_audio": true,
-        "generate_descriptions": false,
-        "generate_embeddings": true
-      },
-      "embedding_type": "direct_video_segment",
-      "model_specific": {
-        "max_patches": 1024,
-        "segment_duration": 15.0,
-        "adaptive_segmentation": true,
-        "max_pixels": 16777216,
-        "sampling_fps": 1.0
-      },
-      "schema_config": {
-        "schema_name": "video_colqwen",
-        "model_name": "ColQwen-Omni",
-        "num_patches": 1024,
-        "embedding_dim": 128,
-        "binary_dim": 16
-      }
-    },
     "colqwen_chunks": {
       "vespa_schema": "video_colqwen_chunks",
       "embedding_model": "vidore/colqwen-omni-v0.1",
+      "process_type": "video_chunks",
       "pipeline_config": {
         "extract_keyframes": false,
         "transcribe_audio": true,
@@ -125,9 +101,12 @@
       "model_specific": {
         "max_patches": 1024,
         "segment_duration": 30.0,
+        "chunk_duration": 30.0,
+        "chunk_overlap": 5.0,
         "extract_audio": true,
         "transcribe_audio": true,
         "whisper_model": "base",
+        "store_as_single_doc": true,
         "adaptive_segmentation": false,
         "max_pixels": 16777216,
         "sampling_fps": 1.0

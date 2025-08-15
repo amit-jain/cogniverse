@@ -656,43 +656,43 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         
         for segment in segments:
             try:
-                # Extract frames from segment
+                # Get temporal info first
+                seg_start_time = segment.start_time if hasattr(segment, 'start_time') else segment.get('start_time', 0)
+                seg_end_time = segment.end_time if hasattr(segment, 'end_time') else segment.get('end_time', 0)
+                
+                # For video_chunks, we process segments directly without needing frames
+                # Extract frames from segment (if available for other modes)
                 frames = segment.frames if hasattr(segment, 'frames') else segment.get('frames', [])
                 
-                if frames:
-                    # Get temporal info first
-                    seg_start_time = segment.start_time if hasattr(segment, 'start_time') else segment.get('start_time', 0)
-                    seg_end_time = segment.end_time if hasattr(segment, 'end_time') else segment.get('end_time', 0)
+                # Generate embeddings for this segment using the raw embeddings method
+                raw_embeddings = self._generate_raw_embeddings(
+                    video_path,
+                    seg_start_time,
+                    seg_end_time
+                )
+                
+                if raw_embeddings is not None:
+                    # Process embeddings based on model
+                    if self.model_name.startswith("videoprism"):
+                        # VideoPrism embeddings
+                        float_embeddings = raw_embeddings
+                        # Generate binary embeddings
+                        binary_embeddings = (float_embeddings > 0).astype(np.int8)
+                    else:
+                        # For other models, assume raw embeddings are ready
+                        float_embeddings = raw_embeddings
+                        binary_embeddings = (float_embeddings > 0).astype(np.int8)
                     
-                    # Generate embeddings for this segment using the raw embeddings method
-                    raw_embeddings = self._generate_raw_embeddings(
-                        video_path,
-                        seg_start_time,
-                        seg_end_time
-                    )
-                    
-                    if raw_embeddings is not None:
-                        # Process embeddings based on model
-                        if self.model_name.startswith("videoprism"):
-                            # VideoPrism embeddings
-                            float_embeddings = raw_embeddings
-                            # Generate binary embeddings
-                            binary_embeddings = (float_embeddings > 0).astype(np.int8)
-                        else:
-                            # For other models, assume raw embeddings are ready
-                            float_embeddings = raw_embeddings
-                            binary_embeddings = (float_embeddings > 0).astype(np.int8)
-                        
-                        all_embeddings.append(float_embeddings)
-                        all_embeddings_binary.append(binary_embeddings)
-                    
-                    # Store temporal info
-                    start_times.append(float(seg_start_time))
-                    end_times.append(float(seg_end_time))
-                    
-                    # Store transcript
-                    transcript = segment.transcript_text if hasattr(segment, 'transcript_text') else segment.get('transcript_text', '')
-                    segment_transcripts.append(transcript)
+                    all_embeddings.append(float_embeddings)
+                    all_embeddings_binary.append(binary_embeddings)
+                
+                # Store temporal info
+                start_times.append(float(seg_start_time))
+                end_times.append(float(seg_end_time))
+                
+                # Store transcript
+                transcript = segment.transcript_text if hasattr(segment, 'transcript_text') else segment.get('transcript_text', '')
+                segment_transcripts.append(transcript)
                     
             except Exception as e:
                 segment_id = segment.segment_id if hasattr(segment, 'segment_id') else segment.get('segment_id', 'unknown')
