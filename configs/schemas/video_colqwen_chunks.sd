@@ -1,0 +1,232 @@
+schema video_colqwen_chunks {
+    document video_colqwen_chunks {
+        # Video-level metadata
+        field video_id type string {
+            indexing: summary | attribute
+            attribute {
+                fast-search
+            }
+        }
+        field video_title type string {
+            indexing: summary | index
+            index: enable-bm25
+        }
+        field video_description type string {
+            indexing: summary | index
+            index: enable-bm25
+        }
+        field duration type float {
+            indexing: summary | attribute
+        }
+        field num_segments type int {
+            indexing: summary | attribute
+        }
+        
+        # Arrays for segment data
+        field segment_transcripts type array<string> {
+            indexing: index | summary
+            index: enable-bm25
+        }
+        field start_times type array<float> {
+            indexing: attribute | summary
+        }
+        field end_times type array<float> {
+            indexing: attribute | summary
+        }
+        
+        # ColQwen embeddings: p{} for segments, patch{} for ColQwen patches, v[128] for dimension
+        field embedding type tensor<bfloat16>(p{},patch{},v[128]) {
+            indexing: attribute
+        }
+        field embedding_binary type tensor<int8>(p{},patch{},v[16]) {
+            indexing: attribute
+        }
+        
+        # Optional: Audio embeddings if we process audio separately
+        field audio_embeddings type tensor<float>(p{},v[768]) {
+            indexing: attribute | index
+            attribute {
+                distance-metric: angular
+            }
+        }
+        
+        field creation_timestamp type long {
+            indexing: summary | attribute
+        }
+    }
+    
+    fieldset default {
+        fields: video_title, video_description, segment_transcripts
+    }
+    
+    # Default ranking profile
+    rank-profile default {
+        inputs {
+            query(qtb) tensor<int8>(querytoken{}, v[16])
+        }
+        function max_sim_per_segment() {
+            expression {
+                # For each segment, find max similarity across patches, then sum across query tokens
+                # Then take max across all segments
+                reduce(
+                    sum(
+                        reduce(
+                            1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), 
+                            max, 
+                            patch
+                        ), 
+                        querytoken
+                    ), 
+                    max, 
+                    p
+                )
+            }
+        }
+        first-phase {
+            expression {
+                max_sim_per_segment
+            }
+        }
+    }
+    
+    # BM25 text-only search
+    rank-profile bm25_only {
+        first-phase {
+            expression {
+                bm25(video_title) + bm25(video_description) + bm25(segment_transcripts)
+            }
+        }
+    }
+    
+    # Binary embedding search
+    rank-profile binary_binary {
+        inputs {
+            query(qtb) tensor<int8>(querytoken{}, v[16])
+        }
+        function max_sim_per_segment() {
+            expression {
+                reduce(
+                    sum(
+                        reduce(
+                            1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), 
+                            max, 
+                            patch
+                        ), 
+                        querytoken
+                    ), 
+                    max, 
+                    p
+                )
+            }
+        }
+        first-phase {
+            expression {
+                max_sim_per_segment
+            }
+        }
+    }
+    
+    # Float embedding search
+    rank-profile float_float {
+        inputs {
+            query(qt) tensor<float>(querytoken{}, v[128])
+        }
+        function max_sim_per_segment() {
+            expression {
+                reduce(
+                    sum(
+                        reduce(
+                            sum(query(qt) * cell_cast(attribute(embedding), float), v), 
+                            max, 
+                            patch
+                        ), 
+                        querytoken
+                    ), 
+                    max, 
+                    p
+                )
+            }
+        }
+        first-phase {
+            expression {
+                max_sim_per_segment
+            }
+        }
+    }
+    
+    # Hybrid visual + text search
+    rank-profile hybrid_binary_bm25 {
+        inputs {
+            query(qtb) tensor<int8>(querytoken{}, v[16])
+        }
+        function visual_sim() {
+            expression {
+                reduce(
+                    sum(
+                        reduce(
+                            1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), 
+                            max, 
+                            patch
+                        ), 
+                        querytoken
+                    ), 
+                    max, 
+                    p
+                )
+            }
+        }
+        function text_sim() {
+            expression {
+                bm25(video_title) + bm25(video_description) + bm25(segment_transcripts)
+            }
+        }
+        first-phase {
+            expression {
+                visual_sim + 0.1 * text_sim
+            }
+        }
+    }
+    
+    # Audio-visual-text hybrid search
+    rank-profile audio_visual_hybrid {
+        inputs {
+            query(qtb) tensor<int8>(querytoken{}, v[16])
+            query(qa) tensor<float>(v[768])
+        }
+        function visual_sim() {
+            expression {
+                reduce(
+                    sum(
+                        reduce(
+                            1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), 
+                            max, 
+                            patch
+                        ), 
+                        querytoken
+                    ), 
+                    max, 
+                    p
+                )
+            }
+        }
+        function audio_sim() {
+            expression {
+                reduce(
+                    cosine_similarity(query(qa), attribute(audio_embeddings), v),
+                    max,
+                    p
+                )
+            }
+        }
+        function text_sim() {
+            expression {
+                bm25(segment_transcripts)
+            }
+        }
+        first-phase {
+            expression {
+                0.5 * visual_sim + 0.3 * audio_sim + 0.2 * text_sim
+            }
+        }
+    }
+}

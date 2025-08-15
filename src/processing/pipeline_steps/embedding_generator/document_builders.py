@@ -204,6 +204,9 @@ class DocumentBuilderFactory:
                 schema_name=schema_name,
                 storage_mode=storage_mode
             )
+        elif "colqwen_chunks" in schema_lower:
+            from .colqwen_chunks_builder import ColQwenChunksBuilder
+            return ColQwenChunksBuilder()
         elif "colqwen" in schema_lower or "colvision__" in schema_lower:
             return ColQwenDocumentBuilder(schema_name)
         elif "videoprism" in schema_lower:

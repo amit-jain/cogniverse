@@ -1,0 +1,201 @@
+{
+  "name": "video_colqwen_chunks",
+  "document": {
+    "name": "video_colqwen_chunks",
+    "fields": [
+      {
+        "name": "video_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "video_title",
+        "type": "string",
+        "indexing": ["summary", "index"],
+        "index": "enable-bm25"
+      },
+      {
+        "name": "video_description",
+        "type": "string",
+        "indexing": ["summary", "index"],
+        "index": "enable-bm25"
+      },
+      {
+        "name": "duration",
+        "type": "float",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "num_segments",
+        "type": "int",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "segment_transcripts",
+        "type": "array<string>",
+        "indexing": ["index", "summary"],
+        "match": ["text"],
+        "index": "enable-bm25"
+      },
+      {
+        "name": "start_times",
+        "type": "array<float>",
+        "indexing": ["attribute", "summary"]
+      },
+      {
+        "name": "end_times",
+        "type": "array<float>",
+        "indexing": ["attribute", "summary"]
+      },
+      {
+        "name": "embedding",
+        "type": "tensor<bfloat16>(p{},patch{},v[128])",
+        "indexing": ["attribute"],
+        "comment": "p{} for segments, patch{} for ColQwen patches, v[128] for embedding dimension"
+      },
+      {
+        "name": "embedding_binary",
+        "type": "tensor<int8>(p{},patch{},v[16])",
+        "indexing": ["attribute"],
+        "comment": "Binary version of embeddings for fast search"
+      },
+      {
+        "name": "audio_embeddings",
+        "type": "tensor<float>(p{},v[768])",
+        "indexing": ["attribute", "index"],
+        "ann": {
+          "hnsw": {
+            "distance-metric": "angular"
+          }
+        },
+        "comment": "Optional audio embeddings if processed separately"
+      },
+      {
+        "name": "creation_timestamp",
+        "type": "long",
+        "indexing": ["summary", "attribute"]
+      }
+    ]
+  },
+  "fieldsets": [
+    {
+      "name": "default",
+      "fields": ["video_title", "video_description", "segment_transcripts"]
+    }
+  ],
+  "rank_profiles": [
+    {
+      "name": "default",
+      "inputs": [
+        {
+          "name": "query(qtb)",
+          "type": "tensor<int8>(querytoken{}, v[16])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "max_sim_per_segment",
+          "expression": "reduce(sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken), max, p)"
+        }
+      ],
+      "first_phase": {
+        "expression": "max_sim_per_segment"
+      }
+    },
+    {
+      "name": "bm25_only",
+      "first_phase": {
+        "expression": "bm25(video_title) + bm25(video_description) + bm25(segment_transcripts)"
+      }
+    },
+    {
+      "name": "binary_binary",
+      "inputs": [
+        {
+          "name": "query(qtb)",
+          "type": "tensor<int8>(querytoken{}, v[16])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "max_sim_per_segment",
+          "expression": "reduce(sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken), max, p)"
+        }
+      ],
+      "first_phase": {
+        "expression": "max_sim_per_segment"
+      }
+    },
+    {
+      "name": "float_float",
+      "inputs": [
+        {
+          "name": "query(qt)",
+          "type": "tensor<float>(querytoken{}, v[128])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "max_sim_per_segment",
+          "expression": "reduce(sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, patch), querytoken), max, p)"
+        }
+      ],
+      "first_phase": {
+        "expression": "max_sim_per_segment"
+      }
+    },
+    {
+      "name": "hybrid_binary_bm25",
+      "inputs": [
+        {
+          "name": "query(qtb)",
+          "type": "tensor<int8>(querytoken{}, v[16])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "visual_sim",
+          "expression": "reduce(sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken), max, p)"
+        },
+        {
+          "name": "text_sim",
+          "expression": "bm25(video_title) + bm25(video_description) + bm25(segment_transcripts)"
+        }
+      ],
+      "first_phase": {
+        "expression": "visual_sim + 0.1 * text_sim"
+      }
+    },
+    {
+      "name": "audio_visual_hybrid",
+      "inputs": [
+        {
+          "name": "query(qtb)",
+          "type": "tensor<int8>(querytoken{}, v[16])"
+        },
+        {
+          "name": "query(qa)",
+          "type": "tensor<float>(v[768])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "visual_sim",
+          "expression": "reduce(sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken), max, p)"
+        },
+        {
+          "name": "audio_sim",
+          "expression": "reduce(cosine_similarity(query(qa), attribute(audio_embeddings), v), max, p)"
+        },
+        {
+          "name": "text_sim",
+          "expression": "bm25(segment_transcripts)"
+        }
+      ],
+      "first_phase": {
+        "expression": "0.5 * visual_sim + 0.3 * audio_sim + 0.2 * text_sim"
+      }
+    }
+  ]
+}

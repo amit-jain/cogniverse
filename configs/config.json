@@ -112,6 +112,34 @@
         "binary_dim": 16
       }
     },
+    "colqwen_chunks": {
+      "vespa_schema": "video_colqwen_chunks",
+      "embedding_model": "vidore/colqwen-omni-v0.1",
+      "pipeline_config": {
+        "extract_keyframes": false,
+        "transcribe_audio": true,
+        "generate_descriptions": false,
+        "generate_embeddings": true
+      },
+      "embedding_type": "video_chunks",
+      "model_specific": {
+        "max_patches": 1024,
+        "segment_duration": 30.0,
+        "extract_audio": true,
+        "transcribe_audio": true,
+        "whisper_model": "base",
+        "adaptive_segmentation": false,
+        "max_pixels": 16777216,
+        "sampling_fps": 1.0
+      },
+      "schema_config": {
+        "schema_name": "video_colqwen_chunks",
+        "model_name": "ColQwen-Omni",
+        "num_patches": 1024,
+        "embedding_dim": 128,
+        "binary_dim": 16
+      }
+    },
     "direct_video_frame": {
       "vespa_schema": "video_videoprism_base",
       "embedding_model": "videoprism_public_v1_base_hf",

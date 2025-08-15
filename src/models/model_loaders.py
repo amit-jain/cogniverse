@@ -424,22 +424,12 @@ class ColQwenModelLoader(ModelLoader):
                 attn_implementation=attn_implementation
             ).eval()
             
-            # Load processor - check for audio-enabled version
+            # Load processor
+            # The Omni processor already handles audio, no need for custom processor
+            processor = processor_class.from_pretrained(self.model_name)
+            
             if "omni" in self.model_name.lower():
-                try:
-                    # Try to import from the parent module
-                    import sys
-                    parent_dir = Path(__file__).parent.parent
-                    if str(parent_dir) not in sys.path:
-                        sys.path.insert(0, str(parent_dir))
-                    
-                    from colqwen_audio_processor import ColQwenAudioEnabledProcessor
-                    processor = ColQwenAudioEnabledProcessor.from_pretrained(self.model_name)
-                    self.logger.info("Using audio-enabled processor")
-                except ImportError:
-                    processor = processor_class.from_pretrained(self.model_name)
-            else:
-                processor = processor_class.from_pretrained(self.model_name)
+                self.logger.info("Using ColQwen2.5-Omni processor with audio support")
             
             self.model = model
             self.processor = processor

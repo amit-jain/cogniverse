@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Tuple
 from vespa.application import Vespa
 from vespa.package import ApplicationPackage, Document, Field, RankProfile, Schema
 from vespa.package import FirstPhaseRanking, SecondPhaseRanking, Function
-from src.tools.config import get_config
+from src.common.config import get_config
 
 
 class VespaSchemaManager:
@@ -19,7 +19,7 @@ class VespaSchemaManager:
     
     def __init__(self, vespa_endpoint: str = None, vespa_port: int = None):
         config = get_config()
-        self.vespa_endpoint = vespa_endpoint or f"{config.vespa_url}:{config.vespa_port}"
+        self.vespa_endpoint = vespa_endpoint or f"{config['vespa_url']}:{config['vespa_port']}"
         self.vespa_port = vespa_port or 19071  # Default deployment port
         self._logger = logging.getLogger(self.__class__.__name__)
     

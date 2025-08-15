@@ -91,7 +91,7 @@ class EmbeddingProcessor:
                 
                 subprocess.run(cmd, check=True, capture_output=True)
                 
-                # Process video segment
+                # Process video segment with audio if available
                 if hasattr(processor, 'process_videos_with_audio'):
                     batch_inputs = processor.process_videos_with_audio([tmp_path]).to(model.device)
                 else:
