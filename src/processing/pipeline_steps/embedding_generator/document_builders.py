@@ -196,7 +196,7 @@ class DocumentBuilderFactory:
         schema_lower = schema_name.lower()
         
         # Check for single vector schemas
-        if "single__" in schema_lower or "video_chunks" in schema_lower:
+        if "sv_chunk" in schema_lower:
             from .single_vector_document_builder import SingleVectorDocumentBuilder
             # Determine storage mode based on schema
             storage_mode = "single_doc" if "chunks" in schema_lower or "6s" in schema_lower else "multi_doc"
@@ -204,12 +204,12 @@ class DocumentBuilderFactory:
                 schema_name=schema_name,
                 storage_mode=storage_mode
             )
-        elif "colqwen_chunks" in schema_lower:
+        elif "sv_chunk" in schema_lower and "colqwen" in self.schema_name:
             from .colqwen_chunks_builder import ColQwenChunksBuilder
             return ColQwenChunksBuilder()
-        elif "colqwen" in schema_lower or "colvision__" in schema_lower:
+        elif "colqwen" in schema_lower and "sv_chunk" not in schema_lower:
             return ColQwenDocumentBuilder(schema_name)
-        elif "videoprism" in schema_lower:
+        elif "mv_chunk" in schema_lower or "sv_global" in schema_lower:
             return VideoPrismDocumentBuilder(schema_name)
         else:
             # Default to video_frame builder

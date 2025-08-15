@@ -154,7 +154,7 @@ def test_profile_with_queries(profile: str, queries: List[Dict], test_multiple_s
     
     # Determine strategies to test
     if test_multiple_strategies:
-        if profile == 'frame_based_colpali':
+        if profile == 'video_colpali_smol500_mv_frame':
             strategies_to_test = [
                 ('binary_binary', 'Visual Only'),
                 ('hybrid_binary_bm25_no_description', 'Hybrid No Desc'),
@@ -288,10 +288,10 @@ def test_profile_with_queries(profile: str, queries: List[Dict], test_multiple_s
 def get_best_strategy_for_profile(profile: str) -> str:
     """Get the best ranking strategy for a profile based on previous results"""
     best_strategies = {
-        'frame_based_colpali': 'binary_binary',  # Changed to visual-only for fair comparison
-        'colqwen_chunks': 'hybrid_binary_bm25',
-        'direct_video_global': 'binary_binary',
-        'direct_video_global_large': 'binary_binary',
+        'video_colpali_smol500_mv_frame': 'binary_binary',  # Changed to visual-only for fair comparison
+        'video_colqwen_omni_sv_chunk': 'hybrid_binary_bm25',
+        'video_videoprism_base_sv_global': 'binary_binary',
+        'video_videoprism_large_sv_global': 'binary_binary',
         'single__video_videoprism_large_6s': 'default'  # Use default for video_chunks
     }
     return best_strategies.get(profile, 'float_float')
@@ -401,8 +401,8 @@ def create_metrics_summary_table(all_results: List[Dict]) -> pd.DataFrame:
 def main():
     parser = argparse.ArgumentParser(description="Comprehensive video query test v2")
     parser.add_argument("--profiles", nargs="+", 
-                       default=["frame_based_colpali", "colqwen_chunks", 
-                               "direct_video_global", "direct_video_global_large",
+                       default=["video_colpali_smol500_mv_frame", "video_colqwen_omni_sv_chunk", 
+                               "video_videoprism_base_sv_global", "video_videoprism_large_sv_global",
                                "single__video_videoprism_large_6s"],
                        help="Profiles to test")
     parser.add_argument("--output-format", choices=["table", "html", "csv"], default="table",

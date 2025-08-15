@@ -1,0 +1,50 @@
+SCHEMA STANDARDIZATION
+======================
+
+PROFILE NAMES (include model info):
+------------------------------------
+frame_based_colpali             → video_colpali_smol500_mv_frame
+colqwen_chunks                  → video_colqwen_omni_sv_chunk
+direct_video_frame              → video_videoprism_base_mv_chunk
+direct_video_frame_large        → video_videoprism_large_mv_chunk
+direct_video_global             → video_videoprism_base_sv_global
+direct_video_global_large       → video_videoprism_large_sv_global
+single__video_videoprism_large_6s → video_videoprism_large_sv_chunk
+
+VESPA SCHEMA NAMES (data structure only):
+------------------------------------------
+video_frame                     → video_mv_frame
+video_colqwen_chunks            → video_sv_chunk
+video_videoprism_base           → video_mv_chunk
+video_videoprism_large          → video_mv_chunk_large
+video_videoprism_global         → video_sv_global
+video_videoprism_global_large   → video_sv_global_large
+video_chunks                    → video_sv_chunk_large
+
+Actually, we can simplify even further since schemas don't need size variants:
+
+SIMPLIFIED VESPA SCHEMA NAMES:
+-------------------------------
+video_frame                     → video_mv_frame    (multi-vector, frame-based)
+video_colqwen_chunks            → video_sv_chunk    (single-vector, chunk arrays)
+video_videoprism_base           → video_mv_chunk    (multi-vector, chunk-based)
+video_videoprism_large          → video_mv_chunk    (same structure as base)
+video_videoprism_global         → video_sv_global   (single-vector, global)
+video_videoprism_global_large   → video_sv_global   (same structure as base)
+video_chunks                    → video_sv_chunk    (single-vector, chunk arrays)
+
+FINAL MAPPING:
+--------------
+Profiles (with model info) → Schemas (structure only)
+video_colpali_smol500_mv_frame    → video_mv_frame
+video_colqwen_omni_sv_chunk       → video_sv_chunk
+video_videoprism_base_mv_chunk    → video_mv_chunk
+video_videoprism_large_mv_chunk   → video_mv_chunk
+video_videoprism_base_sv_global   → video_sv_global
+video_videoprism_large_sv_global  → video_sv_global
+video_videoprism_large_sv_chunk   → video_sv_chunk
+
+This means:
+- Multiple profiles can share the same schema (e.g., both base and large VideoPrism use video_mv_chunk)
+- Schema names are purely structural: video_{vectortype}_{processing}
+- Profile names include model details: video_{model}_{variant}_{vectortype}_{processing}

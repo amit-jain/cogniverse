@@ -55,7 +55,7 @@ class VespaPyClient(BackendClient):
         logger: Optional[logging.Logger] = None
     ):
         # Extract Vespa-specific config
-        schema_name = config.get("vespa_schema", "video_frame")
+        schema_name = config.get("vespa_schema", "video_mv_frame")
         super().__init__(config, schema_name, logger)
         
         self.vespa_url = config.get("vespa_url", "http://localhost")
@@ -157,7 +157,7 @@ class VespaPyClient(BackendClient):
             self.logger.debug(f"Adding binary embeddings to field '{binary_field}'")
         
         # Special handling for video_chunks schema
-        if self.schema_name == "video_chunks":
+        if self.schema_name == "video_sv_chunk":
             # video_chunks stores data from SingleVectorVideoProcessor
             metadata = doc.metadata or {}
             
@@ -180,7 +180,7 @@ class VespaPyClient(BackendClient):
             }
         
         # Add temporal info if present (skip for video_chunks as it uses arrays)
-        if doc.temporal_info and self.schema_name != "video_chunks":
+        if doc.temporal_info and self.schema_name != "video_sv_chunk":
             fields.update({
                 "start_time": doc.temporal_info.start_time,
                 "end_time": doc.temporal_info.end_time
@@ -188,7 +188,7 @@ class VespaPyClient(BackendClient):
             })
         
         # Add segment info if present (skip for video_chunks)
-        if doc.segment_info and self.schema_name != "video_chunks":
+        if doc.segment_info and self.schema_name != "video_sv_chunk":
             # Check if schema uses frame_id or segment_id
             # VideoPrism schemas use frame_id, ColQwen uses segment_id
             if "videoprism" in self.schema_name:
@@ -208,7 +208,7 @@ class VespaPyClient(BackendClient):
                     fields["segment_duration"] = float(segment_duration)
         
         # Map universal fields to schema-specific fields (skip for video_chunks)
-        if doc.media_type in [MediaType.VIDEO_SEGMENT, MediaType.VIDEO_FRAME] and self.schema_name != "video_chunks":
+        if doc.media_type in [MediaType.VIDEO_SEGMENT, MediaType.VIDEO_FRAME] and self.schema_name != "video_sv_chunk":
             fields["video_id"] = doc.metadata.get("source_id", doc.doc_id.split("_")[0])
             fields["video_title"] = doc.metadata.get("video_title", fields["video_id"])
         
@@ -217,11 +217,11 @@ class VespaPyClient(BackendClient):
         
         # Map metadata fields based on schema requirements
         schema_metadata_mapping = {
-            "video_frame": {
+            "video_mv_frame": {
                 "frame_description": "frame_description",
                 "audio_transcript": "audio_transcript"
             },
-            "video_colqwen_chunks": {
+            "video_sv_chunk": {
                 "segment_description": "segment_description", 
                 "audio_transcript": "audio_transcript"
             }
