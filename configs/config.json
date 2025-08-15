@@ -67,8 +67,8 @@
     "serialization_format": "json"
   },
   "video_processing_profiles": {
-    "frame_based_colpali": {
-      "vespa_schema": "video_frame",
+    "video_colpali_smol500_mv_frame": {
+      "vespa_schema": "video_mv_frame",
       "embedding_model": "vidore/colsmol-500m",
       "pipeline_config": {
         "extract_keyframes": true,
@@ -87,8 +87,8 @@
         "binary_dim": 16
       }
     },
-    "colqwen_chunks": {
-      "vespa_schema": "video_colqwen_chunks",
+    "video_colqwen_omni_sv_chunk": {
+      "vespa_schema": "video_sv_chunk",
       "embedding_model": "vidore/colqwen-omni-v0.1",
       "process_type": "video_chunks",
       "pipeline_config": {
@@ -112,15 +112,15 @@
         "sampling_fps": 1.0
       },
       "schema_config": {
-        "schema_name": "video_colqwen_chunks",
+        "schema_name": "video_sv_chunk",
         "model_name": "ColQwen-Omni",
         "num_patches": 1024,
         "embedding_dim": 128,
         "binary_dim": 16
       }
     },
-    "direct_video_frame": {
-      "vespa_schema": "video_videoprism_base",
+    "video_videoprism_base_mv_chunk": {
+      "vespa_schema": "video_mv_chunk",
       "embedding_model": "videoprism_public_v1_base_hf",
       "pipeline_config": {
         "extract_keyframes": false,
@@ -143,15 +143,15 @@
         "query_encoder": "vidore/colsmol-500m"
       },
       "schema_config": {
-        "schema_name": "video_videoprism_base",
+        "schema_name": "video_mv_chunk",
         "model_name": "VideoPrism-Base",
         "num_patches": 4096,
         "embedding_dim": 768,
         "binary_dim": 96
       }
     },
-    "direct_video_frame_large": {
-      "vespa_schema": "video_videoprism_large",
+    "video_videoprism_large_mv_chunk": {
+      "vespa_schema": "video_mv_chunk",
       "embedding_model": "videoprism_public_v1_large_hf",
       "pipeline_config": {
         "extract_keyframes": false,
@@ -174,15 +174,15 @@
         "query_encoder": "vidore/colsmol-500m"
       },
       "schema_config": {
-        "schema_name": "video_videoprism_large",
+        "schema_name": "video_mv_chunk",
         "model_name": "VideoPrism-Large",
         "num_patches": 2048,
         "embedding_dim": 1024,
         "binary_dim": 128
       }
     },
-    "direct_video_global": {
-      "vespa_schema": "video_videoprism_global",
+    "video_videoprism_base_sv_global": {
+      "vespa_schema": "video_sv_global",
       "embedding_model": "videoprism_lvt_public_v1_base",
       "pipeline_config": {
         "extract_keyframes": false,
@@ -202,15 +202,15 @@
         "query_encoder": "videoprism_lvt_public_v1_base"
       },
       "schema_config": {
-        "schema_name": "video_videoprism_global",
+        "schema_name": "video_sv_global",
         "model_name": "VideoPrism-LVT-Base",
         "embedding_dim": 768,
         "binary_dim": 96,
         "global_embedding": true
       }
     },
-    "direct_video_global_large": {
-      "vespa_schema": "video_videoprism_global_large",
+    "video_videoprism_large_sv_global": {
+      "vespa_schema": "video_sv_global",
       "embedding_model": "videoprism_lvt_public_v1_large",
       "pipeline_config": {
         "extract_keyframes": false,
@@ -230,15 +230,15 @@
         "query_encoder": "videoprism_lvt_public_v1_large"
       },
       "schema_config": {
-        "schema_name": "video_videoprism_global",
+        "schema_name": "video_sv_global",
         "model_name": "VideoPrism-LVT-Large",
         "embedding_dim": 1024,
         "binary_dim": 128,
         "global_embedding": true
       }
     },
-    "single__video_videoprism_large_6s": {
-      "vespa_schema": "video_chunks",
+    "video_videoprism_large_sv_chunk_6s": {
+      "vespa_schema": "video_sv_chunk",
       "embedding_model": "videoprism_lvt_public_v1_large",
       "processing_type": "single_vector",
       "pipeline_config": {
@@ -263,7 +263,7 @@
         "query_encoder": "videoprism_lvt_public_v1_large"
       },
       "schema_config": {
-        "schema_name": "video_chunks",
+        "schema_name": "video_sv_chunk",
         "model_name": "VideoPrism-Large-Chunks",
         "embedding_dim": 1024,
         "binary_dim": 128,
@@ -271,7 +271,7 @@
       }
     }
   },
-  "active_video_profile": "frame_based_colpali",
+  "active_video_profile": "video_colpali_smol500_mv_frame",
   "query_inference_engine": {
     "mode": "llm",
     "available_gliner_models": [

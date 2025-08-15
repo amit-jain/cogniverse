@@ -153,29 +153,29 @@ class QueryEncoderFactory:
     def create_encoder(profile: str, model_name: Optional[str] = None) -> QueryEncoder:
         """Create query encoder for the given profile"""
         
-        if profile == "frame_based_colpali":
+        if profile == "video_colpali_smol500_mv_frame":
             return ColPaliQueryEncoder(model_name or "vidore/colsmol-500m")
         
-        elif profile == "colqwen_chunks":
+        elif profile == "video_colqwen_omni_sv_chunk":
             return ColQwenQueryEncoder(model_name or "vidore/colqwen-omni-v0.1")
         
-        elif profile == "direct_video_frame":
+        elif profile == "video_videoprism_base_mv_chunk":
             # VideoPrism Base
             return VideoPrismQueryEncoder(model_name or "videoprism_public_v1_base_hf")
         
-        elif profile == "direct_video_frame_large":
+        elif profile == "video_videoprism_large_mv_chunk":
             # VideoPrism Large
             return VideoPrismQueryEncoder(model_name or "videoprism_public_v1_large_hf")
         
-        elif profile == "direct_video_global":
+        elif profile == "video_videoprism_base_sv_global":
             # VideoPrism Global (LVT) Base
             return VideoPrismQueryEncoder(model_name or "videoprism_lvt_public_v1_base")
         
-        elif profile == "direct_video_global_large":
+        elif profile == "video_videoprism_large_sv_global":
             # VideoPrism Global (LVT) Large
             return VideoPrismQueryEncoder(model_name or "videoprism_lvt_public_v1_large")
         
-        elif profile.startswith("single__video_videoprism"):
+        elif "sv_chunk" in profile and "videoprism" in profile:
             # Single vector VideoPrism profiles (e.g., single__video_videoprism_large_6s)
             if not model_name:
                 raise ValueError(f"No embedding_model specified for profile: {profile}")
@@ -188,11 +188,11 @@ class QueryEncoderFactory:
     def get_supported_profiles() -> list:
         """Return list of supported profiles"""
         return [
-            "frame_based_colpali",
-            "colqwen_chunks",
-            "direct_video_frame",
-            "direct_video_frame_large",
-            "direct_video_global",
-            "direct_video_global_large",
-            "single__video_videoprism_large_6s"  # TwelveLabs-style chunking
+            "video_colpali_smol500_mv_frame",
+            "video_colqwen_omni_sv_chunk",
+            "video_videoprism_base_mv_chunk",
+            "video_videoprism_large_mv_chunk",
+            "video_videoprism_base_sv_global",
+            "video_videoprism_large_sv_global",
+            "video_videoprism_large_sv_chunk_6s"  # TwelveLabs-style chunking
         ]

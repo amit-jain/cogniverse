@@ -98,7 +98,7 @@ class VideoIngestionPipeline:
         # Check environment variable first, then config
         import os
         env_profile = os.environ.get("VIDEO_PROFILE")
-        config_profile = self.app_config.get("active_video_profile", "frame_based_colpali")
+        config_profile = self.app_config.get("active_video_profile", "video_colpali_smol500_mv_frame")
         self.active_profile = env_profile or config_profile
         self.strategy_config = StrategyConfig()
         self.setup_directories()
