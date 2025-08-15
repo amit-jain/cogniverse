@@ -1,5 +1,5 @@
 {
-  "name": "video_videoprism_global",
+  "name": "video_videoprism_lvt_large_sv_chunk_6s",
   "document": {
     "fields": [
       {
@@ -28,7 +28,7 @@
         ]
       },
       {
-        "name": "frame_id",
+        "name": "segment_id",
         "type": "int",
         "indexing": [
           "summary",
@@ -53,7 +53,7 @@
       },
       {
         "name": "embedding",
-        "type": "tensor<float>(v[768])",
+        "type": "tensor<float>(v[1024])",
         "indexing": [
           "attribute",
           "index"
@@ -62,11 +62,20 @@
       },
       {
         "name": "embedding_binary",
-        "type": "tensor<int8>(v[96])",
+        "type": "tensor<int8>(v[128])",
         "indexing": [
           "attribute"
         ],
         "attribute": ["distance-metric: hamming"]
+      },
+      {
+        "name": "audio_transcript",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "index"
+        ],
+        "index": "enable-bm25"
       }
     ]
   },
@@ -74,7 +83,8 @@
     {
       "name": "default",
       "fields": [
-        "video_title"
+        "video_title",
+        "audio_transcript"
       ]
     }
   ],
@@ -84,7 +94,7 @@
       "inputs": [
         {
           "name": "query(qtb)",
-          "type": "tensor<int8>(v[96])"
+          "type": "tensor<int8>(v[128])"
         }
       ],
       "first_phase": "closeness(field, embedding_binary)",
@@ -92,7 +102,7 @@
     },
     {
       "name": "bm25_only",
-      "first_phase": "bm25(video_title)",
+      "first_phase": "bm25(video_title) + bm25(audio_transcript)",
       "timeout": 2.0
     },
     {
@@ -100,7 +110,7 @@
       "inputs": [
         {
           "name": "query(qtb)",
-          "type": "tensor<int8>(v[96])"
+          "type": "tensor<int8>(v[128])"
         }
       ],
       "first_phase": "closeness(field, embedding_binary)",
@@ -112,7 +122,7 @@
       "inputs": [
         {
           "name": "query(qt)",
-          "type": "tensor<float>(v[768])"
+          "type": "tensor<float>(v[1024])"
         }
       ],
       "first_phase": "closeness(field, embedding)",
@@ -123,11 +133,11 @@
       "inputs": [
         {
           "name": "query(qtb)",
-          "type": "tensor<int8>(v[96])"
+          "type": "tensor<int8>(v[128])"
         },
         {
           "name": "query(qt)",
-          "type": "tensor<float>(v[768])"
+          "type": "tensor<float>(v[1024])"
         }
       ],
       "functions": [
@@ -144,11 +154,11 @@
       "inputs": [
         {
           "name": "query(qtb)",
-          "type": "tensor<int8>(v[96])"
+          "type": "tensor<int8>(v[128])"
         },
         {
           "name": "query(qt)",
-          "type": "tensor<float>(v[768])"
+          "type": "tensor<float>(v[1024])"
         }
       ],
       "functions": [
@@ -170,7 +180,7 @@
       "inputs": [
         {
           "name": "query(qt)",
-          "type": "tensor<float>(v[768])"
+          "type": "tensor<float>(v[1024])"
         }
       ],
       "functions": [
@@ -195,7 +205,7 @@
       "inputs": [
         {
           "name": "query(qtb)",
-          "type": "tensor<int8>(v[96])"
+          "type": "tensor<int8>(v[128])"
         }
       ],
       "functions": [
@@ -216,7 +226,7 @@
       "inputs": [
         {
           "name": "query(qtb)",
-          "type": "tensor<int8>(v[96])"
+          "type": "tensor<int8>(v[128])"
         }
       ],
       "functions": [
@@ -241,7 +251,7 @@
       "inputs": [
         {
           "name": "query(qt)",
-          "type": "tensor<float>(v[768])"
+          "type": "tensor<float>(v[1024])"
         }
       ],
       "functions": [

@@ -213,13 +213,11 @@ class StrategyAwareProcessor:
 def process_with_strategy_awareness(video_path: str, profile: str):
     """Example of how to use strategy-aware processing"""
     
-    from src.processing.vespa.schema_profile_mapping import get_schema_for_profile
-    
     # Initialize processor
     processor = StrategyAwareProcessor()
     
-    # Get schema for profile
-    schema_name = get_schema_for_profile(profile)
+    # Schema name is the same as profile name
+    schema_name = profile
     
     # Check what's needed
     requirements = processor.get_required_embeddings(schema_name)

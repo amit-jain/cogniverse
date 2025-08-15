@@ -29,9 +29,6 @@ from .vespa_pyvespa_client import VespaPyClient
 
 from .embedding_generator_impl import EmbeddingGeneratorImpl
 
-# Export implementation as EmbeddingGenerator for backward compatibility
-EmbeddingGenerator = EmbeddingGeneratorImpl
-
 from .embedding_generator_factory import (
     EmbeddingGeneratorFactory,
     create_embedding_generator

@@ -1,7 +1,7 @@
 {
-  "name": "video_frame",
+  "name": "video_colqwen_omni_mv_chunk_30s",
   "document": {
-    "name": "video_frame",
+    "name": "video_colqwen_omni_mv_chunk_30s",
     "fields": [
       {
         "name": "video_id",
@@ -35,7 +35,7 @@
         ]
       },
       {
-        "name": "frame_id",
+        "name": "segment_id",
         "type": "int",
         "indexing": [
           "summary",
@@ -68,15 +68,6 @@
         ]
       },
       {
-        "name": "frame_description",
-        "type": "string",
-        "indexing": [
-          "summary",
-          "index"
-        ],
-        "index": "enable-bm25"
-      },
-      {
         "name": "audio_transcript",
         "type": "string",
         "indexing": [
@@ -107,8 +98,7 @@
       "name": "default",
       "fields": [
         "video_title",
-        "frame_description",
-        "audio_transcript"
+"audio_transcript"
       ]
     }
   ],
@@ -132,7 +122,7 @@
     },
     {
       "name": "bm25_only",
-      "first_phase": "bm25(video_title) + bm25(frame_description) + bm25(audio_transcript)",
+      "first_phase": "bm25(video_title) + bm25(audio_transcript)",
       "timeout": 2.0
     },
     {
@@ -235,7 +225,7 @@
         },
         {
           "name": "text_sim",
-          "expression": "bm25(video_title) + bm25(frame_description) + bm25(audio_transcript)"
+          "expression": "bm25(video_title) + bm25(audio_transcript)"
         }
       ],
       "first_phase": "visual_sim_float",
@@ -260,7 +250,7 @@
         },
         {
           "name": "text_sim",
-          "expression": "bm25(video_title) + bm25(frame_description) + bm25(audio_transcript)"
+          "expression": "bm25(video_title) + bm25(audio_transcript)"
         }
       ],
       "first_phase": "visual_sim_binary",
@@ -285,7 +275,7 @@
         },
         {
           "name": "text_sim",
-          "expression": "bm25(video_title) + bm25(frame_description) + bm25(audio_transcript)"
+          "expression": "bm25(video_title) + bm25(audio_transcript)"
         }
       ],
       "first_phase": "text_sim",
@@ -310,7 +300,7 @@
         },
         {
           "name": "text_sim",
-          "expression": "bm25(video_title) + bm25(frame_description) + bm25(audio_transcript)"
+          "expression": "bm25(video_title) + bm25(audio_transcript)"
         }
       ],
       "first_phase": "text_sim",

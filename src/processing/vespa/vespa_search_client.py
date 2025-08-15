@@ -219,13 +219,8 @@ class VespaVideoSearchClient:
         """Initialize query encoder based on the Vespa schema"""
         try:
             from src.agents.query_encoders import QueryEncoderFactory
-            from src.processing.vespa.schema_profile_mapping import get_profile_for_schema
             
-            try:
-                profile = get_profile_for_schema(self.vespa_schema)
-            except ValueError:
-                self.logger.warning(f"No profile mapping for schema {self.vespa_schema}")
-                return
+            profile = self.vespa_schema
             
             if profile:
                 # Get model name from config
