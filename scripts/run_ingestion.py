@@ -19,7 +19,7 @@ def main():
     parser.add_argument("--video_dir", type=Path, help="Directory containing videos")
     parser.add_argument("--output_dir", type=Path, help="Output directory for processed data")
     parser.add_argument("--backend", choices=["byaldi", "vespa"], help="Search backend")
-    parser.add_argument("--profile", nargs="+", help="Video processing profiles (space-separated, e.g., direct_video_colqwen direct_video_frame)")
+    parser.add_argument("--profile", nargs="+", help="Video processing profiles (space-separated, e.g., colqwen_chunks direct_video_frame)")
     
     # Pipeline step toggles
     parser.add_argument("--skip-keyframes", action="store_true", help="Skip keyframe extraction")

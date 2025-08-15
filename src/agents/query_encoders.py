@@ -156,7 +156,7 @@ class QueryEncoderFactory:
         if profile == "frame_based_colpali":
             return ColPaliQueryEncoder(model_name or "vidore/colsmol-500m")
         
-        elif profile == "direct_video_colqwen":
+        elif profile == "colqwen_chunks":
             return ColQwenQueryEncoder(model_name or "vidore/colqwen-omni-v0.1")
         
         elif profile == "direct_video_frame":
@@ -189,7 +189,7 @@ class QueryEncoderFactory:
         """Return list of supported profiles"""
         return [
             "frame_based_colpali",
-            "direct_video_colqwen",
+            "colqwen_chunks",
             "direct_video_frame",
             "direct_video_frame_large",
             "direct_video_global",

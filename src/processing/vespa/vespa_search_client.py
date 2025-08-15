@@ -236,7 +236,7 @@ class VespaVideoSearchClient:
                     # Default models
                     default_models = {
                         "frame_based_colpali": "vidore/colsmol-500m",
-                        "direct_video_colqwen": "vidore/colqwen-omni-v0.1",
+                        "colqwen_chunks": "vidore/colqwen-omni-v0.1",
                         "direct_video_frame": "videoprism_public_v1_base_hf",
                         "direct_video_frame_large": "videoprism_public_v1_large_hf"
                     }

@@ -187,7 +187,7 @@ def render_embedding_atlas_tab():
             "frame_based_colpali",
             "direct_video_frame", 
             "direct_video_frame_large",
-            "direct_video_colqwen"
+            "colqwen_chunks"
         ]
         
         selected_profile = st.selectbox(

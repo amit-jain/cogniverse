@@ -117,7 +117,7 @@ class VideoFrameDocumentBuilder(BaseDocumentBuilder):
 
 
 class ColQwenDocumentBuilder(BaseDocumentBuilder):
-    """Document builder for video_colqwen schema"""
+    """Document builder for old video_colqwen schema (deprecated - use colqwen_chunks instead)"""
     
     def build_document(
         self,
@@ -125,7 +125,7 @@ class ColQwenDocumentBuilder(BaseDocumentBuilder):
         embeddings: Dict[str, Any],
         additional_fields: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        """Build document for video_colqwen schema"""
+        """Build document for old video_colqwen schema (deprecated)"""
         
         doc_id = self.create_document_id(metadata)
         

@@ -52,8 +52,8 @@ class GenericEmbeddingGenerator(BaseEmbeddingGenerator):
     
     def _should_load_model(self) -> bool:
         """Check if model should be loaded during init"""
-        # Load model for any direct video processing
-        return self.process_type.startswith("direct_video")
+        # Load model for any direct video processing or video chunks
+        return self.process_type.startswith("direct_video") or self.process_type == "video_chunks"
     
     def _load_model(self):
         """Load the appropriate model"""
@@ -225,7 +225,7 @@ class GenericEmbeddingGenerator(BaseEmbeddingGenerator):
         duration = video_info["duration"]
         
         # Calculate segments
-        segment_duration = self.config.get("model_specific", {}).get("segment_duration", 30.0)
+        segment_duration = self.profile_config.get("model_specific", {}).get("segment_duration", 30.0)
         num_segments = max(1, int(np.ceil(duration / segment_duration)))
         
         self.logger.info(
@@ -436,7 +436,7 @@ class GenericEmbeddingGenerator(BaseEmbeddingGenerator):
         duration = video_info["duration"]
         
         # Calculate segments
-        segment_duration = self.config.get("model_specific", {}).get("segment_duration", 30.0)
+        segment_duration = self.profile_config.get("model_specific", {}).get("segment_duration", 30.0)
         num_segments = max(1, int(np.ceil(duration / segment_duration)))
         
         self.logger.info(
@@ -498,7 +498,7 @@ class GenericEmbeddingGenerator(BaseEmbeddingGenerator):
                 video_path=video_path,
                 segments=segments,
                 embeddings_list=valid_embeddings,
-                extract_audio=self.config.get("model_specific", {}).get("extract_audio", True),
+                extract_audio=self.profile_config.get("model_specific", {}).get("extract_audio", True),
                 video_description=video_data.get('video_description', ''),
                 creation_timestamp=int(time.time() * 1000)
             )

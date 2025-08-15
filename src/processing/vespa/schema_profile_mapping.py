@@ -4,7 +4,7 @@ Mapping between Vespa schemas and video processing profiles
 
 SCHEMA_TO_PROFILE = {
     "video_frame": "frame_based_colpali",
-    "video_colqwen": "direct_video_colqwen", 
+    "video_colqwen_chunks": "colqwen_chunks",
     "video_videoprism_base": "direct_video_frame",
     "video_videoprism_large": "direct_video_frame_large",
     "video_videoprism_global": "direct_video_global",

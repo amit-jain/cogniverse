@@ -192,10 +192,10 @@ def main():
                 "profile": "frame_based_colpali"
             },
             {
-                "name": "direct_video_colqwen",
+                "name": "colqwen_chunks",
                 "url": "localhost",
                 "port": 8002,
-                "profile": "direct_video_colqwen"
+                "profile": "colqwen_chunks"
             }
         ]
     

@@ -173,6 +173,9 @@ class StrategyConfig:
             return "direct_video", "windows"
         elif process_type == "frame_based":
             return "frame_based", "frames"
+        elif process_type == "video_chunks":
+            # Video chunks is a variant of single_vector with chunk segmentation
+            return "single_vector", "chunks"
         
         # Default
         return "frame_based", "frames"
@@ -204,6 +207,10 @@ class StrategyConfig:
         # Explicit in model config
         if "store_as_single_doc" in profile.get("model_specific", {}):
             return "single_doc" if profile["model_specific"]["store_as_single_doc"] else "multi_doc"
+        
+        # Check process_type for video_chunks (always single doc)
+        if profile.get("process_type") == "video_chunks":
+            return "single_doc"
         
         # Based on processing type
         if processing_type == "single_vector":

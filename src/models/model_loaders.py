@@ -404,9 +404,15 @@ class ColQwenModelLoader(ModelLoader):
             device = self.get_device()
             dtype = self.get_dtype()
             
+            # Force CPU for ColQwen on Mac due to MPS memory limitations
+            import platform
+            if platform.system() == "Darwin" and "colqwen" in self.model_name.lower():
+                device = "cpu"
+                self.logger.info("Forcing CPU for ColQwen on Mac due to MPS memory limitations")
+            
             # Check for flash attention
             attn_implementation = None
-            if device != "mps":
+            if device != "mps" and device != "cpu":
                 try:
                     from transformers.utils import is_flash_attn_2_available
                     if is_flash_attn_2_available():

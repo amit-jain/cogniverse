@@ -2,7 +2,7 @@
 
 # Run ingestion for all profiles except frame_based_colpali
 PROFILES=(
-    "direct_video_colqwen"
+    "colqwen_chunks"
     "direct_video_frame"
     "direct_video_frame_large"
     "direct_video_global"
