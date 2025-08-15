@@ -55,7 +55,7 @@ class VespaPyClient(BackendClient):
         logger: Optional[logging.Logger] = None
     ):
         # Extract Vespa-specific config
-        schema_name = config.get("vespa_schema", "video_mv_frame")
+        schema_name = config.get("vespa_schema", "video_colpali_smol500_mv_frame")
         super().__init__(config, schema_name, logger)
         
         self.vespa_url = config.get("vespa_url", "http://localhost")
@@ -156,82 +156,44 @@ class VespaPyClient(BackendClient):
             processed_embeddings[binary_field] = all_processed_embeddings["embedding_binary"]
             self.logger.debug(f"Adding binary embeddings to field '{binary_field}'")
         
-        # Special handling for video_chunks schema
-        if self.schema_name == "video_sv_chunk":
-            # video_chunks stores data from SingleVectorVideoProcessor
-            metadata = doc.metadata or {}
-            
-            fields = {
-                "video_id": metadata.get("video_id", doc.doc_id),
-                "duration": metadata.get("duration", 0.0),
-                "num_segments": metadata.get("num_segments", 0),
-                "segment_transcripts": metadata.get("segment_transcripts", []),
-                "start_times": metadata.get("start_times", []),
-                "end_times": metadata.get("end_times", []),
-                "creation_timestamp": metadata.get("creation_timestamp", int(time.time())),
-                **processed_embeddings
-            }
-        else:
-            # Build base fields for other schemas
-            fields = {
-                # document_id is used for the document ID in the put operation, not as a field
-                "creation_timestamp": int(time.time() * 1000),  # milliseconds
-                **processed_embeddings
-            }
+        # Build base fields for all schemas (all use per-document structure now)
+        fields = {
+            "creation_timestamp": int(time.time() * 1000),  # milliseconds
+            **processed_embeddings
+        }
         
-        # Add temporal info if present (skip for video_chunks as it uses arrays)
-        if doc.temporal_info and self.schema_name != "video_sv_chunk":
+        # Add temporal info if present
+        if doc.temporal_info:
             fields.update({
                 "start_time": doc.temporal_info.start_time,
                 "end_time": doc.temporal_info.end_time
-                # duration is not in the schema, so don't add it
             })
         
-        # Add segment info if present (skip for video_chunks)
-        if doc.segment_info and self.schema_name != "video_sv_chunk":
-            # Check if schema uses frame_id or segment_id
-            # VideoPrism schemas use frame_id, ColQwen uses segment_id
-            if "videoprism" in self.schema_name:
-                # For VideoPrism, use frame_id
-                fields["frame_id"] = doc.segment_info.segment_idx
-            else:
-                # For others, use segment_id
-                fields.update({
-                    "segment_id": doc.segment_info.segment_idx,  # Map segment_idx to segment_id for schema
-                    "total_segments": doc.segment_info.total_segments
-                })
-                # segment_id is already set from segment_idx above
-                
-                # Calculate segment duration if temporal info is available
-                if doc.temporal_info:
-                    segment_duration = doc.temporal_info.end_time - doc.temporal_info.start_time
-                    fields["segment_duration"] = float(segment_duration)
+        # Add segment info if present
+        if doc.segment_info:
+            # All schemas now use segment_id consistently
+            fields["segment_id"] = doc.segment_info.segment_idx
+            fields["total_segments"] = doc.segment_info.total_segments
+            
+            # Calculate segment duration if temporal info is available
+            if doc.temporal_info:
+                segment_duration = doc.temporal_info.end_time - doc.temporal_info.start_time
+                fields["segment_duration"] = float(segment_duration)
         
-        # Map universal fields to schema-specific fields (skip for video_chunks)
-        if doc.media_type in [MediaType.VIDEO_SEGMENT, MediaType.VIDEO_FRAME] and self.schema_name != "video_sv_chunk":
+        # Map universal fields to schema-specific fields
+        if doc.media_type in [MediaType.VIDEO_SEGMENT, MediaType.VIDEO_FRAME]:
             fields["video_id"] = doc.metadata.get("source_id", doc.doc_id.split("_")[0])
             fields["video_title"] = doc.metadata.get("video_title", fields["video_id"])
         
         if doc.media_type == MediaType.VIDEO_FRAME:
             fields["frame_id"] = doc.metadata.get("frame_id", doc.metadata.get("frame_idx", 0))
         
-        # Map metadata fields based on schema requirements
-        schema_metadata_mapping = {
-            "video_mv_frame": {
-                "frame_description": "frame_description",
-                "audio_transcript": "audio_transcript"
-            },
-            "video_sv_chunk": {
-                "segment_description": "segment_description", 
-                "audio_transcript": "audio_transcript"
-            }
-            # VideoPrism schemas (base, large, global) do not include text metadata fields
-        }
-        
-        if self.schema_name in schema_metadata_mapping:
-            for doc_field, schema_field in schema_metadata_mapping[self.schema_name].items():
-                if doc_field in doc.metadata:
-                    fields[schema_field] = doc.metadata[doc_field]
+        # Add text metadata fields if present in document
+        # The schema should define which fields it supports
+        if "segment_description" in doc.metadata:
+            fields["segment_description"] = doc.metadata["segment_description"]
+        if "audio_transcript" in doc.metadata:
+            fields["audio_transcript"] = doc.metadata["audio_transcript"]
         
         # Create Vespa document
         return {

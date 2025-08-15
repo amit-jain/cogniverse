@@ -54,7 +54,7 @@ def video_retrieval_accuracy(
     
     # Default profiles and strategies if not specified
     if profiles is None:
-        profiles = ["video_colpali_smol500_mv_frame", "video_videoprism_base_sv_global"]
+        profiles = ["video_colpali_smol500_mv_frame", "video_videoprism_lvt_base_sv_global"]
     
     if strategies is None:
         strategies = ["float_float", "binary_binary", "hybrid_binary_bm25"]
@@ -106,7 +106,7 @@ def temporal_understanding(
     
     # Default profiles if not specified
     if profiles is None:
-        profiles = ["video_videoprism_base_sv_global", "video_colpali_smol500_mv_frame"]
+        profiles = ["video_videoprism_lvt_base_sv_global", "video_colpali_smol500_mv_frame"]
     
     # Load dataset
     dataset = load_temporal_dataset(dataset_path)
@@ -200,7 +200,7 @@ def failure_analysis(
     
     # Default profiles and strategies if not specified
     if profiles is None:
-        profiles = ["video_colpali_smol500_mv_frame", "video_videoprism_base_sv_global"]
+        profiles = ["video_colpali_smol500_mv_frame", "video_videoprism_lvt_base_sv_global"]
     
     if strategies is None:
         strategies = ["float_float", "binary_binary", "hybrid_binary_bm25"]

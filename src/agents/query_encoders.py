@@ -167,11 +167,11 @@ class QueryEncoderFactory:
             # VideoPrism Large
             return VideoPrismQueryEncoder(model_name or "videoprism_public_v1_large_hf")
         
-        elif profile == "video_videoprism_base_sv_global":
+        elif profile == "video_videoprism_lvt_base_sv_global":
             # VideoPrism Global (LVT) Base
             return VideoPrismQueryEncoder(model_name or "videoprism_lvt_public_v1_base")
         
-        elif profile == "video_videoprism_large_sv_global":
+        elif profile == "video_videoprism_lvt_large_sv_global":
             # VideoPrism Global (LVT) Large
             return VideoPrismQueryEncoder(model_name or "videoprism_lvt_public_v1_large")
         
@@ -192,7 +192,7 @@ class QueryEncoderFactory:
             "video_colqwen_omni_sv_chunk",
             "video_videoprism_base_mv_chunk",
             "video_videoprism_large_mv_chunk",
-            "video_videoprism_base_sv_global",
-            "video_videoprism_large_sv_global",
-            "video_videoprism_large_sv_chunk_6s"  # TwelveLabs-style chunking
+            "video_videoprism_lvt_base_sv_global",
+            "video_videoprism_lvt_large_sv_global",
+            "video_videoprism_lvt_large_sv_chunk_6s"  # TwelveLabs-style chunking
         ]
