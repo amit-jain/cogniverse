@@ -195,7 +195,7 @@ class VespaVideoSearchClient:
         import sys
         from pathlib import Path
         sys.path.append(str(Path(__file__).parent.parent.parent.parent))
-        from src.tools.config import get_config
+        from src.common.config import get_config
         self.config = get_config()
         # Get schema from environment or config (required)
         self.vespa_schema = os.environ.get("VESPA_SCHEMA") or self.config.get("schema_name")
@@ -220,7 +220,7 @@ class VespaVideoSearchClient:
     def _init_query_encoder(self):
         """Initialize query encoder based on the Vespa schema"""
         try:
-            from src.agents.query_encoders import QueryEncoderFactory
+            from src.app.agents.query_encoders import QueryEncoderFactory
             
             profile = self.vespa_schema
             

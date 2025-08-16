@@ -59,7 +59,7 @@ class CogniverseInstrumentor(BaseInstrumentor):
     def _instrument_video_pipeline(self):
         """Add tracing to video processing pipeline"""
         try:
-            from src.processing.unified_video_pipeline import VideoIngestionPipeline
+            from src.app.ingestion.pipeline import VideoIngestionPipeline
             
             # Store original method
             original_process = VideoIngestionPipeline.process_video
@@ -108,7 +108,7 @@ class CogniverseInstrumentor(BaseInstrumentor):
     def _instrument_search_backends(self):
         """Add tracing to search operations"""
         try:
-            from src.search.vespa_search_backend import VespaSearchBackend
+            from src.backends.vespa.search_backend import VespaSearchBackend
             from vespa.application import Vespa
             
             # Store original methods
@@ -289,7 +289,7 @@ class CogniverseInstrumentor(BaseInstrumentor):
     def _instrument_query_encoders(self):
         """Add tracing to query encoding operations"""
         try:
-            from src.agents.query_encoders import (
+            from src.app.agents.query_encoders import (
                 ColPaliQueryEncoder, 
                 ColQwenQueryEncoder,
                 VideoPrismQueryEncoder
@@ -363,7 +363,7 @@ class CogniverseInstrumentor(BaseInstrumentor):
     def _instrument_agents(self):
         """Add tracing to agent operations"""
         try:
-            from src.agents.video_agent_refactored import VideoAgent
+            from src.app.agents.video_agent_refactored import VideoAgent
             
             if hasattr(VideoAgent, 'process_query'):
                 original_process = VideoAgent.process_query
@@ -411,7 +411,7 @@ class CogniverseInstrumentor(BaseInstrumentor):
     def _instrument_search_service(self):
         """Add tracing to search service operations"""
         try:
-            from src.search.search_service import SearchService
+            from src.app.search.service import SearchService
             
             # Store original method
             original_search = SearchService.search

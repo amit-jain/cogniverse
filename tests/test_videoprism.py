@@ -9,7 +9,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 import numpy as np
 import cv2
-from src.processing.pipeline_steps.videoprism_loader import get_videoprism_loader, VIDEOPRISM_AVAILABLE
+from src.app.ingestion.processors.videoprism_loader import get_videoprism_loader, VIDEOPRISM_AVAILABLE
 
 
 def test_videoprism_availability():

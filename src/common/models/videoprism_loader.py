@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 import cv2
 from PIL import Image
-from src.utils.retry import retry_with_backoff, RetryConfig
+from src.common.utils.retry import retry_with_backoff, RetryConfig
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ def _check_videoprism_available():
                 _videoprism_models = videoprism_models
             except ImportError:
                 # Fallback to absolute import
-                import src.models.videoprism_models as videoprism_models
+                import src.common.models.videoprism_models as videoprism_models
                 _videoprism_models = videoprism_models
             VIDEOPRISM_AVAILABLE = True
         except ImportError as e:
@@ -531,7 +531,7 @@ class VideoPrismGlobalLoader(VideoPrismLoader):
                 from .videoprism_text_encoder import VideoPrismTextEncoder
             except ImportError:
                 # Fallback to absolute import
-                from src.models.videoprism_text_encoder import VideoPrismTextEncoder
+                from src.common.models.videoprism_text_encoder import VideoPrismTextEncoder
             
             self.text_encoder = VideoPrismTextEncoder(
                 self.model_name,

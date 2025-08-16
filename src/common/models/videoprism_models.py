@@ -52,7 +52,7 @@ class SimpleVideoPrismModel:
             from pathlib import Path
             
             # Get videoprism path from config or environment
-            from src.tools.config import get_config
+            from src.common.config import get_config
             config = get_config()
             videoprism_path = config.get("videoprism_repo_path")
             

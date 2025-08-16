@@ -37,7 +37,7 @@ class BaseEmbeddingGenerator(ABC):
     def generate_embeddings(self, video_data: Dict[str, Any], output_dir: Path) -> EmbeddingResult:
         pass
 
-from src.models import get_or_load_model
+from src.common.models import get_or_load_model
 from .document_builders import DocumentBuilderFactory, DocumentMetadata
 from .embedding_processors import EmbeddingProcessor
 

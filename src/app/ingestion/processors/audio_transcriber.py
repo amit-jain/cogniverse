@@ -36,7 +36,7 @@ class AudioTranscriber:
         
         # Use OutputManager for consistent directory structure
         if output_dir is None:
-            from src.utils.output_manager import get_output_manager
+            from src.common.utils.output_manager import get_output_manager
             output_manager = get_output_manager()
             transcript_file = output_manager.get_processing_dir("transcripts") / f"{video_path.stem}.json"
         else:

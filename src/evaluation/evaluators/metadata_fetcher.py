@@ -73,7 +73,7 @@ class VideoMetadataFetcher:
         """
         try:
             # Import here to avoid circular dependencies
-            from src.search.vespa_search_backend import VespaSearchBackend
+            from src.backends.vespa.search_backend import VespaSearchBackend
             
             # Create a temporary backend instance
             backend = VespaSearchBackend(self.config)

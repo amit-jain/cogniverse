@@ -35,7 +35,7 @@ def video_search_tool():
         """
         try:
             # Import here to avoid circular dependencies
-            from src.search.search_service import SearchService
+            from src.app.search.service import SearchService
             
             # Try to get config from common module first, fallback to src.tools
             try:

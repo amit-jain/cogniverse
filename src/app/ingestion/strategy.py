@@ -78,7 +78,7 @@ class StrategyConfig:
                 self.ranking_strategies = json.load(f)
         else:
             # Generate if missing
-            from src.processing.vespa.ranking_strategy_extractor import (
+            from src.backends.vespa.ranking_strategy_extractor import (
                 extract_all_ranking_strategies, save_ranking_strategies
             )
             schemas_dir = self.config_dir / "schemas"

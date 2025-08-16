@@ -16,8 +16,8 @@ from datetime import datetime
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.search.search_service import SearchService
-from src.tools.config import get_config
+from src.app.search.service import SearchService
+from src.common.config import get_config
 import torch
 
 

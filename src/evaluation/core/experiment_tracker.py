@@ -110,7 +110,7 @@ class ExperimentTracker:
         
         Compatible with run_experiments_with_visualization.py
         """
-        from src.core.strategy_registry import get_registry
+        from src.common.core.registry import get_registry
         
         registry = get_registry()
         configurations = []

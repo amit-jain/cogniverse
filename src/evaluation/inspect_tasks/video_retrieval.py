@@ -11,8 +11,8 @@ from inspect_ai.dataset import Sample, Dataset
 from inspect_ai.solver import Solver, solver, generate
 from inspect_ai.scorer import Scorer, scorer, Score
 
-from src.search.search_service import SearchService
-from src.tools.config import get_config
+from src.app.search.service import SearchService
+from src.common.config import get_config
 from .solvers import (
     CogniverseRetrievalSolver,
     ResultRankingAnalyzer,

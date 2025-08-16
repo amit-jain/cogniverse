@@ -17,8 +17,8 @@ from phoenix.experiments.evaluators.base import Evaluator
 from phoenix.experiments.types import EvaluationResult
 
 # Use existing model infrastructure
-from src.models import get_or_load_model
-from src.agents.query_encoders import ColPaliQueryEncoder
+from src.common.models import get_or_load_model
+from src.app.agents.query_encoders import ColPaliQueryEncoder
 
 logger = logging.getLogger(__name__)
 

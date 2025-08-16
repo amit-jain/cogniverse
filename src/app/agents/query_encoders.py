@@ -11,7 +11,7 @@ from pathlib import Path
 
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent.parent))
-from src.models import get_or_load_model
+from src.common.models import get_or_load_model
 
 logger = logging.getLogger(__name__)
 

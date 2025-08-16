@@ -18,7 +18,7 @@ details like hex encoding for Vespa's bfloat16 tensors.
 from abc import ABC, abstractmethod
 from typing import Dict, List, Any, Optional, Tuple, Union
 import logging
-from src.core import Document
+from src.common.core import Document
 
 
 class BackendClient(ABC):

@@ -15,7 +15,7 @@ import numpy as np
 import time
 from typing import Any
 
-from src.models.videoprism_text_encoder import (
+from src.common.models.videoprism_text_encoder import (
     VideoPrismTextEncoder,
     CircuitBreaker,
     CircuitState,
@@ -219,7 +219,7 @@ class TestVideoPrismTextEncoder(unittest.TestCase):
         self.vp_patch.start()
         
         # Mock the global VIDEOPRISM_AVAILABLE flag
-        import src.models.videoprism_text_encoder_v2 as encoder_module
+        import src.common.models.videoprism_text_encoder_v2 as encoder_module
         encoder_module.VIDEOPRISM_AVAILABLE = True
         encoder_module.vp = self.vp_mock.models
         

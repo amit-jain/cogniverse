@@ -16,7 +16,7 @@ from typing import List, Dict, Any
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.search.search_service import SearchService
+from src.app.search.service import SearchService
 from src.evaluation.data.datasets import DatasetManager
 
 

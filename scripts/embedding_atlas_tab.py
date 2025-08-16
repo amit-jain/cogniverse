@@ -23,8 +23,8 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 # Import search backend
 try:
-    from src.search.vespa_search_backend import VespaSearchBackend as SearchBackend
-    from src.tools.config import get_config
+    from src.backends.vespa.search_backend import VespaSearchBackend as SearchBackend
+    from src.common.config import get_config
     VESPA_AVAILABLE = True
 except ImportError:
     VESPA_AVAILABLE = False
@@ -709,7 +709,7 @@ def compare_multiple_queries_with_embeddings(query_texts: list, schema: str):
             # Using strategy profile: {strategy_profile}
             
             # Create encoder from the strategy
-            from src.agents.query_encoders import QueryEncoderFactory
+            from src.app.agents.query_encoders import QueryEncoderFactory
             encoder = QueryEncoderFactory.create_encoder(strategy_profile)
             
             # Process each query
@@ -941,7 +941,7 @@ def compare_query_with_embeddings(query_text: str, schema: str):
             # Using strategy profile: {strategy_profile}
             
             # Create encoder from the strategy
-            from src.agents.query_encoders import QueryEncoderFactory
+            from src.app.agents.query_encoders import QueryEncoderFactory
             encoder = QueryEncoderFactory.create_encoder(strategy_profile)
             
             # Encode query

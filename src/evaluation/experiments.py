@@ -17,7 +17,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
 from tests.comprehensive_video_query_test_v2 import VISUAL_TEST_QUERIES
-from src.tools.config import get_config
+from src.common.config import get_config
 from .evaluators.sync_reference_free import create_sync_evaluators
 from .evaluators.golden_dataset import create_low_scoring_golden_dataset
 
@@ -243,7 +243,7 @@ class PhoenixExperimentRunner:
                 
                 try:
                     # Import here to ensure it's in the right context
-                    from src.search.search_service import SearchService
+                    from src.app.search.service import SearchService
                     
                     # Log to confirm we're using the SearchService
                     logger.info(f"Creating SearchService with profile: {profile}")

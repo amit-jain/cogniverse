@@ -26,16 +26,16 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from src.common.config import get_config
-from src.processing.pipeline_steps import (
+from src.app.ingestion.processors import (
     KeyframeExtractor,
     AudioTranscriber,
     VLMDescriptor
 )
-from src.processing.pipeline_steps.keyframe_extractor_fps import FPSKeyframeExtractor
-from src.processing.pipeline_steps.embedding_generator import create_embedding_generator
-from src.cache import CacheManager, CacheConfig
-from src.cache.pipeline_cache import PipelineArtifactCache
-from src.processing.strategy import StrategyConfig
+from src.app.ingestion.processors.keyframe_extractor_fps import FPSKeyframeExtractor
+from src.app.ingestion.processors.embedding_generator import create_embedding_generator
+from src.common.cache import CacheManager, CacheConfig
+from src.common.cache.pipeline_cache import PipelineArtifactCache
+from src.app.ingestion.strategy import StrategyConfig
 
 
 class PipelineStep(Enum):
@@ -73,7 +73,7 @@ class PipelineConfig:
         pipeline_config = config.get("pipeline_config", {})
         
         # Get output directory from OutputManager
-        from src.utils.output_manager import get_output_manager
+        from src.common.utils.output_manager import get_output_manager
         output_manager = get_output_manager()
         
         return cls(
@@ -137,7 +137,7 @@ class VideoIngestionPipeline:
         logger.handlers.clear()
         
         # Create timestamp for log file with profile name
-        from src.utils.output_manager import get_output_manager
+        from src.common.utils.output_manager import get_output_manager
         output_manager = get_output_manager()
         timestamp = int(time.time())
         active_profile = self.app_config.get("active_video_profile", "default")
@@ -213,7 +213,7 @@ class VideoIngestionPipeline:
         # Initialize processors based on strategy
         if self.strategy and self.strategy.processing_type == "single_vector":
             # Initialize SingleVectorVideoProcessor
-            from src.processing.pipeline_steps.single_vector_processor import SingleVectorVideoProcessor
+            from src.app.ingestion.processors.single_vector_processor import SingleVectorVideoProcessor
             
             model_config = self.strategy.model_config
             self.single_vector_processor = SingleVectorVideoProcessor(

@@ -12,7 +12,7 @@ from pathlib import Path
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.processing.unified_video_pipeline import VideoIngestionPipeline, PipelineConfig
+from src.app.ingestion.pipeline import VideoIngestionPipeline, PipelineConfig
 
 def main():
     parser = argparse.ArgumentParser(description="Unified Video Processing Pipeline")

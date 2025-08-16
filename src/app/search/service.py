@@ -5,11 +5,11 @@ from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
 import os
 
-from src.models import get_or_load_model
-from src.agents.query_encoders import QueryEncoderFactory
-from src.core.strategy_registry import get_registry
-from .search import SearchBackend, SearchResult
-from .vespa_search_backend import VespaSearchBackend
+from src.common.models import get_or_load_model
+from src.app.agents.query_encoders import QueryEncoderFactory
+from src.common.core.registry import get_registry
+from .base import SearchBackend, SearchResult
+from src.backends.vespa.search_backend import VespaSearchBackend
 
 logger = logging.getLogger(__name__)
 

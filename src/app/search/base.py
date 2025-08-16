@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 import numpy as np
-from src.core import Document
+from src.common.core import Document
 
 
 class SearchResult:

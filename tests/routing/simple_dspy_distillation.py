@@ -18,7 +18,7 @@ import sys
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 sys.path.insert(0, os.path.join(project_root, 'src'))
 
-from src.tools.config import get_config
+from src.common.config import get_config
 
 class SimpleRoutingSignature(dspy.Signature):
     """Simple signature for query routing without structured outputs."""
