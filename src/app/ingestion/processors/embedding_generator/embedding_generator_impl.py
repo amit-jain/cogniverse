@@ -64,7 +64,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         config: Dict[str, Any],
         logger: Optional[logging.Logger] = None,
         profile_config: Dict[str, Any] = None,
-        backend_client: Any = None
+        backend_client: Any = None  # IngestionBackend interface
     ):
         super().__init__(config, logger)
         
@@ -445,10 +445,12 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
     
     def _feed_single_document(self, document: Document) -> bool:
         if self.backend_client:
-            success_count, failed_ids = self.backend_client.feed(document)
-            self.logger.debug(f"Fed document {document.doc_id}: success={success_count}, failed={failed_ids}")
-            return success_count > 0
-        self.logger.warning("No backend client available")
+            # Use IngestionBackend interface ONLY
+            result = self.backend_client.ingest_documents([document])
+            success = result.get('success_count', 0) > 0
+            self.logger.debug(f"Fed document {document.doc_id}: success={success}")
+            return success
+        self.logger.warning("No backend available")
         return False
     
     def _generate_direct_video_embeddings(

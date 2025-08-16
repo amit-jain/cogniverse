@@ -85,7 +85,7 @@ class DocumentBuilder:
                 fields["segment_duration"] = additional_fields["segment_duration"]
         
         return {
-            "put": self.create_put_id(doc_id),
+            "id": doc_id,
             "fields": fields
         }
     
@@ -93,9 +93,6 @@ class DocumentBuilder:
         """Create a unique document ID"""
         return f"{metadata.video_id}_segment_{metadata.segment_idx}"
     
-    def create_put_id(self, doc_id: str) -> str:
-        """Create the PUT ID for Vespa"""
-        return f"id:video:{self.schema_name}::{doc_id}"
     
     def _get_field_names(self) -> Dict[str, str]:
         """Get field names from unified strategy"""

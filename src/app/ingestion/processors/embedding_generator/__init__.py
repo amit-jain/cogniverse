@@ -22,10 +22,9 @@ from src.common.models import (
 
 from .embedding_processors import EmbeddingProcessor
 
-from .backend_client import BackendClient
 from .backend_factory import BackendFactory
 
-from .vespa_pyvespa_client import VespaPyClient
+# VespaPyClient is now in backends/vespa/ingestion_client.py
 
 from .embedding_generator_impl import EmbeddingGeneratorImpl
 
@@ -52,11 +51,9 @@ __all__ = [
     'ColQwenModelLoader',
     'VideoPrismModelLoader',
     
-    # Processors and clients
+    # Processors and factories
     'EmbeddingProcessor',
-    'BackendClient',
     'BackendFactory',
-    'VespaPyClient',
     
     # Factory function
     'create_embedding_generator'

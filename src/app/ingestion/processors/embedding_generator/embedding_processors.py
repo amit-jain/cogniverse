@@ -8,8 +8,6 @@ import numpy as np
 from typing import List, Dict, Any, Optional, Tuple
 from PIL import Image
 from pathlib import Path
-import struct
-from binascii import hexlify
 import logging
 
 
@@ -140,59 +138,19 @@ class EmbeddingProcessor:
             self.logger.error(f"Failed to process VideoPrism segment: {e}")
             return None
     
-    def convert_to_float_embeddings(
+    def prepare_float_embeddings(
         self,
         embeddings: np.ndarray
-    ) -> Dict[int, str]:
-        """Convert embeddings to Vespa float format (hex-encoded bfloat16)"""
-        try:
-            embedding_dict = {}
-            
-            for patch_idx in range(len(embeddings)):
-                # Convert to tensor and then to hex
-                tensor = torch.tensor(embeddings[patch_idx], dtype=torch.float32)
-                hex_string = self._tensor_to_hex_bfloat16(tensor)
-                embedding_dict[patch_idx] = hex_string
-            
-            return embedding_dict
-            
-        except Exception as e:
-            self.logger.error(f"Failed to convert to float embeddings: {e}")
-            return {}
+    ) -> np.ndarray:
+        """Prepare float embeddings (returns raw numpy)"""
+        # Just return raw embeddings - backend handles format conversion
+        return embeddings
     
-    def convert_to_binary_embeddings(
+    def prepare_binary_embeddings(
         self,
         embeddings: np.ndarray
-    ) -> Dict[int, str]:
-        """Convert embeddings to binary format"""
-        try:
-            # Binarize: positive values -> 1, negative/zero -> 0
-            binarized = np.packbits(
-                np.where(embeddings > 0, 1, 0),
-                axis=1
-            ).astype(np.int8)
-            
-            # Convert to hex strings
-            embedding_dict = {}
-            for idx in range(len(binarized)):
-                hex_string = hexlify(binarized[idx].tobytes()).decode('utf-8')
-                embedding_dict[idx] = hex_string
-            
-            return embedding_dict
-            
-        except Exception as e:
-            self.logger.error(f"Failed to convert to binary embeddings: {e}")
-            return {}
+    ) -> np.ndarray:
+        """Prepare binary embeddings (returns binarized numpy)"""
+        # Binarize but keep as numpy - backend handles hex conversion
+        return (embeddings > 0).astype(np.uint8)
     
-    def _tensor_to_hex_bfloat16(self, tensor: torch.Tensor) -> str:
-        """Convert tensor to hex-encoded bfloat16 format"""
-        if not tensor.is_floating_point():
-            raise ValueError("Input tensor must be of float type")
-        
-        def float_to_bfloat16_hex(f: float) -> str:
-            packed_float = struct.pack("=f", f)
-            bfloat16_bits = struct.unpack("=H", packed_float[2:])[0]
-            return format(bfloat16_bits, "04X")
-        
-        hex_list = [float_to_bfloat16_hex(float(val)) for val in tensor.flatten()]
-        return "".join(hex_list)
