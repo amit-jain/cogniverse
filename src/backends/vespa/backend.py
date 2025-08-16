@@ -29,9 +29,10 @@ class VespaBackend(Backend):
     def __init__(self):
         """Initialize Vespa backend."""
         super().__init__("vespa")
-        self.search_client: Optional[VespaSearchBackend] = None
+        self._vespa_search_backend: Optional[VespaSearchBackend] = None
         self.schema_manager: Optional[VespaSchemaManager] = None
         self.config: Dict[str, Any] = {}
+        self._initialized_as_search = False
     
     def _initialize_backend(self, config: Dict[str, Any]) -> None:
         """
@@ -44,10 +45,11 @@ class VespaBackend(Backend):
                 - schema_name: Schema to use
                 - profile: Processing profile
                 - strategy: Strategy object (optional)
+                - query_encoder: Query encoder (optional)
         """
         self.config = config
         
-        # Initialize schema manager
+        # Initialize schema manager for ingestion operations
         vespa_url = config.get("vespa_url", "http://localhost")
         vespa_port = config.get("vespa_port", 8080)
         self.schema_manager = VespaSchemaManager(
@@ -55,23 +57,18 @@ class VespaBackend(Backend):
             vespa_port=19071  # Deployment port
         )
         
-        # Initialize search backend
-        if "schema_name" in config:
-            from src.app.search.service import SearchService
-            from src.common.core.registry import get_registry
+        # Initialize search backend if this is being used for search
+        if "schema_name" in config and ("strategy" in config or "profile" in config):
+            # This means we're initializing for search operations
+            self._initialized_as_search = True
             
-            # Get strategy if not provided
-            strategy = config.get("strategy")
-            if not strategy and "profile" in config:
-                registry = get_registry()
-                strategy = registry.get_strategy(config["profile"])
-            
-            self.search_client = VespaSearchBackend(
+            # Create the actual VespaSearchBackend
+            self._vespa_search_backend = VespaSearchBackend(
                 vespa_url=config.get("vespa_url", "http://localhost"),
                 vespa_port=config.get("vespa_port", 8080),
                 schema_name=config["schema_name"],
                 profile=config.get("profile"),
-                strategy=strategy,
+                strategy=config.get("strategy"),
                 query_encoder=config.get("query_encoder")
             )
         
@@ -230,9 +227,12 @@ class VespaBackend(Backend):
         top_k: int = 10,
         filters: Optional[Dict[str, Any]] = None,
         ranking_strategy: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+    ):
         """
         Execute a search query.
+        
+        This method delegates to VespaSearchBackend and returns its results directly.
+        The return type matches what VespaSearchBackend returns (List[SearchResult]).
         
         Args:
             query_embeddings: Optional query embeddings
@@ -242,23 +242,20 @@ class VespaBackend(Backend):
             ranking_strategy: Optional ranking strategy
             
         Returns:
-            Search results
+            Search results (List[SearchResult] from VespaSearchBackend)
         """
-        if not self.search_client:
-            raise RuntimeError("Search client not initialized. Ensure schema_name is provided in config.")
+        if not self._vespa_search_backend:
+            raise RuntimeError("Search backend not initialized. Ensure schema_name is provided in config.")
         
-        # Use the existing VespaSearchBackend - it returns SearchResult objects
-        # We should NOT convert them to dicts here, let the backend handle that
-        results = self.search_client.search(
+        # Delegate directly to VespaSearchBackend
+        # It returns List[SearchResult], which is what SearchService expects
+        return self._vespa_search_backend.search(
             query_embeddings=query_embeddings,
             query_text=query_text,
             top_k=top_k,
             filters=filters,
             ranking_strategy=ranking_strategy
         )
-        
-        # Return the SearchResult objects directly
-        return results
     
     def get_document(self, document_id: str) -> Optional[Document]:
         """
@@ -270,10 +267,10 @@ class VespaBackend(Backend):
         Returns:
             Document or None
         """
-        if not self.search_client:
-            raise RuntimeError("Search client not initialized.")
+        if not self._vespa_search_backend:
+            raise RuntimeError("Search backend not initialized.")
         
-        return self.search_client.get_document(document_id)
+        return self._vespa_search_backend.get_document(document_id)
     
     def batch_get_documents(self, document_ids: List[str]) -> List[Optional[Document]]:
         """
@@ -294,19 +291,16 @@ class VespaBackend(Backend):
         Returns:
             Statistics dictionary
         """
-        if not self.search_client:
-            return {"error": "Search client not initialized"}
+        if self._vespa_search_backend:
+            # Delegate to search backend if available
+            return self._vespa_search_backend.get_statistics()
         
-        try:
-            # Get statistics from Vespa
-            return {
-                "document_count": 0,  # Would query actual count
-                "index_size": 0,  # Would query actual size
-                "status": "healthy"
-            }
-        except Exception as e:
-            logger.error(f"Failed to get statistics: {e}")
-            return {"error": str(e)}
+        # Basic stats if only ingestion is configured
+        return {
+            "backend": "vespa",
+            "status": "healthy" if self.schema_manager else "not initialized",
+            "search_enabled": self._initialized_as_search
+        }
     
     def health_check(self) -> bool:
         """
@@ -315,16 +309,11 @@ class VespaBackend(Backend):
         Returns:
             True if healthy
         """
-        if not self.search_client:
-            return False
+        if self._vespa_search_backend:
+            return self._vespa_search_backend.health_check()
         
-        try:
-            # Perform health check
-            # This would ping Vespa or check its status endpoint
-            return True
-        except Exception as e:
-            logger.error(f"Health check failed: {e}")
-            return False
+        # Basic health check
+        return self.schema_manager is not None
 
 
 # Self-registration when module is imported
