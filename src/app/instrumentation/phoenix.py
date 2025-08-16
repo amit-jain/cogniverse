@@ -106,25 +106,23 @@ class CogniverseInstrumentor(BaseInstrumentor):
             logger.warning(f"Could not instrument video pipeline: {e}")
     
     def _instrument_search_backends(self):
-        """Add tracing to search operations"""
+        """Add tracing to search operations at the service layer"""
         try:
-            from src.backends.vespa.search_backend import VespaSearchBackend
-            from vespa.application import Vespa
+            # Instrument at the app layer, not backend layer
+            # This keeps evaluation independent of specific backends
+            from src.app.search.service import SearchService
             
             # Store original methods
-            original_search = VespaSearchBackend.search
-            self._original_methods['src.search.vespa_search_backend.VespaSearchBackend.search'] = original_search
-            
-            # Also instrument Vespa query method
-            original_vespa_query = Vespa.query
-            self._original_methods['vespa.application.Vespa.query'] = original_vespa_query
+            original_search = SearchService.search
+            self._original_methods['src.app.search.service.SearchService.search'] = original_search
             
             # Capture tracer in closure
             tracer = self.tracer
             
             @wraps(original_search)
-            def traced_search(backend_self, *args, **kwargs):
-                query_text = kwargs.get("query_text", "")
+            def traced_search(service_self, query: str, *args, **kwargs):
+                # SearchService.search takes query as first positional arg
+                query_text = query
                 ranking_strategy = kwargs.get("ranking_strategy", "default")
                 top_k = kwargs.get("top_k", 10)
                 
@@ -134,12 +132,11 @@ class CogniverseInstrumentor(BaseInstrumentor):
                     attributes={
                         "openinference.span.kind": "RETRIEVER",
                         "operation.name": "search.execute",
-                        "backend": "vespa",
+                        "backend": getattr(service_self.config, 'search_backend', 'vespa'),
                         "query": query_text,
                         "strategy": ranking_strategy,
                         "top_k": top_k,
-                        "schema": getattr(backend_self, 'schema_name', 'unknown'),
-                        "profile": getattr(backend_self, 'profile', 'unknown'),
+                        "profile": getattr(service_self, 'profile', 'unknown'),
                         # Add input.value for Phoenix
                         "input.value": json.dumps({
                             "query": query_text,
@@ -158,7 +155,7 @@ class CogniverseInstrumentor(BaseInstrumentor):
                         else:
                             span.set_attribute("has_embeddings", False)
                         
-                        result = original_search(backend_self, *args, **kwargs)
+                        result = original_search(service_self, query, *args, **kwargs)
                         
                         # Add result metrics
                         span.set_attribute("num_results", len(result))
@@ -187,101 +184,8 @@ class CogniverseInstrumentor(BaseInstrumentor):
                         span.set_status(Status(StatusCode.ERROR, str(e)))
                         raise
             
-            VespaSearchBackend.search = traced_search
-            logger.info("Instrumented VespaSearchBackend.search")
-            
-            # Create traced Vespa query
-            @wraps(original_vespa_query)
-            def traced_vespa_query(vespa_self, *args, **kwargs):
-                # Skip health check queries
-                yql_check = kwargs.get('yql', '')
-                body = kwargs.get('body', {})
-                yql = body.get('yql', yql_check)
-                
-                if "select * from sources * where true limit 1" in yql:
-                    # Skip tracing for health checks
-                    return original_vespa_query(vespa_self, *args, **kwargs)
-                
-                # Extract query details
-                hits = body.get('hits', kwargs.get('hits', 10))
-                
-                with tracer.start_as_current_span(
-                    "vespaBackend.search",
-                    kind=SpanKind.CLIENT,
-                    attributes={
-                        "openinference.span.kind": "RETRIEVER",
-                        "operation.name": "vespa.query",
-                        "vespa.yql": yql[:200] if yql else "",  # Truncate long queries
-                        "vespa.hits": hits,
-                        "vespa.ranking_profile": body.get('ranking.profile', 'default'),
-                        "vespa.has_embeddings": bool(body.get('input.query(qt)') or body.get('input.query(qtb)')),
-                        # Add input.value for Phoenix
-                        "input.value": json.dumps({
-                            "yql": yql[:200],
-                            "hits": hits,
-                            "ranking_profile": body.get('ranking.profile', 'default')
-                        })
-                    }
-                ) as span:
-                    try:
-                        start_time = time.time()
-                        result = original_vespa_query(vespa_self, *args, **kwargs)
-                        
-                        # Add result info
-                        if hasattr(result, 'hits'):
-                            span.set_attribute("vespa.result_count", len(result.hits))
-                            
-                            # Add top result details as span events (keeping all the details)
-                            top_results = []
-                            output_documents = []
-                            for i, hit in enumerate(result.hits[:5]):  # Top 5 results
-                                fields = hit.get("fields", {})
-                                
-                                # Detailed info for span event
-                                result_info = {
-                                    "rank": i + 1,
-                                    "document_id": hit.get("id", "unknown"),
-                                    "video_id": fields.get("video_id", "unknown"),
-                                    "relevance": hit.get("relevance", 0.0)
-                                }
-                                # Only add frame_number if it exists and is not None
-                                if "frame_number" in fields and fields["frame_number"] is not None:
-                                    result_info["frame_number"] = fields["frame_number"]
-                                # Add description if available
-                                if "description" in fields:
-                                    result_info["description"] = fields["description"][:100] + "..." if len(fields["description"]) > 100 else fields["description"]
-                                top_results.append(result_info)
-                                
-                                # Simple info for output.value
-                                doc_info = {
-                                    "document_id": hit.get("id", "unknown"),
-                                    "video_id": fields.get("video_id", "unknown")
-                                }
-                                if "frame_number" in fields and fields["frame_number"] is not None:
-                                    doc_info["frame_number"] = fields["frame_number"]
-                                output_documents.append(doc_info)
-                            
-                            # Add detailed results as span event
-                            span.add_event("vespa_results", {"top_results": str(top_results)})
-                            
-                            # Set output.value with just document info
-                            span.set_attribute("output.value", json.dumps(output_documents))
-                            
-                        if hasattr(result, 'json') and callable(result.json):
-                            result_json = result.json()
-                            if 'timing' in result_json:
-                                span.set_attribute("vespa.query_time_ms", result_json['timing'].get('querytime', 0) * 1000)
-                        
-                        span.set_attribute("http.latency_ms", (time.time() - start_time) * 1000)
-                        span.set_status(Status(StatusCode.OK))
-                        return result
-                    except Exception as e:
-                        span.record_exception(e)
-                        span.set_status(Status(StatusCode.ERROR, str(e)))
-                        raise
-            
-            Vespa.query = traced_vespa_query
-            logger.info("Instrumented Vespa.query")
+            SearchService.search = traced_search
+            logger.info("Instrumented SearchService.search")
             
         except ImportError as e:
             logger.warning(f"Could not instrument search backend: {e}")

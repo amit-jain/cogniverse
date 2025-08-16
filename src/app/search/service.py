@@ -57,7 +57,7 @@ def _init_phoenix_instrumentation():
         tracer = trace.get_tracer(__name__)
         
         # Initialize Cogniverse instrumentation
-        from src.evaluation.phoenix.instrumentation import CogniverseInstrumentor
+        from src.app.instrumentation import CogniverseInstrumentor
         instrumentor = CogniverseInstrumentor()
         instrumentor.instrument(tracer_provider=tracer_provider)
         
