@@ -112,25 +112,39 @@ class SearchService:
         """Initialize search backend with strategy using backend registry."""
         backend_type = self.config.get("search_backend", "vespa")
         
-        # Get backend from registry
-        backend_registry = get_backend_registry()
-        
-        # Prepare backend configuration
-        backend_config = {
-            "vespa_url": self.config.get("vespa_url", "http://localhost"),
-            "vespa_port": self.config.get("vespa_port", 8080),
-            "schema_name": self.strategy.schema_name,
-            "profile": self.profile,
-            "strategy": self.strategy,
-            "query_encoder": self.query_encoder
-        }
-        
-        # Get backend instance from registry - let it fail if backend not found
-        self.search_backend = backend_registry.get_search_backend(
-            backend_type, 
-            backend_config
-        )
-        logger.info(f"Initialized {backend_type} search backend with schema: {self.strategy.schema_name}")
+        # For now, use direct VespaSearchBackend until we fix the wrapper
+        # TODO: Fix VespaBackend wrapper to properly handle SearchResult objects
+        if backend_type == "vespa":
+            from src.backends.vespa.search_backend import VespaSearchBackend
+            vespa_url = self.config.get("vespa_url", "http://localhost")
+            vespa_port = self.config.get("vespa_port", 8080)
+            schema_name = self.strategy.schema_name
+            
+            self.search_backend = VespaSearchBackend(
+                vespa_url=vespa_url,
+                vespa_port=vespa_port,
+                schema_name=schema_name,
+                profile=self.profile,
+                strategy=self.strategy,
+                query_encoder=self.query_encoder
+            )
+            logger.info(f"Initialized {backend_type} search backend with schema: {schema_name}")
+        else:
+            # Use registry for other backends
+            backend_registry = get_backend_registry()
+            backend_config = {
+                "vespa_url": self.config.get("vespa_url", "http://localhost"),
+                "vespa_port": self.config.get("vespa_port", 8080),
+                "schema_name": self.strategy.schema_name,
+                "profile": self.profile,
+                "strategy": self.strategy,
+                "query_encoder": self.query_encoder
+            }
+            self.search_backend = backend_registry.get_search_backend(
+                backend_type, 
+                backend_config
+            )
+            logger.info(f"Initialized {backend_type} search backend with schema: {self.strategy.schema_name}")
     
     def search(
         self,

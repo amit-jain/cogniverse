@@ -48,9 +48,11 @@ class VespaBackend(Backend):
         self.config = config
         
         # Initialize schema manager
+        vespa_url = config.get("vespa_url", "http://localhost")
+        vespa_port = config.get("vespa_port", 8080)
         self.schema_manager = VespaSchemaManager(
-            vespa_url=config.get("vespa_url", "http://localhost"),
-            vespa_port=config.get("vespa_port", 8080)
+            vespa_endpoint=f"{vespa_url}:{vespa_port}",
+            vespa_port=19071  # Deployment port
         )
         
         # Initialize search backend
@@ -245,7 +247,8 @@ class VespaBackend(Backend):
         if not self.search_client:
             raise RuntimeError("Search client not initialized. Ensure schema_name is provided in config.")
         
-        # Use the existing VespaSearchBackend
+        # Use the existing VespaSearchBackend - it returns SearchResult objects
+        # We should NOT convert them to dicts here, let the backend handle that
         results = self.search_client.search(
             query_embeddings=query_embeddings,
             query_text=query_text,
@@ -254,8 +257,8 @@ class VespaBackend(Backend):
             ranking_strategy=ranking_strategy
         )
         
-        # Convert SearchResult objects to dicts
-        return [r.to_dict() for r in results]
+        # Return the SearchResult objects directly
+        return results
     
     def get_document(self, document_id: str) -> Optional[Document]:
         """
