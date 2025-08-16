@@ -9,9 +9,34 @@ import logging
 import time
 import json
 import numpy as np
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
-from .base_embedding_generator import BaseEmbeddingGenerator, EmbeddingResult, ProcessingConfig
-from .model_loaders import get_or_load_model
+@dataclass
+class EmbeddingResult:
+    video_id: str
+    total_documents: int
+    documents_processed: int
+    documents_fed: int
+    processing_time: float
+    errors: List[str]
+    metadata: Dict[str, Any]
+
+@dataclass  
+class ProcessingConfig:
+    process_type: str
+    model_name: str
+    backend: str
+
+class BaseEmbeddingGenerator(ABC):
+    def __init__(self, config: Dict[str, Any], logger=None):
+        self.config = config
+        self.logger = logger or logging.getLogger(__name__)
+    
+    @abstractmethod
+    def generate_embeddings(self, video_data: Dict[str, Any], output_dir: Path) -> EmbeddingResult:
+        pass
+from src.models import get_or_load_model
 from .document_builders import DocumentBuilderFactory, DocumentMetadata
 from .embedding_processors import EmbeddingProcessor
 
