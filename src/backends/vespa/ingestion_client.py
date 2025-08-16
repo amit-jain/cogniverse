@@ -19,16 +19,13 @@ import numpy as np
 import time
 from typing import Dict, List, Any, Optional, Tuple
 import logging
-import struct
-from binascii import hexlify
-from .backend_client import BackendClient
-from .vespa_embedding_processor import VespaEmbeddingProcessor
+from .embedding_processor import VespaEmbeddingProcessor
 from src.common.core import Document, MediaType
-from src.backends.vespa.strategy_aware_processor import StrategyAwareProcessor
+from .strategy_aware_processor import StrategyAwareProcessor
 from src.common.utils.retry import retry_with_backoff, RetryConfig
 
 
-class VespaPyClient(BackendClient):
+class VespaPyClient:
     """
     Vespa client implementation using official pyvespa library.
     
@@ -55,12 +52,13 @@ class VespaPyClient(BackendClient):
         logger: Optional[logging.Logger] = None
     ):
         # Extract Vespa-specific config
-        schema_name = config.get("schema_name")
-        if not schema_name:
+        self.config = config
+        self.schema_name = config.get("schema_name")
+        if not self.schema_name:
             raise ValueError("schema_name is required in config for VespaPyClient")
-        super().__init__(config, schema_name, logger)
+        self.logger = logger or logging.getLogger(self.__class__.__name__)
         
-        self.vespa_url = config.get("vespa_url", "http://localhost")
+        self.vespa_url = config["vespa_url"]  # Required
         self.vespa_port = config.get("vespa_port", 8080)
         self.app = None
         self._connected = False
@@ -74,7 +72,7 @@ class VespaPyClient(BackendClient):
             if active_profile in profiles:
                 model_name = profiles[active_profile].get("embedding_model", "")
         
-        self._embedding_processor = VespaEmbeddingProcessor(logger, model_name, schema_name)
+        self._embedding_processor = VespaEmbeddingProcessor(logger, model_name, self.schema_name)
         
         # Initialize strategy-aware processor to get field names from ranking strategies
         self._strategy_processor = StrategyAwareProcessor()
@@ -87,8 +85,14 @@ class VespaPyClient(BackendClient):
         import json
         from pathlib import Path
         
-        # Load the schema definition to know what fields it has
-        schema_path = Path(__file__).parent.parent.parent.parent.parent / "configs" / "schemas" / f"{self.schema_name}_schema.json"
+        current = Path(__file__).resolve()
+        while current.parent != current:
+            if (current / "configs" / "schemas").exists():
+                schema_path = current / "configs" / "schemas" / f"{self.schema_name}_schema.json"
+                break
+            current = current.parent
+        else:
+            raise RuntimeError("Cannot find project root with configs/schemas directory")
         
         if not schema_path.exists():
             raise ValueError(f"Schema file not found: {schema_path}")
@@ -233,81 +237,12 @@ class VespaPyClient(BackendClient):
     # Removed _feed_prepared - using only batch method
     
     def _convert_embeddings_for_vespa(self, fields: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert raw embeddings to Vespa's expected format"""
-        
-        # Standard embedding field names (all schemas now use these)
-        embedding_fields = [
-            "embedding",
-            "embedding_binary"
-        ]
-        
-        for field_name in embedding_fields:
-            if field_name in fields:
-                value = fields[field_name]
-                
-                # Check if it's raw numpy array or already converted
-                if isinstance(value, np.ndarray):
-                    if "binary" in field_name:
-                        fields[field_name] = self._convert_to_binary_dict(value)
-                    else:
-                        fields[field_name] = self._convert_to_float_dict(value)
-                elif isinstance(value, dict) and len(value) > 0:
-                    # Check if values are numpy arrays (patches)
-                    first_value = next(iter(value.values()))
-                    if isinstance(first_value, np.ndarray):
-                        if "binary" in field_name:
-                            fields[field_name] = {
-                                k: self._numpy_to_hex_binary(v) 
-                                for k, v in value.items()
-                            }
-                        else:
-                            fields[field_name] = {
-                                k: self._numpy_to_hex_bfloat16(v) 
-                                for k, v in value.items()
-                            }
-        
+        """Verify embeddings are already in correct format (processed by VespaEmbeddingProcessor)"""
+        # Embeddings should already be converted by VespaEmbeddingProcessor in process()
+        # This method now just passes through the already-converted fields
         return fields
     
-    def _convert_to_float_dict(self, embeddings: np.ndarray) -> Dict[int, str]:
-        """Convert numpy array to Vespa float format (hex-encoded bfloat16)"""
-        embedding_dict = {}
-        for patch_idx in range(len(embeddings)):
-            hex_string = self._numpy_to_hex_bfloat16(embeddings[patch_idx])
-            embedding_dict[patch_idx] = hex_string
-        return embedding_dict
-    
-    def _convert_to_binary_dict(self, embeddings: np.ndarray) -> Dict[int, str]:
-        """Convert numpy array to binary format"""
-        # Binarize: positive values -> 1, negative/zero -> 0
-        binarized = np.packbits(
-            np.where(embeddings > 0, 1, 0),
-            axis=1
-        ).astype(np.int8)
-        
-        embedding_dict = {}
-        for idx in range(len(binarized)):
-            hex_string = hexlify(binarized[idx].tobytes()).decode('utf-8')
-            embedding_dict[idx] = hex_string
-        
-        return embedding_dict
-    
-    def _numpy_to_hex_bfloat16(self, array: np.ndarray) -> str:
-        """Convert numpy array to hex-encoded bfloat16 format"""
-        tensor = torch.tensor(array, dtype=torch.float32)
-        
-        def float_to_bfloat16_hex(f: float) -> str:
-            packed_float = struct.pack("=f", f)
-            bfloat16_bits = struct.unpack("=H", packed_float[2:])[0]
-            return format(bfloat16_bits, "04X")
-        
-        hex_list = [float_to_bfloat16_hex(float(val)) for val in tensor.flatten()]
-        return "".join(hex_list)
-    
-    def _numpy_to_hex_binary(self, array: np.ndarray) -> str:
-        """Convert numpy array to hex-encoded binary"""
-        # Binarize and pack
-        binary = np.packbits(np.where(array > 0, 1, 0)).astype(np.int8)
-        return hexlify(binary.tobytes()).decode('utf-8')
+    # Removed duplicate conversion methods - VespaEmbeddingProcessor handles all conversions
     
     def _feed_prepared_batch(
         self,

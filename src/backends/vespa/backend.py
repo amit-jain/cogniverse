@@ -14,6 +14,7 @@ from src.common.core.interfaces import Backend
 from src.common.core.documents import Document
 from .search_backend import VespaSearchBackend
 from .vespa_schema_manager import VespaSchemaManager
+from .ingestion_client import VespaPyClient
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +31,11 @@ class VespaBackend(Backend):
         """Initialize Vespa backend."""
         super().__init__("vespa")
         self._vespa_search_backend: Optional[VespaSearchBackend] = None
+        self._vespa_ingestion_client: Optional[VespaPyClient] = None
         self.schema_manager: Optional[VespaSchemaManager] = None
         self.config: Dict[str, Any] = {}
         self._initialized_as_search = False
+        self._initialized_as_ingestion = False
     
     def _initialize_backend(self, config: Dict[str, Any]) -> None:
         """
@@ -49,12 +52,26 @@ class VespaBackend(Backend):
         """
         self.config = config
         
-        # Initialize schema manager for ingestion operations
-        vespa_url = config.get("vespa_url", "http://localhost")
+        # Initialize for ingestion if schema_name is provided without search-specific params
+        if "schema_name" in config and not ("strategy" in config or "profile" in config):
+            # This means we're initializing for ingestion operations
+            self._initialized_as_ingestion = True
+            
+            # Create the VespaPyClient for ingestion
+            self._vespa_ingestion_client = VespaPyClient(
+                config=config,
+                logger=logger
+            )
+            self._vespa_ingestion_client.connect()
+        
+        # Initialize schema manager for schema operations
+        vespa_url = config["vespa_url"]  # Required, no default
         vespa_port = config.get("vespa_port", 8080)
+        deployment_port = config.get("vespa_deployment_port", 19071)
+        
         self.schema_manager = VespaSchemaManager(
             vespa_endpoint=f"{vespa_url}:{vespa_port}",
-            vespa_port=19071  # Deployment port
+            vespa_port=deployment_port
         )
         
         # Initialize search backend if this is being used for search
@@ -64,7 +81,7 @@ class VespaBackend(Backend):
             
             # Create the actual VespaSearchBackend
             self._vespa_search_backend = VespaSearchBackend(
-                vespa_url=config.get("vespa_url", "http://localhost"),
+                vespa_url=config["vespa_url"],  # Required
                 vespa_port=config.get("vespa_port", 8080),
                 schema_name=config["schema_name"],
                 profile=config.get("profile"),
@@ -86,46 +103,48 @@ class VespaBackend(Backend):
         Returns:
             Ingestion results
         """
-        if not self.schema_manager:
-            raise RuntimeError("Backend not initialized. Call initialize() first.")
+        if not self._vespa_ingestion_client:
+            # Initialize ingestion client if not already done
+            if "schema_name" not in self.config:
+                raise RuntimeError("schema_name must be provided in config for ingestion")
+            
+            self._vespa_ingestion_client = VespaPyClient(
+                config=self.config,
+                logger=logger
+            )
+            self._vespa_ingestion_client.connect()
+            self._initialized_as_ingestion = True
         
-        # Use existing Vespa ingestion logic
-        # This would typically use the VespaSchemaManager or pyvespa client
-        results = {
-            "success_count": 0,
-            "error_count": 0,
-            "errors": []
+        # Process and feed documents using the ingestion client
+        prepared_docs = []
+        for doc in documents:
+            prepared = self._vespa_ingestion_client.process(doc)
+            prepared_docs.append(prepared)
+        
+        # Feed documents to Vespa
+        success_count, failed_docs = self._vespa_ingestion_client._feed_prepared_batch(
+            prepared_docs
+        )
+        
+        return {
+            "success_count": success_count,
+            "failed_count": len(failed_docs),
+            "failed_documents": failed_docs,
+            "total_documents": len(documents)
         }
-        
-        try:
-            # Convert documents to Vespa format and feed
-            for doc in documents:
-                try:
-                    # Here we would use the actual Vespa feeding logic
-                    # For now, just count as success
-                    results["success_count"] += 1
-                except Exception as e:
-                    results["error_count"] += 1
-                    results["errors"].append(str(e))
-        except Exception as e:
-            logger.error(f"Failed to ingest documents: {e}")
-            results["errors"].append(str(e))
-        
-        return results
     
-    def ingest_stream(self, documents: Iterator[Document]) -> Iterator[Dict[str, Any]]:
+    def ingest_stream(self, documents: Iterator[Document], batch_size: int = 100) -> Iterator[Dict[str, Any]]:
         """
         Stream documents for ingestion.
         
         Args:
             documents: Iterator of Document objects
+            batch_size: Number of documents per batch
             
         Yields:
             Ingestion results for each batch
         """
         batch = []
-        batch_size = self.config.get("batch_size", 100)
-        
         for doc in documents:
             batch.append(doc)
             if len(batch) >= batch_size:
@@ -187,15 +206,28 @@ class VespaBackend(Backend):
             raise RuntimeError("Backend not initialized. Call initialize() first.")
         
         try:
-            # Get schema info from schema manager
+            # Get actual schema info if available from search backend
+            if self._vespa_search_backend:
+                # Delegate to search backend which has schema access
+                return {
+                    "name": self.config["schema_name"],
+                    "backend": "vespa",
+                    "initialized": True,
+                    "search_enabled": self._initialized_as_search,
+                "ingestion_enabled": self._initialized_as_ingestion
+                }
+            
+            # Basic info if only ingestion is configured
             return {
                 "name": self.config.get("schema_name", "unknown"),
-                "fields": [],  # Would be populated from actual schema
-                "ranking_profiles": []  # Would be populated from actual schema
+                "backend": "vespa",
+                "initialized": True,
+                "search_enabled": False,
+                "ingestion_enabled": self._initialized_as_ingestion
             }
         except Exception as e:
             logger.error(f"Failed to get schema info: {e}")
-            return {}
+            raise  # Re-raise instead of returning empty dict
     
     def validate_schema(self, schema_name: str) -> bool:
         """
@@ -227,7 +259,7 @@ class VespaBackend(Backend):
         top_k: int = 10,
         filters: Optional[Dict[str, Any]] = None,
         ranking_strategy: Optional[str] = None
-    ):
+    ) -> Any:
         """
         Execute a search query.
         
@@ -317,7 +349,7 @@ class VespaBackend(Backend):
 
 
 # Self-registration when module is imported
-def register():
+def register() -> None:
     """Register Vespa backend with the backend registry."""
     from src.common.core.backend_registry import register_backend
     

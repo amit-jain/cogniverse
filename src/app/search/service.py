@@ -117,7 +117,7 @@ class SearchService:
         
         # Prepare backend configuration
         backend_config = {
-            "vespa_url": self.config.get("vespa_url", "http://localhost"),
+            "vespa_url": self.config["vespa_url"],  # Required
             "vespa_port": self.config.get("vespa_port", 8080),
             "schema_name": self.strategy.schema_name,
             "profile": self.profile,
