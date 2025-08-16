@@ -110,6 +110,11 @@ class VLMDescriptor:
     
     def generate_descriptions(self, keyframes_metadata: Dict[str, Any], output_dir: Path = None) -> Dict[str, Any]:
         """Generate VLM descriptions for keyframes using Modal service"""
+        # Check if keyframes_metadata is empty or doesn't have required data
+        if not keyframes_metadata or "video_id" not in keyframes_metadata:
+            self.logger.info("No keyframes to generate descriptions for")
+            return {"descriptions": {}}
+        
         video_id = keyframes_metadata["video_id"]
         self.logger.info(f"Starting VLM description generation for video: {video_id}")
         print(f"🤖 Generating VLM descriptions for: {video_id}")

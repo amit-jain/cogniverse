@@ -27,8 +27,8 @@ class AudioTranscriber:
                 from faster_whisper import WhisperModel
                 self._model = WhisperModel(self.model_size, device=self.device)
                 print(f"  📝 Loaded Whisper model: {self.model_size} on {self.device}")
-            except ImportError:
-                raise ImportError("faster-whisper not installed. Install with: pip install faster-whisper")
+            except ImportError as e:
+                raise ImportError(f"faster-whisper import failed: {e}")
     
     def transcribe_audio(self, video_path: Path, output_dir: Path = None) -> Dict[str, Any]:
         """Extract and transcribe audio from video"""

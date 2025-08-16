@@ -197,8 +197,10 @@ class VespaVideoSearchClient:
         sys.path.append(str(Path(__file__).parent.parent.parent.parent))
         from src.tools.config import get_config
         self.config = get_config()
-        # Check environment variable first, then config
-        self.vespa_schema = os.environ.get("VESPA_SCHEMA", self.config.get("vespa_schema", "video_frame"))
+        # Get schema from environment or config (required)
+        self.vespa_schema = os.environ.get("VESPA_SCHEMA") or self.config.get("schema_name")
+        if not self.vespa_schema:
+            raise ValueError("No schema_name found in VESPA_SCHEMA env var or config")
         
         self.logger = logging.getLogger(__name__)
         self.vespa_url = vespa_url

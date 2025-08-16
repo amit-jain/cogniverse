@@ -68,7 +68,7 @@
   },
   "video_processing_profiles": {
     "video_colpali_smol500_mv_frame": {
-      "vespa_schema": "video_mv_frame",
+      "schema_name": "video_colpali_smol500_mv_frame",
       "embedding_model": "vidore/colsmol-500m",
       "pipeline_config": {
         "extract_keyframes": true,
@@ -87,8 +87,8 @@
         "binary_dim": 16
       }
     },
-    "video_colqwen_omni_sv_chunk": {
-      "vespa_schema": "video_sv_chunk",
+    "video_colqwen_omni_mv_chunk_30s": {
+      "schema_name": "video_colqwen_omni_mv_chunk_30s",
       "embedding_model": "vidore/colqwen-omni-v0.1",
       "process_type": "video_chunks",
       "pipeline_config": {
@@ -119,8 +119,8 @@
         "binary_dim": 16
       }
     },
-    "video_videoprism_base_mv_chunk": {
-      "vespa_schema": "video_mv_chunk",
+    "video_videoprism_base_mv_chunk_30s": {
+      "schema_name": "video_videoprism_base_mv_chunk_30s",
       "embedding_model": "videoprism_public_v1_base_hf",
       "pipeline_config": {
         "extract_keyframes": false,
@@ -150,8 +150,8 @@
         "binary_dim": 96
       }
     },
-    "video_videoprism_large_mv_chunk": {
-      "vespa_schema": "video_mv_chunk",
+    "video_videoprism_large_mv_chunk_30s": {
+      "schema_name": "video_videoprism_large_mv_chunk_30s",
       "embedding_model": "videoprism_public_v1_large_hf",
       "pipeline_config": {
         "extract_keyframes": false,
@@ -182,7 +182,7 @@
       }
     },
     "video_videoprism_lvt_base_sv_chunk_6s": {
-      "vespa_schema": "video_videoprism_lvt_base_sv_chunk_6s",
+      "schema_name": "video_videoprism_lvt_base_sv_chunk_6s",
       "embedding_model": "videoprism_lvt_public_v1_base",
       "pipeline_config": {
         "extract_keyframes": false,
@@ -212,7 +212,7 @@
       }
     },
     "video_videoprism_lvt_large_sv_chunk_6s": {
-      "vespa_schema": "video_videoprism_lvt_large_sv_chunk_6s",
+      "schema_name": "video_videoprism_lvt_large_sv_chunk_6s",
       "embedding_model": "videoprism_lvt_public_v1_large",
       "pipeline_config": {
         "extract_keyframes": false,

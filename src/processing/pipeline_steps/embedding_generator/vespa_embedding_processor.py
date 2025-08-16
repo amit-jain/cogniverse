@@ -73,13 +73,24 @@ class VespaEmbeddingProcessor:
     def _convert_to_float_dict(self, embeddings: np.ndarray) -> Any:
         """Convert numpy array to Vespa float format
         
-        For global schemas using tensor<float>, return raw float values as a list.
+        For single-vector schemas using tensor<float>, return raw float values as a list.
         For patch-based schemas using tensor<bfloat16>, return hex-encoded bfloat16.
         """
-        # Check if this is a global schema that uses tensor<float>
-        if "global" in self.schema_name.lower() and embeddings.shape[0] == 1:
-            # Global schemas use tensor<float>(v[dim]) which expects raw float values
-            return embeddings[0].tolist()
+        # Check if this is a single-vector schema (1D array or single row)
+        # Single-vector schemas: LVT models or schemas with "_sv_" in name
+        is_single_vector = (
+            embeddings.ndim == 1 or  # 1D array (single vector)
+            embeddings.shape[0] == 1 or  # Single row
+            "_sv_" in self.schema_name or  # Single-vector in name
+            "lvt" in self.schema_name.lower()  # LVT models are single-vector
+        )
+        
+        if is_single_vector:
+            # Single-vector schemas use tensor<float>(v[dim]) which expects raw float values
+            if embeddings.ndim == 1:
+                return embeddings.tolist()
+            else:
+                return embeddings[0].tolist()
         
         # For patch-based schemas, use hex-encoded bfloat16 format
         embedding_dict = {}
@@ -91,8 +102,8 @@ class VespaEmbeddingProcessor:
     def _convert_to_binary_dict(self, embeddings: np.ndarray) -> Any:
         """Convert numpy array to binary format
         
-        For global schemas, return raw int8 values as a list.
-        For patch-based schemas, return hex-encoded binary.
+        For single-vector schemas, return hex-encoded binary string.
+        For patch-based schemas, return dict of hex-encoded binary.
         """
         # Ensure 2D array
         if embeddings.ndim == 1:
@@ -104,12 +115,18 @@ class VespaEmbeddingProcessor:
             axis=1
         ).astype(np.int8)
         
-        # Check if this is a global schema
-        if "global" in self.schema_name.lower() and binarized.shape[0] == 1:
-            # Global schemas use tensor<int8>(v[dim]) which expects raw int values
-            return binarized[0].tolist()
+        # Check if this is a single-vector schema
+        is_single_vector = (
+            binarized.shape[0] == 1 or  # Single row
+            "_sv_" in self.schema_name or  # Single-vector in name
+            "lvt" in self.schema_name.lower()  # LVT models are single-vector
+        )
         
-        # For patch-based schemas, use hex-encoded format
+        if is_single_vector:
+            # Single-vector schemas use hex string for binary embeddings
+            return hexlify(binarized[0].tobytes()).decode('utf-8')
+        
+        # For patch-based schemas, use dict of hex-encoded values
         embedding_dict = {}
         for idx in range(len(binarized)):
             hex_string = hexlify(binarized[idx].tobytes()).decode('utf-8')

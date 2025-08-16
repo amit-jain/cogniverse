@@ -497,13 +497,32 @@ class VideoIngestionPipeline:
             if "keyframes" in keyframes_data:
                 # Convert keyframe data to frames format expected by v2
                 frames = []
+                video_id = results.get("video_id")
                 for kf in keyframes_data["keyframes"]:
+                    # Construct frame path from filename
+                    frame_path = None
+                    if kf.get("path"):
+                        frame_path = kf.get("path")
+                    elif kf.get("filename") and video_id:
+                        # Construct path from profile output dir
+                        frame_path = str(self.profile_output_dir / "keyframes" / video_id / kf.get("filename"))
+                    
                     frames.append({
                         "frame_id": kf.get("frame_id"),
-                        "frame_path": kf.get("path"),
+                        "frame_path": frame_path,
                         "timestamp": kf.get("timestamp", 0.0)
                     })
                 video_data["frames"] = frames
+                
+                # Add transcript if available
+                if "transcript" in results.get("results", {}):
+                    video_data["transcript"] = results["results"]["transcript"]
+                
+                # Add descriptions if available
+                if "descriptions" in results.get("results", {}):
+                    desc_data = results["results"]["descriptions"]
+                    if "descriptions" in desc_data:
+                        video_data["descriptions"] = desc_data["descriptions"]
         
         # For video_chunks processing, always create segments
         if video_data.get("processing_type") == "video_chunks" and "segments" not in video_data:
@@ -795,10 +814,20 @@ class VideoIngestionPipeline:
         summary_file = self.profile_output_dir / "pipeline_summary.json"
         
         # Remove any raw segments from processed videos before saving
-        results_to_save = results.copy()
+        import copy
+        results_to_save = copy.deepcopy(results)
         for video_result in results_to_save.get("processed_videos", []):
             if "_raw_segments" in video_result:
                 del video_result["_raw_segments"]
+            # Also check if there are any VideoSegment objects in the results
+            if "results" in video_result and "single_vector_processing" in video_result["results"]:
+                if "segments" in video_result["results"]["single_vector_processing"]:
+                    segments = video_result["results"]["single_vector_processing"]["segments"]
+                    # Convert any VideoSegment objects to dicts
+                    if segments and hasattr(segments[0], 'to_dict'):
+                        video_result["results"]["single_vector_processing"]["segments"] = [
+                            seg.to_dict() if hasattr(seg, 'to_dict') else seg for seg in segments
+                        ]
         
         with open(summary_file, 'w') as f:
             json.dump(results_to_save, f, indent=2)

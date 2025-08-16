@@ -113,7 +113,9 @@ class StrategyConfig:
         storage_mode = self._resolve_storage_mode(profile, processing_type)
         
         # Get schema and ranking strategies
-        schema_name = profile.get("vespa_schema", "video_frame")
+        schema_name = profile.get("schema_name")
+        if not schema_name:
+            raise ValueError(f"schema_name not found in profile: {profile}")
         schema_rankings = self.ranking_strategies.get(schema_name, {})
         
         # Determine embedding requirements from ranking strategies

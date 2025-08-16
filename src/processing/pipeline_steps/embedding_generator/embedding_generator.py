@@ -36,6 +36,7 @@ class BaseEmbeddingGenerator(ABC):
     @abstractmethod
     def generate_embeddings(self, video_data: Dict[str, Any], output_dir: Path) -> EmbeddingResult:
         pass
+
 from src.models import get_or_load_model
 from .document_builders import DocumentBuilderFactory, DocumentMetadata
 from .embedding_processors import EmbeddingProcessor
@@ -59,7 +60,7 @@ class EmbeddingGenerator(BaseEmbeddingGenerator):
         self.backend_client = backend_client
         
         # Get schema name from backend client (it knows its own schema)
-        self.schema_name = backend_client.schema_name if backend_client else "video_frame"
+        self.schema_name = backend_client.schema_name if backend_client else config.get("schema_name")
         
         # Initialize components
         self.embedding_processor = EmbeddingProcessor(logger)
