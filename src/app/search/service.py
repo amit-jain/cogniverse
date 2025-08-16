@@ -8,8 +8,8 @@ import os
 from src.common.models import get_or_load_model
 from src.app.agents.query_encoders import QueryEncoderFactory
 from src.common.core.registry import get_registry
+from src.common.core.backend_registry import get_backend_registry
 from .base import SearchBackend, SearchResult
-from src.backends.vespa.search_backend import VespaSearchBackend
 
 logger = logging.getLogger(__name__)
 
@@ -109,29 +109,28 @@ class SearchService:
         logger.info(f"Initialized query encoder type: {type(self.query_encoder).__name__} for profile: {self.profile}")
     
     def _init_search_backend(self):
-        """Initialize search backend with strategy."""
-        # For now, only Vespa is supported
+        """Initialize search backend with strategy using backend registry."""
         backend_type = self.config.get("search_backend", "vespa")
         
-        if backend_type == "vespa":
-            vespa_url = self.config.get("vespa_url", "http://localhost")
-            vespa_port = self.config.get("vespa_port", 8080)
-            
-            # Use schema from strategy
-            schema_name = self.strategy.schema_name
-            
-            self.search_backend = VespaSearchBackend(
-                vespa_url=vespa_url,
-                vespa_port=vespa_port,
-                schema_name=schema_name,
-                profile=self.profile,
-                strategy=self.strategy,  # Pass the strategy object
-                query_encoder=self.query_encoder
-            )
-        else:
-            raise ValueError(f"Unsupported search backend: {backend_type}")
+        # Get backend from registry
+        backend_registry = get_backend_registry()
         
-        logger.info(f"Initialized {backend_type} search backend with schema: {schema_name}")
+        # Prepare backend configuration
+        backend_config = {
+            "vespa_url": self.config.get("vespa_url", "http://localhost"),
+            "vespa_port": self.config.get("vespa_port", 8080),
+            "schema_name": self.strategy.schema_name,
+            "profile": self.profile,
+            "strategy": self.strategy,
+            "query_encoder": self.query_encoder
+        }
+        
+        # Get backend instance from registry - let it fail if backend not found
+        self.search_backend = backend_registry.get_search_backend(
+            backend_type, 
+            backend_config
+        )
+        logger.info(f"Initialized {backend_type} search backend with schema: {self.strategy.schema_name}")
     
     def search(
         self,
