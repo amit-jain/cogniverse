@@ -472,6 +472,9 @@ class VespaSearchBackend(SearchBackend):
                     logger.info(f"[{correlation_id}] Query text: '{query_text}'")
                     query_embeddings = self.query_encoder.encode(query_text)
                     logger.info(f"[{correlation_id}] Generated embeddings shape: {query_embeddings.shape}")
+                    logger.info(f"[{correlation_id}] Embeddings dtype: {query_embeddings.dtype}")
+                    logger.info(f"[{correlation_id}] Embeddings min/max: {query_embeddings.min():.4f}/{query_embeddings.max():.4f}")
+                    logger.info(f"[{correlation_id}] First 5 values: {query_embeddings.flatten()[:5]}")
                 else:
                     logger.warning(
                         f"[{correlation_id}] Strategy '{ranking_profile}' requires embeddings but no encoder available"
@@ -575,22 +578,40 @@ class VespaSearchBackend(SearchBackend):
             logger.info(f"[{correlation_id}] Strategy '{ranking_profile}' needs inputs: {list(inputs_needed.keys())}")
             
             for input_name, input_type in inputs_needed.items():
-                if "query(qt)" in input_name and "float" in input_type:
+                # The input names are like 'qt', 'qtb', etc. We need to construct the full Vespa query parameter name
+                vespa_param_name = f"input.query({input_name})"
+                
+                if input_name == "qt" and "float" in input_type:
                     # Float embeddings needed
-                    logger.info(f"[{correlation_id}] Adding float embeddings for {input_name}")
-                    query_params[input_name] = query_embeddings.tolist()
+                    logger.info(f"[{correlation_id}] Adding float embeddings for {vespa_param_name}")
+                    # For multi-vector models, convert to dict format as per Vespa docs
+                    if query_embeddings.ndim == 2:
+                        query_params[vespa_param_name] = {index: vector.tolist() for index, vector in enumerate(query_embeddings)}
+                    else:
+                        query_params[vespa_param_name] = query_embeddings.tolist()
                     
-                elif "query(qtb)" in input_name and "int8" in input_type:
+                elif input_name == "qtb" and "int8" in input_type:
                     # Binary embeddings needed
-                    logger.info(f"[{correlation_id}] Adding binary embeddings for {input_name}")
+                    logger.info(f"[{correlation_id}] Adding binary embeddings for {vespa_param_name}")
                     binary_embeddings = self._generate_binary_embeddings(query_embeddings)
-                    binary_list = [int(x) for x in binary_embeddings.tolist()]
-                    query_params[input_name] = binary_list
+                    # For multi-vector models, convert to dict format as per Vespa docs
+                    if binary_embeddings.ndim == 2:
+                        query_params[vespa_param_name] = {index: vector.tolist() for index, vector in enumerate(binary_embeddings)}
+                    else:
+                        query_params[vespa_param_name] = binary_embeddings.tolist()
                     
-                elif "query(q)" in input_name:
+                elif input_name == "q":
                     # Generic query tensor (used by some schemas)
-                    logger.info(f"[{correlation_id}] Adding generic embeddings for {input_name}")
-                    query_params[input_name] = query_embeddings.tolist()
+                    logger.info(f"[{correlation_id}] Adding generic embeddings for {vespa_param_name}")
+                    query_params[vespa_param_name] = query_embeddings.tolist()
+                    
+                else:
+                    # Unknown input name - this shouldn't happen with proper configuration
+                    logger.warning(
+                        f"[{correlation_id}] Unknown input name '{input_name}' with type '{input_type}' "
+                        f"in ranking strategy '{ranking_profile}'. This input will be skipped. "
+                        f"Known input names: 'qt' (float), 'qtb' (binary), 'q' (generic)."
+                    )
         
         # Add schema to query body to avoid conflicts with other schemas
         query_params["model.restrict"] = self.schema_name  # Must be string, not list!

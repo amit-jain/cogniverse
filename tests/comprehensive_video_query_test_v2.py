@@ -96,8 +96,18 @@ def calculate_metrics(results: List[Dict], expected_videos: List[str], k_values:
     """Calculate MRR, NDCG, and Recall@k metrics"""
     metrics = {}
     
+    # Initialize all metrics to 0
+    metrics['mrr'] = 0.0
+    for k in k_values:
+        metrics[f'recall@{k}'] = 0.0
+        metrics[f'ndcg@{k}'] = 0.0
+    
     # Get video IDs from results
     result_videos = [r.get('video_id', '') for r in results]
+    
+    # If no results, return zero metrics
+    if not result_videos:
+        return metrics
     
     # MRR (Mean Reciprocal Rank)
     mrr = 0.0
@@ -110,7 +120,7 @@ def calculate_metrics(results: List[Dict], expected_videos: List[str], k_values:
     # Recall@k
     for k in k_values:
         if k <= len(result_videos):
-            recall_k = len(set(result_videos[:k]) & set(expected_videos)) / len(expected_videos)
+            recall_k = len(set(result_videos[:k]) & set(expected_videos)) / len(expected_videos) if expected_videos else 0
             metrics[f'recall@{k}'] = recall_k
     
     # NDCG@k (Normalized Discounted Cumulative Gain)
@@ -259,14 +269,21 @@ def test_profile_with_queries(profile: str, queries: List[Dict], test_multiple_s
         
         # Calculate aggregate metrics for this strategy
         if all_metrics:
-            for metric_name in all_metrics[0].keys():
-                values = [m[metric_name] for m in all_metrics]
-                strategy_results['aggregate_metrics'][metric_name] = {
-                    'mean': np.mean(values),
-                    'std': np.std(values),
-                    'min': np.min(values),
-                    'max': np.max(values)
-                }
+            # Get all unique metric names from all results
+            all_metric_names = set()
+            for m in all_metrics:
+                all_metric_names.update(m.keys())
+            
+            for metric_name in all_metric_names:
+                # Only calculate if at least one result has this metric
+                values = [m.get(metric_name, 0) for m in all_metrics if metric_name in m]
+                if values:
+                    strategy_results['aggregate_metrics'][metric_name] = {
+                        'mean': np.mean(values),
+                        'std': np.std(values),
+                        'min': np.min(values),
+                        'max': np.max(values)
+                    }
         
         if test_multiple_strategies:
             profile_results['strategies'][strategy or 'default'] = strategy_results

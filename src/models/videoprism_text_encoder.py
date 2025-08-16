@@ -282,9 +282,29 @@ class VideoPrismTextEncoder:
             # Load the text tokenizer
             self.tokenizer = vp.load_text_tokenizer('c4_en')
             
+            # Map our model names to VideoPrism model names
+            # Use the actual LVT model names for text encoding
+            if "lvt" in self.model_name.lower():
+                if "large" in self.model_name.lower():
+                    vp_model_name = "videoprism_lvt_public_v1_large"
+                else:
+                    vp_model_name = "videoprism_lvt_public_v1_base"
+            elif "videoprism_lvt_public" in self.model_name:
+                vp_model_name = self.model_name
+            elif "videoprism_public" in self.model_name:
+                vp_model_name = self.model_name
+            else:
+                # Text encoding is only supported for LVT models
+                raise ValueError(
+                    f"Unknown model name for text encoding: {self.model_name}. "
+                    f"Text encoding is only supported for LVT models. "
+                    f"Expected patterns: 'lvt', 'videoprism_lvt_public', or explicit 'videoprism_public' names. "
+                    f"Regular VideoPrism models (non-LVT) cannot encode text."
+                )
+            
             # Load the model to get text encoding capabilities
-            self.model = vp.get_model(self.model_name)
-            self.state = vp.load_pretrained_weights(self.model_name)
+            self.model = vp.get_model(vp_model_name)
+            self.state = vp.load_pretrained_weights(vp_model_name)
             
             # Verify model output dimension
             self._verify_model_dimension()
@@ -300,13 +320,31 @@ class VideoPrismTextEncoder:
         test_text = "test"
         test_ids, test_paddings = self._vp.tokenize_texts(self.tokenizer, [test_text])
         
-        _, text_embeddings, _ = self.model.apply(
+        # Call model.apply with positional arguments as per VideoPrism API
+        result = self.model.apply(
             self.state,
-            None,
-            test_ids,
-            test_paddings,
-            train=False
+            None,  # video_inputs
+            test_ids,  # text_inputs
+            test_paddings,  # text_paddings
+            False  # train (as positional argument, not keyword)
         )
+        
+        # The model MUST return exactly (video_embeddings, text_embeddings, logits_scale)
+        # For text-only input, video_embeddings should be None
+        if not isinstance(result, tuple) or len(result) != 3:
+            raise ValueError(
+                f"Unexpected model output format. Expected tuple of "
+                f"(video_embeddings, text_embeddings, logits_scale), "
+                f"got {type(result)} with length {len(result) if hasattr(result, '__len__') else 'N/A'}"
+            )
+        
+        video_embeddings, text_embeddings, logits_scale = result
+        
+        if text_embeddings is None:
+            raise ValueError(
+                f"Model returned None for text embeddings. This usually means the model "
+                f"is not an LVT model or doesn't support text encoding. Model: {self.model_name}"
+            )
         
         actual_dim = text_embeddings.shape[-1]
         if actual_dim != self.embedding_dim:
@@ -402,7 +440,7 @@ class VideoPrismTextEncoder:
                 None,  # No video input
                 text_ids,
                 text_paddings,
-                train=False
+                False  # train (as positional argument, not keyword)
             )
             
             # Extract embeddings and ensure correct shape

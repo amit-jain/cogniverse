@@ -27,6 +27,7 @@ class SimpleVideoPrismModel:
         self.model_name = model_name
         self.model = None
         self.state = None
+        self.forward_fn = None
         
         # Model configuration
         # Use the regular VideoPrism models for video encoding

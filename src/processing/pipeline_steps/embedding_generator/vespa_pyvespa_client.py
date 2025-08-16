@@ -55,7 +55,9 @@ class VespaPyClient(BackendClient):
         logger: Optional[logging.Logger] = None
     ):
         # Extract Vespa-specific config
-        schema_name = config.get("vespa_schema", "video_colpali_smol500_mv_frame")
+        schema_name = config.get("schema_name")
+        if not schema_name:
+            raise ValueError("schema_name is required in config for VespaPyClient")
         super().__init__(config, schema_name, logger)
         
         self.vespa_url = config.get("vespa_url", "http://localhost")
@@ -76,6 +78,37 @@ class VespaPyClient(BackendClient):
         
         # Initialize strategy-aware processor to get field names from ranking strategies
         self._strategy_processor = StrategyAwareProcessor()
+        
+        # Load schema fields to know what fields to populate
+        self._load_schema_fields()
+    
+    def _load_schema_fields(self):
+        """Load the fields defined in the schema"""
+        import json
+        from pathlib import Path
+        
+        # Load the schema definition to know what fields it has
+        schema_path = Path(__file__).parent.parent.parent.parent.parent / "configs" / "schemas" / f"{self.schema_name}_schema.json"
+        
+        if not schema_path.exists():
+            raise ValueError(f"Schema file not found: {schema_path}")
+        
+        try:
+            with open(schema_path, 'r') as f:
+                schema_def = json.load(f)
+            
+            # Extract field names from schema
+            self.schema_fields = set()
+            for field in schema_def.get("document", {}).get("fields", []):
+                self.schema_fields.add(field["name"])
+            
+            if not self.schema_fields:
+                raise ValueError(f"No fields found in schema {self.schema_name}")
+                
+            self.logger.debug(f"Loaded {len(self.schema_fields)} fields from schema {self.schema_name}")
+        except Exception as e:
+            self.logger.error(f"Failed to load schema fields from {schema_path}: {e}")
+            raise
     
     @retry_with_backoff(config=RetryConfig(max_attempts=3, initial_delay=1.0))
     def connect(self) -> bool:
@@ -162,38 +195,34 @@ class VespaPyClient(BackendClient):
             **processed_embeddings
         }
         
-        # Add temporal info if present
+        # Only add fields that exist in the schema definition
+        # This makes the code completely schema-driven
+        
+        # Add temporal info if schema has these fields
         if doc.temporal_info:
-            fields.update({
-                "start_time": doc.temporal_info.start_time,
-                "end_time": doc.temporal_info.end_time
-            })
+            if "start_time" in self.schema_fields:
+                fields["start_time"] = float(doc.temporal_info.start_time)
+            if "end_time" in self.schema_fields:
+                fields["end_time"] = float(doc.temporal_info.end_time)
         
-        # Add segment info if present
-        if doc.segment_info:
-            # All schemas now use segment_id consistently
+        # Add segment info if schema has segment_id
+        if doc.segment_info and "segment_id" in self.schema_fields:
             fields["segment_id"] = doc.segment_info.segment_idx
-            fields["total_segments"] = doc.segment_info.total_segments
-            
-            # Calculate segment duration if temporal info is available
-            if doc.temporal_info:
-                segment_duration = doc.temporal_info.end_time - doc.temporal_info.start_time
-                fields["segment_duration"] = float(segment_duration)
+            if "total_segments" in self.schema_fields and hasattr(doc.segment_info, "total_segments"):
+                fields["total_segments"] = doc.segment_info.total_segments
         
-        # Map universal fields to schema-specific fields
-        if doc.media_type in [MediaType.VIDEO_SEGMENT, MediaType.VIDEO_FRAME]:
-            fields["video_id"] = doc.metadata.get("source_id", doc.doc_id.split("_")[0])
-            fields["video_title"] = doc.metadata.get("video_title", fields["video_id"])
+        # Add transcription if schema has audio_transcript field
+        if doc.transcription and "audio_transcript" in self.schema_fields:
+            fields["audio_transcript"] = doc.transcription
         
-        if doc.media_type == MediaType.VIDEO_FRAME:
-            fields["frame_id"] = doc.metadata.get("frame_id", doc.metadata.get("frame_idx", 0))
+        # Handle description from metadata if schema has segment_description
+        if "description" in doc.metadata and "segment_description" in self.schema_fields:
+            fields["segment_description"] = doc.metadata["description"]
         
-        # Add text metadata fields if present in document
-        # The schema should define which fields it supports
-        if "segment_description" in doc.metadata:
-            fields["segment_description"] = doc.metadata["segment_description"]
-        if "audio_transcript" in doc.metadata:
-            fields["audio_transcript"] = doc.metadata["audio_transcript"]
+        # Add other metadata fields that directly match schema fields
+        for key, value in doc.metadata.items():
+            if key in self.schema_fields and key not in fields:
+                fields[key] = value
         
         # Create Vespa document
         return {

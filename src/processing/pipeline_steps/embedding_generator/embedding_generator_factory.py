@@ -32,8 +32,16 @@ class EmbeddingGeneratorFactory:
             Embedding generator instance
         """
         
+        # Backend needs both main config and profile config
+        # Profile config contains schema_name and model-specific settings
+        # Main config contains system-wide settings like vespa_url
+        backend_config = {
+            **config,  # System config (vespa_url, ports, etc.)
+            **profile_config  # Profile config (schema_name, model, etc.) - overwrites any duplicates
+        }
+        
         # Delegate to backend factory
-        backend_client = BackendFactory.create(backend, config, logger)
+        backend_client = BackendFactory.create(backend, backend_config, logger)
         
         # Return embedding generator with backend client
         return EmbeddingGeneratorImpl(

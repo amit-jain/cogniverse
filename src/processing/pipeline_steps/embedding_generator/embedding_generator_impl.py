@@ -75,6 +75,14 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         self.model_name = self.profile_config.get("embedding_model", "vidore/colsmol-500m")
         self.backend_client = backend_client
         
+        # Get schema name from backend client (it knows its own schema)
+        if backend_client:
+            self.schema_name = backend_client.schema_name
+        else:
+            self.schema_name = profile_config.get("schema_name")
+            if not self.schema_name:
+                raise ValueError("schema_name is required when backend_client is not provided")
+        
         # Determine media type based on process type
         if self.process_type.startswith("direct_video"):
             self.media_type = MediaType.VIDEO_SEGMENT
@@ -218,9 +226,9 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         # Create Document with all necessary information
         doc_id = f"{video_id}_{segment_idx}_{int(start_time)}"
         
-        # Create metadata including source_id
+        # Create metadata using schema field names
         metadata = {
-            'source_id': video_id,
+            'video_id': video_id,  # Use video_id as defined in schema
             "video_title": video_id,
             "video_path": str(video_path)
         }
@@ -505,48 +513,38 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         """Generate embeddings for frame-based processing"""
         video_id = video_data['video_id']
         
-        # Load data from files like the old implementation
-        output_dir = Path(video_data.get("output_dir", output_dir))
-        
-        # Load keyframes metadata
-        keyframes_file = output_dir / "metadata" / f"{video_id}_keyframes.json"
-        if not keyframes_file.exists():
+        # Get keyframes from video_data (passed from pipeline)
+        frames = video_data.get('frames', [])
+        if not frames:
             return ProcessingResult(
                 video_id=video_id,
                 total_documents=0,
                 documents_processed=0,
                 documents_fed=0,
                 processing_time=0.0,
-                errors=["Keyframes file not found"],
+                errors=["No frames found in video_data"],
                 metadata={}
             )
         
-        with open(keyframes_file, 'r') as f:
-            metadata = json.load(f)
+        keyframes = frames
         
-        keyframes = metadata.get("keyframes", [])
+        # Get descriptions and transcript from video_data
+        descriptions = video_data.get('descriptions', {})
         
-        # Load descriptions
-        descriptions_file = output_dir / "descriptions" / f"{video_id}.json"
-        descriptions = {}
-        if descriptions_file.exists():
-            with open(descriptions_file, 'r') as f:
-                descriptions = json.load(f)
-        
-        # Load transcript
-        transcript_file = output_dir / "transcripts" / f"{video_id}.json"
-        transcript_data = {}
-        if transcript_file.exists():
-            with open(transcript_file, 'r') as f:
-                transcript_data = json.load(f)
+        # Get transcript from video_data
+        transcript_data = video_data.get('transcript', {})
         
         # Extract audio transcript
         audio_transcript = ""
         if transcript_data:
-            if isinstance(transcript_data, list):
+            if isinstance(transcript_data, str):
+                audio_transcript = transcript_data
+            elif isinstance(transcript_data, list):
                 audio_transcript = " ".join([segment.get("text", "") for segment in transcript_data])
             elif isinstance(transcript_data, dict) and "segments" in transcript_data:
                 audio_transcript = " ".join([segment.get("text", "") for segment in transcript_data["segments"]])
+            elif isinstance(transcript_data, dict) and "full_text" in transcript_data:
+                audio_transcript = transcript_data["full_text"]
         
         documents_processed = 0
         documents_fed = 0
@@ -564,8 +562,8 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
             
             try:
                 for keyframe in batch_keyframes:
-                    frame_id = str(keyframe["frame_id"])
-                    frame_path = Path(keyframe["path"])
+                    frame_id = str(keyframe.get("frame_id", 0))
+                    frame_path = Path(keyframe.get("frame_path", keyframe.get("path", "")))
                     timestamp = keyframe.get("timestamp", 0.0)
                     description = descriptions.get(frame_id, "")
                     
@@ -579,19 +577,10 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
                     if raw_embeddings is None:
                         continue
                     
-                    # Create Document for frame
-                    metadata = {
-                        "source_id": video_id,
-                        "video_title": video_id,
-                        "frame_id": int(frame_id),
-                        "frame_path": str(frame_path),
-                        "frame_description": description,
-                        "audio_transcript": audio_transcript
-                    }
-                    
+                    # Create Document for frame using structured fields, not hardcoded metadata
                     embedding_result = EmbeddingResult(
                         embeddings=raw_embeddings,
-                        metadata=metadata
+                        metadata={}  # No hardcoded metadata fields
                     )
                     
                     doc = Document(
@@ -602,7 +591,16 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
                             start_time=timestamp,
                             end_time=timestamp + 1.0
                         ),
-                        metadata=metadata
+                        segment_info=SegmentInfo(
+                            segment_idx=int(frame_id),
+                            total_segments=len(keyframes)
+                        ),
+                        transcription=audio_transcript,
+                        metadata={
+                            "video_id": video_id,  # Only keep video_id in metadata
+                            "video_title": video_id,
+                            "description": description  # Just "description", not hardcoded field name
+                        }
                     )
                     
                     documents_processed += 1
@@ -734,10 +732,11 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
             
             # Create EmbeddingResult with both float and binary embeddings
             # For single vector, embeddings should be the tensor arrays
+            # Use field names that match Vespa schema: "embedding" and "embedding_binary"
             embedding_result = EmbeddingResult(
                 embeddings={
-                    "embeddings": embeddings_tensor,
-                    "embeddings_binary": embeddings_binary_tensor
+                    "embedding": embeddings_tensor,
+                    "embedding_binary": embeddings_binary_tensor
                 },
                 metadata=metadata
             )

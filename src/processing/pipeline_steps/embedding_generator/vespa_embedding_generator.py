@@ -10,8 +10,8 @@ import json
 import time
 import numpy as np
 
-from .base_embedding_generator import BaseEmbeddingGenerator, EmbeddingResult, ProcessingConfig
-from .model_loaders import get_or_load_model
+from .embedding_generator import BaseEmbeddingGenerator, EmbeddingResult, ProcessingConfig
+from src.models import get_or_load_model
 from .document_builders import DocumentBuilderFactory, DocumentMetadata
 from .embedding_processors import EmbeddingProcessor
 from .vespa_pyvespa_client import VespaPyClient
@@ -29,7 +29,9 @@ class VespaEmbeddingGenerator(BaseEmbeddingGenerator):
         super().__init__(config, logger)
         
         self.embedding_type = embedding_type
-        self.schema_name = config.get("vespa_schema", "video_frame")
+        self.schema_name = config.get("schema_name")
+        if not self.schema_name:
+            raise ValueError("schema_name is required in config")
         self.model_name = self._get_model_name()
         
         # Initialize components
