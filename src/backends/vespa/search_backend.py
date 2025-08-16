@@ -25,16 +25,16 @@ import logging
 import numpy as np
 from vespa.application import Vespa
 
-from src.search.search import SearchBackend, SearchResult
-from src.core import Document, MediaType, TemporalInfo, SegmentInfo
-from src.models.videoprism_text_encoder import (
+from src.app.search.base import SearchBackend, SearchResult
+from src.common.core import Document, MediaType, TemporalInfo, SegmentInfo
+from src.common.models.videoprism_text_encoder import (
     VideoPrismTextEncoder, create_text_encoder
 )
-from src.processing.strategy import Strategy
-from src.core.strategy_registry import get_registry
-from src.utils.retry import retry_with_backoff, RetryConfig
-from src.utils.output_manager import OutputManager
-from src.agents.query_encoders import QueryEncoderFactory, QueryEncoder
+from src.app.ingestion.strategy import Strategy
+from src.common.core.registry import get_registry
+from src.common.utils.retry import retry_with_backoff, RetryConfig
+from src.common.utils.output_manager import OutputManager
+from src.app.agents.query_encoders import QueryEncoderFactory, QueryEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -828,7 +828,7 @@ class VespaSearchBackend(SearchBackend):
             fields = data.get("fields", {})
             
             # Create Document from fields
-            from src.core.documents import Document, MediaType, TemporalInfo
+            from src.common.core.documents import Document, MediaType, TemporalInfo
             
             doc = Document(
                 doc_id=document_id,

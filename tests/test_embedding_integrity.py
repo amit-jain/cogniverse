@@ -18,7 +18,7 @@ import time
 
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
-from src.utils.output_manager import get_output_manager
+from src.common.utils.output_manager import get_output_manager
 
 
 class EmbeddingIntegrityTester:

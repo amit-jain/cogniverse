@@ -26,7 +26,7 @@ def setup_logging(
     Returns:
         Configured logger instance
     """
-    from src.utils.output_manager import get_output_manager
+    from src.common.utils.output_manager import get_output_manager
     
     # Get or create logger
     logger = logging.getLogger(name)

@@ -11,7 +11,7 @@ import time
 import numpy as np
 
 from .embedding_generator import BaseEmbeddingGenerator, EmbeddingResult, ProcessingConfig
-from src.models import get_or_load_model
+from src.common.models import get_or_load_model
 from .document_builders import DocumentBuilderFactory, DocumentMetadata
 from .embedding_processors import EmbeddingProcessor
 from .vespa_pyvespa_client import VespaPyClient

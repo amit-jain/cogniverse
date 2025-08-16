@@ -41,7 +41,7 @@ class PhoenixExperimentPlugin:
             query = example.input.get("query", "") if hasattr(example, 'input') else example.get("query", "")
             
             # Import search service
-            from src.search.search_service import SearchService
+            from src.app.search.service import SearchService
             from src.common.config import get_config
             
             main_config = get_config()

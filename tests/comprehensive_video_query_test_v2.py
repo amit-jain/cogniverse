@@ -16,8 +16,8 @@ from datetime import datetime
 
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
-from src.tools.config import get_config
-from src.search.search_service import SearchService
+from src.common.config import get_config
+from src.app.search.service import SearchService
 
 
 # Better visual queries that don't rely on text descriptions

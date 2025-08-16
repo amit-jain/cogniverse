@@ -16,7 +16,7 @@ from google.adk.sessions import InMemorySessionService
 logger = logging.getLogger(__name__)
 
 # Import our custom utilities
-from src.tools.config import get_config, setup_environment
+from src.common.config import get_config, setup_environment
 from src.tools.a2a_utils import A2AClient, format_search_results
 from src.tools.video_player_tool import VideoPlayerTool
 
@@ -122,7 +122,7 @@ class QueryAnalysisTool(BaseTool):
                 self.gliner_model = None
         elif self.inference_mode == "llm":
             # Use PromptManager for LLM-based routing
-            from src.utils.prompt_manager import PromptManager
+            from src.common.utils.prompt_manager import PromptManager
             self.prompt_manager = PromptManager()
     
     async def execute(self, query: str) -> Dict[str, Any]:

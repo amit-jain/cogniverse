@@ -7,8 +7,8 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from a2a import A2AMessage, DataPart
 
-from src.tools.config import get_config
-from src.search.search_service import SearchService
+from src.common.config import get_config
+from src.app.search.service import SearchService
 
 logger = logging.getLogger(__name__)
 

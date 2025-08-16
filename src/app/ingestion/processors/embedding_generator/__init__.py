@@ -7,9 +7,9 @@ from .embedding_generator import (
 )
 
 # Import from core
-from src.core import Document, MediaType, TemporalInfo, SegmentInfo
+from src.common.core import Document, MediaType, TemporalInfo, SegmentInfo
 
-from src.models import (
+from src.common.models import (
     get_or_load_model,
     ModelLoaderFactory,
     ModelLoader,

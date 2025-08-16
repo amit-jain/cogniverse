@@ -18,8 +18,8 @@ from datetime import datetime
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.search.search_service import SearchService
-from src.tools.config import get_config
+from src.app.search.service import SearchService
+from src.common.config import get_config
 from tests.test_utils import TestResultsFormatter
 
 
@@ -231,7 +231,7 @@ def test_float_float_search(output_format="table", save_results=False):
     print(f"Embeddings dtype: {embeddings_np.dtype}")
     
     # Use the search client directly
-    from src.processing.vespa.vespa_search_client import VespaVideoSearchClient
+    from src.backends.vespa.vespa_search_client import VespaVideoSearchClient
     
     # Initialize search client
     search_client = VespaVideoSearchClient(vespa_url=vespa_url, vespa_port=vespa_port)
@@ -340,7 +340,7 @@ def test_hybrid_float_bm25(output_format="table", save_results=False):
     print(f"Embeddings dtype: {embeddings_np.dtype}")
     
     # Use the search client directly to ensure proper formatting
-    from src.processing.vespa.vespa_search_client import VespaVideoSearchClient
+    from src.backends.vespa.vespa_search_client import VespaVideoSearchClient
     
     # Initialize search client
     search_client = VespaVideoSearchClient(vespa_url=vespa_url, vespa_port=vespa_port)

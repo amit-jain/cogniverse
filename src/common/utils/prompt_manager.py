@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 import yaml
-from src.tools.config import get_config
+from src.common.config import get_config
 
 
 class PromptManager:

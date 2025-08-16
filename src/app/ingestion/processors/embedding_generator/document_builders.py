@@ -12,7 +12,7 @@ import sys
 
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent.parent.parent))
-from src.processing.strategy import StrategyConfig
+from src.app.ingestion.strategy import StrategyConfig
 
 
 @dataclass

@@ -19,7 +19,7 @@ from pathlib import Path
 import requests
 import numpy as np
 import subprocess
-from src.utils.retry import retry_with_backoff, RetryConfig
+from src.common.utils.retry import retry_with_backoff, RetryConfig
 
 
 class ModelLoader(ABC):

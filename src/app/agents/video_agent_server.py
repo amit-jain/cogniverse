@@ -13,9 +13,9 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from colpali_engine.models import ColIdefics3, ColIdefics3Processor
 from vespa.application import Vespa
-from src.processing.vespa.vespa_search_client import VespaVideoSearchClient
-from src.tools.config import get_config
-from src.agents.query_encoders import QueryEncoderFactory
+from src.backends.vespa.vespa_search_client import VespaVideoSearchClient
+from src.common.config import get_config
+from src.app.agents.query_encoders import QueryEncoderFactory
 
 # Configure logging
 logging.basicConfig(
@@ -234,7 +234,7 @@ if __name__ == "__main__":
     if args.profile:
         os.environ["VIDEO_PROFILE"] = args.profile
         # Reload config with the new profile
-        from src.tools.config import get_config
+        from src.common.config import get_config
         app_config = get_config()
         app_config.reload()
         print(f"--- Using video processing profile: {args.profile} ---")

@@ -23,9 +23,9 @@ import struct
 from binascii import hexlify
 from .backend_client import BackendClient
 from .vespa_embedding_processor import VespaEmbeddingProcessor
-from src.core import Document, MediaType
-from src.processing.vespa.strategy_aware_processor import StrategyAwareProcessor
-from src.utils.retry import retry_with_backoff, RetryConfig
+from src.common.core import Document, MediaType
+from src.backends.vespa.strategy_aware_processor import StrategyAwareProcessor
+from src.common.utils.retry import retry_with_backoff, RetryConfig
 
 
 class VespaPyClient(BackendClient):

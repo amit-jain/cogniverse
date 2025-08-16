@@ -18,8 +18,8 @@ import pyarrow.parquet as pq
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.search.search import SearchBackend
-from src.search.vespa_search_backend import VespaSearchBackend
+from src.app.search.base import SearchBackend
+from src.backends.vespa.search_backend import VespaSearchBackend
 
 # Configure logging
 logging.basicConfig(

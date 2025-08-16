@@ -29,7 +29,7 @@ def get_experiment_configurations(args=None):
     Get experiment configurations from strategy registry.
     This ensures we use the same profiles/strategies as defined in the system.
     """
-    from src.core.strategy_registry import get_registry
+    from src.common.core.registry import get_registry
     
     registry = get_registry()
     configurations = []

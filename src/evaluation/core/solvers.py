@@ -51,7 +51,7 @@ def create_retrieval_solver(
         logger.info(f"Running retrieval for query: {query_str[:50]}...")
         
         # Import here to avoid circular dependencies
-        from src.search.search_service import SearchService
+        from src.app.search.service import SearchService
         from src.common.config import get_config
         
         main_config = get_config()
@@ -182,7 +182,7 @@ def create_batch_solver(
         backend = None
         if config.get("use_backend_for_ground_truth", False):
             try:
-                from src.search.search_service import SearchService
+                from src.app.search.service import SearchService
                 from src.common.config import get_config
                 main_config = get_config()
                 search_service = SearchService(main_config)

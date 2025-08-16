@@ -3,7 +3,7 @@
 Setup and display output directory structure
 """
 
-from src.utils.output_manager import get_output_manager
+from src.common.utils.output_manager import get_output_manager
 import json
 
 
@@ -50,7 +50,7 @@ def main():
     
     print("\n✅ Output directory structure setup complete!")
     print("\nTo use in your code:")
-    print("  from src.utils.output_manager import get_output_manager")
+    print("  from src.common.utils.output_manager import get_output_manager")
     print("  om = get_output_manager()")
     print("  log_file = om.get_logs_dir() / 'my_log.log'")
 

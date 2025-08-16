@@ -31,10 +31,10 @@ from .embedding_generator import (
     EmbeddingGenerator, ProcessingConfig,
     EmbeddingResult as ProcessingResult
 )
-from src.core.documents import (
+from src.common.core.documents import (
     Document, MediaType, TemporalInfo, SegmentInfo, EmbeddingResult
 )
-from src.models import get_or_load_model
+from src.common.models import get_or_load_model
 
 
 class EmbeddingGeneratorImpl(EmbeddingGenerator):

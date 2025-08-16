@@ -284,8 +284,8 @@ class PhoenixExperimentRunner:
             raise ValueError(f"Dataset '{dataset_name}' not found")
         
         # Run experiment for each configuration
-        from src.search.search_service import SearchService
-        from src.tools.config import get_config
+        from src.app.search.service import SearchService
+        from src.common.config import get_config
         
         config = get_config()
         results = []

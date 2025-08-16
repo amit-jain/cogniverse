@@ -11,7 +11,7 @@ from typing import Dict, Any, Optional
 from pathlib import Path
 import logging
 
-from src.processing.strategy import StrategyConfig, Strategy
+from src.app.ingestion.strategy import StrategyConfig, Strategy
 
 logger = logging.getLogger(__name__)
 
