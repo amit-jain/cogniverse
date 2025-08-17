@@ -12,6 +12,7 @@ from pathlib import Path
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from src.common.models import get_or_load_model
+from src.common.config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -149,50 +150,50 @@ class VideoPrismQueryEncoder(QueryEncoder):
 class QueryEncoderFactory:
     """Factory to create appropriate query encoder based on profile"""
     
+    _encoder_cache = {}  # Cache for config-based encoder mappings
+    
     @staticmethod
     def create_encoder(profile: str, model_name: Optional[str] = None) -> QueryEncoder:
-        """Create query encoder for the given profile"""
+        """Create query encoder for the given profile
         
-        if profile == "video_colpali_smol500_mv_frame":
-            return ColPaliQueryEncoder(model_name or "vidore/colsmol-500m")
+        Dynamically determines the encoder based on config.json video_processing_profiles
+        """
+        config = get_config()
+        video_profiles = config.get("video_processing_profiles", {})
         
-        elif profile == "video_colqwen_omni_mv_chunk_30s":
-            return ColQwenQueryEncoder(model_name or "vidore/colqwen-omni-v0.1")
+        # Check if profile exists in config
+        if profile not in video_profiles:
+            raise ValueError(f"Unknown profile: {profile}. Available profiles: {list(video_profiles.keys())}")
         
-        elif profile == "video_videoprism_base_mv_chunk":
-            # VideoPrism Base
-            return VideoPrismQueryEncoder(model_name or "videoprism_public_v1_base_hf")
+        profile_config = video_profiles[profile]
         
-        elif profile == "video_videoprism_large_mv_chunk":
-            # VideoPrism Large
-            return VideoPrismQueryEncoder(model_name or "videoprism_public_v1_large_hf")
-        
-        elif profile == "video_videoprism_lvt_base_sv_global":
-            # VideoPrism Global (LVT) Base
-            return VideoPrismQueryEncoder(model_name or "videoprism_lvt_public_v1_base")
-        
-        elif profile == "video_videoprism_lvt_large_sv_global":
-            # VideoPrism Global (LVT) Large
-            return VideoPrismQueryEncoder(model_name or "videoprism_lvt_public_v1_large")
-        
-        elif "sv_chunk" in profile and "videoprism" in profile:
-            # Single vector VideoPrism profiles (e.g., single__video_videoprism_large_6s)
+        # Use provided model_name or get from config
+        if not model_name:
+            model_name = profile_config.get("embedding_model")
             if not model_name:
                 raise ValueError(f"No embedding_model specified for profile: {profile}")
-            return VideoPrismQueryEncoder(model_name)
         
+        # Determine encoder type based on model name
+        if "colpali" in model_name.lower() or "colsmol" in model_name.lower():
+            return ColPaliQueryEncoder(model_name)
+        elif "colqwen" in model_name.lower():
+            return ColQwenQueryEncoder(model_name)
+        elif "videoprism" in model_name.lower():
+            return VideoPrismQueryEncoder(model_name)
         else:
-            raise ValueError(f"Unknown profile: {profile}")
+            # Fallback: try to infer from profile name
+            if "colpali" in profile.lower():
+                return ColPaliQueryEncoder(model_name)
+            elif "colqwen" in profile.lower():
+                return ColQwenQueryEncoder(model_name)
+            elif "videoprism" in profile.lower():
+                return VideoPrismQueryEncoder(model_name)
+            else:
+                raise ValueError(f"Cannot determine encoder type for model: {model_name} in profile: {profile}")
     
     @staticmethod
     def get_supported_profiles() -> list:
-        """Return list of supported profiles"""
-        return [
-            "video_colpali_smol500_mv_frame",
-            "video_colqwen_omni_mv_chunk_30s",
-            "video_videoprism_base_mv_chunk",
-            "video_videoprism_large_mv_chunk",
-            "video_videoprism_lvt_base_sv_global",
-            "video_videoprism_lvt_large_sv_global",
-            "video_videoprism_lvt_large_sv_chunk_6s"  # TwelveLabs-style chunking
-        ]
+        """Return list of supported profiles from config.json"""
+        config = get_config()
+        video_profiles = config.get("video_processing_profiles", {})
+        return list(video_profiles.keys())
