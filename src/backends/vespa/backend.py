@@ -6,7 +6,7 @@ and SearchBackend interfaces, with self-registration to the backend registry.
 """
 
 import logging
-from typing import List, Dict, Any, Optional, Iterator
+from typing import List, Dict, Any, Optional, Iterator, Tuple
 from pathlib import Path
 import numpy as np
 
@@ -36,6 +36,7 @@ class VespaBackend(Backend):
         self.config: Dict[str, Any] = {}
         self._initialized_as_search = False
         self._initialized_as_ingestion = False
+        self.schema_name: Optional[str] = None
     
     def _initialize_backend(self, config: Dict[str, Any]) -> None:
         """
@@ -51,6 +52,7 @@ class VespaBackend(Backend):
                 - query_encoder: Query encoder (optional)
         """
         self.config = config
+        self.schema_name = config.get("schema_name")
         
         # Initialize for ingestion if schema_name is provided without search-specific params
         if "schema_name" in config and not ("strategy" in config or "profile" in config):
@@ -132,6 +134,35 @@ class VespaBackend(Backend):
             "failed_documents": failed_docs,
             "total_documents": len(documents)
         }
+    
+    def feed(self, document: Document) -> Tuple[int, List[str]]:
+        """
+        Feed a single document to Vespa.
+        
+        This method provides compatibility with the embedding generator
+        which expects a feed method.
+        
+        Args:
+            document: Document object to feed
+            
+        Returns:
+            Tuple of (success_count, failed_document_ids)
+        """
+        # Convert single document to list and call ingest_documents
+        result = self.ingest_documents([document])
+        
+        # Extract failed document IDs from the result
+        failed_ids = []
+        if result.get("failed_documents"):
+            for failed_doc in result["failed_documents"]:
+                # Extract the document ID from the failed document info
+                if isinstance(failed_doc, str):
+                    failed_ids.append(failed_doc)
+                elif isinstance(failed_doc, dict) and "id" in failed_doc:
+                    failed_ids.append(failed_doc["id"])
+        
+        success_count = result.get("success_count", 0)
+        return success_count, failed_ids
     
     def ingest_stream(self, documents: Iterator[Document], batch_size: int = 100) -> Iterator[Dict[str, Any]]:
         """
@@ -333,6 +364,17 @@ class VespaBackend(Backend):
             "status": "healthy" if self.schema_manager else "not initialized",
             "search_enabled": self._initialized_as_search
         }
+    
+    def close(self) -> None:
+        """
+        Close connections to Vespa.
+        """
+        if self._vespa_ingestion_client:
+            self._vespa_ingestion_client.close()
+        if self._vespa_search_backend:
+            # Search backend may not have a close method
+            pass
+        logger.info("Closed Vespa backend connections")
     
     def health_check(self) -> bool:
         """

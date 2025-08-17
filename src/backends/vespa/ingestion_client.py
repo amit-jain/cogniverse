@@ -263,6 +263,11 @@ class VespaPyClient:
             for doc in documents:
                 doc_id = doc["put"].split("::")[-1]
                 fields = self._convert_embeddings_for_vespa(doc["fields"].copy())
+                
+                # Debug: log field names being sent
+                if self.logger.isEnabledFor(logging.DEBUG):
+                    self.logger.debug(f"Document {doc_id} fields: {list(fields.keys())}")
+                
                 feed_data.append({
                     "id": doc_id,
                     "fields": fields

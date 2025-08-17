@@ -155,7 +155,7 @@ class RankingStrategyExtractor:
             embedding_field = "embedding"
         elif "qtb" in inputs:
             query_tensor_name = "qtb"
-            embedding_field = "embedding_binary" if "binary" in profile_name else "embeddings_binary"
+            embedding_field = "embedding_binary"
         
         # Generate description
         description = self._generate_description(profile_name, strategy_type, needs_float_embeddings, needs_binary_embeddings)

@@ -169,15 +169,40 @@ class StrategyConfig:
         elif profile_name.startswith(("colpali__", "colvision__")):
             return "frame_based", "frames"
         
-        # 4. Check process_type in profile (legacy)
+        # 4. Check if it's a multi-vector model based on patches
+        num_patches = profile.get("schema_config", {}).get("num_patches", 1)
+        
+        # Check if frame-based extraction is explicitly enabled
+        extract_keyframes = profile.get("pipeline_config", {}).get("extract_keyframes", False)
+        
+        if extract_keyframes and num_patches > 1:
+            # Frame-based multi-vector model like ColPali
+            return "frame_based", "frames"
+        elif num_patches > 1:
+            # Multi-vector model with chunks (ColQwen, VideoPrism MV)
+            # Check if it has segment_duration to determine chunk size
+            if profile.get("model_specific", {}).get("segment_duration"):
+                return "direct_video", "chunks"
+            else:
+                return "direct_video", "windows"
+        elif profile.get("model_specific", {}).get("chunk_duration"):
+            # Single-vector with chunks (VideoPrism LVT)
+            return "single_vector", "chunks"
+        
+        # 5. Check process_type in profile (legacy)
         process_type = profile.get("process_type", "")
         if process_type.startswith("direct_video"):
             return "direct_video", "windows"
         elif process_type == "frame_based":
             return "frame_based", "frames"
         elif process_type == "video_chunks":
-            # Video chunks is a variant of single_vector with chunk segmentation
-            return "single_vector", "chunks"
+            # Check if this is actually a multi-vector model (has patches > 1)
+            if profile.get("schema_config", {}).get("num_patches", 1) > 1:
+                # Multi-vector model like ColQwen - use direct_video
+                return "direct_video", "chunks"
+            else:
+                # Single vector variant with chunk segmentation
+                return "single_vector", "chunks"
         
         # Default
         return "frame_based", "frames"
@@ -206,12 +231,16 @@ class StrategyConfig:
     
     def _resolve_storage_mode(self, profile: Dict[str, Any], processing_type: str) -> str:
         """Resolve storage mode"""
+        # For multi-vector models (patches > 1), always use multi_doc
+        if profile.get("schema_config", {}).get("num_patches", 1) > 1:
+            return "multi_doc"
+        
         # Explicit in model config
         if "store_as_single_doc" in profile.get("model_specific", {}):
             return "single_doc" if profile["model_specific"]["store_as_single_doc"] else "multi_doc"
         
-        # Check process_type for video_chunks (always single doc)
-        if profile.get("process_type") == "video_chunks":
+        # Check process_type for video_chunks (single doc for single-vector only)
+        if profile.get("process_type") == "video_chunks" and processing_type == "single_vector":
             return "single_doc"
         
         # Based on processing type

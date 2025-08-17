@@ -32,6 +32,7 @@ from src.app.ingestion.processors import (
     VLMDescriptor
 )
 from src.app.ingestion.processors.keyframe_extractor_fps import FPSKeyframeExtractor
+from src.app.ingestion.processors.video_chunk_extractor import VideoChunkExtractor
 from src.app.ingestion.processors.embedding_generator import create_embedding_generator
 from src.common.cache import CacheManager, CacheConfig
 from src.common.cache.pipeline_cache import PipelineArtifactCache
@@ -41,6 +42,7 @@ from src.app.ingestion.strategy import StrategyConfig
 class PipelineStep(Enum):
     """Pipeline steps that can be enabled/disabled"""
     EXTRACT_KEYFRAMES = "extract_keyframes"
+    EXTRACT_CHUNKS = "extract_chunks"
     TRANSCRIBE_AUDIO = "transcribe_audio" 
     GENERATE_DESCRIPTIONS = "generate_descriptions"
     GENERATE_EMBEDDINGS = "generate_embeddings"
@@ -118,6 +120,7 @@ class VideoIngestionPipeline:
         
         directories = [
             self.profile_output_dir / "keyframes",
+            self.profile_output_dir / "chunks",  # Add chunks directory
             self.profile_output_dir / "metadata", 
             self.profile_output_dir / "descriptions",
             self.profile_output_dir / "transcripts",
@@ -140,8 +143,8 @@ class VideoIngestionPipeline:
         from src.common.utils.output_manager import get_output_manager
         output_manager = get_output_manager()
         timestamp = int(time.time())
-        active_profile = self.app_config.get("active_video_profile", "default")
-        log_file = output_manager.get_logs_dir() / f"video_processing_{active_profile}_{timestamp}.log"
+        # Use self.active_profile which is correctly set in __init__
+        log_file = output_manager.get_logs_dir() / f"video_processing_{self.active_profile}_{timestamp}.log"
         
         # File handler with detailed formatting
         file_handler = logging.FileHandler(log_file)
@@ -210,8 +213,23 @@ class VideoIngestionPipeline:
         else:
             self.strategy = None
         
+        # Initialize video chunk extractor for direct_video with chunks (multi-vector models)
+        if self.strategy and self.strategy.processing_type == "direct_video" and self.strategy.segmentation in ["chunks", "windows"]:
+            # This is for multi-vector models like ColQwen, VideoPrism that process video chunks
+            # Get chunk duration from model config - use segment_duration or chunk_duration
+            chunk_duration = self.strategy.model_config.get("segment_duration") or \
+                           self.strategy.model_config.get("chunk_duration", 30.0)
+            self.video_chunk_extractor = VideoChunkExtractor(
+                chunk_duration=chunk_duration,
+                chunk_overlap=0.0,
+                cache_chunks=True
+            )
+            self.logger.info(f"Using VideoChunkExtractor for {self.strategy.processing_type}/{self.strategy.segmentation} processing with {chunk_duration}s chunks")
+            # Don't need keyframe extractor for chunk processing
+            self.keyframe_extractor = None
+            self.single_vector_processor = None
         # Initialize processors based on strategy
-        if self.strategy and self.strategy.processing_type == "single_vector":
+        elif self.strategy and self.strategy.processing_type == "single_vector":
             # Initialize SingleVectorVideoProcessor
             from src.app.ingestion.processors.single_vector_processor import SingleVectorVideoProcessor
             
@@ -231,8 +249,10 @@ class VideoIngestionPipeline:
             )
             # For single vector processing, we handle frames differently
             self.keyframe_extractor = None
+            self.video_chunk_extractor = None
         else:
             self.single_vector_processor = None
+            self.video_chunk_extractor = None
             # Initialize keyframe extractor only if needed
             if self.config.extract_keyframes:
                 # Check if FPS-based extraction is configured
@@ -394,6 +414,25 @@ class VideoIngestionPipeline:
         
         return result
     
+    def extract_chunks(self, video_path: Path) -> Dict[str, Any]:
+        """Extract video chunks using VideoChunkExtractor"""
+        # Check cache first
+        cached_result = None
+        if self.cache:
+            cached_result = self.video_chunk_extractor.load_cached_chunks(
+                video_path, self.profile_output_dir
+            )
+        
+        if cached_result:
+            self.logger.info(f"Using cached chunks for {video_path.name}")
+            return cached_result
+        
+        # Extract chunks
+        result = self.video_chunk_extractor.extract_chunks(video_path, self.profile_output_dir)
+        self.logger.info(f"Extracted {len(result.get('chunks', []))} chunks for {video_path.name}")
+        
+        return result
+    
     def transcribe_audio(self, video_path: Path) -> Dict[str, Any]:
         """Extract and transcribe audio from video using AudioTranscriber"""
         # Check cache first if enabled
@@ -480,8 +519,20 @@ class VideoIngestionPipeline:
             video_data["storage_mode"] = self.strategy.storage_mode
             video_data["schema_name"] = self.strategy.schema_name
         
+        # Check if we have chunks from VideoChunkExtractor
+        if "chunks" in results.get("results", {}):
+            # Add chunks data for direct_video/chunks processing
+            chunks_data = results["results"]["chunks"]
+            video_data["chunks"] = chunks_data["chunks"]
+            video_data["chunk_duration"] = chunks_data.get("chunk_duration", 30.0)
+            self.logger.info(f"Using video chunks data with {len(video_data['chunks'])} chunks")
+            
+            # Add transcript if available
+            if "transcript" in results.get("results", {}):
+                video_data["transcript"] = results["results"]["transcript"]
+        
         # Check if we have single vector processing results
-        if "single_vector_processing" in results.get("results", {}):
+        elif "single_vector_processing" in results.get("results", {}):
             # Add single vector processing data
             processing_data = results["results"]["single_vector_processing"]
             # Use raw segments if available (for embedding generation), otherwise use serialized
@@ -604,8 +655,39 @@ class VideoIngestionPipeline:
         }
         
         try:
+            # Check if we're using video chunk extraction for direct_video/chunks
+            if hasattr(self, 'video_chunk_extractor') and self.video_chunk_extractor:
+                # Process video with chunk extraction for multi-vector models like ColQwen
+                step_start = time.time()
+                self.logger.info("Using VideoChunkExtractor for direct_video/chunks processing")
+                
+                # Step 1: Extract chunks
+                self.logger.info("Step 1: Extracting video chunks")
+                chunks_data = self.extract_chunks(video_path)
+                results["results"]["chunks"] = chunks_data
+                step_time = time.time() - step_start
+                
+                if "error" in chunks_data:
+                    self.logger.error(f"Chunk extraction failed: {chunks_data['error']}")
+                    raise Exception(f"Chunk extraction failed: {chunks_data['error']}")
+                else:
+                    chunk_count = len(chunks_data.get("chunks", []))
+                    self.logger.info(f"Step 1 completed in {step_time:.2f}s - extracted {chunk_count} chunks")
+                
+                # Step 2: Transcribe audio if enabled
+                transcript_data = None
+                if self.config.transcribe_audio:
+                    step_start = time.time()
+                    self.logger.info("Step 2: Starting audio transcription")
+                    transcript_data = self.transcribe_audio(video_path)
+                    results["results"]["transcript"] = transcript_data
+                    step_time = time.time() - step_start
+                    self.logger.info(f"Step 2 completed in {step_time:.2f}s")
+                
+                # Note: Descriptions are typically not generated for chunk-based processing
+                
             # Check if we're using single vector processing
-            if self.single_vector_processor:
+            elif self.single_vector_processor:
                 # Process video with single vector processor
                 step_start = time.time()
                 self.logger.info("Using SingleVectorVideoProcessor for video processing")
