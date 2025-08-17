@@ -1,5 +1,5 @@
 """
-Setup configuration for Cogniverse Core module.
+Setup configuration for Cogniverse Vespa Backend.
 """
 
 from setuptools import setup, find_packages
@@ -12,25 +12,26 @@ if readme_path.exists():
     long_description = readme_path.read_text()
 
 setup(
-    name="cogniverse-core",
+    name="cogniverse-vespa-backend",
     version="0.1.0",
     author="Cogniverse Team",
-    description="Core interfaces and utilities for Cogniverse",
+    description="Vespa backend implementation for Cogniverse",
     long_description=long_description,
     long_description_content_type="text/markdown",
     packages=find_packages(),
     python_requires=">=3.9",
     install_requires=[
+        "cogniverse-core>=0.1.0",
+        "pyvespa>=0.33.0",
+        "httpx>=0.24.0",
+        "tenacity>=8.0.0",
         "numpy>=1.20.0",
         "torch>=1.10.0",
-        "pydantic>=2.0.0",
-        "tenacity>=8.0.0",
-        "pyyaml>=6.0",
-        "click>=8.0.0",
     ],
     extras_require={
         "dev": [
             "pytest>=7.0.0",
+            "pytest-asyncio>=0.21.0",
             "pytest-cov>=4.0.0",
             "pytest-mock>=3.10.0",
             "black>=23.0.0",
@@ -38,11 +39,17 @@ setup(
             "mypy>=1.0.0",
         ],
     },
+    entry_points={
+        "cogniverse.backends": [
+            "vespa=backend:VespaBackend",
+        ],
+    },
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",
         "Topic :: Software Development :: Libraries",
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
+        "Topic :: Database",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",

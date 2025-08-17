@@ -1,5 +1,5 @@
 """
-Setup configuration for Cogniverse Core module.
+Setup configuration for Cogniverse App module.
 """
 
 from setuptools import setup, find_packages
@@ -12,25 +12,31 @@ if readme_path.exists():
     long_description = readme_path.read_text()
 
 setup(
-    name="cogniverse-core",
+    name="cogniverse-app",
     version="0.1.0",
     author="Cogniverse Team",
-    description="Core interfaces and utilities for Cogniverse",
+    description="Main application module for Cogniverse",
     long_description=long_description,
     long_description_content_type="text/markdown",
     packages=find_packages(),
     python_requires=">=3.9",
     install_requires=[
-        "numpy>=1.20.0",
-        "torch>=1.10.0",
-        "pydantic>=2.0.0",
-        "tenacity>=8.0.0",
+        "cogniverse-core>=0.1.0",
+        "fastapi>=0.100.0",
+        "uvicorn>=0.23.0",
+        "pillow>=9.0.0",
+        "opentelemetry-api>=1.20.0",
+        "opentelemetry-sdk>=1.20.0",
+        "opentelemetry-exporter-otlp>=1.20.0",
+        "phoenix-otel>=2.0.0",
+        "httpx>=0.24.0",
         "pyyaml>=6.0",
         "click>=8.0.0",
     ],
     extras_require={
         "dev": [
             "pytest>=7.0.0",
+            "pytest-asyncio>=0.21.0",
             "pytest-cov>=4.0.0",
             "pytest-mock>=3.10.0",
             "black>=23.0.0",
@@ -38,11 +44,17 @@ setup(
             "mypy>=1.0.0",
         ],
     },
+    entry_points={
+        "console_scripts": [
+            "cogniverse-app=app.cli:main",
+        ],
+    },
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",
         "Topic :: Software Development :: Libraries",
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
+        "Framework :: FastAPI",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
