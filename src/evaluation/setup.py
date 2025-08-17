@@ -22,7 +22,8 @@ setup(
     package_dir={"cogniverse_evaluation": "."},
     python_requires=">=3.9",
     install_requires=[
-        "cogniverse-common>=0.1.0",  # Common config and utilities
+        "cogniverse-core>=0.1.0",  # Core interfaces and utilities
+        "cogniverse-app>=0.1.0",  # App layer for search service
         "inspect-ai>=0.3.0",
         "ragas>=0.1.0",
         "arize-phoenix>=2.0.0",
