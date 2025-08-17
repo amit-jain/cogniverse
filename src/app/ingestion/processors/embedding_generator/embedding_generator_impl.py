@@ -69,9 +69,6 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         super().__init__(config, logger)
         
         self.profile_config = profile_config or {}
-        # Get process type from embedding_type in profile config
-        embedding_type = self.profile_config.get("embedding_type", "frame_based")
-        self.process_type = embedding_type
         self.model_name = self.profile_config.get("embedding_model", "vidore/colsmol-500m")
         self.backend_client = backend_client
         
@@ -83,11 +80,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
             if not self.schema_name:
                 raise ValueError("schema_name is required when backend_client is not provided")
         
-        # Determine media type based on process type
-        if self.process_type.startswith("direct_video"):
-            self.media_type = MediaType.VIDEO_SEGMENT
-        else:
-            self.media_type = MediaType.VIDEO_FRAME
+        # Media type will be determined based on processing_type at runtime
         
         # Model and processor
         self.model = None
@@ -109,7 +102,13 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         Returns:
             bool: True if model should be loaded, False otherwise
         """
-        return self.process_type.startswith("direct_video") or self.process_type in ["single_vector", "video_chunks"]
+        # Get embedding_type from profile config for initial model loading decision
+        embedding_type = self.profile_config.get("embedding_type", "")
+        
+        # Load model for direct video, single vector, or video_chunks processing
+        return (embedding_type.startswith("direct_video") or 
+                embedding_type == "single_vector" or 
+                embedding_type == "video_chunks")
     
     def _load_model(self):
         """Load the appropriate model"""
@@ -139,19 +138,26 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         start_time = time.time()
         video_id = video_data.get('video_id', 'unknown')
         
+        # Get processing type from video_data (passed by pipeline)
+        processing_type = video_data.get('processing_type')
+        if not processing_type:
+            # Fallback to embedding_type from profile config
+            processing_type = self.profile_config.get('embedding_type', 'frame_based')
+        
         self.logger.info(f"Starting embedding generation for video: {video_id}")
-        self.logger.info(f"Process type: {self.process_type}")
+        self.logger.info(f"Processing type: {processing_type}")
         self.logger.info(f"Model: {self.model_name}")
         
         try:
-            if self.process_type.startswith("direct_video"):
+            # Handle video_chunks as direct_video since it has pre-extracted chunks
+            if processing_type == "video_chunks" or processing_type == "direct_video":
                 result = self._generate_direct_video_embeddings(video_data, output_dir)
-            elif self.process_type == "frame_based":
+            elif processing_type == "frame_based":
                 result = self._generate_frame_based_embeddings(video_data, output_dir)
-            elif self.process_type in ["single_vector", "video_chunks"]:
+            elif processing_type == "single_vector":
                 result = self._generate_single_vector_embeddings(video_data, output_dir)
             else:
-                raise ValueError(f"Unknown process type: {self.process_type}")
+                raise ValueError(f"Unknown processing type: {processing_type}")
             
             processing_time = time.time() - start_time
             result.processing_time = processing_time
@@ -253,6 +259,106 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
             ),
             metadata=metadata
         )
+    
+    def _generate_raw_embeddings_from_file(
+        self,
+        video_path: Path
+    ) -> Optional[np.ndarray]:
+        """
+        Generate raw embeddings for a pre-extracted video chunk file.
+        
+        This is used when processing pre-extracted chunks from VideoChunkExtractor.
+        The entire file is processed as a single segment.
+        
+        Args:
+            video_path: Path to the pre-extracted chunk video file
+            
+        Returns:
+            Optional[np.ndarray]: Raw numpy embeddings or None if generation fails
+        """
+        try:
+            if self.videoprism_loader:
+                self.logger.info(f"Using VideoPrism loader for chunk file: {video_path.name}")
+                # Get video duration for the chunk
+                import subprocess
+                cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', 
+                       '-of', 'default=noprint_wrappers=1:nokey=1', str(video_path)]
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                duration = float(result.stdout.strip()) if result.returncode == 0 else 30.0
+                
+                # Process entire chunk
+                result = self.videoprism_loader.process_video_segment(
+                    video_path, 0, duration
+                )
+                
+                if result:
+                    if "embeddings" in result:
+                        return result["embeddings"]
+                    elif "embeddings_np" in result:
+                        return result["embeddings_np"]
+                return None
+                
+            elif "colqwen" in self.model_name.lower():
+                # ColQwen processes video chunks
+                import cv2
+                cap = cv2.VideoCapture(str(video_path))
+                frames = []
+                
+                # Extract frames at regular intervals
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                target_fps = self.profile_config.get('fps', 1.0)
+                
+                # Calculate frame indices to extract
+                interval = int(fps / target_fps) if fps > target_fps else 1
+                frame_indices = list(range(0, total_frames, interval))
+                
+                for idx in frame_indices[:10]:  # Limit to 10 frames per chunk
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                    ret, frame = cap.read()
+                    if ret:
+                        # Convert BGR to RGB
+                        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        pil_image = Image.fromarray(frame_rgb)
+                        frames.append(pil_image)
+                
+                cap.release()
+                
+                if not frames:
+                    self.logger.error("No frames extracted from chunk")
+                    return None
+                
+                # Process frames with ColQwen
+                batch_inputs = self.processor.process_images(frames).to(self.model.device)
+                
+                # Generate embeddings
+                with torch.no_grad():
+                    embeddings = self.model(**batch_inputs)
+                
+                # Convert to numpy and average across frames
+                embeddings_np = embeddings.cpu().numpy()
+                
+                # Average embeddings across frames to get segment embedding
+                # Shape: (num_frames, patches, dim) -> (patches, dim)
+                return embeddings_np.mean(axis=0)
+                
+            else:
+                # Other models
+                if hasattr(self.processor, 'process_videos'):
+                    batch_inputs = self.processor.process_videos([str(video_path)]).to(self.model.device)
+                else:
+                    batch_inputs = self.processor.process_images([str(video_path)]).to(self.model.device)
+                
+                # Generate embeddings
+                with torch.no_grad():
+                    embeddings = self.model(**batch_inputs)
+                
+                # Convert to numpy
+                return embeddings.cpu().numpy()
+                
+        except Exception as e:
+            self.logger.error(f"Failed to generate embeddings from file: {e}")
+            return None
     
     def _generate_raw_embeddings(
         self,
@@ -462,7 +568,83 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         video_path = Path(video_data['video_path'])
         video_id = video_data['video_id']
         
-        # Calculate segments
+        # Check if we have pre-extracted chunks (from VideoChunkExtractor)
+        if 'chunks' in video_data:
+            # Use pre-extracted chunks
+            chunks = video_data['chunks']
+            self.logger.info(f"Using {len(chunks)} pre-extracted chunks")
+            
+            documents_processed = 0
+            documents_fed = 0
+            errors = []
+            
+            for chunk in chunks:
+                chunk_path = Path(chunk['chunk_path'])
+                chunk_id = chunk['chunk_id']
+                start_time = chunk['start_time']
+                end_time = chunk['end_time']
+                
+                try:
+                    # Process the pre-extracted chunk directly
+                    self.logger.info(f"Processing pre-extracted chunk {chunk_id}: {start_time}s-{end_time}s")
+                    
+                    # Generate embeddings for the chunk video file
+                    raw_embeddings = self._generate_raw_embeddings_from_file(chunk_path)
+                    
+                    if raw_embeddings is not None:
+                        # Create Document
+                        doc_id = f"{video_id}_{chunk_id}_{int(start_time)}"
+                        
+                        metadata = {
+                            'video_id': video_id,
+                            "video_title": video_id,
+                            "video_path": str(video_path)
+                        }
+                        
+                        embedding_result = EmbeddingResult(
+                            embeddings=raw_embeddings,
+                            metadata=metadata
+                        )
+                        
+                        doc = Document(
+                            doc_id=doc_id,
+                            media_type=MediaType.VIDEO_SEGMENT,
+                            embeddings=embedding_result,
+                            temporal_info=TemporalInfo(
+                                start_time=start_time,
+                                end_time=end_time
+                            ),
+                            segment_info=SegmentInfo(
+                                segment_idx=chunk_id,
+                                total_segments=len(chunks)
+                            ),
+                            metadata=metadata
+                        )
+                        
+                        documents_processed += 1
+                        
+                        # Feed immediately
+                        if self._feed_single_document(doc):
+                            documents_fed += 1
+                            self.logger.info(f"Fed chunk {chunk_id} successfully")
+                        else:
+                            errors.append(f"Failed to feed chunk {chunk_id}")
+                            
+                except Exception as e:
+                    self.logger.error(f"Error processing chunk {chunk_id}: {e}")
+                    errors.append(f"Chunk {chunk_id}: {str(e)}")
+            
+            return ProcessingResult(
+                video_id=video_id,
+                total_documents=len(chunks),
+                documents_processed=documents_processed,
+                documents_fed=documents_fed,
+                processing_time=0.0,  # Will be set by caller
+                errors=errors,
+                metadata={'num_chunks': len(chunks)}
+            )
+        
+        # Original segment calculation logic if no pre-extracted chunks
         duration = video_data.get('duration', 0)
         segment_duration = self.profile_config.get('segment_duration', 30.0)
         num_segments = max(1, int(duration / segment_duration) + (1 if duration % segment_duration > 0 else 0))
