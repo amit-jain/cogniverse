@@ -156,7 +156,7 @@ class QueryEncoderFactory:
         if profile == "video_colpali_smol500_mv_frame":
             return ColPaliQueryEncoder(model_name or "vidore/colsmol-500m")
         
-        elif profile == "video_colqwen_omni_sv_chunk":
+        elif profile == "video_colqwen_omni_mv_chunk_30s":
             return ColQwenQueryEncoder(model_name or "vidore/colqwen-omni-v0.1")
         
         elif profile == "video_videoprism_base_mv_chunk":
@@ -189,7 +189,7 @@ class QueryEncoderFactory:
         """Return list of supported profiles"""
         return [
             "video_colpali_smol500_mv_frame",
-            "video_colqwen_omni_sv_chunk",
+            "video_colqwen_omni_mv_chunk_30s",
             "video_videoprism_base_mv_chunk",
             "video_videoprism_large_mv_chunk",
             "video_videoprism_lvt_base_sv_global",
