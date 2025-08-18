@@ -27,12 +27,13 @@ class IngestionBackend(ABC):
         pass
     
     @abstractmethod
-    def ingest_documents(self, documents: List[Document]) -> Dict[str, Any]:
+    def ingest_documents(self, documents: List[Document], schema_name: str) -> Dict[str, Any]:
         """
         Ingest a batch of documents into the backend.
         
         Args:
             documents: List of Document objects to ingest
+            schema_name: Schema to ingest documents into
             
         Returns:
             Ingestion results including success count, errors, etc.

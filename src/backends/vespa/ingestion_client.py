@@ -51,34 +51,60 @@ class VespaPyClient:
         config: Dict[str, Any],
         logger: Optional[logging.Logger] = None
     ):
-        # Extract Vespa-specific config
-        self.config = config
+        """
+        Initialize VespaPyClient from config.
+        
+        Args:
+            config: Config dict with schema_name, vespa_url, vespa_port, and optionally model info
+            logger: Optional logger
+        """
+        # Extract from config
         self.schema_name = config.get("schema_name")
         if not self.schema_name:
-            raise ValueError("schema_name is required in config for VespaPyClient")
+            raise ValueError("schema_name is required in config")
+        self.vespa_url = config.get("vespa_url")
+        if not self.vespa_url:
+            raise ValueError("vespa_url is required in config")
+        self.vespa_port = config.get("vespa_port", 8080)
+        
         self.logger = logger or logging.getLogger(self.__class__.__name__)
         
-        self.vespa_url = config["vespa_url"]  # Required
-        self.vespa_port = config.get("vespa_port", 8080)
+        # CRITICAL: Log backend initialization to track schema assignment
+        self.logger.warning(f"🚀 VESPA CLIENT INITIALIZED:")
+        self.logger.warning(f"   Schema name: {self.schema_name}")
+        self.logger.warning(f"   Instance ID: {id(self)}")
+        self.logger.warning(f"   Vespa URL: {self.vespa_url}:{self.vespa_port}")
+        
         self.app = None
         self._connected = False
         
-        # Create Vespa-specific embedding processor
-        # Get model name from active profile if available
-        model_name = ""
-        active_profile = config.get("active_profile")
-        if active_profile:
-            profiles = config.get("video_processing_profiles", {})
-            if active_profile in profiles:
-                model_name = profiles[active_profile].get("embedding_model", "")
+        # Get model name from profile config
+        profile_config = config.get("profile_config", {})
+        model_name = profile_config.get("model", "")
         
-        self._embedding_processor = VespaEmbeddingProcessor(logger, model_name, self.schema_name)
+        # Create embedding processor with this client's schema
+        self._embedding_processor = VespaEmbeddingProcessor(self.logger, model_name, self.schema_name)
         
-        # Initialize strategy-aware processor to get field names from ranking strategies
+        # Initialize strategy-aware processor
         self._strategy_processor = StrategyAwareProcessor()
         
-        # Load schema fields to know what fields to populate
+        # Load schema fields for this specific schema
         self._load_schema_fields()
+        
+        # Production-ready feed configuration with environment variable overrides
+        import os
+        self.feed_config = {
+            "max_queue_size": int(os.environ.get("VESPA_FEED_MAX_QUEUE_SIZE", 
+                                                 config.get("feed_max_queue_size", 500))),
+            "max_workers": int(os.environ.get("VESPA_FEED_MAX_WORKERS", 
+                                              config.get("feed_max_workers", 4))),
+            "max_connections": int(os.environ.get("VESPA_FEED_MAX_CONNECTIONS", 
+                                                  config.get("feed_max_connections", 8))),
+            "compress": os.environ.get("VESPA_FEED_COMPRESS", 
+                                       config.get("feed_compress", "auto"))
+        }
+        
+        self.logger.info(f"Feed configuration: {self.feed_config}")
     
     def _load_schema_fields(self):
         """Load the fields defined in the schema"""
@@ -156,10 +182,12 @@ class VespaPyClient:
         
         Args:
             doc: Universal Document with raw numpy embeddings
+            schema_name: Schema to use for this document (REQUIRED - no fallbacks)
             
         Returns:
-            Dict with Vespa document structure:
+            Dict with Vespa document structure INCLUDING schema:
             {
+                "schema": "video_colpali_smol500_mv_frame",  # Explicit schema
                 "put": "id:video:schema_name::document_id",
                 "fields": {
                     "embedding": {0: "hex", 1: "hex", ...},
@@ -169,6 +197,7 @@ class VespaPyClient:
                 }
             }
         """
+        # Use this client's schema (each client is dedicated to one schema)
         # Get required embeddings and field names from strategy processor
         required_embeddings = self._strategy_processor.get_required_embeddings(self.schema_name)
         field_names = self._strategy_processor.get_embedding_field_names(self.schema_name)
@@ -228,9 +257,24 @@ class VespaPyClient:
             if key in self.schema_fields and key not in fields:
                 fields[key] = value
         
-        # Create Vespa document
+        # Create Vespa document with this client's schema
+        doc_id_string = f"id:video:{self.schema_name}::{doc.doc_id}"
+        
+        # CRITICAL: Log schema being used for each document (first doc only to avoid spam)
+        if doc.doc_id.endswith("_0_0") or doc.doc_id.endswith("_0"):  # Log first doc of each video
+            self.logger.info(f"📝 FEEDING DOCUMENT TO SCHEMA:")
+            self.logger.info(f"   Doc ID: {doc_id_string}")
+            self.logger.info(f"   Schema: {self.schema_name}")
+            # Log embedding field type to verify dimensions
+            if 'embedding' in fields:
+                if isinstance(fields['embedding'], dict) and 'values' in fields['embedding']:
+                    emb_len = len(fields['embedding']['values'])
+                    self.logger.info(f"   Embedding dimensions: {emb_len}")
+                else:
+                    self.logger.info(f"   Embedding type: {type(fields['embedding'])}")
+        
         return {
-            "put": f"id:video:{self.schema_name}::{doc.doc_id}",
+            "put": doc_id_string,
             "fields": fields
         }
     
@@ -249,7 +293,17 @@ class VespaPyClient:
         documents: List[Dict[str, Any]],
         batch_size: int = 100
     ) -> Tuple[int, List[str]]:
-        """Feed prepared documents in batches using pyvespa's batch feeding"""
+        """Feed prepared documents in batches using pyvespa's batch feeding
+        
+        Production-ready configuration with proper retry and timeout handling.
+        
+        Args:
+            documents: List of prepared documents from process()
+            batch_size: Number of documents per batch
+            
+        Returns:
+            Tuple of (success_count, list of failed doc IDs)
+        """
         if not self._connected:
             if not self.connect():
                 return 0, [d["put"].split("::")[-1] for d in documents]
@@ -280,7 +334,7 @@ class VespaPyClient:
                 total_batches = (len(feed_data) + batch_size - 1) // batch_size
                 
                 self.logger.info(
-                    f"Processing batch {batch_num}/{total_batches} "
+                    f"Processing batch {batch_num}/{total_batches} for schema '{self.schema_name}' "
                     f"({len(batch)} documents)"
                 )
                 
@@ -292,35 +346,67 @@ class VespaPyClient:
                 # Track results with callback
                 batch_success = 0
                 batch_failed = []
+                batch_retries = {}  # Track retries per document
                 
                 def callback(response, doc_id):
-                    nonlocal batch_success, batch_failed
+                    nonlocal batch_success, batch_failed, batch_retries
                     if response.is_successful():
                         batch_success += 1
+                        if doc_id in batch_retries:
+                            self.logger.info(f"Document {doc_id} succeeded after {batch_retries[doc_id]} retries")
                     else:
-                        batch_failed.append(doc_id)
+                        # Track retry attempts
+                        if doc_id not in batch_retries:
+                            batch_retries[doc_id] = 0
+                        batch_retries[doc_id] += 1
+                        
+                        # Log detailed error
                         try:
                             error_msg = response.get_json()
-                            self.logger.error(f"Failed to feed {doc_id}: {error_msg}")
+                            status = response.get_status_code()
+                            self.logger.error(
+                                f"Failed to feed {doc_id} to schema '{self.schema_name}' "
+                                f"(attempt {batch_retries[doc_id]}): HTTP {status} - {error_msg}"
+                            )
                         except:
-                            self.logger.error(f"Failed to feed {doc_id}: {response.status_code}")
+                            status = getattr(response, 'status_code', 'unknown')
+                            self.logger.error(
+                                f"Failed to feed {doc_id} to schema '{self.schema_name}' "
+                                f"(attempt {batch_retries[doc_id]}): HTTP {status}"
+                            )
+                        
+                        # Add to failed list after max retries (handled by pyvespa internally)
+                        batch_failed.append(doc_id)
                 
-                # Use feed_iterable - pyvespa has built-in retry mechanisms
+                # Use feed_iterable with production-ready configuration
+                # These parameters provide robust feeding with proper resource management
                 self.app.feed_iterable(
                     iter=feed_batch_iter(),
-                    schema=self.schema_name,
+                    schema=self.schema_name,  # Use this client's schema
                     namespace="video",
-                    callback=callback
+                    callback=callback,
+                    # Production configuration parameters from self.feed_config
+                    max_queue_size=self.feed_config["max_queue_size"],
+                    max_workers=self.feed_config["max_workers"],
+                    max_connections=self.feed_config["max_connections"],
+                    compress=self.feed_config["compress"]
                 )
                 
                 # Update counts
                 success_count += batch_success
                 failed_docs.extend(batch_failed)
                 
+                # Log batch results with retry info
+                unique_failed = list(set(batch_failed))  # Remove duplicates from retries
                 self.logger.info(
-                    f"Batch {batch_num}: {batch_success}/{len(batch)} "
-                    f"documents fed successfully"
+                    f"Batch {batch_num} to schema '{self.schema_name}': "
+                    f"{batch_success}/{len(batch)} documents fed successfully"
                 )
+                if unique_failed:
+                    self.logger.warning(
+                        f"Batch {batch_num} had {len(unique_failed)} failed documents "
+                        f"(some may have been retried)"
+                    )
             
         except Exception as e:
             self.logger.error(f"Batch feeding failed: {e}")

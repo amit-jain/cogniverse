@@ -21,15 +21,30 @@ class BackendFactory:
     ) -> IngestionBackend:
         """Create a backend of the specified type using the backend registry
         
+        Args:
+            backend_type: Type of backend (e.g., "vespa")
+            config: Full application config
+            logger: Optional logger
+            
         Returns:
             IngestionBackend: The backend that implements the ingestion interface
         """
         
         backend_type = backend_type.lower()
         
-        # Get backend from registry
+        # CRITICAL: Log backend creation to track when new instances are made
+        if not logger:
+            logger = logging.getLogger(__name__)
+        
+        logger.warning(f"🏭 BACKEND FACTORY: Getting {backend_type} backend")
+        logger.warning(f"   Config keys: {list(config.keys())[:10]}")
+        
+        # Get backend from registry (singleton)
         registry = get_backend_registry()
         
         backend = registry.get_ingestion_backend(backend_type, config)
+        
+        logger.warning(f"   Got backend instance: {id(backend)}")
+        
         return backend
     

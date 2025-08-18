@@ -255,15 +255,32 @@ class SingleVectorVideoProcessor:
         """Extract frames from video segment with caching"""
         # Check cache first if available
         if self.cache:
-            cached_result = asyncio.run(self.cache.get_segment_frames(
-                str(video_path),
-                segment_id,
-                start_time,
-                end_time,
-                self.sampling_fps,
-                self.max_frames_per_segment,
-                load_images=True
-            ))
+            # Handle asyncio.run() in nested event loop
+            try:
+                loop = asyncio.get_running_loop()
+                # We're already in an event loop, use ThreadPoolExecutor
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    cached_result = executor.submit(asyncio.run, self.cache.get_segment_frames(
+                        str(video_path),
+                        segment_id,
+                        start_time,
+                        end_time,
+                        self.sampling_fps,
+                        self.max_frames_per_segment,
+                        load_images=True
+                    )).result()
+            except RuntimeError:
+                # No event loop, safe to use asyncio.run
+                cached_result = asyncio.run(self.cache.get_segment_frames(
+                    str(video_path),
+                    segment_id,
+                    start_time,
+                    end_time,
+                    self.sampling_fps,
+                    self.max_frames_per_segment,
+                    load_images=True
+                ))
             
             if cached_result:
                 if isinstance(cached_result, tuple):
@@ -311,16 +328,34 @@ class SingleVectorVideoProcessor:
         
         # Cache the frames if cache is available
         if self.cache and frames:
-            asyncio.run(self.cache.set_segment_frames(
-                str(video_path),
-                segment_id,
-                start_time,
-                end_time,
-                frames,
-                timestamps,
-                self.sampling_fps,
-                self.max_frames_per_segment
-            ))
+            # Handle asyncio.run() in nested event loop
+            try:
+                loop = asyncio.get_running_loop()
+                # We're already in an event loop, use ThreadPoolExecutor
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    executor.submit(asyncio.run, self.cache.set_segment_frames(
+                        str(video_path),
+                        segment_id,
+                        start_time,
+                        end_time,
+                        frames,
+                        timestamps,
+                        self.sampling_fps,
+                        self.max_frames_per_segment
+                    )).result()
+            except RuntimeError:
+                # No event loop, safe to use asyncio.run
+                asyncio.run(self.cache.set_segment_frames(
+                    str(video_path),
+                    segment_id,
+                    start_time,
+                    end_time,
+                    frames,
+                    timestamps,
+                    self.sampling_fps,
+                    self.max_frames_per_segment
+                ))
             self.logger.info(f"Cached frames for segment {segment_id}")
         
         return frames, timestamps

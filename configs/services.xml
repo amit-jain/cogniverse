@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services version="1.0">
+    <container id="videosearch_container" version="1.0">
+        <!-- Configure JVM heap to 4GB for better performance -->
+        <jvm>
+            <options>-Xms4g -Xmx4g</options>
+        </jvm>
+        <search></search>
+        <document-api></document-api>
+        <document-processing></document-processing>
+    </container>
+    <content id="videosearch_content" version="1.0">
+        <redundancy>1</redundancy>
+        <documents>
+            <document type="videosearch" mode="index"></document>
+            <document type="video_colqwen_omni_mv_chunk_30s" mode="index"></document>
+            <document type="video_videoprism_lvt_base_sv_chunk_6s" mode="index"></document>
+            <document type="video_videoprism_large_mv_chunk_30s" mode="index"></document>
+            <document type="video_videoprism_base_mv_chunk_30s" mode="index"></document>
+            <document type="video_videoprism_lvt_large_sv_chunk_6s" mode="index"></document>
+            <document type="video_colpali_smol500_mv_frame" mode="index"></document>
+        </documents>
+        <nodes>
+            <node distribution-key="0" hostalias="node1"></node>
+        </nodes>
+    </content>
+</services>

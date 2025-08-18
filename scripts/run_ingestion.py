@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Unified Video Ingestion Pipeline Entry Point
-
-Uses the VideoIngestionPipeline class as the single entry point for all video processing.
+Async Video Ingestion Pipeline - Faster concurrent processing
 """
 
 import argparse
+import asyncio
+import time
 from pathlib import Path
 
 # Add project root to path
@@ -14,12 +14,14 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from src.app.ingestion.pipeline import VideoIngestionPipeline, PipelineConfig
 
-def main():
-    parser = argparse.ArgumentParser(description="Unified Video Processing Pipeline")
+async def main_async():
+    parser = argparse.ArgumentParser(description="Async Video Processing Pipeline with Performance Optimizations")
     parser.add_argument("--video_dir", type=Path, help="Directory containing videos")
     parser.add_argument("--output_dir", type=Path, help="Output directory for processed data")
     parser.add_argument("--backend", choices=["byaldi", "vespa"], help="Search backend")
     parser.add_argument("--profile", nargs="+", help="Video processing profiles (space-separated, e.g., colqwen_chunks direct_video_frame)")
+    parser.add_argument("--max-concurrent", type=int, default=3, help="Maximum concurrent videos to process (default: 3)")
+    parser.add_argument("--enable-async-vespa", action="store_true", help="Enable async Vespa feeding (Phase 3 optimization)")
     
     # Pipeline step toggles
     parser.add_argument("--skip-keyframes", action="store_true", help="Skip keyframe extraction")
@@ -97,21 +99,69 @@ def main():
         print(f"  - Descriptions: {config.generate_descriptions}")
         print(f"  - Embeddings: {config.generate_embeddings}")
         
-        # Run pipeline
-        pipeline = VideoIngestionPipeline(config)
-        results = pipeline.process_directory()
+        # Enable async Vespa if requested
+        if args.enable_async_vespa and config.search_backend == "vespa":
+            # Get the actual schema name from the profile config
+            profile_config = config.config.get('video_processing_profiles', {}).get(profile, {})
+            schema_name = profile_config.get('schema_name', profile)
+            
+            # CRITICAL: Log the schema mapping to ensure correct assignment
+            print(f"\n🔍 SCHEMA MAPPING CHECK:")
+            print(f"   Profile name: {profile}")
+            print(f"   Expected schema: {schema_name}")
+            print(f"   Profile config keys: {list(profile_config.keys())[:5]}...")
+            
+            config.backend_config = {
+                'vespa_url': 'http://localhost',
+                'vespa_port': 8080,
+                'schema_name': schema_name,
+                'use_async_ingestion': True
+            }
+            print(f"⚡ Async Vespa feeding enabled for schema: {schema_name}")
+            print(f"   Backend config: {config.backend_config}")
         
-        # Store results
-        all_results[profile] = results
+        # Set schema_name in config for the pipeline
+        config.schema_name = profile
+        
+        # Initialize pipeline with config, app_config, and schema_name
+        # The VideoIngestionPipeline now includes all async optimizations
+        pipeline = VideoIngestionPipeline(config, app_config, profile)
+        
+        # Get video files
+        video_files = list(config.video_dir.glob('*.mp4'))
+        if not video_files:
+            print(f"❌ No MP4 files found in {config.video_dir}")
+            continue
+        
+        print(f"\n📹 Found {len(video_files)} videos to process")
+        
+        # Process videos concurrently with timing
+        start_time = time.time()
+        results = await pipeline.process_videos_concurrent(video_files, max_concurrent=args.max_concurrent)
+        total_time = time.time() - start_time
+        
+        # Calculate statistics
+        successful = sum(1 for r in results if r.get('status') == 'completed')
+        total_docs_fed = sum(
+            r.get('results', {}).get('embeddings', {}).get('documents_fed', 0)
+            for r in results if r.get('status') == 'completed'
+        )
         
         # Display results for this profile
-        if results.get("error"):
-            print(f"\n❌ Pipeline failed for {profile}: {results['error']}")
-        else:
-            print(f"\n✅ Profile {profile} completed!")
-            print(f"   Processed: {len(results['processed_videos'])} videos")
-            print(f"   Failed: {len(results['failed_videos'])} videos")
-            print(f"   Time: {results['total_processing_time']/60:.1f} minutes")
+        print(f"\n✅ Profile {profile} completed!")
+        print(f"   Time: {total_time:.2f} seconds")
+        print(f"   Videos: {successful}/{len(video_files)} successful")
+        print(f"   Documents fed: {total_docs_fed}")
+        print(f"   Throughput: {total_docs_fed/total_time:.1f} docs/sec" if total_time > 0 else "")
+        print(f"   Avg per video: {total_time/len(video_files):.2f} seconds")
+        
+        # Store results
+        all_results[profile] = {
+            'results': results,
+            'time': total_time,
+            'docs_fed': total_docs_fed,
+            'successful': successful
+        }
     
     # Final summary
     print(f"\n{'='*60}")
@@ -119,11 +169,14 @@ def main():
     print(f"{'='*60}")
     print(f"Processed {len(profiles_to_process)} profiles")
     
-    for profile, results in all_results.items():
-        status = "✅" if not results.get("error") else "❌"
-        print(f"{status} {profile}: {len(results.get('processed_videos', []))} videos processed")
+    for profile, result_data in all_results.items():
+        print(f"✅ {profile}: {result_data['successful']} videos, {result_data['docs_fed']} docs in {result_data['time']:.1f}s")
     
     return 0
+
+def main():
+    """Wrapper to run async main"""
+    return asyncio.run(main_async())
 
 if __name__ == "__main__":
     exit(main())
