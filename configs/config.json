@@ -190,7 +190,7 @@
         "generate_descriptions": false,
         "generate_embeddings": true
       },
-      "embedding_type": "direct_video_single",
+      "embedding_type": "single_vector",
       "model_specific": {
         "chunk_duration": 6.0,
         "chunk_overlap": 1.0,
@@ -220,7 +220,7 @@
         "generate_descriptions": false,
         "generate_embeddings": true
       },
-      "embedding_type": "direct_video_single_large",
+      "embedding_type": "single_vector",
       "model_specific": {
         "chunk_duration": 6.0,
         "chunk_overlap": 1.0,

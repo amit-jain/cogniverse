@@ -145,8 +145,12 @@ class VideoIngestionPipeline:
         self.app_config = app_config or get_config()
         self.schema_name = schema_name
         
-        # Initialize logging
-        self.logger = logging.getLogger(self.__class__.__name__)
+        # Initialize logging with unique logger per profile
+        logger_name = f"{self.__class__.__name__}_{schema_name}" if schema_name else self.__class__.__name__
+        self.logger = logging.getLogger(logger_name)
+        # Clear any existing handlers to avoid duplicate logging
+        self.logger.handlers.clear()
+        self.logger.setLevel(logging.INFO)
         self._setup_logging()
         
         # Log configuration
@@ -190,11 +194,21 @@ class VideoIngestionPipeline:
         log_filename = f"video_processing_{self.schema_name}_{timestamp}.log" if self.schema_name else f"video_processing_{timestamp}.log"
         self.log_file = output_manager.get_logs_dir() / log_filename
         
-        # Add file handler
-        handler = logging.FileHandler(self.log_file)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        self.logger.addHandler(handler)
+        # File handler with detailed formatting
+        file_handler = logging.FileHandler(self.log_file)
+        file_handler.setLevel(logging.INFO)
+        detailed_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(detailed_formatter)
+        
+        # Console handler with simpler formatting
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        simple_formatter = logging.Formatter('%(levelname)s - %(message)s')
+        console_handler.setFormatter(simple_formatter)
+        
+        # Add both handlers
+        self.logger.addHandler(file_handler)
+        self.logger.addHandler(console_handler)
         self.logger.setLevel(logging.INFO)
     
     def _init_cache(self):
@@ -243,45 +257,65 @@ class VideoIngestionPipeline:
             return
         
         # Get strategy from profile config
-        profiles = self.app_config.get("video_processing_profiles", {})
-        profile_config = profiles.get(self.schema_name, {})
+        from src.app.ingestion.strategy import Strategy, StrategyConfig
         
-        if "strategy" in profile_config:
-            from src.app.ingestion.strategy import Strategy
-            strategy_config = profile_config["strategy"]
-            self.strategy = Strategy(
-                processing_type=strategy_config.get("processing", "frame_based/frames"),
-                storage_mode=strategy_config.get("storage", "multi_doc"),
-                schema_name=self.schema_name
-            )
-            self.logger.info(f"Resolved strategy: {self.strategy}")
-            
-            # Check if we need single vector processor
-            if self.strategy.storage_mode == "single_doc":
-                from src.app.ingestion.processors.single_vector_processor import SingleVectorVideoProcessor
-                segmentation_type = self.strategy.processing_type.split("/")[1] if "/" in self.strategy.processing_type else "frames"
-                self.single_vector_processor = SingleVectorVideoProcessor(
-                    segmentation=segmentation_type,
-                    storage_mode=self.strategy.storage_mode,
-                    schema_name=self.schema_name,
-                    embedding_generator=None  # Will be set later
-                )
-                self.logger.info(f"Using SingleVectorVideoProcessor - segmentation: {segmentation_type}, storage: {self.strategy.storage_mode}")
+        # Use StrategyConfig to properly resolve strategy (as in old implementation)
+        if self.schema_name:
+            try:
+                strategy_config = StrategyConfig()
+                self.strategy = strategy_config.get_strategy(self.schema_name)
+                self.logger.info(f"Resolved strategy: {self.strategy}")
+            except Exception as e:
+                self.logger.error(f"Failed to resolve strategy: {e}")
+                self.strategy = None
+        else:
+            self.strategy = None
+        
     
     def _init_processors(self):
         """Initialize video processing components based on configuration"""
         # Keyframe extractor
         self.keyframe_extractor = None
         self.video_chunk_extractor = None
+        self.single_vector_processor = None
         
-        if self.strategy and "chunks" in self.strategy.processing_type:
-            # Use VideoChunkExtractor for chunk-based processing
-            chunk_duration = self._get_chunk_duration()
+        # Initialize video chunk extractor for direct_video with chunks (multi-vector models)
+        if self.strategy and self.strategy.processing_type == "direct_video" and self.strategy.segmentation in ["chunks", "windows"]:
+            # This is for multi-vector models like ColQwen, VideoPrism that process video chunks
+            # Get chunk duration from model config - use segment_duration or chunk_duration
+            chunk_duration = self.strategy.model_config.get("segment_duration") or \
+                           self.strategy.model_config.get("chunk_duration", 30.0)
             self.video_chunk_extractor = VideoChunkExtractor(
                 chunk_duration=chunk_duration,
+                chunk_overlap=0.0,
+                cache_chunks=True
+            )
+            self.logger.info(f"Using VideoChunkExtractor for {self.strategy.processing_type}/{self.strategy.segmentation} processing with {chunk_duration}s chunks")
+            # Don't need keyframe extractor for chunk processing
+            self.keyframe_extractor = None
+            self.single_vector_processor = None
+        # Initialize processors based on strategy
+        elif self.strategy and self.strategy.processing_type == "single_vector":
+            # Initialize SingleVectorVideoProcessor
+            from src.app.ingestion.processors.single_vector_processor import SingleVectorVideoProcessor
+            
+            model_config = self.strategy.model_config
+            self.single_vector_processor = SingleVectorVideoProcessor(
+                strategy=self.strategy.segmentation,
+                segment_duration=model_config.get("chunk_duration", 6.0),
+                segment_overlap=model_config.get("chunk_overlap", 1.0),
+                sampling_fps=model_config.get("sampling_fps", 2.0),
+                max_frames_per_segment=model_config.get("max_frames_per_chunk", 12),
+                store_as_single_doc=(self.strategy.storage_mode == "single_doc"),
                 cache=self.cache
             )
-            self.logger.info(f"Using VideoChunkExtractor for {self.strategy.processing_type} processing with {chunk_duration}s chunks")
+            self.logger.info(
+                f"Using SingleVectorVideoProcessor - segmentation: {self.strategy.segmentation}, "
+                f"storage: {self.strategy.storage_mode}"
+            )
+            # For single vector processing, we handle frames differently
+            self.keyframe_extractor = None
+            self.video_chunk_extractor = None
         elif self.config.extract_keyframes:
             # Get keyframe strategy from profile config
             keyframe_strategy = "similarity"
@@ -508,6 +542,8 @@ class VideoIngestionPipeline:
         except Exception as e:
             self.logger.warning(f"Failed to cache {step}: {e}")
     
+    # DEPRECATED: Sync methods not used by run_ingestion.py
+    # Keeping for backward compatibility only
     def extract_keyframes(self, video_path: Path) -> Dict[str, Any]:
         """
         Extract keyframes with async cache operations using shared event loop
@@ -827,8 +863,18 @@ class VideoIngestionPipeline:
                         results["results"]["transcript"] = cached_data["transcript"]
                         self.logger.info("Using cached transcript")
                     else:
-                        transcript_data = self.transcribe_audio(video_path)
+                        # Directly call the transcriber
+                        transcript_data = self.audio_transcriber.transcribe_audio(video_path, self.profile_output_dir)
                         results["results"]["transcript"] = transcript_data
+                        # Cache the result asynchronously
+                        if self.cache and transcript_data:
+                            await self._save_to_cache_async(
+                                video_path,
+                                "transcript",
+                                transcript_data,
+                                model_size=getattr(self.audio_transcriber, 'model_size', "base"),
+                                language=transcript_data.get("language")
+                            )
             
             # Check if we're using single vector processing
             elif self.single_vector_processor:
@@ -840,8 +886,18 @@ class VideoIngestionPipeline:
                         results["results"]["transcript"] = transcript_data
                         self.logger.info("Using cached transcript")
                     else:
-                        transcript_data = self.transcribe_audio(video_path)
+                        # Directly call the transcriber
+                        transcript_data = self.audio_transcriber.transcribe_audio(video_path, self.profile_output_dir)
                         results["results"]["transcript"] = transcript_data
+                        # Cache the result asynchronously
+                        if self.cache and transcript_data:
+                            await self._save_to_cache_async(
+                                video_path,
+                                "transcript",
+                                transcript_data,
+                                model_size=getattr(self.audio_transcriber, 'model_size', "base"),
+                                language=transcript_data.get("language")
+                            )
                 
                 # Process video
                 processed_data = self.single_vector_processor.process_video(
@@ -871,9 +927,25 @@ class VideoIngestionPipeline:
                         results["results"]["keyframes"] = keyframes_data
                         self.logger.info(f"Using cached keyframes: {len(keyframes_data.get('keyframes', []))} frames")
                     else:
-                        keyframes_data = self.extract_keyframes(video_path)
+                        # Directly call the appropriate extractor
+                        if self.keyframe_extractor:
+                            keyframes_data = self.keyframe_extractor.extract_keyframes(video_path, self.profile_output_dir)
+                        else:
+                            keyframes_data = {}
                         results["results"]["keyframes"] = keyframes_data
                         self.logger.info(f"Extracted {len(keyframes_data.get('keyframes', []))} keyframes")
+                        # Cache the result asynchronously
+                        if self.cache and keyframes_data:
+                            strategy = self.config.keyframe_strategy if hasattr(self.config, 'keyframe_strategy') else "similarity"
+                            await self._save_to_cache_async(
+                                video_path,
+                                "keyframes",
+                                keyframes_data,
+                                strategy=strategy,
+                                threshold=self.config.keyframe_threshold if strategy == "similarity" else None,
+                                fps=self.config.keyframe_fps if strategy == "fps" else None,
+                                max_frames=self.config.max_frames_per_video
+                            )
                 
                 # Transcribe audio
                 if self.config.transcribe_audio:
@@ -882,9 +954,19 @@ class VideoIngestionPipeline:
                         results["results"]["transcript"] = transcript_data
                         self.logger.info(f"Using cached transcript: {len(transcript_data.get('segments', []))} segments")
                     else:
-                        transcript_data = self.transcribe_audio(video_path)
+                        # Directly call the transcriber without cache operations
+                        transcript_data = self.audio_transcriber.transcribe_audio(video_path, self.profile_output_dir)
                         results["results"]["transcript"] = transcript_data
                         self.logger.info(f"Transcribed {len(transcript_data.get('segments', []))} segments")
+                        # Cache the result asynchronously
+                        if self.cache and transcript_data:
+                            await self._save_to_cache_async(
+                                video_path,
+                                "transcript",
+                                transcript_data,
+                                model_size=getattr(self.audio_transcriber, 'model_size', "base"),
+                                language=transcript_data.get("language")
+                            )
                 
                 # Generate descriptions
                 if self.config.generate_descriptions and self.config.extract_keyframes:
@@ -894,9 +976,25 @@ class VideoIngestionPipeline:
                         self.logger.info(f"Using cached descriptions: {len(descriptions_data.get('descriptions', {}))} items")
                     else:
                         keyframes_data = results["results"].get("keyframes", {})
-                        descriptions_data = self.generate_descriptions(keyframes_data, video_path)
+                        # Directly call the descriptor without cache operations
+                        if self.vlm_descriptor:
+                            descriptions_data = self.vlm_descriptor.generate_descriptions(
+                                keyframes_data, 
+                                self.profile_output_dir
+                            )
+                        else:
+                            descriptions_data = {}
                         results["results"]["descriptions"] = descriptions_data
                         self.logger.info(f"Generated {len(descriptions_data.get('descriptions', {}))} descriptions")
+                        # Cache the result asynchronously
+                        if self.cache and video_path and descriptions_data:
+                            await self._save_to_cache_async(
+                                video_path,
+                                "descriptions",
+                                descriptions_data.get("descriptions", {}),
+                                model_name=getattr(self.vlm_descriptor, 'model_name', "Qwen/Qwen2-VL-2B-Instruct"),
+                                batch_size=self.config.vlm_batch_size
+                            )
             
             # Generate embeddings (same as before)
             if self.config.generate_embeddings:
@@ -932,7 +1030,8 @@ class VideoIngestionPipeline:
     
     def process_video(self, video_path: Path) -> Dict[str, Any]:
         """
-        Process a single video using async optimizations
+        DEPRECATED: Sync wrapper for backward compatibility
+        Use process_video_async directly in new code
         """
         # Run the async version using the shared event loop
         return self.loop.run_until_complete(self.process_video_async(video_path))
