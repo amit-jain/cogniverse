@@ -201,15 +201,33 @@ class VideoIngestionPipeline:
         """Initialize pipeline cache if available"""
         self.cache = None
         
-        # Check if cache is enabled
-        if not self.app_config.get("enable_cache", True):
-            self.logger.info("Cache disabled in configuration")
+        # Check if cache is enabled in pipeline_cache config
+        cache_config_dict = self.app_config.get("pipeline_cache", {})
+        
+        if not cache_config_dict.get("enabled", False):
+            self.logger.info("Pipeline cache is disabled")
             return
         
         try:
-            # Initialize with profile-specific namespace
-            cache_namespace = f"pipeline_{self.schema_name}" if self.schema_name else "pipeline_default"
-            self.cache = PipelineArtifactCache(namespace=cache_namespace)
+            # Create cache configuration
+            from src.common.cache import CacheManager, CacheConfig
+            
+            cache_config = CacheConfig(
+                backends=cache_config_dict.get("backends", []),
+                default_ttl=cache_config_dict.get("default_ttl", 0),
+                enable_compression=cache_config_dict.get("enable_compression", True),
+                serialization_format=cache_config_dict.get("serialization_format", "pickle")
+            )
+            
+            # Initialize cache manager
+            self.cache_manager = CacheManager(cache_config)
+            
+            # Initialize pipeline artifact cache with profile
+            self.cache = PipelineArtifactCache(
+                self.cache_manager,
+                ttl=cache_config_dict.get("default_ttl", 0),
+                profile=self.schema_name  # Use schema_name as profile for namespacing
+            )
             self.logger.info(f"Initialized pipeline cache for profile: {self.schema_name}")
         except Exception as e:
             self.logger.warning(f"Failed to initialize cache: {e}")
@@ -300,7 +318,15 @@ class VideoIngestionPipeline:
         # VLM descriptor
         self.vlm_descriptor = None
         if self.config.generate_descriptions:
-            self.vlm_descriptor = VLMDescriptor(batch_size=self.config.vlm_batch_size)
+            vlm_endpoint = self.app_config.get("vlm_endpoint_url")
+            if vlm_endpoint:
+                auto_start_vlm = self.app_config.get("auto_start_vlm_service", True)
+                self.vlm_descriptor = VLMDescriptor(
+                    vlm_endpoint=vlm_endpoint,
+                    batch_size=self.config.vlm_batch_size,
+                    timeout=10800,  # 3 hours
+                    auto_start=auto_start_vlm
+                )
     
     def _get_chunk_duration(self) -> float:
         """Get chunk duration from profile configuration"""
