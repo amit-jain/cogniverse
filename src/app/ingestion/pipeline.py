@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Unified Video Processing Pipeline
+Unified Video Processing Pipeline with Async Optimizations
 
 Consolidates all video processing steps into a single configurable pipeline:
 1. Keyframe extraction
@@ -9,17 +9,23 @@ Consolidates all video processing steps into a single configurable pipeline:
 4. Vector embeddings
 5. Index creation
 
+Features:
+- Single event loop for all async operations
+- Concurrent cache checks
+- Parallel video processing support
+- Configurable concurrency levels
+
 Based on the configurable pipeline design from CLAUDE.md.
 """
 
 import json
 import time
 import logging
+import asyncio
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 from enum import Enum
-import asyncio
 
 # Add project root to path
 import sys
@@ -89,412 +95,547 @@ class PipelineConfig:
             search_backend=config.get("search_backend", "byaldi"),
             output_dir=output_manager.get_processing_dir()
         )
+    
+    @classmethod
+    def from_profile(cls, profile_name: str) -> 'PipelineConfig':
+        """Load pipeline config for a specific profile"""
+        config = get_config()
+        
+        # Get profile-specific config
+        profiles = config.get("video_processing_profiles", {})
+        if profile_name not in profiles:
+            raise ValueError(f"Profile '{profile_name}' not found in config")
+        
+        profile_config = profiles[profile_name]
+        pipeline_config = profile_config.get("pipeline_config", {})
+        
+        # Get output directory from OutputManager
+        from src.common.utils.output_manager import get_output_manager
+        output_manager = get_output_manager()
+        
+        return cls(
+            extract_keyframes=pipeline_config.get("extract_keyframes", True),
+            transcribe_audio=pipeline_config.get("transcribe_audio", True),
+            generate_descriptions=pipeline_config.get("generate_descriptions", True),
+            generate_embeddings=pipeline_config.get("generate_embeddings", True),
+            keyframe_threshold=pipeline_config.get("keyframe_threshold", 0.999),
+            max_frames_per_video=pipeline_config.get("max_frames_per_video", 3000),
+            vlm_batch_size=pipeline_config.get("vlm_batch_size", 500),
+            search_backend=config.get("search_backend", "byaldi"),
+            output_dir=output_manager.get_processing_dir()
+        )
 
 
 class VideoIngestionPipeline:
-    """Unified video processing pipeline - single entry point for all video processing"""
+    """
+    Unified video processing pipeline with async optimizations.
     
-    def __init__(self, config: Optional[PipelineConfig] = None):
+    This class now incorporates async optimizations by default:
+    - Single event loop for all async operations
+    - Concurrent cache checks
+    - Support for parallel video processing
+    
+    The pipeline can run in serial mode (max_concurrent=1) or 
+    parallel mode (max_concurrent>1) as needed.
+    """
+    
+    def __init__(self, config: Optional[PipelineConfig] = None, app_config: Optional[Dict[str, Any]] = None, schema_name: Optional[str] = None):
+        """Initialize the video ingestion pipeline with async support"""
         self.config = config or PipelineConfig.from_config()
-        self.app_config = get_config()
-        # Check environment variable first, then config
-        import os
-        env_profile = os.environ.get("VIDEO_PROFILE")
-        config_profile = self.app_config.get("active_video_profile", "video_colpali_smol500_mv_frame")
-        self.active_profile = env_profile or config_profile
-        self.strategy_config = StrategyConfig()
-        self.setup_directories()
-        self.logger = self._setup_logging()
-        self._initialize_cache()
-        self._initialize_pipeline_steps()
+        self.app_config = app_config or get_config()
+        self.schema_name = schema_name
         
-    def setup_directories(self):
-        """Create necessary directories with profile-specific organization"""
-        # Use the active profile we already set
-        if self.active_profile:
-            # Use profile-specific directory
-            self.profile_output_dir = self.config.output_dir / f"profile_{self.active_profile}"
-        else:
-            # Fallback to default
-            self.profile_output_dir = self.config.output_dir / "default"
+        # Initialize logging
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self._setup_logging()
         
-        directories = [
-            self.profile_output_dir / "keyframes",
-            self.profile_output_dir / "chunks",  # Add chunks directory
-            self.profile_output_dir / "metadata", 
-            self.profile_output_dir / "descriptions",
-            self.profile_output_dir / "transcripts",
-            self.profile_output_dir / "embeddings",
-            Path("logs")  # Add logs directory
-        ]
-        
-        for dir_path in directories:
-            dir_path.mkdir(parents=True, exist_ok=True)
-    
-    def _setup_logging(self) -> logging.Logger:
-        """Setup comprehensive logging for the pipeline"""
-        logger = logging.getLogger("VideoIngestionPipeline")
-        logger.setLevel(logging.INFO)
-        
-        # Clear existing handlers
-        logger.handlers.clear()
-        
-        # Create timestamp for log file with profile name
-        from src.common.utils.output_manager import get_output_manager
-        output_manager = get_output_manager()
-        timestamp = int(time.time())
-        # Use self.active_profile which is correctly set in __init__
-        log_file = output_manager.get_logs_dir() / f"video_processing_{self.active_profile}_{timestamp}.log"
-        
-        # File handler with detailed formatting
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setLevel(logging.INFO)
-        
-        # Console handler with simpler formatting
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
-        
-        # Formatters
-        detailed_formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
-        simple_formatter = logging.Formatter('%(levelname)s - %(message)s')
-        
-        file_handler.setFormatter(detailed_formatter)
-        console_handler.setFormatter(simple_formatter)
-        
-        logger.addHandler(file_handler)
-        logger.addHandler(console_handler)
-        
-        # Log initialization
-        logger.info(f"VideoIngestionPipeline initialized - logging to: {log_file}")
-        logger.info(f"Backend: {self.config.search_backend}")
-        logger.info(f"Output directory: {self.profile_output_dir}")
-        logger.info(f"Pipeline config: {self.config}")
-        
-        return logger
-    
-    def _initialize_cache(self):
-        """Initialize cache from configuration"""
-        cache_config_dict = self.app_config.get("pipeline_cache", {})
-        
-        if not cache_config_dict.get("enabled", False):
-            self.logger.info("Pipeline cache is disabled")
-            self.cache = None
-            return
-        
-        # Create cache configuration
-        cache_config = CacheConfig(
-            backends=cache_config_dict.get("backends", []),
-            default_ttl=cache_config_dict.get("default_ttl", 0),
-            enable_compression=cache_config_dict.get("enable_compression", True),
-            serialization_format=cache_config_dict.get("serialization_format", "pickle")
-        )
+        # Log configuration
+        self.logger.info(f"VideoIngestionPipeline initialized - logging to: {self.log_file}")
+        self.logger.info(f"Backend: {self.config.search_backend}")
+        self.logger.info(f"Output directory: {self.profile_output_dir}")
+        self.logger.info(f"Pipeline config: {self.config}")
         
         # Initialize cache
-        self.cache_manager = CacheManager(cache_config)
-        self.cache = PipelineArtifactCache(
-            self.cache_manager,
-            ttl=cache_config_dict.get("default_ttl", 0),
-            profile=self.active_profile  # Include profile for namespacing
-        )
-        self.logger.info(f"Initialized pipeline cache for profile: {self.active_profile}")
-    
-    def _initialize_pipeline_steps(self):
-        """Initialize all pipeline step handlers"""
-        # Use StrategyConfig to get complete strategy
-        if self.active_profile:
-            try:
-                self.strategy = self.strategy_config.get_strategy(self.active_profile)
-                self.logger.info(f"Resolved strategy: {self.strategy}")
-            except Exception as e:
-                self.logger.error(f"Failed to resolve strategy: {e}")
-                self.strategy = None
-        else:
-            self.strategy = None
+        self._init_cache()
         
-        # Initialize video chunk extractor for direct_video with chunks (multi-vector models)
-        if self.strategy and self.strategy.processing_type == "direct_video" and self.strategy.segmentation in ["chunks", "windows"]:
-            # This is for multi-vector models like ColQwen, VideoPrism that process video chunks
-            # Get chunk duration from model config - use segment_duration or chunk_duration
-            chunk_duration = self.strategy.model_config.get("segment_duration") or \
-                           self.strategy.model_config.get("chunk_duration", 30.0)
+        # Resolve strategy
+        self._resolve_strategy()
+        
+        # Initialize processors
+        self._init_processors()
+        
+        # Initialize backend
+        self._init_backend()
+        
+        # Create a single event loop for the pipeline lifetime (async optimization)
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        self.logger.info("Initialized pipeline with dedicated event loop")
+    
+    def _setup_logging(self):
+        """Setup logging for this pipeline instance"""
+        from src.common.utils.output_manager import get_output_manager
+        output_manager = get_output_manager()
+        
+        # Create profile-specific directory if schema_name is provided
+        if self.schema_name:
+            self.profile_output_dir = output_manager.get_processing_dir() / f"profile_{self.schema_name}"
+        else:
+            self.profile_output_dir = output_manager.get_processing_dir()
+        
+        self.profile_output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create log file with timestamp
+        timestamp = int(time.time())
+        log_filename = f"video_processing_{self.schema_name}_{timestamp}.log" if self.schema_name else f"video_processing_{timestamp}.log"
+        self.log_file = output_manager.get_logs_dir() / log_filename
+        
+        # Add file handler
+        handler = logging.FileHandler(self.log_file)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        self.logger.addHandler(handler)
+        self.logger.setLevel(logging.INFO)
+    
+    def _init_cache(self):
+        """Initialize pipeline cache if available"""
+        self.cache = None
+        
+        # Check if cache is enabled
+        if not self.app_config.get("enable_cache", True):
+            self.logger.info("Cache disabled in configuration")
+            return
+        
+        try:
+            # Initialize with profile-specific namespace
+            cache_namespace = f"pipeline_{self.schema_name}" if self.schema_name else "pipeline_default"
+            self.cache = PipelineArtifactCache(namespace=cache_namespace)
+            self.logger.info(f"Initialized pipeline cache for profile: {self.schema_name}")
+        except Exception as e:
+            self.logger.warning(f"Failed to initialize cache: {e}")
+            self.cache = None
+    
+    def _resolve_strategy(self):
+        """Resolve processing strategy from profile configuration"""
+        self.strategy = None
+        self.single_vector_processor = None
+        
+        if not self.schema_name:
+            self.logger.info("No schema_name provided, using default frame-based processing")
+            return
+        
+        # Get strategy from profile config
+        profiles = self.app_config.get("video_processing_profiles", {})
+        profile_config = profiles.get(self.schema_name, {})
+        
+        if "strategy" in profile_config:
+            from src.app.ingestion.strategy import Strategy
+            strategy_config = profile_config["strategy"]
+            self.strategy = Strategy(
+                processing_type=strategy_config.get("processing", "frame_based/frames"),
+                storage_mode=strategy_config.get("storage", "multi_doc"),
+                schema_name=self.schema_name
+            )
+            self.logger.info(f"Resolved strategy: {self.strategy}")
+            
+            # Check if we need single vector processor
+            if self.strategy.storage_mode == "single_doc":
+                from src.app.ingestion.processors.single_vector_processor import SingleVectorVideoProcessor
+                segmentation_type = self.strategy.processing_type.split("/")[1] if "/" in self.strategy.processing_type else "frames"
+                self.single_vector_processor = SingleVectorVideoProcessor(
+                    segmentation=segmentation_type,
+                    storage_mode=self.strategy.storage_mode,
+                    schema_name=self.schema_name,
+                    embedding_generator=None  # Will be set later
+                )
+                self.logger.info(f"Using SingleVectorVideoProcessor - segmentation: {segmentation_type}, storage: {self.strategy.storage_mode}")
+    
+    def _init_processors(self):
+        """Initialize video processing components based on configuration"""
+        # Keyframe extractor
+        self.keyframe_extractor = None
+        self.video_chunk_extractor = None
+        
+        if self.strategy and "chunks" in self.strategy.processing_type:
+            # Use VideoChunkExtractor for chunk-based processing
+            chunk_duration = self._get_chunk_duration()
             self.video_chunk_extractor = VideoChunkExtractor(
                 chunk_duration=chunk_duration,
-                chunk_overlap=0.0,
-                cache_chunks=True
-            )
-            self.logger.info(f"Using VideoChunkExtractor for {self.strategy.processing_type}/{self.strategy.segmentation} processing with {chunk_duration}s chunks")
-            # Don't need keyframe extractor for chunk processing
-            self.keyframe_extractor = None
-            self.single_vector_processor = None
-        # Initialize processors based on strategy
-        elif self.strategy and self.strategy.processing_type == "single_vector":
-            # Initialize SingleVectorVideoProcessor
-            from src.app.ingestion.processors.single_vector_processor import SingleVectorVideoProcessor
-            
-            model_config = self.strategy.model_config
-            self.single_vector_processor = SingleVectorVideoProcessor(
-                strategy=self.strategy.segmentation,
-                segment_duration=model_config.get("chunk_duration", 6.0),
-                segment_overlap=model_config.get("chunk_overlap", 1.0),
-                sampling_fps=model_config.get("sampling_fps", 2.0),
-                max_frames_per_segment=model_config.get("max_frames_per_chunk", 12),
-                store_as_single_doc=(self.strategy.storage_mode == "single_doc"),
                 cache=self.cache
             )
-            self.logger.info(
-                f"Using SingleVectorVideoProcessor - segmentation: {self.strategy.segmentation}, "
-                f"storage: {self.strategy.storage_mode}"
-            )
-            # For single vector processing, we handle frames differently
-            self.keyframe_extractor = None
-            self.video_chunk_extractor = None
-        else:
-            self.single_vector_processor = None
-            self.video_chunk_extractor = None
-            # Initialize keyframe extractor only if needed
-            if self.config.extract_keyframes:
-                # Check if FPS-based extraction is configured
-                extraction_method = self.app_config.get("pipeline_config.keyframe_extraction_method", "histogram")
-                if extraction_method == "fps":
-                    # FPS-based extraction
-                    keyframe_fps = self.app_config.get("pipeline_config.keyframe_fps", 1.0)
-                    self.keyframe_extractor = FPSKeyframeExtractor(
-                        fps=keyframe_fps,
-                        max_frames=self.config.max_frames_per_video
-                    )
-                    self.logger.info(f"Using FPS-based keyframe extraction at {keyframe_fps} FPS")
-                else:
-                    self.keyframe_extractor = KeyframeExtractor(
-                        threshold=self.config.keyframe_threshold,
-                        max_frames=self.config.max_frames_per_video
-                    )
-                    self.logger.info("Using histogram-based keyframe extraction")
+            self.logger.info(f"Using VideoChunkExtractor for {self.strategy.processing_type} processing with {chunk_duration}s chunks")
+        elif self.config.extract_keyframes:
+            # Get keyframe strategy from profile config
+            keyframe_strategy = "similarity"
+            if self.schema_name:
+                profiles = self.app_config.get("video_processing_profiles", {})
+                profile_config = profiles.get(self.schema_name, {})
+                pipeline_config = profile_config.get("pipeline_config", {})
+                keyframe_strategy = pipeline_config.get("keyframe_strategy", "similarity")
+            
+            if keyframe_strategy == "fps":
+                fps = 1.0
+                if self.schema_name:
+                    profiles = self.app_config.get("video_processing_profiles", {})
+                    profile_config = profiles.get(self.schema_name, {})
+                    pipeline_config = profile_config.get("pipeline_config", {})
+                    fps = pipeline_config.get("keyframe_fps", 1.0)
+                self.keyframe_extractor = FPSKeyframeExtractor(
+                    fps=fps,
+                    max_frames=self.config.max_frames_per_video
+                )
+                self.logger.info(f"Using FPS-based keyframe extraction with {fps} fps")
             else:
-                self.keyframe_extractor = None
+                self.keyframe_extractor = KeyframeExtractor(
+                    threshold=self.config.keyframe_threshold,
+                    max_frames=self.config.max_frames_per_video
+                )
+                self.logger.info("Using histogram-based keyframe extraction")
         
-        # Initialize audio transcriber only if needed
+        # Audio transcriber
+        self.audio_transcriber = None
         if self.config.transcribe_audio:
-            self.audio_transcriber = AudioTranscriber(
-                model_size="base",
-                device=None  # Auto-detect
-            )
-        else:
-            self.audio_transcriber = None
+            self.audio_transcriber = AudioTranscriber()
         
-        # Initialize VLM descriptor only if needed
+        # VLM descriptor
+        self.vlm_descriptor = None
         if self.config.generate_descriptions:
-            vlm_endpoint = self.app_config.get("vlm_endpoint_url")
-            if vlm_endpoint:
-                auto_start_vlm = self.app_config.get("auto_start_vlm_service", True)
-                self.vlm_descriptor = VLMDescriptor(
-                    vlm_endpoint=vlm_endpoint,
-                    batch_size=self.config.vlm_batch_size,
-                    timeout=10800,  # 3 hours
-                    auto_start=auto_start_vlm
-                )
-            else:
-                self.vlm_descriptor = None
-        else:
-            self.vlm_descriptor = None
-            
-        # Initialize embedding generator v2
-        if self.config.generate_embeddings:
-            try:
-                # Get the config data (app_config is already a dict)
-                generator_config = self.app_config.copy()
-                generator_config["embedding_backend"] = self.config.search_backend
-                generator_config["active_profile"] = self.active_profile
-                
-                # Create embedding generator v2
-                self.embedding_generator = create_embedding_generator(
-                    config=generator_config,
-                    logger=self.logger
-                )
-                self.logger.info(f"Initialized embedding generator v2 with backend: {self.config.search_backend}")
-            except Exception as e:
-                self.logger.error(f"Failed to initialize embedding generator v2: {e}")
-                self.embedding_generator = None
-        else:
-            self.embedding_generator = None
-            
-    def get_video_files(self, video_dir: Optional[Path] = None) -> List[Path]:
-        """Get all video files from directory"""
-        video_dir = video_dir or self.config.video_dir
-        extensions = ["*.mp4", "*.mov", "*.avi", "*.mkv", "*.webm"]
+            self.vlm_descriptor = VLMDescriptor(batch_size=self.config.vlm_batch_size)
+    
+    def _get_chunk_duration(self) -> float:
+        """Get chunk duration from profile configuration"""
+        if not self.schema_name:
+            return 30.0  # Default
         
-        video_files = []
-        for ext in extensions:
-            video_files.extend(video_dir.glob(ext))
+        profiles = self.app_config.get("video_processing_profiles", {})
+        profile_config = profiles.get(self.schema_name, {})
+        
+        # Extract from processing type (e.g., "direct_video/chunks:30s")
+        processing_type = profile_config.get("strategy", {}).get("processing", "")
+        if ":" in processing_type:
+            duration_str = processing_type.split(":")[1]
+            if duration_str.endswith("s"):
+                return float(duration_str[:-1])
+        
+        # Fallback to pipeline config
+        pipeline_config = profile_config.get("pipeline_config", {})
+        return pipeline_config.get("chunk_duration", 30.0)
+    
+    def _init_backend(self):
+        """Initialize embedding generation backend"""
+        if not self.config.generate_embeddings:
+            self.embedding_generator = None
+            return
+        
+        # Initialize embedding generator v2 directly
+        try:
+            self.embedding_generator = create_embedding_generator(
+                config=self.app_config,
+                schema_name=self.schema_name,
+                logger=self.logger
+            )
+            self.logger.info(f"Initialized embedding generator v2 with backend: {self.config.search_backend}")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize embedding generator v2: {e}")
+            self.embedding_generator = None
+        
+        # Set embedding generator for single vector processor if needed
+        if self.single_vector_processor:
+            self.single_vector_processor.embedding_generator = self.embedding_generator
+    
+    def _get_video_duration(self, video_path: Path) -> float:
+        """Get video duration in seconds"""
+        try:
+            import cv2
+            cap = cv2.VideoCapture(str(video_path))
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+            duration = frame_count / fps if fps > 0 else 0
+            cap.release()
+            return duration
+        except Exception as e:
+            self.logger.warning(f"Failed to get video duration: {e}")
+            return 0
+    
+    async def _check_cache_async(self, video_path: Path) -> Dict[str, Any]:
+        """
+        Check all cache entries concurrently
+        Returns dict with cached results or None for each step
+        """
+        if not self.cache:
+            return {}
+        
+        # Prepare cache check tasks
+        cache_tasks = []
+        cache_keys = []
+        
+        # Get profile configuration for cache parameters
+        profiles = self.app_config.get("video_processing_profiles", {})
+        profile_config = profiles.get(self.schema_name, {})
+        pipeline_config = profile_config.get("pipeline_config", {})
+        
+        # Keyframes cache check
+        if self.config.extract_keyframes:
+            strategy = pipeline_config.get("keyframe_strategy", "similarity")
+            cache_tasks.append(
+                self.cache.get_keyframes(
+                    str(video_path),
+                    strategy=strategy,
+                    threshold=pipeline_config.get("keyframe_threshold", self.config.keyframe_threshold),
+                    fps=pipeline_config.get("keyframe_fps", 1.0),
+                    max_frames=self.config.max_frames_per_video,
+                    load_images=True
+                )
+            )
+            cache_keys.append("keyframes")
+        
+        # Transcript cache check
+        if self.config.transcribe_audio and self.audio_transcriber:
+            cache_tasks.append(
+                self.cache.get_transcript(
+                    str(video_path),
+                    model_size=getattr(self.audio_transcriber, 'model_size', "base"),
+                    language=None
+                )
+            )
+            cache_keys.append("transcript")
+        
+        # Descriptions cache check
+        if self.config.generate_descriptions and self.vlm_descriptor:
+            cache_tasks.append(
+                self.cache.get_descriptions(
+                    str(video_path),
+                    model_name=getattr(self.vlm_descriptor, 'model_name', "Qwen/Qwen2-VL-2B-Instruct"),
+                    batch_size=self.config.vlm_batch_size
+                )
+            )
+            cache_keys.append("descriptions")
+        
+        # Execute all cache checks concurrently
+        if cache_tasks:
+            self.logger.info(f"Checking {len(cache_tasks)} cache entries concurrently for {video_path.name}")
+            start_time = time.time()
+            cache_results = await asyncio.gather(*cache_tasks, return_exceptions=True)
+            elapsed = time.time() - start_time
+            self.logger.info(f"Cache checks completed in {elapsed:.2f}s")
             
-        return sorted(video_files)
+            # Build results dict
+            results = {}
+            for key, result in zip(cache_keys, cache_results):
+                if isinstance(result, Exception):
+                    self.logger.warning(f"Cache check failed for {key}: {result}")
+                    results[key] = None
+                else:
+                    results[key] = result
+                    if result:
+                        self.logger.info(f"Cache HIT for {key}")
+                    else:
+                        self.logger.info(f"Cache MISS for {key}")
+            
+            return results
+        
+        return {}
+    
+    async def _save_to_cache_async(self, video_path: Path, step: str, data: Any, **kwargs) -> None:
+        """
+        Save data to cache asynchronously
+        """
+        if not self.cache or not data:
+            return
+        
+        try:
+            if step == "keyframes":
+                # Load images for caching
+                video_id = video_path.stem
+                keyframes_dir = self.profile_output_dir / "keyframes" / video_id
+                images = {}
+                
+                import cv2
+                for kf in data.get("keyframes", []):
+                    if "filename" in kf:
+                        frame_path = keyframes_dir / kf["filename"]
+                        if frame_path.exists():
+                            image = cv2.imread(str(frame_path))
+                            if image is not None:
+                                images[str(kf["frame_id"])] = image
+                
+                await self.cache.set_keyframes(
+                    str(video_path),
+                    data,
+                    images,
+                    **kwargs
+                )
+            elif step == "transcript":
+                await self.cache.set_transcript(
+                    str(video_path),
+                    data,
+                    **kwargs
+                )
+            elif step == "descriptions":
+                await self.cache.set_descriptions(
+                    str(video_path),
+                    data.get("descriptions", {}),
+                    **kwargs
+                )
+            
+            self.logger.info(f"Cached {step} for {video_path.name}")
+        except Exception as e:
+            self.logger.warning(f"Failed to cache {step}: {e}")
     
     def extract_keyframes(self, video_path: Path) -> Dict[str, Any]:
-        """Extract keyframes from video using KeyframeExtractor"""
-        # Track if we used cache
-        used_cache = False
-        
-        # Check cache first if enabled
+        """
+        Extract keyframes with async cache operations using shared event loop
+        """
+        # Check cache using the shared event loop
+        cached_result = None
         if self.cache:
-            # Get profile configuration to determine strategy
             profiles = self.app_config.get("video_processing_profiles", {})
-            profile_config = profiles.get(self.active_profile, {})
+            profile_config = profiles.get(self.schema_name, {})
             pipeline_config = profile_config.get("pipeline_config", {})
-            
             strategy = pipeline_config.get("keyframe_strategy", "similarity")
             
-            # Try to get from cache
-            cached_result = asyncio.run(self.cache.get_keyframes(
-                str(video_path),
-                strategy=strategy,
-                threshold=pipeline_config.get("keyframe_threshold", self.config.keyframe_threshold),
-                fps=pipeline_config.get("keyframe_fps", 1.0),
-                max_frames=self.config.max_frames_per_video,
-                load_images=True  # Load images for processing
-            ))
-            
-            if cached_result:
-                self.logger.info(f"Using cached keyframes for {video_path.name}")
-                # Convert cache format to expected format
-                if isinstance(cached_result, tuple):
-                    metadata, images = cached_result
-                else:
-                    metadata = cached_result
-                    images = None
-                
-                # Save images to output directory for compatibility
-                if images:
-                    video_id = video_path.stem
-                    keyframes_dir = self.profile_output_dir / "keyframes" / video_id
-                    keyframes_dir.mkdir(parents=True, exist_ok=True)
-                    
-                    import cv2
-                    for frame_id, image in images.items():
-                        frame_path = keyframes_dir / f"frame_{int(frame_id):04d}.jpg"
-                        cv2.imwrite(str(frame_path), image)
-                
-                return metadata
+            # Use the shared event loop instead of asyncio.run()
+            cached_result = self.loop.run_until_complete(
+                self.cache.get_keyframes(
+                    str(video_path),
+                    strategy=strategy,
+                    threshold=pipeline_config.get("keyframe_threshold", self.config.keyframe_threshold),
+                    fps=pipeline_config.get("keyframe_fps", 1.0),
+                    max_frames=self.config.max_frames_per_video,
+                    load_images=True
+                )
+            )
         
-        # No cache or cache miss - extract keyframes
+        if cached_result:
+            self.logger.info(f"Using cached keyframes for {video_path.name}")
+            # Convert cache format to expected format
+            if isinstance(cached_result, tuple):
+                metadata, images = cached_result
+            else:
+                metadata = cached_result
+                images = None
+            
+            # Save images to output directory for compatibility
+            if images:
+                video_id = video_path.stem
+                keyframes_dir = self.profile_output_dir / "keyframes" / video_id
+                keyframes_dir.mkdir(parents=True, exist_ok=True)
+                
+                import cv2
+                for frame_id, image in images.items():
+                    frame_path = keyframes_dir / f"frame_{int(frame_id):04d}.jpg"
+                    cv2.imwrite(str(frame_path), image)
+            
+            return metadata
+        
+        # Extract keyframes
         result = self.keyframe_extractor.extract_keyframes(video_path, self.profile_output_dir)
         
-        # Cache the result if cache is enabled
+        # Cache the result using shared event loop
         if self.cache and result and "keyframes" in result:
-            # Load images for caching
-            video_id = video_path.stem
-            keyframes_dir = self.profile_output_dir / "keyframes" / video_id
-            images = {}
-            
-            import cv2
-            for kf in result.get("keyframes", []):
-                if "filename" in kf:
-                    frame_path = keyframes_dir / kf["filename"]
-                    if frame_path.exists():
-                        image = cv2.imread(str(frame_path))
-                        if image is not None:
-                            images[str(kf["frame_id"])] = image
-            
-            # Get strategy parameters
             profiles = self.app_config.get("video_processing_profiles", {})
-            profile_config = profiles.get(self.active_profile, {})
+            profile_config = profiles.get(self.schema_name, {})
             pipeline_config = profile_config.get("pipeline_config", {})
             strategy = pipeline_config.get("keyframe_strategy", "similarity")
             
-            asyncio.run(self.cache.set_keyframes(
-                str(video_path),
-                result,
-                images,
-                strategy=strategy,
-                threshold=pipeline_config.get("keyframe_threshold", self.config.keyframe_threshold),
-                fps=pipeline_config.get("keyframe_fps", 1.0),
-                max_frames=self.config.max_frames_per_video
-            ))
-            self.logger.info(f"Cached keyframes for {video_path.name}")
+            self.loop.run_until_complete(
+                self._save_to_cache_async(
+                    video_path,
+                    "keyframes",
+                    result,
+                    strategy=strategy,
+                    threshold=pipeline_config.get("keyframe_threshold", self.config.keyframe_threshold),
+                    fps=pipeline_config.get("keyframe_fps", 1.0),
+                    max_frames=self.config.max_frames_per_video
+                )
+            )
         
         return result
     
     def extract_chunks(self, video_path: Path) -> Dict[str, Any]:
         """Extract video chunks using VideoChunkExtractor"""
-        # Check cache first
-        cached_result = None
-        if self.cache:
-            cached_result = self.video_chunk_extractor.load_cached_chunks(
-                video_path, self.profile_output_dir
-            )
+        if not self.video_chunk_extractor:
+            return {"error": "VideoChunkExtractor not initialized"}
         
-        if cached_result:
-            self.logger.info(f"Using cached chunks for {video_path.name}")
-            return cached_result
-        
-        # Extract chunks
-        result = self.video_chunk_extractor.extract_chunks(video_path, self.profile_output_dir)
-        self.logger.info(f"Extracted {len(result.get('chunks', []))} chunks for {video_path.name}")
-        
+        # Process video chunks
+        result = self.video_chunk_extractor.process_video(video_path, self.profile_output_dir)
         return result
     
     def transcribe_audio(self, video_path: Path) -> Dict[str, Any]:
-        """Extract and transcribe audio from video using AudioTranscriber"""
-        # Check cache first if enabled
+        """
+        Transcribe audio with async cache operations using shared event loop
+        """
+        # Check cache using the shared event loop
+        cached_result = None
         if self.cache:
-            cached_result = asyncio.run(self.cache.get_transcript(
-                str(video_path),
-                model_size=self.audio_transcriber.model_size if hasattr(self.audio_transcriber, 'model_size') else "base",
-                language=None  # Auto-detect
-            ))
-            
-            if cached_result:
-                self.logger.info(f"Using cached transcript for {video_path.name}")
-                return cached_result
+            cached_result = self.loop.run_until_complete(
+                self.cache.get_transcript(
+                    str(video_path),
+                    model_size=getattr(self.audio_transcriber, 'model_size', "base"),
+                    language=None
+                )
+            )
         
-        # No cache or cache miss - transcribe audio
+        if cached_result:
+            self.logger.info(f"Using cached transcript for {video_path.name}")
+            return cached_result
+        
+        # Transcribe audio
         result = self.audio_transcriber.transcribe_audio(video_path, self.profile_output_dir)
         
-        # Cache the result if cache is enabled
+        # Cache the result using shared event loop
         if self.cache and result:
-            asyncio.run(self.cache.set_transcript(
-                str(video_path),
-                result,
-                model_size=self.audio_transcriber.model_size if hasattr(self.audio_transcriber, 'model_size') else "base",
-                language=result.get("language")
-            ))
-            self.logger.info(f"Cached transcript for {video_path.name}")
+            self.loop.run_until_complete(
+                self._save_to_cache_async(
+                    video_path,
+                    "transcript",
+                    result,
+                    model_size=getattr(self.audio_transcriber, 'model_size', "base"),
+                    language=result.get("language")
+                )
+            )
         
         return result
     
     def generate_descriptions(self, keyframes_metadata: Dict[str, Any], video_path: Optional[Path] = None) -> Dict[str, Any]:
-        """Generate VLM descriptions for keyframes using VLMDescriptor"""
+        """
+        Generate VLM descriptions with async cache operations using shared event loop
+        """
         if not self.vlm_descriptor:
-            print("  ⚠️ No VLM endpoint configured, skipping description generation")
+            self.logger.warning("No VLM endpoint configured, skipping description generation")
             return {}
         
-        # Check cache first if enabled and video_path provided
+        # Check cache using the shared event loop
+        cached_result = None
         if self.cache and video_path:
-            cached_result = asyncio.run(self.cache.get_descriptions(
-                str(video_path),
-                model_name=self.vlm_descriptor.model_name if hasattr(self.vlm_descriptor, 'model_name') else "Qwen/Qwen2-VL-2B-Instruct",
-                batch_size=self.config.vlm_batch_size
-            ))
-            
-            if cached_result:
-                self.logger.info(f"Using cached descriptions for {video_path.name}")
-                return {"descriptions": cached_result}
+            cached_result = self.loop.run_until_complete(
+                self.cache.get_descriptions(
+                    str(video_path),
+                    model_name=getattr(self.vlm_descriptor, 'model_name', "Qwen/Qwen2-VL-2B-Instruct"),
+                    batch_size=self.config.vlm_batch_size
+                )
+            )
         
-        # No cache or cache miss - generate descriptions
+        if cached_result:
+            self.logger.info(f"Using cached descriptions for {video_path.name}")
+            return {"descriptions": cached_result}
+        
+        # Generate descriptions
         result = self.vlm_descriptor.generate_descriptions(keyframes_metadata, self.profile_output_dir)
         
-        # Cache the result if cache is enabled
+        # Cache the result using shared event loop
         if self.cache and video_path and result and "descriptions" in result:
-            asyncio.run(self.cache.set_descriptions(
-                str(video_path),
-                result["descriptions"],
-                model_name=self.vlm_descriptor.model_name if hasattr(self.vlm_descriptor, 'model_name') else "Qwen/Qwen2-VL-2B-Instruct",
-                batch_size=self.config.vlm_batch_size
-            ))
-            self.logger.info(f"Cached descriptions for {video_path.name}")
+            self.loop.run_until_complete(
+                self._save_to_cache_async(
+                    video_path,
+                    "descriptions",
+                    result,
+                    model_name=getattr(self.vlm_descriptor, 'model_name', "Qwen/Qwen2-VL-2B-Instruct"),
+                    batch_size=self.config.vlm_batch_size
+                )
+            )
         
         return result
-    
     
     def generate_embeddings(self, results: Dict[str, Any]) -> Dict[str, Any]:
         """Generate embeddings for search backend using EmbeddingGenerator v2"""
@@ -575,42 +716,10 @@ class VideoIngestionPipeline:
                     if "descriptions" in desc_data:
                         video_data["descriptions"] = desc_data["descriptions"]
         
-        # For video_chunks processing, always create segments
-        if video_data.get("processing_type") == "video_chunks" and "segments" not in video_data:
-            self.logger.info(f"Creating segments for video_chunks processing")
-            # Get video duration and segment configuration
-            video_path = Path(video_data["video_path"])
-            duration = video_data.get("duration", 0)
-            self.logger.info(f"Video duration: {duration}")
-            
-            if duration > 0:
-                # Get segment duration from profile config
-                profiles = self.app_config.get("video_processing_profiles", {})
-                profile = profiles.get(self.active_profile, {})
-                segment_duration = profile.get("model_specific", {}).get("segment_duration", 30.0)
-                
-                # Calculate segments
-                import math
-                num_segments = max(1, math.ceil(duration / segment_duration))
-                
-                # Create segment list
-                segments = []
-                for i in range(num_segments):
-                    start_time = i * segment_duration
-                    end_time = min((i + 1) * segment_duration, duration)
-                    segments.append({
-                        "segment_id": i,
-                        "start_time": start_time,
-                        "end_time": end_time,
-                        "duration": end_time - start_time
-                    })
-                
-                video_data["segments"] = segments
-                self.logger.info(f"Created {len(segments)} segments of {segment_duration}s for video_chunks processing")
-        
         self.logger.info(f"Data extracted - Video ID: {video_data['video_id']}")
         self.logger.info(f"Output directory: {video_data['output_dir']}")
         
+        # Generate embeddings using v2 generator
         # Call v2 generator which returns EmbeddingResult
         result = self.embedding_generator.generate_embeddings(video_data, self.profile_output_dir)
         
@@ -626,18 +735,19 @@ class VideoIngestionPipeline:
             "backend": self.config.search_backend
         }
     
-    
-    def process_video(self, video_path: Path) -> Dict[str, Any]:
-        """Process a single video through the complete pipeline"""
+    async def process_video_async(self, video_path: Path) -> Dict[str, Any]:
+        """
+        Async version of process_video with concurrent cache checks
+        """
         video_id = video_path.stem
         
-        self.logger.info(f"Starting video processing: {video_id}")
+        self.logger.info(f"Starting async video processing: {video_id}")
         self.logger.info(f"Video path: {video_path}")
         
         # Get video duration
         duration = self._get_video_duration(video_path)
         
-        print(f"\n🎬 Processing video: {video_path.name}")
+        print(f"\n🎬 Processing video (async): {video_path.name}")
         print("=" * 60)
         
         # Convert PosixPath objects to strings for JSON serialization
@@ -651,176 +761,136 @@ class VideoIngestionPipeline:
             "duration": duration,
             "pipeline_config": config_dict,
             "results": {},
-            "started_at": time.time()
+            "started_at": time.time(),
+            "async_optimized": True
         }
         
         try:
-            # Check if we're using video chunk extraction for direct_video/chunks
+            # Phase 1 optimization: Check all caches concurrently
+            if self.cache:
+                cache_start = time.time()
+                cached_data = await self._check_cache_async(video_path)
+                cache_time = time.time() - cache_start
+                self.logger.info(f"Concurrent cache checks completed in {cache_time:.2f}s")
+                results["cache_check_time"] = cache_time
+            else:
+                cached_data = {}
+            
+            # Process based on what's cached and what's needed
+            
+            # Check if we're using video chunk extraction
             if hasattr(self, 'video_chunk_extractor') and self.video_chunk_extractor:
-                # Process video with chunk extraction for multi-vector models like ColQwen
+                # Process video with chunk extraction
                 step_start = time.time()
                 self.logger.info("Using VideoChunkExtractor for direct_video/chunks processing")
                 
-                # Step 1: Extract chunks
-                self.logger.info("Step 1: Extracting video chunks")
+                # Extract chunks (no cache for chunks yet)
                 chunks_data = self.extract_chunks(video_path)
                 results["results"]["chunks"] = chunks_data
                 step_time = time.time() - step_start
                 
                 if "error" in chunks_data:
-                    self.logger.error(f"Chunk extraction failed: {chunks_data['error']}")
                     raise Exception(f"Chunk extraction failed: {chunks_data['error']}")
                 else:
                     chunk_count = len(chunks_data.get("chunks", []))
-                    self.logger.info(f"Step 1 completed in {step_time:.2f}s - extracted {chunk_count} chunks")
+                    self.logger.info(f"Extracted {chunk_count} chunks in {step_time:.2f}s")
                 
-                # Step 2: Transcribe audio if enabled
-                transcript_data = None
+                # Transcribe audio if enabled
                 if self.config.transcribe_audio:
-                    step_start = time.time()
-                    self.logger.info("Step 2: Starting audio transcription")
-                    transcript_data = self.transcribe_audio(video_path)
-                    results["results"]["transcript"] = transcript_data
-                    step_time = time.time() - step_start
-                    self.logger.info(f"Step 2 completed in {step_time:.2f}s")
-                
-                # Note: Descriptions are typically not generated for chunk-based processing
-                
+                    if cached_data.get("transcript"):
+                        results["results"]["transcript"] = cached_data["transcript"]
+                        self.logger.info("Using cached transcript")
+                    else:
+                        transcript_data = self.transcribe_audio(video_path)
+                        results["results"]["transcript"] = transcript_data
+            
             # Check if we're using single vector processing
             elif self.single_vector_processor:
-                # Process video with single vector processor
-                step_start = time.time()
-                self.logger.info("Using SingleVectorVideoProcessor for video processing")
-                
-                # Transcribe audio first if enabled
+                # Process with single vector processor
                 transcript_data = None
                 if self.config.transcribe_audio:
-                    self.logger.info("Step 1: Starting audio transcription")
-                    transcript_data = self.transcribe_audio(video_path)
-                    results["results"]["transcript"] = transcript_data
+                    if cached_data.get("transcript"):
+                        transcript_data = cached_data["transcript"]
+                        results["results"]["transcript"] = transcript_data
+                        self.logger.info("Using cached transcript")
+                    else:
+                        transcript_data = self.transcribe_audio(video_path)
+                        results["results"]["transcript"] = transcript_data
                 
-                # Process video with single vector processor
-                self.logger.info("Step 2: Processing video with SingleVectorVideoProcessor")
+                # Process video
                 processed_data = self.single_vector_processor.process_video(
                     video_path=video_path,
                     transcript_data=transcript_data
                 )
                 
-                # Convert VideoSegment objects to dicts for JSON serialization
+                # Convert for serialization
                 processed_data_serializable = processed_data.copy()
                 processed_data_serializable["segments"] = [
                     seg.to_dict() for seg in processed_data["segments"]
                 ]
                 results["results"]["single_vector_processing"] = processed_data_serializable
-                
-                # Store segments info for embedding generation (keep raw objects for processing)
-                # Note: These will be passed to embedding generator but not saved to JSON
                 results["_raw_segments"] = processed_data["segments"]
-                
-                step_time = time.time() - step_start
-                self.logger.info(f"Single vector processing completed in {step_time:.2f}s - {len(processed_data['segments'])} segments")
                 
             else:
                 # Original frame-based processing
-                # Step 1: Extract keyframes
+                # Extract keyframes
                 if self.config.extract_keyframes:
-                    step_start = time.time()
-                    self.logger.info("Step 1: Starting keyframe extraction")
-                    keyframes_data = self.extract_keyframes(video_path)
-                    results["results"]["keyframes"] = keyframes_data
-                    step_time = time.time() - step_start
-                    
-                    if "error" in keyframes_data:
-                        self.logger.error(f"Keyframe extraction failed: {keyframes_data['error']}")
-                        raise Exception(f"Keyframe extraction failed: {keyframes_data['error']}")
+                    if cached_data.get("keyframes"):
+                        cached_keyframes = cached_data["keyframes"]
+                        # Handle tuple format from cache (metadata, images)
+                        if isinstance(cached_keyframes, tuple):
+                            keyframes_data, images = cached_keyframes
+                        else:
+                            keyframes_data = cached_keyframes
+                        results["results"]["keyframes"] = keyframes_data
+                        self.logger.info(f"Using cached keyframes: {len(keyframes_data.get('keyframes', []))} frames")
                     else:
-                        keyframe_count = len(keyframes_data.get("keyframes", []))
-                        self.logger.info(f"Step 1 completed in {step_time:.2f}s - extracted {keyframe_count} keyframes")
-                else:
-                    self.logger.info("Step 1: Skipping keyframe extraction (disabled)")
-                    print("⏭️ Skipping keyframe extraction (disabled)")
+                        keyframes_data = self.extract_keyframes(video_path)
+                        results["results"]["keyframes"] = keyframes_data
+                        self.logger.info(f"Extracted {len(keyframes_data.get('keyframes', []))} keyframes")
                 
-                # Step 2: Transcribe audio (for non-single vector processing)
+                # Transcribe audio
                 if self.config.transcribe_audio:
-                    step_start = time.time()
-                    self.logger.info("Step 2: Starting audio transcription")
-                    transcript_data = self.transcribe_audio(video_path)
-                    results["results"]["transcript"] = transcript_data
-                    step_time = time.time() - step_start
-                    
-                    if "error" in transcript_data:
-                        self.logger.error(f"Audio transcription failed: {transcript_data['error']}")
-                        raise Exception(f"Audio transcription failed: {transcript_data['error']}")
+                    if cached_data.get("transcript"):
+                        transcript_data = cached_data["transcript"]
+                        results["results"]["transcript"] = transcript_data
+                        self.logger.info(f"Using cached transcript: {len(transcript_data.get('segments', []))} segments")
                     else:
-                        segment_count = len(transcript_data.get("segments", []))
-                        self.logger.info(f"Step 2 completed in {step_time:.2f}s - transcribed {segment_count} segments")
-                else:
-                    self.logger.info("Step 2: Skipping audio transcription (disabled)")
-                    print("⏭️ Skipping audio transcription (disabled)")
+                        transcript_data = self.transcribe_audio(video_path)
+                        results["results"]["transcript"] = transcript_data
+                        self.logger.info(f"Transcribed {len(transcript_data.get('segments', []))} segments")
                 
-            # Step 3: Generate descriptions
-            if self.config.generate_descriptions and self.config.extract_keyframes:
-                step_start = time.time()
-                self.logger.info("Step 3: Starting description generation")
-                keyframes_data = results["results"].get("keyframes", {})
-                descriptions_data = self.generate_descriptions(keyframes_data, video_path)
-                results["results"]["descriptions"] = descriptions_data
-                step_time = time.time() - step_start
-                
-                if "error" in descriptions_data:
-                    self.logger.error(f"Description generation failed: {descriptions_data['error']}")
-                    raise Exception(f"Description generation failed: {descriptions_data['error']}")
-                else:
-                    desc_count = len(descriptions_data.get("descriptions", {}))
-                    self.logger.info(f"Step 3 completed in {step_time:.2f}s - generated {desc_count} descriptions")
-            elif not self.config.generate_descriptions:
-                self.logger.info("Step 3: Skipping description generation (disabled)")
-                print("⏭️ Skipping description generation (disabled)")
-            else:
-                self.logger.info("Step 3: Skipping description generation (no keyframes available)")
-                print("⏭️ Skipping description generation (no keyframes available)")
-                
-            # Step 4: Generate embeddings
+                # Generate descriptions
+                if self.config.generate_descriptions and self.config.extract_keyframes:
+                    if cached_data.get("descriptions"):
+                        descriptions_data = {"descriptions": cached_data["descriptions"]}
+                        results["results"]["descriptions"] = descriptions_data
+                        self.logger.info(f"Using cached descriptions: {len(descriptions_data.get('descriptions', {}))} items")
+                    else:
+                        keyframes_data = results["results"].get("keyframes", {})
+                        descriptions_data = self.generate_descriptions(keyframes_data, video_path)
+                        results["results"]["descriptions"] = descriptions_data
+                        self.logger.info(f"Generated {len(descriptions_data.get('descriptions', {}))} descriptions")
+            
+            # Generate embeddings (same as before)
             if self.config.generate_embeddings:
                 step_start = time.time()
-                self.logger.info(f"Step 4: Starting {self.config.search_backend} embedding generation")
+                self.logger.info(f"Starting {self.config.search_backend} embedding generation")
                 embeddings_data = self.generate_embeddings(results)
                 results["results"]["embeddings"] = embeddings_data
                 step_time = time.time() - step_start
                 
                 if "error" in embeddings_data:
-                    self.logger.error(f"Embedding generation failed: {embeddings_data['error']}")
                     raise Exception(f"Embedding generation failed: {embeddings_data['error']}")
                 else:
                     embed_count = embeddings_data.get("total_documents", 0)
-                    self.logger.info(f"Step 4 completed in {step_time:.2f}s - generated {embed_count} embeddings")
-            else:
-                self.logger.info("Step 4: Skipping embedding generation (disabled)")
-                print("⏭️ Skipping embedding generation (disabled)")
-                
+                    self.logger.info(f"Generated {embed_count} embeddings in {step_time:.2f}s")
+            
             results["completed_at"] = time.time()
             results["total_processing_time"] = results["completed_at"] - results["started_at"]
             results["status"] = "completed"
             
-            self.logger.info(f"Video processing completed successfully in {results['total_processing_time']:.2f}s")
-            
-            # Log summary
-            summary_parts = []
-            if "keyframes" in results["results"]:
-                keyframe_count = len(results["results"]["keyframes"].get("keyframes", []))
-                summary_parts.append(f"keyframes: {keyframe_count}")
-            if "transcript" in results["results"]:
-                segment_count = len(results["results"]["transcript"].get("segments", []))
-                summary_parts.append(f"segments: {segment_count}")
-            if "descriptions" in results["results"]:
-                desc_count = len(results["results"]["descriptions"].get("descriptions", {}))
-                summary_parts.append(f"descriptions: {desc_count}")
-            if "embeddings" in results["results"]:
-                embed_count = results["results"]["embeddings"].get("total_documents", 0)
-                summary_parts.append(f"embeddings: {embed_count}")
-            
-            self.logger.info(f"Processing summary: {', '.join(summary_parts)}")
-            
+            self.logger.info(f"Async video processing completed in {results['total_processing_time']:.2f}s")
             print(f"\n✅ Video processing completed in {results['total_processing_time']:.1f}s")
             
         except Exception as e:
@@ -831,11 +901,98 @@ class VideoIngestionPipeline:
             
             self.logger.error(f"Video processing failed: {e}", exc_info=True)
             print(f"\n❌ Video processing failed: {e}")
-            
+        
         return results
     
-    def process_directory(self, video_dir: Optional[Path] = None) -> Dict[str, Any]:
-        """Process all videos in a directory"""
+    def process_video(self, video_path: Path) -> Dict[str, Any]:
+        """
+        Process a single video using async optimizations
+        """
+        # Run the async version using the shared event loop
+        return self.loop.run_until_complete(self.process_video_async(video_path))
+    
+    async def process_videos_concurrent(self, video_files: List[Path], max_concurrent: int = 3) -> List[Dict[str, Any]]:
+        """
+        Process multiple videos concurrently with resource control
+        
+        Args:
+            video_files: List of video paths to process
+            max_concurrent: Maximum number of videos to process simultaneously
+            
+        Returns:
+            List of results for each video
+        """
+        # Create semaphore to limit concurrent processing
+        semaphore = asyncio.Semaphore(max_concurrent)
+        
+        async def process_with_limit(video_path: Path, index: int, total: int):
+            """Process a video with concurrency limit and progress tracking"""
+            async with semaphore:
+                try:
+                    self.logger.info(f"[{index}/{total}] Starting concurrent processing: {video_path.name}")
+                    print(f"\n🎯 [{index}/{total}] Processing: {video_path.name}")
+                    
+                    result = await self.process_video_async(video_path)
+                    
+                    if result["status"] == "completed":
+                        self.logger.info(f"[{index}/{total}] Completed: {video_path.name} in {result['total_processing_time']:.1f}s")
+                        print(f"✅ [{index}/{total}] Completed: {video_path.name} ({result['total_processing_time']:.1f}s)")
+                    else:
+                        self.logger.error(f"[{index}/{total}] Failed: {video_path.name} - {result.get('error')}")
+                        print(f"❌ [{index}/{total}] Failed: {video_path.name}")
+                    
+                    return result
+                    
+                except Exception as e:
+                    self.logger.error(f"[{index}/{total}] Exception processing {video_path.name}: {e}")
+                    return {
+                        "video_path": str(video_path),
+                        "error": str(e),
+                        "status": "failed"
+                    }
+        
+        # Create tasks for all videos
+        tasks = [
+            process_with_limit(video, i+1, len(video_files))
+            for i, video in enumerate(video_files)
+        ]
+        
+        # Process all videos concurrently
+        self.logger.info(f"Starting concurrent processing of {len(video_files)} videos (max {max_concurrent} concurrent)")
+        print(f"\n🚀 Processing {len(video_files)} videos concurrently (max {max_concurrent} at once)")
+        
+        start_time = time.time()
+        results = await asyncio.gather(*tasks, return_exceptions=False)
+        total_time = time.time() - start_time
+        
+        # Calculate statistics
+        successful = sum(1 for r in results if isinstance(r, dict) and r.get("status") == "completed")
+        failed = len(results) - successful
+        
+        self.logger.info(f"Concurrent processing completed: {successful}/{len(video_files)} successful in {total_time:.1f}s")
+        print(f"\n🏁 Concurrent processing completed in {total_time:.1f}s")
+        print(f"   ✅ Successful: {successful}/{len(video_files)}")
+        print(f"   ❌ Failed: {failed}/{len(video_files)}")
+        print(f"   ⚡ Average time: {total_time/len(video_files):.1f}s per video")
+        
+        return results
+    
+    def get_video_files(self, video_dir: Path) -> List[Path]:
+        """Get list of video files from directory"""
+        video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.webm']
+        video_files = []
+        for ext in video_extensions:
+            video_files.extend(video_dir.glob(f'*{ext}'))
+        return sorted(video_files)
+    
+    def process_directory(self, video_dir: Optional[Path] = None, max_concurrent: int = 3) -> Dict[str, Any]:
+        """
+        Process all videos in a directory with concurrent processing
+        
+        Args:
+            video_dir: Directory containing videos
+            max_concurrent: Maximum number of videos to process simultaneously
+        """
         video_dir = video_dir or self.config.video_dir
         video_files = self.get_video_files(video_dir)
         
@@ -844,50 +1001,37 @@ class VideoIngestionPipeline:
             print(f"❌ No video files found in {video_dir}")
             return {"error": "No video files found"}
         
-        # Process all videos found
-        
-        self.logger.info(f"Starting batch processing: {len(video_files)} videos from {video_dir}")
+        self.logger.info(f"Starting concurrent batch processing: {len(video_files)} videos from {video_dir}")
         
         print(f"🎬 Found {len(video_files)} videos to process")
         print(f"📁 Output directory: {self.profile_output_dir}")
         print(f"⚙️ Pipeline config: {self.config}")
+        print(f"🚀 Concurrent processing: max {max_concurrent} videos at once")
         
         # Convert PosixPath objects to strings for JSON serialization
         config_dict = self.config.__dict__.copy()
         config_dict["video_dir"] = str(config_dict["video_dir"])
         config_dict["output_dir"] = str(config_dict["output_dir"])
         
-        active_profile = self.app_config.get("active_video_profile", "default")
         results = {
-            "profile": active_profile,
+            "profile": self.schema_name,
             "pipeline_config": config_dict,
             "output_directory": str(self.profile_output_dir),
             "total_videos": len(video_files),
-            "processed_videos": [],
-            "failed_videos": [], 
+            "max_concurrent": max_concurrent,
+            "async_optimized": True,
+            "phase2_concurrent": True,
             "started_at": time.time()
         }
         
-        for i, video_path in enumerate(video_files, 1):
-            self.logger.info(f"Processing video {i}/{len(video_files)}: {video_path.name}")
-            print(f"\n🎯 Processing video {i}/{len(video_files)}")
-            
-            try:
-                video_result = self.process_video(video_path)
-                if video_result["status"] == "completed":
-                    results["processed_videos"].append(video_result)
-                    self.logger.info(f"Video {video_path.name} completed successfully")
-                else:
-                    results["failed_videos"].append(video_result)
-                    self.logger.error(f"Video {video_path.name} failed: {video_result.get('error', 'Unknown error')}")
-                    
-            except Exception as e:
-                self.logger.error(f"Failed to process {video_path.name}: {e}", exc_info=True)
-                print(f"❌ Failed to process {video_path.name}: {e}")
-                results["failed_videos"].append({
-                    "video_path": str(video_path),
-                    "error": str(e)
-                })
+        # Process videos concurrently
+        processed_results = self.loop.run_until_complete(
+            self.process_videos_concurrent(video_files, max_concurrent)
+        )
+        
+        # Separate successful and failed results
+        results["processed_videos"] = [r for r in processed_results if r.get("status") == "completed"]
+        results["failed_videos"] = [r for r in processed_results if r.get("status") != "completed"]
         
         results["completed_at"] = time.time()
         results["total_processing_time"] = results["completed_at"] - results["started_at"]
@@ -901,21 +1045,12 @@ class VideoIngestionPipeline:
         for video_result in results_to_save.get("processed_videos", []):
             if "_raw_segments" in video_result:
                 del video_result["_raw_segments"]
-            # Also check if there are any VideoSegment objects in the results
-            if "results" in video_result and "single_vector_processing" in video_result["results"]:
-                if "segments" in video_result["results"]["single_vector_processing"]:
-                    segments = video_result["results"]["single_vector_processing"]["segments"]
-                    # Convert any VideoSegment objects to dicts
-                    if segments and hasattr(segments[0], 'to_dict'):
-                        video_result["results"]["single_vector_processing"]["segments"] = [
-                            seg.to_dict() if hasattr(seg, 'to_dict') else seg for seg in segments
-                        ]
         
         with open(summary_file, 'w') as f:
             json.dump(results_to_save, f, indent=2)
         
         # Log final summary
-        self.logger.info("Batch processing completed!")
+        self.logger.info("Concurrent batch processing completed!")
         self.logger.info(f"Summary - Total: {len(video_files)}, Processed: {len(results['processed_videos'])}, Failed: {len(results['failed_videos'])}")
         self.logger.info(f"Total time: {results['total_processing_time']:.2f} seconds ({results['total_processing_time']/60:.1f} minutes)")
         self.logger.info(f"Average time per video: {results['total_processing_time'] / len(video_files):.2f} seconds")
@@ -925,6 +1060,7 @@ class VideoIngestionPipeline:
         print(f"✅ Processed: {len(results['processed_videos'])}/{len(video_files)} videos")
         print(f"❌ Failed: {len(results['failed_videos'])} videos")
         print(f"⏱️ Total time: {results['total_processing_time']/60:.1f} minutes")
+        print(f"⚡ Throughput: {len(video_files)/results['total_processing_time']*60:.1f} videos/minute")
         print(f"📄 Summary saved: {summary_file}")
         
         # Stop VLM service if it was auto-started
@@ -934,37 +1070,31 @@ class VideoIngestionPipeline:
         
         return results
     
-    def _get_video_duration(self, video_path: Path) -> float:
-        """Get video duration in seconds using ffprobe"""
-        try:
-            import subprocess
-            import json
-            
-            cmd = [
-                'ffprobe', '-v', 'quiet',
-                '-print_format', 'json',
-                '-show_format',
-                str(video_path)
-            ]
-            
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode == 0:
-                data = json.loads(result.stdout)
-                return float(data.get('format', {}).get('duration', 0))
-            return 0
-        except Exception as e:
-            self.logger.error(f"Failed to get video duration: {e}")
-            return 0
+    def __del__(self):
+        """Cleanup the event loop"""
+        if hasattr(self, 'loop') and self.loop:
+            try:
+                self.loop.close()
+            except:
+                pass
+
+
+# Keep AsyncVideoIngestionPipeline as an alias for backward compatibility
+AsyncVideoIngestionPipeline = VideoIngestionPipeline
 
 
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description="Unified Video Processing Pipeline")
+    parser = argparse.ArgumentParser(description="Video Processing Pipeline")
     parser.add_argument("--video_dir", type=Path, help="Directory containing videos")
     parser.add_argument("--output_dir", type=Path, help="Output directory")
-    parser.add_argument("--config", type=Path, help="Custom pipeline config file")
-    parser.add_argument("--backend", choices=["byaldi", "vespa"], help="Search backend")
+    parser.add_argument("--backend", choices=["byaldi", "vespa"], default="vespa", help="Search backend")
+    parser.add_argument("--profile", type=str, help="Video processing profile")
+    parser.add_argument("--max-frames", type=int, help="Maximum frames per video")
+    
+    # Concurrent processing
+    parser.add_argument("--max-concurrent", type=int, default=3, help="Maximum concurrent videos (default: 3)")
     
     # Pipeline step toggles
     parser.add_argument("--skip-keyframes", action="store_true", help="Skip keyframe extraction")
@@ -973,6 +1103,11 @@ if __name__ == "__main__":
     parser.add_argument("--skip-embeddings", action="store_true", help="Skip embedding generation")
     
     args = parser.parse_args()
+    
+    # Set profile if provided
+    if args.profile:
+        import os
+        os.environ["VIDEO_PROFILE"] = args.profile
     
     # Create pipeline config
     config = PipelineConfig.from_config()
@@ -984,17 +1119,23 @@ if __name__ == "__main__":
         config.output_dir = args.output_dir
     if args.backend:
         config.search_backend = args.backend
-        
+    if args.max_frames:
+        config.max_frames_per_video = args.max_frames
+    
     # Apply skip flags
     if args.skip_keyframes:
         config.extract_keyframes = False
     if args.skip_audio:
-        config.transcribe_audio = False  
+        config.transcribe_audio = False
     if args.skip_descriptions:
         config.generate_descriptions = False
     if args.skip_embeddings:
         config.generate_embeddings = False
     
-    # Run pipeline
+    # Run pipeline with concurrent processing
+    print("🚀 Starting Video Processing Pipeline")
     pipeline = VideoIngestionPipeline(config)
-    results = pipeline.process_directory()
+    
+    # Use max_concurrent from args
+    max_concurrent = args.max_concurrent
+    results = pipeline.process_directory(max_concurrent=max_concurrent)

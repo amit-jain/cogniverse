@@ -61,24 +61,19 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
     
     def __init__(
         self,
-        config: Dict[str, Any],
+        config: Dict[str, Any],  # This is actually profile_config  
         logger: Optional[logging.Logger] = None,
-        profile_config: Dict[str, Any] = None,
         backend_client: Any = None  # IngestionBackend interface
     ):
         super().__init__(config, logger)
         
-        self.profile_config = profile_config or {}
+        # Use config as profile_config (they're the same now)
+        self.profile_config = config
         self.model_name = self.profile_config.get("embedding_model", "vidore/colsmol-500m")
         self.backend_client = backend_client
         
-        # Get schema name from backend client (it knows its own schema)
-        if backend_client:
-            self.schema_name = backend_client.schema_name
-        else:
-            self.schema_name = profile_config.get("schema_name")
-            if not self.schema_name:
-                raise ValueError("schema_name is required when backend_client is not provided")
+        # Get schema name from profile config (backends should be stateless)
+        self.schema_name = self.profile_config.get("schema_name")
         
         # Media type will be determined based on processing_type at runtime
         
@@ -163,7 +158,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
             result.processing_time = processing_time
             
             self.logger.info(
-                f"Completed embedding generation for {video_id} in {processing_time:.2f}s - "
+                f"Completed embedding generation for {video_id} to schema {self.schema_name} in {processing_time:.2f}s - "
                 f"{result.documents_processed} processed, {result.documents_fed} fed"
             )
             
@@ -214,7 +209,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
                               or None if embedding generation fails
         """
         self.logger.info(
-            f"Processing segment {segment_idx + 1}/{num_segments}: "
+            f"Processing segment {segment_idx + 1}/{num_segments} for schema {self.schema_name}: "
             f"{start_time:.1f}s - {end_time:.1f}s"
         )
         
@@ -277,28 +272,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
             Optional[np.ndarray]: Raw numpy embeddings or None if generation fails
         """
         try:
-            if self.videoprism_loader:
-                self.logger.info(f"Using VideoPrism loader for chunk file: {video_path.name}")
-                # Get video duration for the chunk
-                import subprocess
-                cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', 
-                       '-of', 'default=noprint_wrappers=1:nokey=1', str(video_path)]
-                result = subprocess.run(cmd, capture_output=True, text=True)
-                duration = float(result.stdout.strip()) if result.returncode == 0 else 30.0
-                
-                # Process entire chunk
-                result = self.videoprism_loader.process_video_segment(
-                    video_path, 0, duration
-                )
-                
-                if result:
-                    if "embeddings" in result:
-                        return result["embeddings"]
-                    elif "embeddings_np" in result:
-                        return result["embeddings_np"]
-                return None
-                
-            elif "colqwen" in self.model_name.lower():
+            if "colqwen" in self.model_name.lower():
                 # ColQwen processes video chunks
                 import cv2
                 cap = cv2.VideoCapture(str(video_path))
@@ -341,6 +315,27 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
                 # Average embeddings across frames to get segment embedding
                 # Shape: (num_frames, patches, dim) -> (patches, dim)
                 return embeddings_np.mean(axis=0)
+                
+            elif self.videoprism_loader:
+                self.logger.info(f"Using VideoPrism loader for chunk file: {video_path.name}")
+                # Get video duration for the chunk
+                import subprocess
+                cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', 
+                       '-of', 'default=noprint_wrappers=1:nokey=1', str(video_path)]
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                duration = float(result.stdout.strip()) if result.returncode == 0 else 30.0
+                
+                # Process entire chunk
+                result = self.videoprism_loader.process_video_segment(
+                    video_path, 0, duration
+                )
+                
+                if result:
+                    if "embeddings" in result:
+                        return result["embeddings"]
+                    elif "embeddings_np" in result:
+                        return result["embeddings_np"]
+                return None
                 
             else:
                 # Other models
@@ -551,10 +546,16 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
     
     def _feed_single_document(self, document: Document) -> bool:
         if self.backend_client:
-            # Use IngestionBackend interface ONLY
-            result = self.backend_client.ingest_documents([document])
+            # Use IngestionBackend interface with schema
+            if not self.schema_name:
+                self.logger.error("No schema_name available for feeding document")
+                return False
+            result = self.backend_client.ingest_documents([document], self.schema_name)
             success = result.get('success_count', 0) > 0
-            self.logger.debug(f"Fed document {document.doc_id}: success={success}")
+            if success:
+                self.logger.debug(f"Fed document {document.doc_id} to schema {self.schema_name}: success={success}")
+            else:
+                self.logger.warning(f"Failed to feed document {document.doc_id} to schema {self.schema_name}")
             return success
         self.logger.warning("No backend available")
         return False
@@ -586,7 +587,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
                 
                 try:
                     # Process the pre-extracted chunk directly
-                    self.logger.info(f"Processing pre-extracted chunk {chunk_id}: {start_time}s-{end_time}s")
+                    self.logger.info(f"Processing pre-extracted chunk {chunk_id} for schema {self.schema_name}: {start_time}s-{end_time}s")
                     
                     # Generate embeddings for the chunk video file
                     raw_embeddings = self._generate_raw_embeddings_from_file(chunk_path)
@@ -626,7 +627,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
                         # Feed immediately
                         if self._feed_single_document(doc):
                             documents_fed += 1
-                            self.logger.info(f"Fed chunk {chunk_id} successfully")
+                            self.logger.info(f"Fed chunk {chunk_id} to schema {self.schema_name} successfully")
                         else:
                             errors.append(f"Failed to feed chunk {chunk_id}")
                             
@@ -671,7 +672,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
                     # Feed immediately
                     if self._feed_single_document(doc):
                         documents_fed += 1
-                        self.logger.info(f"Fed segment {segment_idx} successfully")
+                        self.logger.info(f"Fed segment {segment_idx} to schema {self.schema_name} successfully")
                     else:
                         errors.append(f"Failed to feed segment {segment_idx}")
                         
@@ -791,6 +792,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
                     
                     if self._feed_single_document(doc):
                         documents_fed += 1
+                        self.logger.info(f"Fed frame {frame_id} to schema {self.schema_name} successfully")
                     
             except Exception as e:
                 self.logger.error(f"Error processing batch starting at {i}: {e}")
@@ -934,10 +936,14 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
                 metadata=metadata
             )
             
-            # Feed using standard feed method
+            # Feed using standard feed method with schema
             if self.backend_client:
-                success_count, failed_ids = self.backend_client.feed(doc)
-                fed = success_count > 0
+                if not self.schema_name:
+                    self.logger.error("No schema_name available for feeding document")
+                    fed = False
+                else:
+                    success_count, failed_ids = self.backend_client.feed(doc, self.schema_name)
+                    fed = success_count > 0
             else:
                 fed = False
             

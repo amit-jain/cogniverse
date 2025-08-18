@@ -32,53 +32,46 @@ class EmbeddingGeneratorFactory:
             Embedding generator instance
         """
         
-        # Backend needs both main config and profile config
-        # Profile config contains schema_name and model-specific settings
-        # Main config contains system-wide settings like vespa_url
-        backend_config = {
-            **config,  # System config (vespa_url, ports, etc.)
-            **profile_config  # Profile config (schema_name, model, etc.) - overwrites any duplicates
-        }
-        
-        # Delegate to backend factory
-        backend_client = BackendFactory.create(backend, backend_config, logger)
+        # Get backend client (singleton)
+        backend_client = BackendFactory.create(
+            backend_type=backend,
+            config=config,
+            logger=logger
+        )
         
         # Return embedding generator with backend client
         return EmbeddingGeneratorImpl(
-            config=config,
+            config=profile_config,  # This becomes self.profile_config
             logger=logger,
-            profile_config=profile_config,
             backend_client=backend_client
         )
 
 
 def create_embedding_generator(
     config: Dict[str, Any],
+    schema_name: str,
     logger: Optional[logging.Logger] = None
 ):
     """
-    Creates an embedding generator based on config settings.
+    Creates an embedding generator for a specific schema.
     
-    The active profile in config determines:
-    - Backend type (from embedding_backend)
-    - Processing type (from profile's process_type)
-    - Model to use (from profile's embedding_model)
+    Args:
+        config: Main configuration dictionary
+        schema_name: Schema/profile name to use
+        logger: Optional logger
     """
     
     # Get backend from config
-    backend = config.get("embedding_backend", "vespa")
+    backend = config.get("embedding_backend", config.get("search_backend", "vespa"))
     
-    # Get active profile
-    active_profile = config.get("active_profile")
-    if not active_profile:
-        raise ValueError("No active_profile specified in config")
-    
-    # Get profile configuration
+    # Get profile configuration using schema_name as key
     profiles = config.get("video_processing_profiles", {})
-    if active_profile not in profiles:
-        raise ValueError(f"Profile '{active_profile}' not found in video_processing_profiles")
+    if schema_name not in profiles:
+        raise ValueError(f"Profile '{schema_name}' not found in video_processing_profiles")
     
-    profile_config = profiles[active_profile]
+    profile_config = profiles[schema_name]
+    # Add schema_name to profile_config so it's available
+    profile_config["schema_name"] = schema_name
     
     # Create and return generator
     return EmbeddingGeneratorFactory.create(

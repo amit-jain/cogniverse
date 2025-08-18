@@ -16,6 +16,13 @@ from .search_backend import VespaSearchBackend
 from .vespa_schema_manager import VespaSchemaManager
 from .ingestion_client import VespaPyClient
 
+# Try to import async client (Phase 3 optimization)
+try:
+    from .async_ingestion_client import AsyncVespaBackendAdapter
+    ASYNC_AVAILABLE = True
+except ImportError:
+    ASYNC_AVAILABLE = False
+    
 logger = logging.getLogger(__name__)
 
 
@@ -31,12 +38,16 @@ class VespaBackend(Backend):
         """Initialize Vespa backend."""
         super().__init__("vespa")
         self._vespa_search_backend: Optional[VespaSearchBackend] = None
-        self._vespa_ingestion_client: Optional[VespaPyClient] = None
+        # Store multiple ingestion clients, one per schema
+        self._vespa_ingestion_clients: Dict[str, VespaPyClient] = {}
+        self._async_ingestion_clients: Dict[str, Any] = {}  # For Phase 3 async optimization
         self.schema_manager: Optional[VespaSchemaManager] = None
-        self.config: Dict[str, Any] = {}
         self._initialized_as_search = False
         self._initialized_as_ingestion = False
-        self.schema_name: Optional[str] = None
+        self.use_async_ingestion = False  # Flag to enable async mode
+        # Store only what's needed for creating clients
+        self._vespa_url: Optional[str] = None
+        self._vespa_port: int = 8080
     
     def _initialize_backend(self, config: Dict[str, Any]) -> None:
         """
@@ -51,20 +62,21 @@ class VespaBackend(Backend):
                 - strategy: Strategy object (optional)
                 - query_encoder: Query encoder (optional)
         """
+        # Check if async ingestion is requested (Phase 3 optimization)
+        self.use_async_ingestion = config.get("use_async_ingestion", False) and ASYNC_AVAILABLE
+        
+        # Store config for accessing profiles later
         self.config = config
-        self.schema_name = config.get("schema_name")
+        
+        # Store connection details needed for creating clients
+        self._vespa_url = config.get("vespa_url")
+        self._vespa_port = config.get("vespa_port", 8080)
         
         # Initialize for ingestion if schema_name is provided without search-specific params
         if "schema_name" in config and not ("strategy" in config or "profile" in config):
             # This means we're initializing for ingestion operations
             self._initialized_as_ingestion = True
-            
-            # Create the VespaPyClient for ingestion
-            self._vespa_ingestion_client = VespaPyClient(
-                config=config,
-                logger=logger
-            )
-            self._vespa_ingestion_client.connect()
+            # Don't create client yet - will create per-schema on demand
         
         # Initialize schema manager for schema operations
         vespa_url = config["vespa_url"]  # Required, no default
@@ -95,37 +107,68 @@ class VespaBackend(Backend):
     
     # Ingestion methods
     
-    def ingest_documents(self, documents: List[Document]) -> Dict[str, Any]:
+    def _get_or_create_ingestion_client(self, schema_name: str) -> VespaPyClient:
+        """
+        Get or create a schema-specific ingestion client.
+        
+        Args:
+            schema_name: Schema name to get client for
+            
+        Returns:
+            VespaPyClient configured for the specific schema
+        """
+        if schema_name not in self._vespa_ingestion_clients:
+            # Create new client with config dict
+            logger.info(f"Creating new VespaPyClient for schema: {schema_name}")
+            
+            # Get the specific profile config for this schema
+            profile_config = {}
+            if self.config:
+                profiles = self.config.get("video_processing_profiles", {})
+                profile_config = profiles.get(schema_name, {})
+            
+            # Pass connection details and profile config
+            client_config = {
+                "schema_name": schema_name,
+                "vespa_url": self._vespa_url,
+                "vespa_port": self._vespa_port,
+                "profile_config": profile_config  # Pass only the specific profile config
+            }
+            
+            client = VespaPyClient(
+                config=client_config,
+                logger=logger
+            )
+            client.connect()
+            
+            self._vespa_ingestion_clients[schema_name] = client
+        
+        return self._vespa_ingestion_clients[schema_name]
+    
+    def ingest_documents(self, documents: List[Document], schema_name: str) -> Dict[str, Any]:
         """
         Ingest documents into Vespa.
         
         Args:
             documents: List of Document objects to ingest
+            schema_name: Schema to ingest documents into
             
         Returns:
             Ingestion results
         """
-        if not self._vespa_ingestion_client:
-            # Initialize ingestion client if not already done
-            if "schema_name" not in self.config:
-                raise RuntimeError("schema_name must be provided in config for ingestion")
-            
-            self._vespa_ingestion_client = VespaPyClient(
-                config=self.config,
-                logger=logger
-            )
-            self._vespa_ingestion_client.connect()
-            self._initialized_as_ingestion = True
+        # Get schema-specific client
+        client = self._get_or_create_ingestion_client(schema_name)
         
-        # Process and feed documents using the ingestion client
+        # Process and feed documents using the schema-specific client
+        # Each client already knows its schema, no need to pass it
         prepared_docs = []
         for doc in documents:
-            prepared = self._vespa_ingestion_client.process(doc)
+            prepared = client.process(doc)  # Client uses its own schema
             prepared_docs.append(prepared)
         
         # Feed documents to Vespa
-        success_count, failed_docs = self._vespa_ingestion_client._feed_prepared_batch(
-            prepared_docs
+        success_count, failed_docs = client._feed_prepared_batch(
+            prepared_docs  # Client uses its own schema
         )
         
         return {
@@ -135,21 +178,19 @@ class VespaBackend(Backend):
             "total_documents": len(documents)
         }
     
-    def feed(self, document: Document) -> Tuple[int, List[str]]:
+    def feed(self, document: Document, schema_name: str) -> Tuple[int, List[str]]:
         """
         Feed a single document to Vespa.
         
-        This method provides compatibility with the embedding generator
-        which expects a feed method.
-        
         Args:
             document: Document object to feed
+            schema_name: Schema to feed document to (REQUIRED)
             
         Returns:
             Tuple of (success_count, failed_document_ids)
         """
         # Convert single document to list and call ingest_documents
-        result = self.ingest_documents([document])
+        result = self.ingest_documents([document], schema_name)
         
         # Extract failed document IDs from the result
         failed_ids = []
@@ -369,12 +410,20 @@ class VespaBackend(Backend):
         """
         Close connections to Vespa.
         """
-        if self._vespa_ingestion_client:
-            self._vespa_ingestion_client.close()
+        # Close all schema-specific clients
+        for schema_name, client in self._vespa_ingestion_clients.items():
+            client.close()
+            logger.info(f"Closed Vespa client for schema: {schema_name}")
+        
+        for schema_name, client in self._async_ingestion_clients.items():
+            client.close()
+            logger.info(f"Closed async Vespa client for schema: {schema_name}")
+        
         if self._vespa_search_backend:
             # Search backend may not have a close method
             pass
-        logger.info("Closed Vespa backend connections")
+        
+        logger.info("Closed all Vespa backend connections")
     
     def health_check(self) -> bool:
         """
