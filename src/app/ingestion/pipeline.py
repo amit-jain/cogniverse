@@ -620,7 +620,7 @@ class VideoIngestionPipeline:
             return {"error": "VideoChunkExtractor not initialized"}
         
         # Process video chunks
-        result = self.video_chunk_extractor.process_video(video_path, self.profile_output_dir)
+        result = self.video_chunk_extractor.extract_chunks(video_path, self.profile_output_dir)
         return result
     
     def transcribe_audio(self, video_path: Path) -> Dict[str, Any]:
