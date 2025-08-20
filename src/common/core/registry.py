@@ -141,9 +141,12 @@ class StrategyRegistry:
         logger.info("StrategyRegistry reloaded")
 
 
-# Global instance for easy access
-_registry = StrategyRegistry()
+# Global instance for easy access - lazily initialized
+_registry = None
 
 def get_registry() -> StrategyRegistry:
     """Get the global StrategyRegistry instance."""
+    global _registry
+    if _registry is None:
+        _registry = StrategyRegistry()
     return _registry
