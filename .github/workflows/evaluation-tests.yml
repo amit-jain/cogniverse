@@ -103,7 +103,7 @@ jobs:
     
     - name: Run integration tests
       run: |
-        pytest src/evaluation/tests/integration -v -m integration --cov=src/evaluation --cov-append --cov-report=term-missing
+        pytest src/evaluation/tests/integration -v -m integration
     
     - name: Stop Phoenix
       run: |
