@@ -45,8 +45,8 @@ jobs:
     
     - name: Install dependencies
       run: |
-        uv pip install -e .
-        uv pip install pytest pytest-cov pytest-mock
+        uv pip install --system -e .
+        uv pip install --system pytest pytest-cov pytest-mock
     
     - name: Run unit tests
       run: |
@@ -79,8 +79,8 @@ jobs:
     
     - name: Install dependencies
       run: |
-        uv pip install -e .
-        uv pip install pytest pytest-cov pytest-mock
+        uv pip install --system -e .
+        uv pip install --system pytest pytest-cov pytest-mock
     
     - name: Start Phoenix (mock)
       run: |
@@ -119,7 +119,7 @@ jobs:
     
     - name: Install linting tools
       run: |
-        uv pip install ruff black isort mypy
+        uv pip install --system ruff black isort mypy
     
     - name: Run ruff
       run: ruff check src/evaluation
@@ -156,7 +156,7 @@ jobs:
     
     - name: Install package
       run: |
-        uv pip install -e .
+        uv pip install --system -e .
     
     - name: Test CLI help
       run: |
@@ -188,8 +188,8 @@ jobs:
     
     - name: Install dependencies
       run: |
-        uv pip install -e .
-        uv pip install pytest pytest-cov
+        uv pip install --system -e .
+        uv pip install --system pytest pytest-cov
     
     - name: Run all tests with coverage
       run: |
