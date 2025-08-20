@@ -9,6 +9,25 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Global plugin registry
+_registered_plugins = {}
+
+
+def register_plugin(name: str, plugin_instance):
+    """Register a plugin instance by name."""
+    _registered_plugins[name] = plugin_instance
+    logger.info(f"Registered plugin: {name}")
+
+
+def get_plugin(name: str):
+    """Get a registered plugin by name."""
+    return _registered_plugins.get(name)
+
+
+def list_plugins():
+    """List all registered plugins."""
+    return list(_registered_plugins.keys())
+
 
 def register_video_plugin():
     """Register video-specific evaluation components."""
