@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 import numpy as np
-from src.common.core import Document
+from src.common.document import Document
 
 
 class SearchResult:
@@ -17,7 +17,7 @@ class SearchResult:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API responses."""
         result = {
-            "document_id": self.document.doc_id,
+            "document_id": self.document.id,
             "score": self.score,
             "metadata": self.document.metadata,
             "highlights": self.highlights
@@ -27,12 +27,12 @@ class SearchResult:
         if "source_id" in self.document.metadata:
             result["source_id"] = self.document.metadata["source_id"]
         
-        # Add temporal info if present
-        if self.document.temporal_info:
+        # Add temporal info if present in metadata
+        if "start_time" in self.document.metadata and "end_time" in self.document.metadata:
             result["temporal_info"] = {
-                "start_time": self.document.temporal_info.start_time,
-                "end_time": self.document.temporal_info.end_time,
-                "duration": self.document.temporal_info.duration
+                "start_time": self.document.metadata["start_time"],
+                "end_time": self.document.metadata["end_time"],
+                "duration": self.document.metadata["end_time"] - self.document.metadata["start_time"]
             }
         
         return result

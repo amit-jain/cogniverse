@@ -1,17 +1,6 @@
 """Core shared structures and utilities."""
 
-from .documents import (
-    Document,
-    EmbeddingResult,
-    MediaType,
-    TemporalInfo,
-    SegmentInfo
-)
+# This module is deprecated - use src.common.document instead
+# Keeping empty to prevent import errors during transition
 
-__all__ = [
-    'Document',
-    'EmbeddingResult',
-    'MediaType',
-    'TemporalInfo',
-    'SegmentInfo'
-]
+__all__ = []

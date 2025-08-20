@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from src.common.core.interfaces import Backend
-from src.common.core.documents import Document
+from src.common.document import Document
 from .search_backend import VespaSearchBackend
 from .vespa_schema_manager import VespaSchemaManager
 from .ingestion_client import VespaPyClient

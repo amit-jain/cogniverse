@@ -179,13 +179,13 @@ class SearchService:
         doc = self.search_backend.get_document(document_id)
         if doc:
             return {
-                "document_id": doc.document_id,
-                "source_id": doc.source_id,
-                "media_type": doc.media_type.value,
+                "document_id": doc.id,  # Use new Document structure
+                "source_id": doc.content_id,  # Use new Document structure
+                "content_type": doc.content_type.value,  # Use new Document structure
                 "metadata": doc.metadata,
                 "temporal_info": {
-                    "start_time": doc.temporal_info.start_time,
-                    "end_time": doc.temporal_info.end_time
-                } if doc.temporal_info else None
+                    "start_time": doc.metadata.get("start_time"),
+                    "end_time": doc.metadata.get("end_time")
+                } if doc.metadata.get("start_time") is not None else None
             }
         return None

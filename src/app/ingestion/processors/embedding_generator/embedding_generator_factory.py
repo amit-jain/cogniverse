@@ -39,7 +39,6 @@ class EmbeddingGeneratorFactory:
             logger=logger
         )
         
-        # Return embedding generator with backend client
         return EmbeddingGeneratorImpl(
             config=profile_config,  # This becomes self.profile_config
             logger=logger,

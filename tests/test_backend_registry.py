@@ -27,7 +27,7 @@ from src.common.core.backend_registry import (
     register_search_backend
 )
 from src.common.core.interfaces import Backend, IngestionBackend, SearchBackend
-from src.common.core.documents import Document, MediaType
+from src.common.document import Document, ContentType
 
 
 class MockIngestionBackend(IngestionBackend):
@@ -83,8 +83,8 @@ class MockSearchBackend(SearchBackend):
     def get_document(self, document_id: str) -> Optional[Document]:
         if document_id.startswith("doc_"):
             return Document(
-                doc_id=document_id,
-                media_type=MediaType.VIDEO_FRAME,
+                id=document_id,
+                content_type=ContentType.VIDEO,
                 metadata={"test": True}
             )
         return None
@@ -111,7 +111,7 @@ class MockFullBackend(Backend):
     
     def ingest_documents(self, documents: List[Document]) -> Dict[str, Any]:
         for doc in documents:
-            self.documents[doc.doc_id] = doc
+            self.documents[doc.id] = doc
         return {"success_count": len(documents), "error_count": 0}
     
     def ingest_stream(self, documents: Iterator[Document]) -> Iterator[Dict[str, Any]]:
@@ -273,8 +273,8 @@ class TestBackendRegistry(unittest.TestCase):
         
         # Test ingestion
         doc = Document(
-            doc_id="test_doc_1",
-            media_type=MediaType.VIDEO_FRAME,
+            id="test_doc_1",
+            content_type=ContentType.VIDEO,
             metadata={"title": "Test Document"}
         )
         
@@ -293,7 +293,7 @@ class TestBackendRegistry(unittest.TestCase):
         retrieved_doc = search_backend.get_document("test_doc_1")
         
         self.assertIsNotNone(retrieved_doc)
-        self.assertEqual(retrieved_doc.doc_id, "test_doc_1")
+        self.assertEqual(retrieved_doc.id, "test_doc_1")
     
     def test_convenience_functions(self):
         """Test module-level convenience functions."""
@@ -368,7 +368,7 @@ class TestBackendIntegration(unittest.TestCase):
         
         # Ingest documents
         docs = [
-            Document(doc_id=f"doc_{i}", media_type=MediaType.VIDEO_FRAME, metadata={"index": i})
+            Document(id=f"doc_{i}", content_type=ContentType.VIDEO, metadata={"index": i})
             for i in range(5)
         ]
         

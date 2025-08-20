@@ -6,8 +6,8 @@ from .embedding_generator import (
     EmbeddingGenerator
 )
 
-# Import from core
-from src.common.core import Document, MediaType, TemporalInfo, SegmentInfo
+# Import new generic Document only
+from src.common.document import Document, ContentType, ProcessingStatus
 
 from src.common.models import (
     get_or_load_model,
@@ -34,14 +34,14 @@ from .embedding_generator_factory import (
 )
 
 __all__ = [
-    # Main classes (EmbeddingGenerator is the implementation)
+    # Main classes
     'EmbeddingGenerator',
+    'EmbeddingGeneratorImpl',
     'EmbeddingResult',
     'ProcessingConfig',
     'Document',
-    'MediaType',
-    'TemporalInfo',
-    'SegmentInfo',
+    'ContentType', 
+    'ProcessingStatus',
     
     # Model loaders
     'get_or_load_model',

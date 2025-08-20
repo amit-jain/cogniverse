@@ -26,7 +26,7 @@ import numpy as np
 from vespa.application import Vespa
 
 from src.app.search.base import SearchBackend, SearchResult
-from src.common.core import Document, MediaType, TemporalInfo, SegmentInfo
+from src.common.document import Document, ContentType, ProcessingStatus
 from src.common.models.videoprism_text_encoder import (
     VideoPrismTextEncoder, create_text_encoder
 )
@@ -638,57 +638,22 @@ class VespaSearchBackend(SearchBackend):
         # Extract document ID
         doc_id = result.get("id", "").split("::")[-1]
         
-        # Determine media type based on schema
-        if "frame" in self.schema_name:
-            media_type = MediaType.VIDEO_FRAME
-        elif "global" in self.schema_name:
-            media_type = MediaType.VIDEO_SEGMENT
-        else:
-            media_type = MediaType.VIDEO_FRAME  # Default to frame
+        # Create Document using new generic structure
+        document = Document(
+            id=doc_id,
+            content_type=ContentType.VIDEO,
+            status=ProcessingStatus.COMPLETED
+        )
         
-        # Build temporal info if available
-        temporal_info = None
-        if "start_time" in fields and "end_time" in fields:
-            temporal_info = TemporalInfo(
-                start_time=fields["start_time"],
-                end_time=fields["end_time"]
-            )
-        
-        # Build segment info if available
-        segment_info = None
-        if "segment_id" in fields:
-            segment_info = SegmentInfo(
-                segment_idx=fields["segment_id"],
-                total_segments=fields.get("total_segments", 1)
-            )
-        elif "frame_id" in fields:
-            segment_info = SegmentInfo(
-                segment_idx=fields["frame_id"],
-                total_segments=1
-            )
-        
-        # Extract metadata
-        metadata = {
-            "video_title": fields.get("video_title"),
-            "frame_description": fields.get("frame_description"),
-            "segment_description": fields.get("segment_description"),
-            "audio_transcript": fields.get("audio_transcript"),
-            "creation_timestamp": fields.get("creation_timestamp")
-        }
-        # Remove None values
-        metadata = {k: v for k, v in metadata.items() if v is not None}
+        # Add all fields as metadata
+        for key, value in fields.items():
+            if value is not None:
+                document.add_metadata(key, value)
         
         # Add source_id to metadata
-        metadata["source_id"] = fields.get("video_id", doc_id.split("_")[0])
+        document.add_metadata("source_id", fields.get("video_id", doc_id.split("_")[0]))
         
-        # Create Document using new structure
-        return Document(
-            doc_id=doc_id,
-            media_type=media_type,
-            temporal_info=temporal_info,
-            segment_info=segment_info,
-            metadata=metadata
-        )
+        return document
     
     def _process_results(
         self,
@@ -828,18 +793,19 @@ class VespaSearchBackend(SearchBackend):
             fields = data.get("fields", {})
             
             # Create Document from fields
-            from src.common.core.documents import Document, MediaType, TemporalInfo
+            from src.common.document import Document, ContentType
             
             doc = Document(
-                doc_id=document_id,
-                content=fields.get("content", ""),
-                media_type=MediaType.VIDEO_SEGMENT,
-                metadata=fields,
-                temporal_info=TemporalInfo(
-                    start_time=fields.get("start_time", 0.0),
-                    end_time=fields.get("end_time", 0.0)
-                ) if "start_time" in fields else None
+                id=document_id,
+                content_type=ContentType.VIDEO,
+                text_content=fields.get("content", ""),
+                status=ProcessingStatus.COMPLETED
             )
+            
+            # Add all fields as metadata
+            for key, value in fields.items():
+                if value is not None:
+                    doc.add_metadata(key, value)
             
             return doc
         
