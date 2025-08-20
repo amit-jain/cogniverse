@@ -7,6 +7,7 @@ on:
       - 'src/evaluation/**'
       - 'tests/**'
       - 'pytest.ini'
+      - 'pyproject.toml'
       - '.github/workflows/evaluation-tests.yml'
   pull_request:
     branches: [ main, develop ]
@@ -14,6 +15,7 @@ on:
       - 'src/evaluation/**'
       - 'tests/**'
       - 'pytest.ini'
+      - 'pyproject.toml'
 
 jobs:
   unit-tests:
