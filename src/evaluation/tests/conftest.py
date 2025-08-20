@@ -74,7 +74,7 @@ def mock_phoenix_client():
 @pytest.fixture
 def mock_search_service():
     """Mock search service for testing."""
-    with patch('src.search.search_service.SearchService') as mock_service_class:
+    with patch('src.app.search.service.SearchService') as mock_service_class:
         mock_service = MagicMock()
         mock_service_class.return_value = mock_service
         
