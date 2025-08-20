@@ -15,6 +15,8 @@ dependencies = [
     "numpy>=1.24.0",
     "opencv-python>=4.8.0",
     "pillow>=10.0.0",
+    # Search Backend Dependencies
+    "pyvespa>=0.59.0",
     # Evaluation Framework Dependencies
     "inspect-ai>=0.3.0",
     "ragas>=0.1.0",
