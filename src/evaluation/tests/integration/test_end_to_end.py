@@ -25,7 +25,7 @@ class TestEndToEnd:
     def test_experiment_mode_e2e(self, mock_phoenix_client, mock_search_service):
         """Test complete experiment mode workflow."""
         with patch('src.evaluation.core.task.px.Client', return_value=mock_phoenix_client):
-            with patch('src.search.search_service.SearchService', return_value=mock_search_service):
+            with patch('src.app.search.service.SearchService', return_value=mock_search_service):
                 # Create evaluation task
                 task = evaluation_task(
                     mode="experiment",
@@ -86,7 +86,7 @@ class TestEndToEnd:
         
         with patch('src.evaluation.data.storage.px.Client', return_value=mock_phoenix_client):
             with patch('src.evaluation.core.task.px.Client', return_value=mock_phoenix_client):
-                with patch('src.search.search_service.SearchService', return_value=mock_search_service):
+                with patch('src.app.search.service.SearchService', return_value=mock_search_service):
                     runner = CliRunner()
                     
                     # Test experiment mode via CLI
@@ -130,7 +130,7 @@ class TestEndToEnd:
             
             with patch('src.evaluation.data.storage.px.Client', return_value=mock_phoenix_client):
                 with patch('src.evaluation.core.task.px.Client', return_value=mock_phoenix_client):
-                    with patch('src.search.search_service.SearchService', return_value=mock_search_service):
+                    with patch('src.app.search.service.SearchService', return_value=mock_search_service):
                         runner = CliRunner()
                         
                         result = runner.invoke(cli, [
@@ -175,7 +175,7 @@ class TestEndToEnd:
             
             with patch('src.evaluation.data.storage.px.Client', return_value=mock_phoenix_client):
                 with patch('src.evaluation.core.task.px.Client', return_value=mock_phoenix_client):
-                    with patch('src.search.search_service.SearchService', return_value=mock_search_service):
+                    with patch('src.app.search.service.SearchService', return_value=mock_search_service):
                         runner = CliRunner()
                         
                         result = runner.invoke(cli, [
@@ -193,7 +193,7 @@ class TestEndToEnd:
     def test_multiple_profiles_strategies(self, mock_phoenix_client, mock_search_service):
         """Test evaluation with multiple profiles and strategies."""
         with patch('src.evaluation.core.task.px.Client', return_value=mock_phoenix_client):
-            with patch('src.search.search_service.SearchService', return_value=mock_search_service):
+            with patch('src.app.search.service.SearchService', return_value=mock_search_service):
                 task = evaluation_task(
                     mode="experiment",
                     dataset_name="test_dataset",
