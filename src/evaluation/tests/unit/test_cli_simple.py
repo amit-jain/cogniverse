@@ -79,7 +79,7 @@ class TestCLISimple:
             # Check mode choices are defined
             for param in evaluate.params:
                 if param.name == 'mode':
-                    assert param.type.choices == ['experiment', 'batch', 'live']
+                    assert set(param.type.choices) == {'experiment', 'batch', 'live'}
                     break
     
     @pytest.mark.unit
