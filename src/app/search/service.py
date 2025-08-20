@@ -28,36 +28,36 @@ def _init_phoenix_instrumentation():
         import phoenix as px
         from opentelemetry import trace
         from opentelemetry.trace import SpanKind, Status, StatusCode
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        # Phoenix OTEL registration will handle the tracer provider setup
         
         # Check if tracer provider is already set (e.g., by experiments)
         current_provider = trace.get_tracer_provider()
         
-        # Check if we have a real tracer provider (not the default no-op one)
-        if current_provider is not None and \
-           str(type(current_provider)) != "<class 'opentelemetry.trace._DefaultTracerProvider'>":
-            # Reuse existing tracer provider
+        # Check if we have a real tracer provider (not the default no-op one or proxy)
+        provider_type = str(type(current_provider))
+        if (current_provider is not None and 
+            provider_type != "<class 'opentelemetry.trace._DefaultTracerProvider'>" and
+            provider_type != "<class 'opentelemetry.trace.ProxyTracerProvider'>" and
+            hasattr(current_provider, 'force_flush')):
+            # Reuse existing real tracer provider
             tracer_provider = current_provider
-            logger.info("Reusing existing tracer provider")
+            logger.info(f"Reusing existing tracer provider: {provider_type}")
         else:
-            # Create new tracer provider
-            endpoint = os.getenv("PHOENIX_COLLECTOR_ENDPOINT", "http://localhost:6006") + "/v1/traces"
+            # Use Phoenix's register function to create tracer provider with project name
+            from phoenix.otel import register
             
-            tracer_provider = TracerProvider()
-            span_processor = BatchSpanProcessor(
-                OTLPSpanExporter(endpoint=endpoint)
+            tracer_provider = register(
+                project_name="cogniverse-video-search",  # sets project name for spans
+                batch=True,  # uses batch span processor
+                auto_instrument=False  # we handle instrumentation manually
             )
-            tracer_provider.add_span_processor(span_processor)
-            trace.set_tracer_provider(tracer_provider)
-            logger.info(f"Created new tracer provider with endpoint: {endpoint}")
+            logger.info(f"Created Phoenix tracer provider for project: cogniverse-video-search")
         
         # Get tracer
         tracer = trace.get_tracer(__name__)
         
         # Initialize Cogniverse instrumentation
-        from src.app.instrumentation import CogniverseInstrumentor
+        from src.app.instrumentation.phoenix import CogniverseInstrumentor
         instrumentor = CogniverseInstrumentor()
         instrumentor.instrument(tracer_provider=tracer_provider)
         
@@ -156,8 +156,15 @@ class SearchService:
         if ranking_strategy:
             logger.info(f"Using ranking strategy: {ranking_strategy}")
         
+        # Generate embeddings at SearchService level (creates encoder span as child of search_service.search)
+        query_embeddings = None
+        if self.query_encoder:
+            logger.info(f"Generating embeddings with {type(self.query_encoder).__name__}")
+            query_embeddings = self.query_encoder.encode(query)
+        
+        # Call backend with embeddings (creates search.execute span as sibling of encoder span)
         results = self.search_backend.search(
-            query_embeddings=None,
+            query_embeddings=query_embeddings,
             query_text=query,
             top_k=top_k,
             filters=filters,
