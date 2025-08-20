@@ -34,10 +34,10 @@ class CogniverseInstrumentor(BaseInstrumentor):
         
         # Instrument components
         self._instrument_video_pipeline()
-        self._instrument_search_backends()
+        self._instrument_search_service()
+        self._instrument_backend_search()
         self._instrument_query_encoders()
         self._instrument_agents()
-        self._instrument_search_service()
         
         logger.info("Cogniverse instrumentation completed")
     
@@ -105,7 +105,7 @@ class CogniverseInstrumentor(BaseInstrumentor):
         except ImportError as e:
             logger.warning(f"Could not instrument video pipeline: {e}")
     
-    def _instrument_search_backends(self):
+    def _instrument_search_service(self):
         """Add tracing to search operations at the service layer"""
         try:
             # Instrument at the app layer, not backend layer
@@ -127,11 +127,11 @@ class CogniverseInstrumentor(BaseInstrumentor):
                 top_k = kwargs.get("top_k", 10)
                 
                 with tracer.start_as_current_span(
-                    "search.execute",
-                    kind=SpanKind.INTERNAL,
+                    "search_service.search",
+                    kind=SpanKind.SERVER,
                     attributes={
-                        "openinference.span.kind": "RETRIEVER",
-                        "operation.name": "search.execute",
+                        "openinference.span.kind": "CHAIN",
+                        "operation.name": "search",
                         "backend": getattr(service_self.config, 'search_backend', 'vespa'),
                         "query": query_text,
                         "strategy": ranking_strategy,
@@ -312,73 +312,88 @@ class CogniverseInstrumentor(BaseInstrumentor):
         except ImportError as e:
             logger.warning(f"Could not instrument agents: {e}")
     
-    def _instrument_search_service(self):
-        """Add tracing to search service operations"""
+    def _instrument_backend_search(self):
+        """Add tracing to backend search operations"""
         try:
-            from src.app.search.service import SearchService
+            from src.backends.vespa.search_backend import VespaSearchBackend
             
             # Store original method
-            original_search = SearchService.search
-            self._original_methods['src.search.search_service.SearchService.search'] = original_search
+            original_search = VespaSearchBackend.search
+            self._original_methods['src.backends.vespa.search_backend.VespaSearchBackend.search'] = original_search
             
             # Capture tracer in closure
             tracer = self.tracer
             
             @wraps(original_search)
-            def traced_search(service_self, query, *args, **kwargs):
-                # Extract kwargs with defaults
+            def traced_search(backend_self, *args, **kwargs):
+                query_text = kwargs.get("query_text", "")
+                ranking_strategy = kwargs.get("ranking_strategy", "default")
                 top_k = kwargs.get("top_k", 10)
-                filters = kwargs.get("filters")
-                ranking_strategy = kwargs.get("ranking_strategy")
                 
                 with tracer.start_as_current_span(
-                    "search_service.search",
-                    kind=SpanKind.SERVER,
+                    "search.execute",
+                    kind=SpanKind.INTERNAL,
                     attributes={
-                        "openinference.span.kind": "CHAIN",
-                        "operation.name": "search",
-                        "query": query,
+                        "openinference.span.kind": "RETRIEVER",
+                        "operation.name": "search.execute",
+                        "backend": "vespa",
+                        "query": query_text,
+                        "strategy": ranking_strategy,
                         "top_k": top_k,
-                        "profile": getattr(service_self, 'profile', 'unknown'),
-                        "ranking_strategy": ranking_strategy or "default",
-                        "has_filters": filters is not None,
-                        "input.value": query,
-                        "input.mime_type": "text/plain"
+                        "schema": getattr(backend_self, 'schema_name', 'unknown'),
+                        "profile": getattr(backend_self, 'profile', 'unknown'),
+                        "input.value": json.dumps({
+                            "query": query_text,
+                            "top_k": top_k,
+                            "strategy": ranking_strategy or "default"
+                        })
                     }
                 ) as span:
                     try:
-                        # Call original method - NO DUPLICATION!
-                        results = original_search(service_self, query, *args, **kwargs)
+                        start_time = time.time()
                         
-                        # Add result attributes
-                        span.set_attribute("num_results", len(results))
-                        if results:
-                            span.set_attribute("top_score", results[0].score)
-                            
-                            # Build output documents for Phoenix
-                            output_documents = []
-                            for i, result in enumerate(results[:5]):  # Top 5 results
-                                output_documents.append({
-                                    "document_id": result.document.id if result.document else 'unknown',
-                                    "video_id": result.document.metadata.get('source_id', 'unknown') if result.document else 'unknown'
-                                })
-                            
-                            span.set_attribute("output.value", json.dumps(output_documents))
-                            span.set_attribute("output.mime_type", "application/json")
+                        # Add query embeddings info
+                        if "query_embeddings" in kwargs and kwargs["query_embeddings"] is not None:
+                            span.set_attribute("has_embeddings", True)
+                            span.set_attribute("embedding_shape", str(kwargs["query_embeddings"].shape))
+                        else:
+                            span.set_attribute("has_embeddings", False)
                         
+                        result = original_search(backend_self, *args, **kwargs)
+                        
+                        # Add result metrics
+                        span.set_attribute("num_results", len(result))
+                        
+                        if result:
+                            span.set_attribute("top_score", result[0].score if hasattr(result[0], 'score') else 0)
+                            # Add details about top results as span event
+                            top_3_results = []
+                            for i, res in enumerate(result[:3]):
+                                result_detail = {
+                                    "rank": i + 1,
+                                    "document_id": res.document.id if res.document else 'unknown',
+                                    "video_id": res.document.metadata.get('source_id', 'unknown') if res.document else 'unknown',
+                                    "score": getattr(res, 'score', 0),
+                                    "content_type": str(res.document.content_type.value) if res.document and res.document.content_type else 'unknown'
+                                }
+                                top_3_results.append(result_detail)
+                            span.add_event("search_results", {"top_3": str(top_3_results)})
+                        
+                        span.set_attribute("latency_ms", (time.time() - start_time) * 1000)
                         span.set_status(Status(StatusCode.OK))
-                        return results
+                        
+                        return result
                         
                     except Exception as e:
                         span.record_exception(e)
                         span.set_status(Status(StatusCode.ERROR, str(e)))
                         raise
             
-            SearchService.search = traced_search
-            logger.info("Instrumented SearchService.search")
+            VespaSearchBackend.search = traced_search
+            logger.info("Instrumented VespaSearchBackend.search")
             
         except ImportError as e:
-            logger.warning(f"Could not instrument search service: {e}")
+            logger.warning(f"Could not instrument backend search: {e}")
 
 
 def instrument_cogniverse():
