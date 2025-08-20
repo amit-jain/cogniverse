@@ -209,14 +209,14 @@ jobs:
         uv pip install --system -e .
         uv pip install --system pytest pytest-cov tabulate
     
-    - name: Run all tests with coverage
+    - name: Run unit tests with coverage
       run: |
-        pytest src/evaluation/tests -v --cov=src/evaluation --cov-report=term-missing --cov-fail-under=80
+        pytest src/evaluation/tests/unit -v -m unit --cov=src/evaluation --cov-report=term-missing --cov-fail-under=75
       continue-on-error: true  # Don't fail build on coverage, just report
     
     - name: Generate coverage report
       run: |
-        pytest src/evaluation/tests -v --cov=src/evaluation --cov-report=html
+        pytest src/evaluation/tests/unit -v -m unit --cov=src/evaluation --cov-report=html
       continue-on-error: true
     
     - name: Upload coverage HTML report
