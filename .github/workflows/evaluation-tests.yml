@@ -50,7 +50,7 @@ jobs:
     - name: Install dependencies
       run: |
         uv pip install --system -e .
-        uv pip install --system pytest pytest-cov pytest-mock
+        uv pip install --system pytest pytest-cov pytest-mock tabulate
     
     - name: Run unit tests
       run: |
@@ -84,18 +84,32 @@ jobs:
     - name: Install dependencies
       run: |
         uv pip install --system -e .
-        uv pip install --system pytest pytest-cov pytest-mock
+        uv pip install --system pytest pytest-cov pytest-mock tabulate
     
-    - name: Start Phoenix (mock)
+    - name: Start Phoenix
       run: |
-        # For CI, we'll run integration tests with mocked Phoenix
-        # In a real setup, you'd start Phoenix here
-        echo "Skipping Phoenix startup for CI"
+        echo "Starting Phoenix in Docker..."
+        docker pull arizephoenix/phoenix:latest
+        docker run -d --name phoenix-ci \
+          -p 6006:6006 \
+          -p 4317:4317 \
+          -e PHOENIX_WORKING_DIR=/tmp/phoenix-data \
+          arizephoenix/phoenix:latest
+        
+        # Wait for Phoenix to be ready
+        echo "Waiting for Phoenix to be ready..."
+        timeout 60 bash -c 'until curl -f http://localhost:6006 >/dev/null 2>&1; do sleep 2; done'
+        echo "Phoenix is ready!"
     
     - name: Run integration tests
       run: |
         pytest src/evaluation/tests/integration -v -m integration --cov=src/evaluation --cov-append
-      continue-on-error: true  # Integration tests may fail without real Phoenix
+    
+    - name: Stop Phoenix
+      run: |
+        docker stop phoenix-ci || true
+        docker rm phoenix-ci || true
+      if: always()  # Always cleanup, even if tests fail
     
     - name: Upload coverage
       uses: codecov/codecov-action@v3
@@ -193,7 +207,7 @@ jobs:
     - name: Install dependencies
       run: |
         uv pip install --system -e .
-        uv pip install --system pytest pytest-cov
+        uv pip install --system pytest pytest-cov tabulate
     
     - name: Run all tests with coverage
       run: |
