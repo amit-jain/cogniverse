@@ -136,15 +136,15 @@ class VideoSchemaAnalyzer(SchemaAnalyzer):
                             return str(vid_id).split('_chunk_')[0]
                         return str(vid_id)
         
-        # Try to extract from doc_id
-        if hasattr(document, 'doc_id'):
-            doc_id = document.doc_id
+        # Try to extract from id (new Document structure)
+        if hasattr(document, 'id'):
+            doc_id = document.id
             
             # Handle compound video IDs like "video123_frame_456"
             if '_frame_' in doc_id:
                 return doc_id.split('_frame_')[0]
-            elif '_segment_' in doc_id:
-                return doc_id.split('_segment_')[0]
+            elif '_segment_' in doc_id or '_seg_' in doc_id:
+                return doc_id.split('_segment_')[0] if '_segment_' in doc_id else doc_id.split('_seg_')[0]
             elif '_chunk_' in doc_id:
                 return doc_id.split('_chunk_')[0]
             

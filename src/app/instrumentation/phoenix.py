@@ -167,10 +167,10 @@ class CogniverseInstrumentor(BaseInstrumentor):
                             for i, res in enumerate(result[:3]):
                                 result_detail = {
                                     "rank": i + 1,
-                                    "document_id": res.document.doc_id if res.document else 'unknown',
+                                    "document_id": res.document.id if res.document else 'unknown',
                                     "video_id": res.document.metadata.get('source_id', 'unknown') if res.document else 'unknown',
                                     "score": getattr(res, 'score', 0),
-                                    "media_type": str(res.document.media_type.value) if res.document and res.document.media_type else 'unknown'
+                                    "content_type": str(res.document.content_type.value) if res.document and res.document.content_type else 'unknown'
                                 }
                                 top_3_results.append(result_detail)
                             span.add_event("search_results", {"top_3": str(top_3_results)})
@@ -359,7 +359,7 @@ class CogniverseInstrumentor(BaseInstrumentor):
                             output_documents = []
                             for i, result in enumerate(results[:5]):  # Top 5 results
                                 output_documents.append({
-                                    "document_id": result.document.doc_id if result.document else 'unknown',
+                                    "document_id": result.document.id if result.document else 'unknown',
                                     "video_id": result.document.metadata.get('source_id', 'unknown') if result.document else 'unknown'
                                 })
                             

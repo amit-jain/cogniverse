@@ -20,7 +20,7 @@ import time
 from typing import Dict, List, Any, Optional, Tuple
 import logging
 from .embedding_processor import VespaEmbeddingProcessor
-from src.common.core import Document, MediaType
+from src.common.document import Document
 from .strategy_aware_processor import StrategyAwareProcessor
 from src.common.utils.retry import retry_with_backoff, RetryConfig
 
@@ -203,9 +203,12 @@ class VespaPyClient:
         field_names = self._strategy_processor.get_embedding_field_names(self.schema_name)
         
         # Process embeddings using internal processor
-        all_processed_embeddings = self._embedding_processor.process_embeddings(
-            doc.embeddings.embeddings if doc.embeddings else None
-        )
+        # New Document class stores embeddings directly in embeddings dict
+        raw_embeddings = None
+        if "embedding" in doc.embeddings:
+            raw_embeddings = doc.embeddings["embedding"]["data"]
+        
+        all_processed_embeddings = self._embedding_processor.process_embeddings(raw_embeddings)
         
         # Map processed embeddings to the correct field names based on ranking strategies
         processed_embeddings = {}
@@ -231,22 +234,21 @@ class VespaPyClient:
         # Only add fields that exist in the schema definition
         # This makes the code completely schema-driven
         
-        # Add temporal info if schema has these fields
-        if doc.temporal_info:
-            if "start_time" in self.schema_fields:
-                fields["start_time"] = float(doc.temporal_info.start_time)
-            if "end_time" in self.schema_fields:
-                fields["end_time"] = float(doc.temporal_info.end_time)
+        # Add temporal info from metadata (new Document structure)
+        if "start_time" in doc.metadata and "start_time" in self.schema_fields:
+            fields["start_time"] = float(doc.metadata["start_time"])
+        if "end_time" in doc.metadata and "end_time" in self.schema_fields:
+            fields["end_time"] = float(doc.metadata["end_time"])
         
-        # Add segment info if schema has segment_id
-        if doc.segment_info and "segment_id" in self.schema_fields:
-            fields["segment_id"] = doc.segment_info.segment_idx
-            if "total_segments" in self.schema_fields and hasattr(doc.segment_info, "total_segments"):
-                fields["total_segments"] = doc.segment_info.total_segments
+        # Add segment info from metadata (new Document structure)
+        if "segment_index" in doc.metadata and "segment_id" in self.schema_fields:
+            fields["segment_id"] = doc.metadata["segment_index"]
+        if "total_segments" in doc.metadata and "total_segments" in self.schema_fields:
+            fields["total_segments"] = doc.metadata["total_segments"]
         
-        # Add transcription if schema has audio_transcript field
-        if doc.transcription and "audio_transcript" in self.schema_fields:
-            fields["audio_transcript"] = doc.transcription
+        # Add transcription from metadata (new Document structure)
+        if "audio_transcript" in doc.metadata and "audio_transcript" in self.schema_fields:
+            fields["audio_transcript"] = doc.metadata["audio_transcript"]
         
         # Handle description from metadata if schema has segment_description
         if "description" in doc.metadata and "segment_description" in self.schema_fields:
@@ -257,11 +259,11 @@ class VespaPyClient:
             if key in self.schema_fields and key not in fields:
                 fields[key] = value
         
-        # Create Vespa document with this client's schema
-        doc_id_string = f"id:video:{self.schema_name}::{doc.doc_id}"
+        # Create Vespa document with this client's schema  
+        doc_id_string = f"id:video:{self.schema_name}::{doc.id}"
         
         # CRITICAL: Log schema being used for each document (first doc only to avoid spam)
-        if doc.doc_id.endswith("_0_0") or doc.doc_id.endswith("_0"):  # Log first doc of each video
+        if doc.id.endswith("_0_0") or doc.id.endswith("_0"):  # Log first doc of each video
             self.logger.info(f"📝 FEEDING DOCUMENT TO SCHEMA:")
             self.logger.info(f"   Doc ID: {doc_id_string}")
             self.logger.info(f"   Schema: {self.schema_name}")

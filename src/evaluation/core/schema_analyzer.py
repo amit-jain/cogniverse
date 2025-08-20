@@ -112,9 +112,9 @@ class DefaultSchemaAnalyzer(SchemaAnalyzer):
                 if id_field in document:
                     return str(document[id_field])
         
-        # Try object attributes
-        if hasattr(document, 'doc_id'):
-            return document.doc_id
+        # Try object attributes (new Document structure)
+        if hasattr(document, 'id'):
+            return document.id
         
         if hasattr(document, 'metadata'):
             # Try common ID field names

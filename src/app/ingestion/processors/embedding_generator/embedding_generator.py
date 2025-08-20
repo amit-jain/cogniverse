@@ -117,20 +117,25 @@ class EmbeddingGenerator(BaseEmbeddingGenerator):
             # Use explicit processing_type from video_data (set by pipeline)
             processing_type = video_data.get("processing_type", self.process_type)
             
-            if processing_type == "single_vector":
-                # Single vector processing with pre-segmented data
-                result = self._generate_single_vector_embeddings(video_data, output_dir)
-            elif processing_type == "video_chunks":
-                # Video chunks processing - all segments in one document
-                result = self._generate_video_chunks_embeddings(video_data, output_dir)
-            elif processing_type == "direct_video" or processing_type.startswith("direct_video"):
-                # Direct video processing
-                result = self._generate_direct_video_embeddings(video_data, output_dir)
-            elif processing_type == "frame_based":
-                # Frame-based processing
-                result = self._generate_frame_based_embeddings(video_data, output_dir)
-            else:
+            # Registry of processing methods - no if/elif chains
+            processing_methods = {
+                "single_vector": self._generate_single_vector_embeddings,
+                "video_chunks": self._generate_video_chunks_embeddings,
+                "direct_video": self._generate_direct_video_embeddings,
+                "frame_based": self._generate_frame_based_embeddings
+            }
+            
+            # Handle direct_video variants
+            if processing_type.startswith("direct_video"):
+                processing_type = "direct_video"
+            
+            # Get the processing method
+            process_method = processing_methods.get(processing_type)
+            if not process_method:
                 raise ValueError(f"Unknown processing type: {processing_type}")
+            
+            # Call the method - no if/elif needed
+            result = process_method(video_data, output_dir)
             
             processing_time = time.time() - start_time
             result.processing_time = processing_time

@@ -25,6 +25,8 @@ import json
 import time
 import asyncio
 
+from ..processor_base import BaseProcessor
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,14 +54,17 @@ class VideoSegment:
         }
 
 
-class SingleVectorVideoProcessor:
+class SingleVectorVideoProcessor(BaseProcessor):
     """
     Generic processor for any single-vector video embedding approach.
     Configurable for different strategies without being tied to specific models.
     """
     
+    PROCESSOR_NAME = "single_vector"
+    
     def __init__(
         self,
+        logger: logging.Logger,
         strategy: Literal["chunks", "windows", "global"] = "chunks",
         segment_duration: float = 6.0,
         segment_overlap: float = 1.0,
@@ -67,7 +72,8 @@ class SingleVectorVideoProcessor:
         max_frames_per_segment: int = 12,
         min_segment_duration: float = 2.0,
         store_as_single_doc: bool = True,
-        cache: Optional[Any] = None
+        cache: Optional[Any] = None,
+        **kwargs
     ):
         """
         Initialize processor with strategy configuration.
@@ -84,6 +90,15 @@ class SingleVectorVideoProcessor:
             min_segment_duration: Minimum duration for last segment
             store_as_single_doc: If True, store all segments in one document
         """
+        # Pass all parameters to parent using locals() to avoid hardcoding
+        params = locals().copy()
+        params.pop('self')  # Remove self
+        params.pop('kwargs')  # Remove kwargs since we'll spread it
+        params.update(kwargs)  # Add any additional kwargs
+        
+        super().__init__(**params)
+        
+        # Set instance variables for backward compatibility with existing code
         self.strategy = strategy
         self.segment_duration = segment_duration
         self.segment_overlap = segment_overlap if strategy != "global" else 0
@@ -92,7 +107,6 @@ class SingleVectorVideoProcessor:
         self.min_segment_duration = min_segment_duration
         self.store_as_single_doc = store_as_single_doc
         self.cache = cache
-        self.logger = logger
         
     def process_video(
         self,

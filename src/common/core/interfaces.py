@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Optional, Iterator
 from pathlib import Path
 import numpy as np
 
-from .documents import Document
+from src.common.document import Document
 
 
 class IngestionBackend(ABC):

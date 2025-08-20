@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Async Video Ingestion Pipeline - Faster concurrent processing
+Async Video Ingestion Pipeline - Using Builder Pattern for clean initialization
 """
 
 import argparse
@@ -12,27 +12,25 @@ from pathlib import Path
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.app.ingestion.pipeline import VideoIngestionPipeline, PipelineConfig
+from src.app.ingestion.pipeline_builder import (
+    create_pipeline,
+    create_config, 
+    build_simple_pipeline,
+    build_test_pipeline
+)
 
 async def main_async():
-    parser = argparse.ArgumentParser(description="Async Video Processing Pipeline with Performance Optimizations")
+    parser = argparse.ArgumentParser(description="Video Processing Pipeline with Builder Pattern")
     parser.add_argument("--video_dir", type=Path, help="Directory containing videos")
     parser.add_argument("--output_dir", type=Path, help="Output directory for processed data")
-    parser.add_argument("--backend", choices=["byaldi", "vespa"], help="Search backend")
-    parser.add_argument("--profile", nargs="+", help="Video processing profiles (space-separated, e.g., colqwen_chunks direct_video_frame)")
-    parser.add_argument("--max-concurrent", type=int, default=3, help="Maximum concurrent videos to process (default: 3)")
-    parser.add_argument("--enable-async-vespa", action="store_true", help="Enable async Vespa feeding (Phase 3 optimization)")
-    
-    # Pipeline step toggles
-    parser.add_argument("--skip-keyframes", action="store_true", help="Skip keyframe extraction")
-    parser.add_argument("--skip-audio", action="store_true", help="Skip audio transcription")
-    parser.add_argument("--skip-descriptions", action="store_true", help="Skip VLM descriptions")
-    parser.add_argument("--skip-embeddings", action="store_true", help="Skip embedding generation")
+    parser.add_argument("--backend", choices=["byaldi", "vespa"], default="vespa", help="Search backend")
+    parser.add_argument("--profile", nargs="+", help="Video processing profiles (space-separated)")
+    parser.add_argument("--max-concurrent", type=int, default=3, help="Maximum concurrent videos to process")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     
     # Processing parameters
-    parser.add_argument("--keyframe-threshold", type=float, default=0.98, help="Keyframe extraction threshold")
-    parser.add_argument("--max-frames", type=int, default=3000, help="Maximum frames per video")
-    parser.add_argument("--vlm-batch-size", type=int, default=1000, help="VLM batch processing size")
+    parser.add_argument("--max-frames", type=int, help="Maximum frames per video")
+    parser.add_argument("--test-mode", action="store_true", help="Use test mode with limited frames")
     
     args = parser.parse_args()
     
@@ -44,123 +42,135 @@ async def main_async():
         profiles_to_process = args.profile
     else:
         # If no profiles specified, use the active one
-        active = app_config.get("active_video_profile", "frame_based_colpali")
+        active = app_config.get("active_video_profile", "video_colpali_smol500_mv_frame")
         profiles_to_process = [active]
     
-    # Process each profile
+    # Process each profile using Builder pattern
     all_results = {}
     for profile in profiles_to_process:
         print(f"\n{'='*60}")
         print(f"🎯 Processing with profile: {profile}")
         print(f"{'='*60}")
         
-        # Set the profile
-        import os
-        os.environ["VIDEO_PROFILE"] = profile
-        # Reload config is not needed for dict
-        
-        # Create pipeline config
-        config = PipelineConfig.from_config()
-    
-        # Override with command line arguments
-        if args.video_dir:
-            config.video_dir = args.video_dir
-        if args.output_dir:
-            config.output_dir = args.output_dir
-        if args.backend:
-            config.search_backend = args.backend
+        # METHOD 1: Test mode - use test pipeline builder
+        if args.test_mode:
+            print("🧪 Using test pipeline builder...")
+            pipeline = build_test_pipeline(
+                video_dir=args.video_dir or Path("data/testset/evaluation/sample_videos"),
+                schema=profile,
+                max_frames=args.max_frames or 10
+            )
             
-        # Processing parameters
-        if args.keyframe_threshold != 0.98:  # Only override if user specified
-            config.keyframe_threshold = args.keyframe_threshold
-        if args.max_frames != 3000:
-            config.max_frames_per_video = args.max_frames
-        if args.vlm_batch_size != 1000:
-            config.vlm_batch_size = args.vlm_batch_size
+        # METHOD 2: Simple usage - use simple pipeline builder
+        elif not args.output_dir and not args.max_frames:
+            print("🚀 Using simple pipeline builder...")
+            pipeline = build_simple_pipeline(
+                video_dir=args.video_dir or Path("data/testset/evaluation/sample_videos"),
+                schema=profile,
+                backend=args.backend,
+                debug=args.debug
+            )
             
-        # Apply skip flags
-        if args.skip_keyframes:
-            config.extract_keyframes = False
-        if args.skip_audio:
-            config.transcribe_audio = False  
-        if args.skip_descriptions:
-            config.generate_descriptions = False
-        if args.skip_embeddings:
-            config.generate_embeddings = False
+        # METHOD 3: Advanced usage - use fluent builder with custom config
+        else:
+            print("🔧 Using advanced pipeline builder...")
+            
+            # Build custom config if needed
+            if args.output_dir or args.max_frames:
+                config_builder = (create_config()
+                                 .video_dir(args.video_dir or Path("data/testset/evaluation/sample_videos"))
+                                 .backend(args.backend))
+                
+                if args.output_dir:
+                    config_builder = config_builder.output_dir(args.output_dir)
+                if args.max_frames:
+                    config_builder = config_builder.max_frames_per_video(args.max_frames)
+                    
+                config = config_builder.build()
+                
+                # Create pipeline with custom config
+                pipeline = (create_pipeline()
+                           .with_config(config)
+                           .with_schema(profile)
+                           .with_debug(args.debug)
+                           .with_concurrency(args.max_concurrent)
+                           .build())
+            else:
+                # Use fluent builder directly
+                pipeline = (create_pipeline()
+                           .with_video_dir(args.video_dir or Path("data/testset/evaluation/sample_videos"))
+                           .with_schema(profile)
+                           .with_backend(args.backend)
+                           .with_debug(args.debug)
+                           .with_concurrency(args.max_concurrent)
+                           .build())
         
         print(f"🎬 Starting Video Processing Pipeline")
-        print(f"📁 Video directory: {config.video_dir}")
-        print(f"📂 Output directory: {config.output_dir}")
-        print(f"🔧 Backend: {config.search_backend}")
+        print(f"📁 Video directory: {pipeline.config.video_dir}")
+        print(f"📂 Output directory: {pipeline.config.output_dir}")
+        print(f"🔧 Backend: {pipeline.config.search_backend}")
         print(f"🎯 Profile: {profile}")
-        print(f"⚙️ Pipeline steps enabled:")
-        print(f"  - Keyframes: {config.extract_keyframes}")
-        print(f"  - Audio: {config.transcribe_audio}")
-        print(f"  - Descriptions: {config.generate_descriptions}")
-        print(f"  - Embeddings: {config.generate_embeddings}")
+        if args.max_frames:
+            print(f"🖼️ Max frames: {args.max_frames}")
+        if args.debug:
+            print("🐛 Debug mode: Enabled")
         
-        # Enable async Vespa if requested
-        if args.enable_async_vespa and config.search_backend == "vespa":
-            # Get the actual schema name from the profile config
-            profile_config = config.config.get('video_processing_profiles', {}).get(profile, {})
-            schema_name = profile_config.get('schema_name', profile)
-            
-            # CRITICAL: Log the schema mapping to ensure correct assignment
-            print(f"\n🔍 SCHEMA MAPPING CHECK:")
-            print(f"   Profile name: {profile}")
-            print(f"   Expected schema: {schema_name}")
-            print(f"   Profile config keys: {list(profile_config.keys())[:5]}...")
-            
-            config.backend_config = {
-                'vespa_url': 'http://localhost',
-                'vespa_port': 8080,
-                'schema_name': schema_name,
-                'use_async_ingestion': True
-            }
-            print(f"⚡ Async Vespa feeding enabled for schema: {schema_name}")
-            print(f"   Backend config: {config.backend_config}")
-        
-        # Set schema_name in config for the pipeline
-        config.schema_name = profile
-        
-        # Initialize pipeline with config, app_config, and schema_name
-        # The VideoIngestionPipeline now includes all async optimizations
-        pipeline = VideoIngestionPipeline(config, app_config, profile)
-        
-        # Get video files
-        video_files = list(config.video_dir.glob('*.mp4'))
+        # Get video files from the pipeline's video directory
+        video_files = list(pipeline.config.video_dir.glob('*.mp4'))
         if not video_files:
-            print(f"❌ No MP4 files found in {config.video_dir}")
+            print(f"❌ No MP4 files found in {pipeline.config.video_dir}")
             continue
+            
+        print(f"📹 Found {len(video_files)} videos to process")
         
-        print(f"\n📹 Found {len(video_files)} videos to process")
-        
-        # Process videos concurrently with timing
+        # Process videos using concurrent async method
         start_time = time.time()
         results = await pipeline.process_videos_concurrent(video_files, max_concurrent=args.max_concurrent)
         total_time = time.time() - start_time
         
-        # Calculate statistics
-        successful = sum(1 for r in results if r.get('status') == 'completed')
-        total_docs_fed = sum(
-            r.get('results', {}).get('embeddings', {}).get('documents_fed', 0)
-            for r in results if r.get('status') == 'completed'
-        )
+        # Calculate statistics from results list
+        if results:
+            num_videos = len(results)
+            successful = sum(1 for result in results if result.get('status') == 'completed')
+            total_docs_fed = sum(
+                result.get('results', {}).get('embeddings', {}).get('documents_fed', 0)
+                for result in results if result.get('status') == 'completed'
+            )
+            failed = num_videos - successful
+        else:
+            num_videos = successful = total_docs_fed = failed = 0
         
-        # Display results for this profile
-        print(f"\n✅ Profile {profile} completed!")
+        # Determine status icon based on success rate
+        if successful == 0:
+            status_icon = "❌"
+            status_text = "failed"
+        elif successful < num_videos:
+            status_icon = "⚠️"
+            status_text = "partially completed"
+        else:
+            status_icon = "✅"
+            status_text = "completed"
+            
+        print(f"\n{status_icon} Profile {profile} {status_text}!")
         print(f"   Time: {total_time:.2f} seconds")
-        print(f"   Videos: {successful}/{len(video_files)} successful")
+        print(f"   Videos: {successful}/{num_videos} successful")
+        if failed > 0:
+            print(f"   Failed: {failed} videos")
         print(f"   Documents fed: {total_docs_fed}")
-        print(f"   Throughput: {total_docs_fed/total_time:.1f} docs/sec" if total_time > 0 else "")
-        print(f"   Avg per video: {total_time/len(video_files):.2f} seconds")
+        if total_time > 0 and total_docs_fed > 0:
+            print(f"   Throughput: {total_docs_fed/total_time:.1f} docs/sec")
+        if num_videos > 0:
+            print(f"   Avg per video: {total_time/num_videos:.2f} seconds")
         
         # Store results
         all_results[profile] = {
             'results': results,
             'time': total_time,
             'docs_fed': total_docs_fed,
-            'successful': successful
+            'successful': successful,
+            'failed': failed,
+            'total': num_videos,
+            'status': status_text
         }
     
     # Final summary
@@ -170,7 +180,20 @@ async def main_async():
     print(f"Processed {len(profiles_to_process)} profiles")
     
     for profile, result_data in all_results.items():
-        print(f"✅ {profile}: {result_data['successful']} videos, {result_data['docs_fed']} docs in {result_data['time']:.1f}s")
+        # Use appropriate icon based on status
+        if result_data['status'] == 'failed':
+            icon = "❌"
+        elif result_data['status'] == 'partially completed':
+            icon = "⚠️"
+        else:
+            icon = "✅"
+            
+        status_msg = f"{icon} {profile}: {result_data['successful']}/{result_data['total']} videos succeeded"
+        
+        if result_data['successful'] > 0:
+            status_msg += f", {result_data['docs_fed']} docs in {result_data['time']:.1f}s"
+        
+        print(status_msg)
     
     return 0
 

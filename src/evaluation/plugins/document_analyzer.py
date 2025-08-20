@@ -99,15 +99,11 @@ class DocumentSchemaAnalyzer(SchemaAnalyzer):
                 if field in document.metadata:
                     return document.metadata[field]
         
-        # Try direct attributes
-        if hasattr(document, 'doc_id'):
-            return document.doc_id
-        if hasattr(document, 'document_id'):
-            return document.document_id
-        
-        # Fallback to generic ID
+        # Try direct attributes (new Document structure)
         if hasattr(document, 'id'):
             return document.id
+        if hasattr(document, 'document_id'):
+            return document.document_id
         
         return None
     

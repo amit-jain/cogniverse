@@ -1,81 +1,57 @@
 #!/usr/bin/env python3
 """
-Embedding Generator Implementation - Backend-agnostic, produces raw embeddings.
+Generic Embedding Generator - Unified processing for all segment types.
 
-This module provides the main implementation of the embedding generator that supports
-multiple video processing profiles:
-
-1. Frame-based Processing (e.g., ColPali):
-   - Processes pre-extracted video frames
-   - Generates embeddings for individual frames
-   - Suitable for models that work on static images
-   
-2. Direct Video Processing (e.g., ColQwen, VideoPrism):
-   - Processes video segments directly without frame extraction
-   - Handles temporal information natively
-   - More efficient for video-native models
-
-The generator is backend-agnostic and delegates format conversion to the backend client.
+This module provides a simplified, strategy-driven embedding generator that handles
+all video processing profiles through a single generic method.
 """
 
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 import logging
 import time
-import json
 import numpy as np
 import torch
 from PIL import Image
 
 from .embedding_generator import (
     EmbeddingGenerator, ProcessingConfig,
-    EmbeddingResult as ProcessingResult
+    EmbeddingResult
 )
-from src.common.core.documents import (
-    Document, MediaType, TemporalInfo, SegmentInfo, EmbeddingResult
-)
-from src.common.models import get_or_load_model
+from src.common.document import Document, ContentType, ProcessingStatus
 
 
 class EmbeddingGeneratorImpl(EmbeddingGenerator):
     """
-    Concrete implementation of the embedding generator.
+    Embedding generator that processes all segment types uniformly.
     
-    This class handles the core logic of generating embeddings from videos using
-    different processing profiles. It supports both frame-based and direct video
-    processing approaches.
+    Key principle: All processing follows the same pattern:
+    1. Iterate over segments (frames/chunks/windows)
+    2. Generate embeddings for each segment
+    3. Create Document objects
+    4. Feed to backend
     
-    Attributes:
-        profile_config: Configuration dict containing profile-specific settings
-        process_type: Type of processing ("frame_based" or "direct_video*")
-        model_name: Name of the embedding model to use
-        media_type: MediaType enum indicating the type of documents created
-        backend_client: Backend client for storing documents
-        
-    The generator follows this flow:
-    1. Load model based on process_type (only for direct video)
-    2. Process video/frames to generate raw numpy embeddings
-    3. Create Document objects with metadata
-    4. Pass Documents to backend for format conversion and storage
+    The only differences are:
+    - How segments are defined (frames vs chunks)
+    - Whether to create one doc per segment or one doc for all
+    - What metadata to include
     """
     
     def __init__(
         self,
-        config: Dict[str, Any],  # This is actually profile_config  
+        config: Dict[str, Any],
         logger: Optional[logging.Logger] = None,
-        backend_client: Any = None  # IngestionBackend interface
+        backend_client: Any = None
     ):
         super().__init__(config, logger)
         
-        # Use config as profile_config (they're the same now)
         self.profile_config = config
         self.model_name = self.profile_config.get("embedding_model", "vidore/colsmol-500m")
         self.backend_client = backend_client
-        
-        # Get schema name from profile config (backends should be stateless)
         self.schema_name = self.profile_config.get("schema_name")
         
-        # Media type will be determined based on processing_type at runtime
+        # Storage mode determines if we create one doc per segment or one doc total
+        self.storage_mode = self.profile_config.get("storage_mode", "multi_doc")
         
         # Model and processor
         self.model = None
@@ -87,37 +63,26 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
             self._load_model()
     
     def _should_load_model(self) -> bool:
-        """
-        Check if model should be loaded during initialization.
-        
-        Frame-based processing doesn't load models during init because frames
-        are processed later. Direct video processing loads models immediately
-        to process video segments.
-        
-        Returns:
-            bool: True if model should be loaded, False otherwise
-        """
-        # Get embedding_type from profile config for initial model loading decision
-        embedding_type = self.profile_config.get("embedding_type", "")
-        
-        # Load model for direct video, single vector, or video_chunks processing
-        return (embedding_type.startswith("direct_video") or 
-                embedding_type == "single_vector" or 
-                embedding_type == "video_chunks")
+        """Check if model should be loaded during initialization."""
+        # Frame-based processing loads model later when processing frames
+        processing_type = self.profile_config.get('embedding_type', 'frame_based')
+        return processing_type != 'frame_based'
     
     def _load_model(self):
-        """Load the appropriate model"""
+        """Load the embedding model based on configuration."""
+        from src.common.models import get_or_load_model
+        
         try:
             if "videoprism" in self.model_name.lower():
                 self.videoprism_loader, _ = get_or_load_model(
                     self.model_name,
-                    self.config,
+                    self.profile_config,
                     self.logger
                 )
             else:
                 self.model, self.processor = get_or_load_model(
                     self.model_name,
-                    self.config,
+                    self.profile_config,
                     self.logger
                 )
         except Exception as e:
@@ -128,154 +93,291 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         self,
         video_data: Dict[str, Any],
         output_dir: Path
-    ) -> ProcessingResult:
-        """Generate embeddings for a video"""
+    ) -> EmbeddingResult:
+        """
+        Generate embeddings using a unified approach for all segment types.
+        
+        The video_data should contain:
+        - segments: List of segments to process (frames/chunks/windows)
+        - segment_type: Type of segments (frame/chunk/window)
+        - storage_mode: How to store (multi_doc/single_doc)
+        - metadata: Additional metadata for documents
+        """
         start_time = time.time()
         video_id = video_data.get('video_id', 'unknown')
         
-        # Get processing type from video_data (passed by pipeline)
-        processing_type = video_data.get('processing_type')
-        if not processing_type:
-            # Fallback to embedding_type from profile config
-            processing_type = self.profile_config.get('embedding_type', 'frame_based')
-        
-        self.logger.info(f"Starting embedding generation for video: {video_id}")
-        self.logger.info(f"Processing type: {processing_type}")
-        self.logger.info(f"Model: {self.model_name}")
-        
-        try:
-            # Handle video_chunks as direct_video since it has pre-extracted chunks
-            if processing_type == "video_chunks" or processing_type == "direct_video":
-                result = self._generate_direct_video_embeddings(video_data, output_dir)
-            elif processing_type == "frame_based":
-                result = self._generate_frame_based_embeddings(video_data, output_dir)
-            elif processing_type == "single_vector":
-                result = self._generate_single_vector_embeddings(video_data, output_dir)
-            else:
-                raise ValueError(f"Unknown processing type: {processing_type}")
-            
-            processing_time = time.time() - start_time
-            result.processing_time = processing_time
-            
-            self.logger.info(
-                f"Completed embedding generation for {video_id} to schema {self.schema_name} in {processing_time:.2f}s - "
-                f"{result.documents_processed} processed, {result.documents_fed} fed"
-            )
-            
-            return result
-            
-        except Exception as e:
-            self.logger.error(f"Embedding generation failed: {e}")
-            return ProcessingResult(
+        # Extract segments - they could be under different keys
+        segments = self._extract_segments(video_data)
+        if not segments:
+            return EmbeddingResult(
                 video_id=video_id,
                 total_documents=0,
                 documents_processed=0,
                 documents_fed=0,
                 processing_time=time.time() - start_time,
-                errors=[str(e)],
+                errors=["No segments found in video_data"],
                 metadata={}
             )
-        finally:
-            if self.backend_client:
-                self.backend_client.close()
-    
-    def _process_video_segment(
-        self,
-        video_path: Path,
-        video_id: str,
-        segment_idx: int,
-        start_time: float,
-        end_time: float,
-        num_segments: int
-    ) -> Optional[Document]:
-        """
-        Process a video segment and create a Document.
         
-        This method orchestrates the segment processing:
-        1. Generate raw embeddings using the model
-        2. Create a Document with appropriate metadata
-        3. Return Document for backend processing
+        self.logger.info(f"📊 Processing {len(segments)} segments for {video_id} (schema: {self.schema_name})")
         
-        Args:
-            video_path: Path to the video file
-            video_id: Unique identifier for the video
-            segment_idx: Index of this segment (0-based)
-            start_time: Start time of segment in seconds
-            end_time: End time of segment in seconds
-            num_segments: Total number of segments in video
-            
-        Returns:
-            Optional[Document]: Document object ready for backend processing,
-                              or None if embedding generation fails
-        """
+        # Determine storage mode
+        storage_mode = video_data.get('storage_mode', self.storage_mode)
+        
+        if storage_mode == 'single_doc':
+            # Process all segments and create one document
+            result = self._process_single_document(video_data, segments)
+        else:
+            # Process each segment as a separate document
+            result = self._process_multi_documents(video_data, segments)
+        
+        result.processing_time = time.time() - start_time
         self.logger.info(
-            f"Processing segment {segment_idx + 1}/{num_segments} for schema {self.schema_name}: "
-            f"{start_time:.1f}s - {end_time:.1f}s"
+            f"Completed {video_id}: {result.documents_processed} processed, "
+            f"{result.documents_fed} fed in {result.processing_time:.2f}s"
         )
         
-        # Generate RAW embeddings
-        raw_embeddings = self._generate_raw_embeddings(
-            video_path, start_time, end_time
-        )
+        return result
+    
+    def _extract_segments(self, video_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Extract segments from video_data, handling different key names.
         
-        if raw_embeddings is None:
-            self.logger.warning(f"No raw embeddings generated for segment {segment_idx}")
-            return None
+        Segments could be under:
+        - 'segments' (generic)
+        - 'keyframes' (frame-based)
+        - 'frames' (frame-based alternative)
+        - 'chunks' (chunk-based)
+        - 'video_chunks' (chunk-based alternative)
+        """
+        # Try different keys in order of preference
+        for key in ['segments', 'keyframes', 'frames', 'chunks', 'video_chunks']:
+            if key in video_data:
+                segments = video_data[key]
+                # Ensure it's a list
+                if isinstance(segments, dict):
+                    # Extract the actual segment list from dict structure
+                    if 'keyframes' in segments:
+                        return segments['keyframes']
+                    elif 'chunks' in segments:
+                        return segments['chunks']
+                    elif 'segments' in segments:
+                        return segments['segments']
+                return segments if isinstance(segments, list) else []
         
-        self.logger.info(f"Generated raw embeddings for segment {segment_idx}: shape={raw_embeddings.shape if hasattr(raw_embeddings, 'shape') else 'unknown'}")
+        # Check for single_vector_processing structure
+        if 'single_vector_processing' in video_data:
+            sv_data = video_data['single_vector_processing']
+            if 'segments' in sv_data:
+                return sv_data['segments']
         
-        # Create Document with all necessary information
-        doc_id = f"{video_id}_{segment_idx}_{int(start_time)}"
+        return []
+    
+    def _process_multi_documents(
+        self,
+        video_data: Dict[str, Any],
+        segments: List[Dict[str, Any]]
+    ) -> EmbeddingResult:
+        """Process segments as individual documents."""
+        video_id = video_data['video_id']
+        video_path = Path(video_data.get('video_path', ''))
         
-        # Create metadata using schema field names
-        metadata = {
-            'video_id': video_id,  # Use video_id as defined in schema
-            "video_title": video_id,
-            "video_path": str(video_path)
-        }
+        documents_processed = 0
+        documents_fed = 0
+        errors = []
         
-        # Create EmbeddingResult
-        embedding_result = EmbeddingResult(
-            embeddings=raw_embeddings,
-            metadata=metadata
-        )
+        # Get additional data
+        transcript_data = video_data.get('transcript', {})
+        descriptions = video_data.get('descriptions', {})
         
-        return Document(
-            doc_id=doc_id,
-            media_type=MediaType.VIDEO_SEGMENT,
-            embeddings=embedding_result,
-            temporal_info=TemporalInfo(
-                start_time=start_time,
-                end_time=end_time
-            ),
-            segment_info=SegmentInfo(
-                segment_idx=segment_idx,
-                total_segments=num_segments
-            ),
-            metadata=metadata
+        # Extract transcript text
+        transcript_text = self._extract_transcript_text(transcript_data)
+        
+        for idx, segment in enumerate(segments):
+            try:
+                # Generate embeddings for this segment
+                self.logger.debug(f"  Processing segment {idx}/{len(segments)}: {segment.get('start_time', 0):.1f}s - {segment.get('end_time', 0):.1f}s")
+                embeddings = self._generate_segment_embeddings(
+                    segment, video_path, video_data
+                )
+                
+                if embeddings is None:
+                    self.logger.debug(f"    ⚠️ No embeddings generated for segment {idx}")
+                    continue
+                else:
+                    self.logger.debug(f"    ✅ Generated embeddings shape: {embeddings.shape}")
+                
+                # Create document for this segment
+                doc = self._create_segment_document(
+                    video_id=video_id,
+                    segment=segment,
+                    segment_idx=idx,
+                    total_segments=len(segments),
+                    embeddings=embeddings,
+                    transcript=transcript_text,
+                    description=descriptions.get(str(idx), "")
+                )
+                
+                documents_processed += 1
+                
+                # Feed to backend
+                if self._feed_document(doc):
+                    documents_fed += 1
+                    
+            except Exception as e:
+                self.logger.error(f"Error processing segment {idx}: {e}")
+                errors.append(f"Segment {idx}: {str(e)}")
+        
+        return EmbeddingResult(
+            video_id=video_id,
+            total_documents=len(segments),
+            documents_processed=documents_processed,
+            documents_fed=documents_fed,
+            processing_time=0,  # Set by caller
+            errors=errors,
+            metadata={'num_segments': len(segments)}
         )
     
-    def _generate_raw_embeddings_from_file(
+    def _process_single_document(
         self,
-        video_path: Path
+        video_data: Dict[str, Any],
+        segments: List[Dict[str, Any]]
+    ) -> EmbeddingResult:
+        """Process all segments and create a single document."""
+        video_id = video_data['video_id']
+        video_path = Path(video_data.get('video_path', ''))
+        
+        # Collect embeddings from all segments
+        all_embeddings = []
+        errors = []
+        
+        for idx, segment in enumerate(segments):
+            try:
+                self.logger.debug(f"  Processing segment {idx}/{len(segments)} for single doc")
+                embeddings = self._generate_segment_embeddings(
+                    segment, video_path, video_data
+                )
+                if embeddings is not None:
+                    all_embeddings.append(embeddings)
+                    self.logger.debug(f"    ✅ Added embeddings shape: {embeddings.shape}")
+            except Exception as e:
+                self.logger.error(f"Error processing segment {idx}: {e}")
+                errors.append(f"Segment {idx}: {str(e)}")
+        
+        if not all_embeddings:
+            return EmbeddingResult(
+                video_id=video_id,
+                total_documents=1,
+                documents_processed=0,
+                documents_fed=0,
+                processing_time=0,
+                errors=["No embeddings generated"],
+                metadata={}
+            )
+        
+        # Stack embeddings
+        combined_embeddings = np.vstack(all_embeddings) if len(all_embeddings) > 1 else all_embeddings[0]
+        
+        # Create single document
+        doc = self._create_combined_document(
+            video_id=video_id,
+            embeddings=combined_embeddings,
+            segments=segments,
+            video_data=video_data
+        )
+        
+        documents_fed = 1 if self._feed_document(doc) else 0
+        
+        return EmbeddingResult(
+            video_id=video_id,
+            total_documents=1,
+            documents_processed=1,
+            documents_fed=documents_fed,
+            processing_time=0,
+            errors=errors,
+            metadata={'num_segments': len(segments)}
+        )
+    
+    def _generate_segment_embeddings(
+        self,
+        segment: Dict[str, Any],
+        video_path: Path,
+        video_data: Dict[str, Any]
     ) -> Optional[np.ndarray]:
         """
-        Generate raw embeddings for a pre-extracted video chunk file.
+        Generate embeddings for a single segment.
         
-        This is used when processing pre-extracted chunks from VideoChunkExtractor.
-        The entire file is processed as a single segment.
-        
-        Args:
-            video_path: Path to the pre-extracted chunk video file
-            
-        Returns:
-            Optional[np.ndarray]: Raw numpy embeddings or None if generation fails
+        Handles different segment types:
+        - Frame: Load image and process
+        - Chunk: Process video file or segment
+        - Window: Process time range
         """
+        # All segments are now dictionaries
+        # Check for chunk segments first (video files)
+        if 'chunk_path' in segment:
+            # Pre-extracted chunk
+            chunk_path = Path(segment['chunk_path'])
+            return self._generate_chunk_embeddings(chunk_path)
+        elif 'path' in segment:
+            # Check if path points to video chunk or image frame
+            path = Path(segment['path'])
+            if path.suffix.lower() in ['.mp4', '.avi', '.mov', '.mkv']:
+                # Video chunk
+                return self._generate_chunk_embeddings(path)
+            else:
+                # Image frame
+                return self._generate_frame_embeddings(path)
+        elif 'frame_path' in segment:
+            # Frame segment
+            frame_path = Path(segment['frame_path'])
+            return self._generate_frame_embeddings(frame_path)
+        elif 'start_time' in segment and 'end_time' in segment:
+            # Time-based segment (including single-vector segments)
+            return self._generate_time_segment_embeddings(
+                video_path,
+                segment['start_time'],
+                segment['end_time']
+            )
+        else:
+            self.logger.warning(f"Unknown segment type: {segment.keys()}")
+            return None
+    
+    def _generate_frame_embeddings(self, frame_path: Path) -> Optional[np.ndarray]:
+        """Generate embeddings for a single frame."""
+        if not self.model:
+            self._load_model()
+        
+        try:
+            if not self.model or not self.processor:
+                self.logger.error("Model or processor not loaded")
+                return None
+            
+            # Load and process image
+            image = Image.open(frame_path).convert("RGB")
+            
+            # Process image with model
+            batch_inputs = self.processor.process_images([image]).to(self.model.device)
+            
+            with torch.no_grad():
+                embeddings = self.model(**batch_inputs)
+            
+            # Convert to numpy
+            embeddings_np = embeddings.cpu().to(torch.float32).numpy()
+            
+            self.logger.info(f"    🖼️ Generated embeddings for frame {frame_path.name}: shape={embeddings_np.shape}")
+            return embeddings_np
+            
+        except Exception as e:
+            self.logger.error(f"Error generating frame embeddings: {e}")
+            return None
+    
+    def _generate_chunk_embeddings(self, chunk_path: Path) -> Optional[np.ndarray]:
+        """Generate embeddings for a video chunk."""
         try:
             if "colqwen" in self.model_name.lower():
                 # ColQwen processes video chunks
                 import cv2
-                cap = cv2.VideoCapture(str(video_path))
+                cap = cv2.VideoCapture(str(chunk_path))
                 frames = []
                 
                 # Extract frames at regular intervals
@@ -285,13 +387,12 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
                 
                 # Calculate frame indices to extract
                 interval = int(fps / target_fps) if fps > target_fps else 1
-                frame_indices = list(range(0, total_frames, interval))
+                frame_indices = list(range(0, total_frames, interval))[:10]  # Limit to 10 frames
                 
-                for idx in frame_indices[:10]:  # Limit to 10 frames per chunk
+                for idx in frame_indices:
                     cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
                     ret, frame = cap.read()
                     if ret:
-                        # Convert BGR to RGB
                         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                         pil_image = Image.fromarray(frame_rgb)
                         frames.append(pil_image)
@@ -305,669 +406,216 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
                 # Process frames with ColQwen
                 batch_inputs = self.processor.process_images(frames).to(self.model.device)
                 
-                # Generate embeddings
                 with torch.no_grad():
                     embeddings = self.model(**batch_inputs)
                 
                 # Convert to numpy and average across frames
                 embeddings_np = embeddings.cpu().numpy()
-                
-                # Average embeddings across frames to get segment embedding
-                # Shape: (num_frames, patches, dim) -> (patches, dim)
-                return embeddings_np.mean(axis=0)
+                return embeddings_np.mean(axis=0)  # Average across frames
                 
             elif self.videoprism_loader:
-                self.logger.info(f"Using VideoPrism loader for chunk file: {video_path.name}")
-                # Get video duration for the chunk
+                # VideoPrism processing
                 import subprocess
                 cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', 
-                       '-of', 'default=noprint_wrappers=1:nokey=1', str(video_path)]
+                       '-of', 'default=noprint_wrappers=1:nokey=1', str(chunk_path)]
                 result = subprocess.run(cmd, capture_output=True, text=True)
                 duration = float(result.stdout.strip()) if result.returncode == 0 else 30.0
                 
-                # Process entire chunk
                 result = self.videoprism_loader.process_video_segment(
-                    video_path, 0, duration
+                    chunk_path, 0, duration
                 )
                 
                 if result:
-                    if "embeddings" in result:
-                        return result["embeddings"]
-                    elif "embeddings_np" in result:
-                        return result["embeddings_np"]
+                    return result.get("embeddings_np", result.get("embeddings"))
                 return None
                 
             else:
                 # Other models
                 if hasattr(self.processor, 'process_videos'):
-                    batch_inputs = self.processor.process_videos([str(video_path)]).to(self.model.device)
+                    batch_inputs = self.processor.process_videos([str(chunk_path)]).to(self.model.device)
                 else:
-                    batch_inputs = self.processor.process_images([str(video_path)]).to(self.model.device)
+                    batch_inputs = self.processor.process_images([str(chunk_path)]).to(self.model.device)
                 
-                # Generate embeddings
                 with torch.no_grad():
                     embeddings = self.model(**batch_inputs)
                 
-                # Convert to numpy
                 return embeddings.cpu().numpy()
                 
         except Exception as e:
-            self.logger.error(f"Failed to generate embeddings from file: {e}")
+            self.logger.error(f"Error generating chunk embeddings: {e}")
             return None
     
-    def _generate_raw_embeddings(
+    def _generate_time_segment_embeddings(
         self,
         video_path: Path,
         start_time: float,
         end_time: float
     ) -> Optional[np.ndarray]:
-        """
-        Generate raw embeddings for a video segment.
-        
-        This method handles the actual model inference to produce embeddings.
-        Different models have different approaches:
-        - VideoPrism: Returns dict with 'embeddings_np' key
-        - ColPali/ColQwen: Process video frames and return embeddings
-        
-        Args:
-            video_path: Path to the video file
-            start_time: Start time of the segment in seconds
-            end_time: End time of the segment in seconds
-            
-        Returns:
-            Optional[np.ndarray]: Raw numpy embeddings or None if generation fails
-                                 Shape depends on model (patches, embedding_dim)
-        """
+        """Generate embeddings for a time segment."""
         try:
             if self.videoprism_loader:
-                self.logger.info(f"Using VideoPrism loader for segment {start_time}s-{end_time}s")
-                # VideoPrism returns dict with embeddings
+                # Use VideoPrism for time-based segments
+                self.logger.debug(f"    Time segment: start={start_time:.1f}s, end={end_time:.1f}s")
                 result = self.videoprism_loader.process_video_segment(
-                    video_path,
-                    start_time,
-                    end_time
+                    video_path, start_time, end_time
                 )
-                self.logger.info(f"VideoPrism result: {result is not None}")
                 if result:
-                    self.logger.info(f"VideoPrism result keys: {list(result.keys())}")
-                    # VideoPrism returns 'embeddings' not 'embeddings_np'
-                    if "embeddings" in result:
-                        embeddings = result["embeddings"]
-                        self.logger.info(f"VideoPrism embeddings shape: {embeddings.shape if hasattr(embeddings, 'shape') else 'no shape'}")
-                        return embeddings
-                    elif "embeddings_np" in result:
-                        embeddings = result["embeddings_np"]
-                        self.logger.info(f"VideoPrism embeddings_np shape: {embeddings.shape if hasattr(embeddings, 'shape') else 'no shape'}")
-                        return embeddings
-                    else:
-                        self.logger.warning(f"VideoPrism returned no embeddings. Keys: {list(result.keys())}")
-                        return None
-                else:
-                    self.logger.warning(f"VideoPrism returned None")
+                    embeddings = result.get("embeddings_np", result.get("embeddings"))
+                    if embeddings is not None:
+                        self.logger.debug(f"    Generated time segment embeddings: shape={embeddings.shape if hasattr(embeddings, 'shape') else 'unknown'}")
+                    return embeddings
+            else:
+                # Extract frames from time segment for other models
+                import cv2
+                cap = cv2.VideoCapture(str(video_path))
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                
+                # Set to start time
+                start_frame = int(start_time * fps)
+                end_frame = int(end_time * fps)
+                cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+                
+                frames = []
+                target_fps = self.profile_config.get('fps', 1.0)
+                interval = int(fps / target_fps) if fps > target_fps else 1
+                
+                for frame_idx in range(start_frame, min(end_frame, start_frame + 10 * interval), interval):
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                    ret, frame = cap.read()
+                    if ret:
+                        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        frames.append(Image.fromarray(frame_rgb))
+                
+                cap.release()
+                
+                if not frames:
                     return None
-            else:
-                # Other models - generate embeddings
-                import tempfile
-                import subprocess
-                import os
                 
-                # Extract segment to temp file
-                with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as tmp_file:
-                    tmp_path = tmp_file.name
+                # Process frames
+                batch_inputs = self.processor.process_images(frames).to(self.model.device)
+                with torch.no_grad():
+                    embeddings = self.model(**batch_inputs)
                 
-                try:
-                    # Extract video segment
-                    cmd = [
-                        'ffmpeg', '-i', str(video_path),
-                        '-ss', str(start_time),
-                        '-t', str(end_time - start_time),
-                        '-c', 'copy',
-                        '-y', tmp_path
-                    ]
-                    subprocess.run(cmd, check=True, capture_output=True)
-                    
-                    # Process with model - ColQwen needs special handling
-                    if "colqwen" in self.model_name.lower():
-                        # ColQwen expects PIL images, not video paths
-                        import cv2
-                        cap = cv2.VideoCapture(tmp_path)
-                        frames = []
-                        
-                        # Extract frames at regular intervals
-                        fps = cap.get(cv2.CAP_PROP_FPS)
-                        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                        target_fps = self.profile_config.get('fps', 1.0)
-                        
-                        # Calculate frame indices to extract
-                        interval = int(fps / target_fps) if fps > target_fps else 1
-                        frame_indices = list(range(0, total_frames, interval))
-                        
-                        for idx in frame_indices[:10]:  # Limit to 10 frames per segment
-                            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-                            ret, frame = cap.read()
-                            if ret:
-                                # Convert BGR to RGB
-                                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                                pil_image = Image.fromarray(frame_rgb)
-                                frames.append(pil_image)
-                        
-                        cap.release()
-                        
-                        if not frames:
-                            self.logger.error("No frames extracted from video segment")
-                            return None
-                        
-                        # Process frames with ColQwen
-                        batch_inputs = self.processor.process_images(frames).to(self.model.device)
-                        
-                        # Generate embeddings
-                        with torch.no_grad():
-                            embeddings = self.model(**batch_inputs)
-                        
-                        # Convert to numpy and average across frames
-                        embeddings_np = embeddings.cpu().numpy()
-                        
-                        # Average embeddings across frames to get segment embedding
-                        # Shape: (num_frames, patches, dim) -> (patches, dim)
-                        return embeddings_np.mean(axis=0)
-                    
-                    elif hasattr(self.processor, 'process_videos'):
-                        batch_inputs = self.processor.process_videos([tmp_path]).to(self.model.device)
-                    else:
-                        batch_inputs = self.processor.process_images([tmp_path]).to(self.model.device)
-                    
-                    # Generate embeddings
-                    with torch.no_grad():
-                        embeddings = self.model(**batch_inputs)
-                    
-                    # Convert to numpy
-                    return embeddings.cpu().numpy()
-                    
-                finally:
-                    if os.path.exists(tmp_path):
-                        os.unlink(tmp_path)
-                        
+                embeddings_np = embeddings.cpu().numpy()
+                return embeddings_np.mean(axis=0) if len(frames) > 1 else embeddings_np
+                
         except Exception as e:
-            self.logger.error(f"Failed to generate embeddings: {e}")
+            self.logger.error(f"Error generating time segment embeddings: {e}")
             return None
     
-    def _generate_frame_embeddings(self, frame_path: Path) -> Optional[np.ndarray]:
-        """Generate embeddings for a single frame using ColPali model"""
-        try:
-            if not self.model or not self.processor:
-                self.logger.error("Model or processor not loaded")
-                return None
-            
-            # Load and process image
-            image = Image.open(frame_path).convert("RGB")
-            
-            # Process image with model
-            batch_inputs = self.processor.process_images([image]).to(self.model.device)
-            
-            # Debug: Log input shape
-            if hasattr(batch_inputs, 'input_ids'):
-                self.logger.info(f"[DEBUG] Input shape: {batch_inputs.input_ids.shape if hasattr(batch_inputs.input_ids, 'shape') else 'unknown'}")
-            
-            with torch.no_grad():
-                embeddings = self.model(**batch_inputs)
-            
-            # Debug: Check what type embeddings is
-            self.logger.info(f"[DEBUG] Embeddings type: {type(embeddings)}")
-            self.logger.info(f"[DEBUG] Embeddings shape before numpy: {embeddings.shape if hasattr(embeddings, 'shape') else 'no shape attr'}")
-            
-            # Convert to numpy
-            embeddings_np = embeddings.cpu().to(torch.float32).numpy()
-            
-            # DEBUG: Log embedding dimensions
-            self.logger.info(f"[DEBUG] Raw embeddings shape from model: {embeddings_np.shape}")
-            self.logger.info(f"[DEBUG] Frame: {frame_path.name}")
-            
-            # Handle different output shapes
-            if len(embeddings_np.shape) == 3:
-                # (batch, patches, dim) - squeeze batch dimension
-                embeddings_np = embeddings_np.squeeze(0)
-                self.logger.info(f"[DEBUG] After squeeze: {embeddings_np.shape}")
-            
-            # Final shape before returning
-            self.logger.info(f"[DEBUG] Final shape being returned: {embeddings_np.shape}")
-            
-            return embeddings_np
-            
-        except Exception as e:
-            self.logger.error(f"Failed to generate frame embeddings: {e}")
-            return None
+    def _create_segment_document(
+        self,
+        video_id: str,
+        segment: Dict[str, Any],
+        segment_idx: int,
+        total_segments: int,
+        embeddings: np.ndarray,
+        transcript: str = "",
+        description: str = ""
+    ) -> Document:
+        """Create a Document for a single segment."""
+        # All segments use generic Document now - no MediaType needed
+        # Extract timing info
+        start_time = segment.get('timestamp', segment.get('start_time', 0.0))
+        end_time = segment.get('end_time', start_time + 1.0)
+        
+        # Create document
+        doc_id = f"{video_id}_seg_{segment_idx}"
+        
+        document = Document(
+            id=doc_id,
+            content_type=ContentType.VIDEO,
+            content_id=video_id,
+            status=ProcessingStatus.COMPLETED
+        )
+        
+        # Add embeddings
+        document.add_embedding("embedding", embeddings, {"type": "float", "raw": True})
+        
+        # Add temporal metadata
+        document.add_metadata("start_time", start_time)
+        document.add_metadata("end_time", end_time)
+        document.add_metadata("segment_index", segment_idx)
+        document.add_metadata("total_segments", total_segments)
+        
+        # Add transcript if available
+        if transcript:
+            document.add_metadata("audio_transcript", transcript)
+        
+        # Add basic metadata
+        document.add_metadata("video_id", video_id)
+        document.add_metadata("video_title", video_id)
+        
+        # Add description if available
+        if description:
+            document.add_metadata("description", description)
+        
+        return document
     
-    # Implement abstract methods
-    def process_segment(self, segment_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        pass
+    def _create_combined_document(
+        self,
+        video_id: str,
+        embeddings: np.ndarray,
+        segments: List[Dict[str, Any]],
+        video_data: Dict[str, Any]
+    ) -> Document:
+        """Create a single Document containing all segments."""
+        # Extract timing info from segments (all are dicts now)
+        start_times = [s.get('start_time', 0.0) for s in segments]
+        end_times = [s.get('end_time', 0.0) for s in segments]
+        
+        # Get transcript
+        transcript = self._extract_transcript_text(video_data.get('transcript', {}))
+        
+        document = Document(
+            id=video_id,
+            content_type=ContentType.VIDEO,
+            content_id=video_id,
+            status=ProcessingStatus.COMPLETED
+        )
+        
+        # Add embeddings
+        document.add_embedding("embedding", embeddings, {"type": "float", "raw": True, "storage_mode": "combined"})
+        
+        # Add temporal metadata
+        if start_times and end_times:
+            document.add_metadata("start_time", min(start_times))
+            document.add_metadata("end_time", max(end_times))
+        
+        document.add_metadata("total_segments", len(segments))
+        
+        # Add transcript if available
+        if transcript:
+            document.add_metadata("audio_transcript", transcript)
+        
+        # Add basic metadata
+        document.add_metadata("video_id", video_id)
+        document.add_metadata("video_title", video_id)
+        
+        return document
     
-    def create_document(self, segment_data: Dict[str, Any], embeddings: Dict[str, Any]) -> Dict[str, Any]:
-        pass
+    def _extract_transcript_text(self, transcript_data: Any) -> str:
+        """Extract text from various transcript formats."""
+        if not transcript_data:
+            return ""
+        
+        if isinstance(transcript_data, str):
+            return transcript_data
+        elif isinstance(transcript_data, list):
+            return " ".join([s.get("text", "") for s in transcript_data])
+        elif isinstance(transcript_data, dict):
+            if "segments" in transcript_data:
+                return " ".join([s.get("text", "") for s in transcript_data["segments"]])
+            elif "full_text" in transcript_data:
+                return transcript_data["full_text"]
+            elif "text" in transcript_data:
+                return transcript_data["text"]
+        
+        return ""
     
-    def _feed_single_document(self, document: Document) -> bool:
+    def _feed_document(self, document: Document) -> bool:
+        """Feed document to backend."""
         if self.backend_client:
-            # Use IngestionBackend interface with schema
-            if not self.schema_name:
-                self.logger.error("No schema_name available for feeding document")
-                return False
             result = self.backend_client.ingest_documents([document], self.schema_name)
-            success = result.get('success_count', 0) > 0
-            if success:
-                self.logger.debug(f"Fed document {document.doc_id} to schema {self.schema_name}: success={success}")
-            else:
-                self.logger.warning(f"Failed to feed document {document.doc_id} to schema {self.schema_name}")
-            return success
-        self.logger.warning("No backend available")
+            return result.get('success_count', 0) > 0
         return False
-    
-    def _generate_direct_video_embeddings(
-        self,
-        video_data: Dict[str, Any],
-        output_dir: Path
-    ) -> ProcessingResult:
-        """Generate embeddings for direct video processing"""
-        video_path = Path(video_data['video_path'])
-        video_id = video_data['video_id']
-        
-        # Check if we have pre-extracted chunks (from VideoChunkExtractor)
-        if 'chunks' in video_data:
-            # Use pre-extracted chunks
-            chunks = video_data['chunks']
-            self.logger.info(f"Using {len(chunks)} pre-extracted chunks")
-            
-            documents_processed = 0
-            documents_fed = 0
-            errors = []
-            
-            for chunk in chunks:
-                chunk_path = Path(chunk['chunk_path'])
-                chunk_id = chunk['chunk_id']
-                start_time = chunk['start_time']
-                end_time = chunk['end_time']
-                
-                try:
-                    # Process the pre-extracted chunk directly
-                    self.logger.info(f"Processing pre-extracted chunk {chunk_id} for schema {self.schema_name}: {start_time}s-{end_time}s")
-                    
-                    # Generate embeddings for the chunk video file
-                    raw_embeddings = self._generate_raw_embeddings_from_file(chunk_path)
-                    
-                    if raw_embeddings is not None:
-                        # Create Document
-                        doc_id = f"{video_id}_{chunk_id}_{int(start_time)}"
-                        
-                        metadata = {
-                            'video_id': video_id,
-                            "video_title": video_id,
-                            "video_path": str(video_path)
-                        }
-                        
-                        embedding_result = EmbeddingResult(
-                            embeddings=raw_embeddings,
-                            metadata=metadata
-                        )
-                        
-                        doc = Document(
-                            doc_id=doc_id,
-                            media_type=MediaType.VIDEO_SEGMENT,
-                            embeddings=embedding_result,
-                            temporal_info=TemporalInfo(
-                                start_time=start_time,
-                                end_time=end_time
-                            ),
-                            segment_info=SegmentInfo(
-                                segment_idx=chunk_id,
-                                total_segments=len(chunks)
-                            ),
-                            metadata=metadata
-                        )
-                        
-                        documents_processed += 1
-                        
-                        # Feed immediately
-                        if self._feed_single_document(doc):
-                            documents_fed += 1
-                            self.logger.info(f"Fed chunk {chunk_id} to schema {self.schema_name} successfully")
-                        else:
-                            errors.append(f"Failed to feed chunk {chunk_id}")
-                            
-                except Exception as e:
-                    self.logger.error(f"Error processing chunk {chunk_id}: {e}")
-                    errors.append(f"Chunk {chunk_id}: {str(e)}")
-            
-            return ProcessingResult(
-                video_id=video_id,
-                total_documents=len(chunks),
-                documents_processed=documents_processed,
-                documents_fed=documents_fed,
-                processing_time=0.0,  # Will be set by caller
-                errors=errors,
-                metadata={'num_chunks': len(chunks)}
-            )
-        
-        # Original segment calculation logic if no pre-extracted chunks
-        duration = video_data.get('duration', 0)
-        segment_duration = self.profile_config.get('segment_duration', 30.0)
-        num_segments = max(1, int(duration / segment_duration) + (1 if duration % segment_duration > 0 else 0))
-        
-        documents_processed = 0
-        documents_fed = 0
-        errors = []
-        
-        # Process each segment
-        for segment_idx in range(num_segments):
-            start_time = segment_idx * segment_duration
-            end_time = min((segment_idx + 1) * segment_duration, duration)
-            
-            try:
-                # Process segment and get Document
-                doc = self._process_video_segment(
-                    video_path, video_id, segment_idx,
-                    start_time, end_time, num_segments
-                )
-                
-                if doc:
-                    documents_processed += 1
-                    
-                    # Feed immediately
-                    if self._feed_single_document(doc):
-                        documents_fed += 1
-                        self.logger.info(f"Fed segment {segment_idx} to schema {self.schema_name} successfully")
-                    else:
-                        errors.append(f"Failed to feed segment {segment_idx}")
-                        
-            except Exception as e:
-                self.logger.error(f"Error processing segment {segment_idx}: {e}")
-                errors.append(f"Segment {segment_idx}: {str(e)}")
-        
-        return ProcessingResult(
-            video_id=video_id,
-            total_documents=num_segments,
-            documents_processed=documents_processed,
-            documents_fed=documents_fed,
-            processing_time=0.0,  # Will be set by caller
-            errors=errors,
-            metadata={'num_segments': num_segments}
-        )
-    
-    def _generate_frame_based_embeddings(
-        self,
-        video_data: Dict[str, Any],
-        output_dir: Path
-    ) -> EmbeddingResult:
-        """Generate embeddings for frame-based processing"""
-        video_id = video_data['video_id']
-        
-        # Get keyframes from video_data (passed from pipeline)
-        frames = video_data.get('frames', [])
-        if not frames:
-            return ProcessingResult(
-                video_id=video_id,
-                total_documents=0,
-                documents_processed=0,
-                documents_fed=0,
-                processing_time=0.0,
-                errors=["No frames found in video_data"],
-                metadata={}
-            )
-        
-        keyframes = frames
-        
-        # Get descriptions and transcript from video_data
-        descriptions = video_data.get('descriptions', {})
-        
-        # Get transcript from video_data
-        transcript_data = video_data.get('transcript', {})
-        
-        # Extract audio transcript
-        audio_transcript = ""
-        if transcript_data:
-            if isinstance(transcript_data, str):
-                audio_transcript = transcript_data
-            elif isinstance(transcript_data, list):
-                audio_transcript = " ".join([segment.get("text", "") for segment in transcript_data])
-            elif isinstance(transcript_data, dict) and "segments" in transcript_data:
-                audio_transcript = " ".join([segment.get("text", "") for segment in transcript_data["segments"]])
-            elif isinstance(transcript_data, dict) and "full_text" in transcript_data:
-                audio_transcript = transcript_data["full_text"]
-        
-        documents_processed = 0
-        documents_fed = 0
-        errors = []
-        
-        # Load model if not already loaded
-        if not self.model and not self.processor:
-            self._load_model()
-        
-        # Process frames in batches
-        batch_size = self.profile_config.get('batch_size', 32)
-        
-        for i in range(0, len(keyframes), batch_size):
-            batch_keyframes = keyframes[i:i + batch_size]
-            
-            try:
-                for keyframe in batch_keyframes:
-                    frame_id = str(keyframe.get("frame_id", 0))
-                    frame_path = Path(keyframe.get("frame_path", keyframe.get("path", "")))
-                    timestamp = keyframe.get("timestamp", 0.0)
-                    description = descriptions.get(frame_id, "")
-                    
-                    if not frame_path.exists():
-                        self.logger.warning(f"Frame not found: {frame_path}")
-                        continue
-                    
-                    # Generate real embeddings using the model
-                    raw_embeddings = self._generate_frame_embeddings(frame_path)
-                    
-                    if raw_embeddings is None:
-                        continue
-                    
-                    # Create Document for frame using structured fields, not hardcoded metadata
-                    embedding_result = EmbeddingResult(
-                        embeddings=raw_embeddings,
-                        metadata={}  # No hardcoded metadata fields
-                    )
-                    
-                    doc = Document(
-                        doc_id=f"{video_id}_frame_{frame_id}",
-                        media_type=MediaType.VIDEO_FRAME,
-                        embeddings=embedding_result,
-                        temporal_info=TemporalInfo(
-                            start_time=timestamp,
-                            end_time=timestamp + 1.0
-                        ),
-                        segment_info=SegmentInfo(
-                            segment_idx=int(frame_id),
-                            total_segments=len(keyframes)
-                        ),
-                        transcription=audio_transcript,
-                        metadata={
-                            "video_id": video_id,  # Only keep video_id in metadata
-                            "video_title": video_id,
-                            "description": description  # Just "description", not hardcoded field name
-                        }
-                    )
-                    
-                    documents_processed += 1
-                    
-                    if self._feed_single_document(doc):
-                        documents_fed += 1
-                        self.logger.info(f"Fed frame {frame_id} to schema {self.schema_name} successfully")
-                    
-            except Exception as e:
-                self.logger.error(f"Error processing batch starting at {i}: {e}")
-                errors.append(f"Batch {i}: {str(e)}")
-        
-        return ProcessingResult(
-            video_id=video_id,
-            total_documents=len(keyframes),
-            documents_processed=documents_processed,
-            documents_fed=documents_fed,
-            processing_time=0.0,
-            errors=errors,
-            metadata={'num_frames': len(keyframes)}
-        )
-    
-    def _generate_single_vector_embeddings(
-        self,
-        video_data: Dict[str, Any],
-        output_dir: Path
-    ) -> ProcessingResult:
-        """Generate embeddings for single vector processing (chunks/windows stored in one doc)"""
-        video_id = video_data['video_id']
-        video_path = Path(video_data['video_path'])
-        segments = video_data.get('segments', [])
-        document_structure = video_data.get('document_structure', {})
-        
-        if not segments:
-            return ProcessingResult(
-                video_id=video_id,
-                total_documents=0,
-                documents_processed=0,
-                documents_fed=0,
-                processing_time=0.0,
-                errors=["No segments found for processing"],
-                metadata={}
-            )
-        
-        # Generate embeddings for all segments
-        all_embeddings = []
-        all_embeddings_binary = []
-        start_times = []
-        end_times = []
-        segment_transcripts = []
-        errors = []
-        
-        for segment in segments:
-            try:
-                # Get temporal info first
-                seg_start_time = segment.start_time if hasattr(segment, 'start_time') else segment.get('start_time', 0)
-                seg_end_time = segment.end_time if hasattr(segment, 'end_time') else segment.get('end_time', 0)
-                
-                # For video_chunks, we process segments directly without needing frames
-                # Extract frames from segment (if available for other modes)
-                frames = segment.frames if hasattr(segment, 'frames') else segment.get('frames', [])
-                
-                # Generate embeddings for this segment using the raw embeddings method
-                raw_embeddings = self._generate_raw_embeddings(
-                    video_path,
-                    seg_start_time,
-                    seg_end_time
-                )
-                
-                if raw_embeddings is not None:
-                    # Process embeddings based on model
-                    if self.model_name.startswith("videoprism"):
-                        # VideoPrism embeddings
-                        float_embeddings = raw_embeddings
-                        # Generate binary embeddings
-                        binary_embeddings = (float_embeddings > 0).astype(np.int8)
-                    else:
-                        # For other models, assume raw embeddings are ready
-                        float_embeddings = raw_embeddings
-                        binary_embeddings = (float_embeddings > 0).astype(np.int8)
-                    
-                    all_embeddings.append(float_embeddings)
-                    all_embeddings_binary.append(binary_embeddings)
-                
-                # Store temporal info
-                start_times.append(float(seg_start_time))
-                end_times.append(float(seg_end_time))
-                
-                # Store transcript
-                transcript = segment.transcript_text if hasattr(segment, 'transcript_text') else segment.get('transcript_text', '')
-                segment_transcripts.append(transcript)
-                    
-            except Exception as e:
-                segment_id = segment.segment_id if hasattr(segment, 'segment_id') else segment.get('segment_id', 'unknown')
-                self.logger.error(f"Error processing segment {segment_id}: {e}")
-                errors.append(str(e))
-        
-        if not all_embeddings:
-            return ProcessingResult(
-                video_id=video_id,
-                total_documents=0,
-                documents_processed=0,
-                documents_fed=0,
-                processing_time=0.0,
-                errors=errors + ["No embeddings generated"],
-                metadata={}
-            )
-        
-        # Create single document with all embeddings
-        try:
-            # Stack embeddings into tensors
-            embeddings_tensor = np.vstack(all_embeddings)
-            embeddings_binary_tensor = np.vstack(all_embeddings_binary)
-            
-            # Get full transcript
-            full_transcript = video_data.get('full_transcript', '')
-            
-            # Create metadata for Document
-            metadata = {
-                "video_url": video_data.get('video_url', video_id),
-                "title": video_data.get('title', video_id),
-                "keywords": video_data.get('keywords', ''),
-                "video_summary": video_data.get('video_summary', ''),
-                "start_offset_sec": start_times,
-                "end_offset_sec": end_times,
-                "transcript": full_transcript,
-                "segment_transcripts": segment_transcripts,
-                "processing_strategy": document_structure.get('type', 'chunks')
-            }
-            
-            # Create EmbeddingResult with both float and binary embeddings
-            # For single vector, embeddings should be the tensor arrays
-            # Use field names that match Vespa schema: "embedding" and "embedding_binary"
-            embedding_result = EmbeddingResult(
-                embeddings={
-                    "embedding": embeddings_tensor,
-                    "embedding_binary": embeddings_binary_tensor
-                },
-                metadata=metadata
-            )
-            
-            # Create Document object
-            doc = Document(
-                doc_id=video_id,
-                media_type=MediaType.VIDEO_SEGMENT,  # Using VIDEO_SEGMENT for chunks
-                embeddings=embedding_result,
-                temporal_info=None,  # Temporal info is in arrays
-                metadata=metadata
-            )
-            
-            # Feed using standard feed method with schema
-            if self.backend_client:
-                if not self.schema_name:
-                    self.logger.error("No schema_name available for feeding document")
-                    fed = False
-                else:
-                    success_count, failed_ids = self.backend_client.feed(doc, self.schema_name)
-                    fed = success_count > 0
-            else:
-                fed = False
-            
-            return ProcessingResult(
-                video_id=video_id,
-                total_documents=1,
-                documents_processed=1,
-                documents_fed=1 if fed else 0,
-                processing_time=0.0,
-                errors=errors,
-                metadata={
-                    'num_segments': len(segments),
-                    'embedding_shape': embeddings_tensor.shape
-                }
-            )
-            
-        except Exception as e:
-            self.logger.error(f"Error creating document: {e}")
-            return ProcessingResult(
-                video_id=video_id,
-                total_documents=1,
-                documents_processed=0,
-                documents_fed=0,
-                processing_time=0.0,
-                errors=errors + [str(e)],
-                metadata={}
-            )
