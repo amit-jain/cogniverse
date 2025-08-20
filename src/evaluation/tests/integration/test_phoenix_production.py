@@ -152,7 +152,7 @@ class TestPhoenixProductionIntegration:
         assert all(r is not None for r in results)
     
     @pytest.mark.integration
-    def test_health_check_recovery(self):
+    def test_health_check_recovery(self, phoenix_required):
         """Test health check and auto-recovery."""
         config = ConnectionConfig(
             enable_health_checks=True,

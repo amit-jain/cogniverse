@@ -16,7 +16,7 @@ import asyncio
 
 from src.evaluation.core.task import evaluation_task
 from src.evaluation.data.datasets import DatasetManager
-from src.evaluation.phoenix.monitoring import PhoenixMonitor
+from src.evaluation.phoenix.monitoring import RetrievalMonitor
 from src.evaluation.plugins import register_plugin
 from src.common.config import get_config
 
@@ -68,7 +68,7 @@ class ExperimentTracker:
         
         # Initialize components
         self.dataset_manager = DatasetManager()
-        self.phoenix_monitor = PhoenixMonitor(project_name=experiment_project_name)
+        self.phoenix_monitor = RetrievalMonitor()
         
         # Track experiments
         self.experiments: List[Dict] = []
@@ -185,61 +185,66 @@ class ExperimentTracker:
         This uses the evaluation_task we created with proper Phoenix integration.
         """
         try:
-            # Start Phoenix span for this experiment
-            with self.phoenix_monitor.trace_experiment(
-                name=f"{profile}_{strategy}",
-                metadata={
-                    "profile": profile,
-                    "strategy": strategy,
-                    "description": description,
-                    "dataset": dataset_name
-                }
-            ) as span:
-                # Create evaluation task using our new framework
-                task = evaluation_task(
-                    mode="experiment",
-                    dataset_name=dataset_name,
-                    profiles=[profile],
-                    strategies=[strategy],
-                    config={
-                        "evaluation": {
-                            "enable_quality_evaluators": self.enable_quality_evaluators,
-                            "enable_llm_evaluators": self.enable_llm_evaluators,
-                            "evaluator_name": self.evaluator_name,
-                            "llm_model": self.llm_model,
-                            "llm_base_url": self.llm_base_url
-                        }
+            # Log experiment start
+            logger.info(f"Starting experiment: {profile}_{strategy}")
+            self.phoenix_monitor.log_retrieval_event({
+                "profile": profile,
+                "strategy": strategy, 
+                "description": description,
+                "dataset": dataset_name,
+                "query": "experiment_start"
+            })
+            
+            # Create evaluation task using our new framework
+            task = evaluation_task(
+                mode="experiment",
+                dataset_name=dataset_name,
+                profiles=[profile],
+                strategies=[strategy],
+                config={
+                    "evaluation": {
+                        "enable_quality_evaluators": self.enable_quality_evaluators,
+                        "enable_llm_evaluators": self.enable_llm_evaluators,
+                        "evaluator_name": self.evaluator_name,
+                        "llm_model": self.llm_model,
+                        "llm_base_url": self.llm_base_url
                     }
-                )
-                
-                # Run evaluation using Inspect AI
-                from inspect_ai import eval as inspect_eval
-                result = await inspect_eval(
-                    task,
-                    model="openai/gpt-4",  # This is overridden by our solvers
-                    log_dir=self.output_dir / "logs"
-                )
-                
-                # Extract metrics from result
-                metrics = {}
-                if result and hasattr(result, 'scores'):
-                    for score_name, score_value in result.scores.items():
-                        metrics[score_name] = score_value.value if hasattr(score_value, 'value') else score_value
-                
-                # Record in Phoenix
-                span.set_attribute("experiment.success", True)
-                span.set_attribute("experiment.metrics", json.dumps(metrics))
-                
-                return {
-                    "status": "success",
-                    "profile": profile,
-                    "strategy": strategy,
-                    "description": description,
-                    "experiment_name": f"{profile}_{strategy}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                    "metrics": metrics,
-                    "result": result,
-                    "timestamp": datetime.now().isoformat()
                 }
+            )
+            
+            # Run evaluation using Inspect AI
+            from inspect_ai import eval as inspect_eval
+            result = await inspect_eval(
+                task,
+                model="openai/gpt-4",  # This is overridden by our solvers
+                log_dir=self.output_dir / "logs"
+            )
+            
+            # Extract metrics from result
+            metrics = {}
+            if result and hasattr(result, 'scores'):
+                for score_name, score_value in result.scores.items():
+                    metrics[score_name] = score_value.value if hasattr(score_value, 'value') else score_value
+            
+            # Record experiment completion
+            self.phoenix_monitor.log_retrieval_event({
+                "profile": profile,
+                "strategy": strategy,
+                "query": "experiment_complete",
+                "mrr": metrics.get("mrr", 0),
+                "error": False
+            })
+            
+            return {
+                "status": "success",
+                "profile": profile,
+                "strategy": strategy,
+                "description": description,
+                "experiment_name": f"{profile}_{strategy}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                "metrics": metrics,
+                "result": result,
+                "timestamp": datetime.now().isoformat()
+            }
                 
         except Exception as e:
             logger.error(f"Experiment failed for {profile}/{strategy}: {e}")
