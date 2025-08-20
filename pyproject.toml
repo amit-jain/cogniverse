@@ -25,6 +25,7 @@ dependencies = [
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-instrumentation>=0.41b0",
+    "pytest-asyncio>=0.23.0",
     # Dashboard Dependencies
     "streamlit>=1.29.0",
     "plotly>=6.0.0",
