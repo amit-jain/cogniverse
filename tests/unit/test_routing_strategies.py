@@ -43,6 +43,7 @@ class TestGLiNERRoutingStrategy:
             strategy.model = mock_model
             return strategy
     
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_simple_entity_query(self, strategy):
         """Test that simple entity queries get high confidence."""
@@ -57,6 +58,7 @@ class TestGLiNERRoutingStrategy:
         assert decision.confidence_score >= 0.7  # Should pass threshold
         assert decision.routing_method == "gliner"
     
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_relationship_query_low_confidence(self, strategy):
         """Test that relationship queries get low confidence."""
@@ -72,6 +74,7 @@ class TestGLiNERRoutingStrategy:
         assert decision.confidence_score < 0.7  # Should fail threshold
         assert "compare" in decision.reasoning.lower() or decision.confidence_score < 0.6
     
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_no_entities_detected(self, strategy):
         """Test handling when no entities are detected."""
@@ -82,6 +85,7 @@ class TestGLiNERRoutingStrategy:
         assert decision.confidence_score < 0.5
         assert decision.routing_method == "gliner"
     
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_model_not_available(self, gliner_config):
         """Test graceful handling when GLiNER model fails to load."""
@@ -112,6 +116,7 @@ class TestLLMRoutingStrategy:
     def strategy(self, llm_config):
         return LLMRoutingStrategy(llm_config)
     
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_valid_json_response(self, strategy):
         """Test parsing valid JSON response from LLM."""
@@ -137,6 +142,7 @@ class TestLLMRoutingStrategy:
             assert decision.generation_type == GenerationType.SUMMARY
             assert decision.reasoning == "Test reasoning"
     
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_structured_extraction_low_confidence(self, strategy):
         """Test that structured extraction queries get lower confidence."""
@@ -145,6 +151,7 @@ class TestLLMRoutingStrategy:
         # Due to the get_confidence logic
         assert decision.confidence_score == 0.55  # Below LLM threshold
     
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_fallback_parsing(self, strategy):
         """Test fallback parsing when JSON extraction fails."""
@@ -182,6 +189,7 @@ class TestKeywordRoutingStrategy:
     def strategy(self, keyword_config):
         return KeywordRoutingStrategy(keyword_config)
     
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_video_keyword_detection(self, strategy):
         """Test detection of video keywords."""
@@ -190,6 +198,7 @@ class TestKeywordRoutingStrategy:
         assert decision.search_modality == SearchModality.VIDEO
         assert decision.routing_method == "keyword"
     
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_text_keyword_detection(self, strategy):
         """Test detection of text keywords."""
@@ -198,6 +207,7 @@ class TestKeywordRoutingStrategy:
         assert decision.search_modality == SearchModality.TEXT
         assert decision.routing_method == "keyword"
     
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_summary_generation_type(self, strategy):
         """Test detection of summary keywords."""
@@ -205,6 +215,7 @@ class TestKeywordRoutingStrategy:
         
         assert decision.generation_type == GenerationType.SUMMARY
     
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_both_modalities(self, strategy):
         """Test detection of both video and text keywords."""
@@ -212,6 +223,7 @@ class TestKeywordRoutingStrategy:
         
         assert decision.search_modality == SearchModality.BOTH
     
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_confidence_calculation(self, strategy):
         """Test confidence is based on keyword matches."""
@@ -247,6 +259,7 @@ class TestLangExtractRoutingStrategy:
             strategy.extractor = True  # Mark as available
             return strategy
     
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_structured_extraction_query(self, strategy):
         """Test that structured extraction queries are identified correctly."""
@@ -272,6 +285,7 @@ class TestLangExtractRoutingStrategy:
             assert decision.confidence_score == 0.95
             assert decision.search_modality == SearchModality.VIDEO
     
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_model_not_available(self, langextract_config):
         """Test fallback when model is not available."""
@@ -304,6 +318,7 @@ class TestGenerationTypeClassification:
         ("comprehensive breakdown", GenerationType.DETAILED_REPORT),
         ("in-depth review", GenerationType.DETAILED_REPORT),
     ])
+    @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_keyword_strategy_generation_types(self, query, expected_type):
         """Test that keyword strategy identifies generation types correctly."""

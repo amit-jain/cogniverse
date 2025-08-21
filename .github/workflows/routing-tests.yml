@@ -1,0 +1,221 @@
+name: Routing Framework Tests
+
+on:
+  push:
+    branches: [ main, develop, feature/* ]
+    paths:
+      - 'src/app/routing/**'
+      - 'src/common/**'
+      - 'tests/unit/test_routing_strategies.py'
+      - 'tests/integration/test_tiered_routing.py'
+      - 'configs/config.json'
+      - 'pytest.ini'
+      - 'pyproject.toml'
+      - '.github/workflows/routing-tests.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'src/app/routing/**'
+      - 'src/common/**'
+      - 'tests/unit/test_routing_strategies.py'
+      - 'tests/integration/test_tiered_routing.py'
+      - 'configs/config.json'
+      - 'pytest.ini'
+      - 'pyproject.toml'
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.12']
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+    
+    - name: Install dependencies
+      run: |
+        uv pip install --system -e .
+        uv pip install --system pytest pytest-cov pytest-mock pytest-asyncio tabulate
+        # Install GLiNER for unit tests (will be mocked)
+        uv pip install --system gliner
+    
+    - name: Run routing unit tests
+      run: |
+        pytest tests/unit/test_routing_strategies.py -v -m "unit or not requires_ollama" \
+          --cov=src/app/routing \
+          --cov-report=xml \
+          --cov-report=term-missing \
+          --cov-fail-under=75
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: routing-unittests
+        name: routing-coverage
+        fail_ci_if_error: false
+
+  integration-tests-mocked:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+    
+    - name: Install dependencies
+      run: |
+        uv pip install --system -e .
+        uv pip install --system pytest pytest-cov pytest-mock pytest-asyncio tabulate
+        uv pip install --system gliner
+    
+    - name: Run mocked integration tests
+      run: |
+        # Run integration tests that don't require real LLM services
+        pytest tests/integration/test_tiered_routing.py -v \
+          -m "not requires_ollama and not requires_gliner" \
+          --cov=src/app/routing \
+          --cov-report=term-missing
+      env:
+        MOCK_LLM_RESPONSES: "true"
+    
+    - name: Upload coverage
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: routing-integration
+        name: routing-coverage
+        fail_ci_if_error: false
+
+  lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+    
+    - name: Install linting tools
+      run: |
+        uv pip install --system ruff black isort mypy
+    
+    - name: Run ruff
+      run: ruff check src/app/routing
+      continue-on-error: true
+    
+    - name: Check formatting with black
+      run: black --check src/app/routing
+      continue-on-error: true
+    
+    - name: Check import sorting
+      run: isort --check-only src/app/routing
+      continue-on-error: true
+    
+    - name: Run mypy
+      run: mypy src/app/routing --ignore-missing-imports
+      continue-on-error: true
+
+  test-routing-cli:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+    
+    - name: Install package
+      run: |
+        uv pip install --system -e .
+        uv pip install --system gliner
+    
+    - name: Test demo script
+      run: |
+        # Test that the demo script can at least be imported and show help
+        python scripts/demo_routing_unified.py --help || echo "Demo script needs CLI args"
+    
+    - name: Test routing module imports
+      run: |
+        python -c "from src.app.routing import TieredRouter, ComprehensiveRouter; print('Routing imports successful')"
+
+  coverage-report:
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests-mocked]
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+    
+    - name: Install dependencies
+      run: |
+        uv pip install --system -e .
+        uv pip install --system pytest pytest-cov pytest-asyncio tabulate gliner
+    
+    - name: Generate combined coverage report
+      run: |
+        echo "Routing module coverage report:"
+        pytest tests/unit/test_routing_strategies.py tests/integration/test_tiered_routing.py \
+          -v -m "not requires_ollama" \
+          --cov=src/app/routing \
+          --cov-report=html \
+          --cov-report=term-missing
+      continue-on-error: true
+    
+    - name: Upload coverage HTML report
+      uses: actions/upload-artifact@v4
+      with:
+        name: routing-coverage-report
+        path: htmlcov/

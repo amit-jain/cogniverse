@@ -67,6 +67,7 @@ def router(test_config):
 class TestTieredEscalation:
     """Test tier escalation logic."""
     
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_tier1_handles_simple_query(self, router):
         """Test that Tier 1 (GLiNER) handles simple entity queries."""
@@ -80,6 +81,7 @@ class TestTieredEscalation:
         else:
             assert decision.routing_method in ["llm", "llm_parsed", "keyword"]
     
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_relationship_query_escalates(self, router):
         """Test that relationship queries escalate beyond Tier 1."""
@@ -92,6 +94,7 @@ class TestTieredEscalation:
         if decision.routing_method in ["llm", "llm_parsed"]:
             assert decision.search_modality == SearchModality.BOTH
     
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_structured_extraction_escalation(self, router):
         """Test that structured extraction queries may escalate to Tier 3."""
@@ -104,6 +107,7 @@ class TestTieredEscalation:
         if decision.routing_method in ["gliner", "langextract"]:
             assert decision.generation_type == GenerationType.RAW_RESULTS
     
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_fallback_for_nonsense(self, router):
         """Test that nonsense queries fall through to keyword fallback."""
@@ -122,6 +126,7 @@ class TestGenerationTypeAccuracy:
         ("summarize the main points", GenerationType.SUMMARY),
         ("detailed analysis of performance", GenerationType.DETAILED_REPORT),
     ])
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_generation_type_classification(self, router, query, expected_type):
         """Test that generation types are correctly identified."""
@@ -148,6 +153,7 @@ class TestSearchModalityDetection:
         ("read the document", SearchModality.TEXT),
         ("compare video with transcript", SearchModality.BOTH),
     ])
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_modality_detection(self, router, query, expected_modality):
         """Test that search modalities are correctly identified."""
@@ -160,6 +166,7 @@ class TestSearchModalityDetection:
 class TestCaching:
     """Test caching functionality."""
     
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_cache_hit(self, router):
         """Test that repeated queries hit the cache."""
@@ -176,6 +183,7 @@ class TestCaching:
         assert decision1.generation_type == decision2.generation_type
         assert decision1.confidence_score == decision2.confidence_score
     
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_cache_expiry(self, test_config):
         """Test that cache expires after TTL."""
@@ -202,6 +210,7 @@ class TestCaching:
 class TestErrorHandling:
     """Test error handling in routing."""
     
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_all_strategies_fail(self, test_config):
         """Test handling when all strategies fail."""
@@ -219,6 +228,7 @@ class TestErrorHandling:
         assert decision is not None
         assert decision.routing_method == "keyword"
     
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_empty_query(self, router):
         """Test handling of empty query."""
@@ -232,6 +242,7 @@ class TestErrorHandling:
 class TestPerformanceTracking:
     """Test performance tracking and metrics."""
     
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_metrics_recording(self, router):
         """Test that metrics are recorded for routing decisions."""
@@ -245,6 +256,7 @@ class TestPerformanceTracking:
         if hasattr(router, 'metrics'):
             assert len(router.metrics) > 0
     
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_execution_time_tracking(self, router):
         """Test that execution time is reasonable."""
@@ -262,6 +274,7 @@ class TestPerformanceTracking:
 class TestFullRoutingFlow:
     """Full integration tests with all components."""
     
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_complete_routing_flow(self, router):
         """Test complete routing flow from query to decision."""
@@ -289,6 +302,7 @@ class TestFullRoutingFlow:
             assert 0.0 <= decision.confidence_score <= 1.0
             assert decision.routing_method is not None
     
+    @pytest.mark.integration
     @pytest.mark.asyncio
     @pytest.mark.skipif(
         not os.environ.get("RUN_SLOW_TESTS"),
