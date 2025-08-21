@@ -253,7 +253,7 @@ class PhoenixExperimentRunner:
                     
                     logger.info(f"SearchService created, instrumentation status: {hasattr(search_service.search, '__wrapped__')}")
                     
-                    # Run search
+                    # Run search (Phoenix experiment system handles project isolation)
                     search_results_raw = search_service.search(
                         query=query,
                         top_k=10,
