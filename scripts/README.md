@@ -4,6 +4,15 @@ Automation scripts for the Agentic Router system using the new `src/` structure.
 
 ## 📁 Scripts Overview
 
+### 📊 Evaluation & Dataset Scripts
+- **`bootstrap_dataset_from_traces.py`** - Extract ground truth datasets from high-confidence Phoenix traces
+- **`generate_dataset_from_videos.py`** - Auto-generate evaluation queries from video content and metadata
+- **`import_benchmark_dataset.py`** - Import standard benchmarks like MSR-VTT, ActivityNet, DiDeMo
+- **`interactive_dataset_builder.py`** - Manually build datasets through interactive search and annotation
+- **`run_experiments_with_visualization.py`** - Run evaluation experiments with Phoenix tracking (use experiment_tracker.py instead)
+
+For detailed evaluation documentation, see `docs/EVALUATION_FRAMEWORK.md`
+
 ### 🚀 `run_optimization.py` - Complete Workflow
 **Full end-to-end optimization and deployment pipeline**
 

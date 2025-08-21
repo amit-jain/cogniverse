@@ -26,8 +26,8 @@ from sklearn.decomposition import PCA
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.search.vespa_search_backend import VespaSearchBackend
-from src.tools.config import get_config
+from src.backends.vespa.search_backend import VespaSearchBackend
+from src.common.config import get_config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

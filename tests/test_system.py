@@ -17,7 +17,7 @@ from typing import Dict, Any, List, Optional, Tuple
 # Add the project root to the path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.tools.config import get_config, setup_environment
+from src.common.config import get_config, setup_environment
 from src.tools.a2a_utils import A2AClient, discover_agents
 
 class SystemTester:
@@ -31,7 +31,7 @@ class SystemTester:
         self.passed_tests = []
         
         # Use OutputManager for test results
-        from src.utils.output_manager import get_output_manager
+        from src.common.utils.output_manager import get_output_manager
         self.output_manager = get_output_manager()
         self.results_dir = self.output_manager.get_test_results_dir()
         
@@ -440,7 +440,7 @@ class SystemTester:
         """Test complete end-to-end multi-agent system with random queries."""
         try:
             # Import here to avoid loading issues
-            from src.agents.composing_agents_main import query_analyzer, video_search_tool
+            from src.app.agents.composing_agents_main import query_analyzer, video_search_tool
             
             # Test with multiple random queries
             print("\n" + "="*60)

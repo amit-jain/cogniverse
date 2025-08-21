@@ -288,7 +288,7 @@ uv run python scripts/run_experiments_with_visualization.py \
 ### Phoenix Experiment Runner
 
 ```python
-from src.evaluation.phoenix_experiments_final import PhoenixExperimentRunner
+from src.evaluation.experiments import PhoenixExperimentRunner
 
 runner = PhoenixExperimentRunner(
     experiment_project_name="experiments",
@@ -415,7 +415,7 @@ curl http://localhost:11434/api/tags
 **Memory Issues:**
 ```bash
 # Reduce concurrent evaluations
-# Edit src/evaluation/phoenix_experiments_final.py
+# Edit src/evaluation/experiments.py
 # Set concurrency=1 in run_experiment()
 ```
 

@@ -66,6 +66,9 @@ test_float_*.py
 temp/
 
 # Test outputs
+.coverage
+coverage.xml
+htmlcov/
 
 # Claude configuration
 CLAUDE.md
@@ -75,3 +78,4 @@ configs/schemas/ranking_strategies.json
 
 # Ideas folder (future implementations)
 ideas/
+docs/internal/

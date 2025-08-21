@@ -13,8 +13,36 @@ import phoenix as px
 logger = logging.getLogger(__name__)
 
 
-@scorer
-class VideoRetrievalScorer(Scorer):
+# Factory functions for Inspect AI registration
+@scorer(metrics=[], name="video_retrieval_scorer")
+def video_retrieval_scorer(metrics: List[str] = None) -> Scorer:
+    """Create a video retrieval scorer for Inspect AI."""
+    scorer_instance = VideoRetrievalScorer(metrics)
+    return scorer_instance
+
+
+@scorer(metrics=[], name="temporal_accuracy_scorer")  
+def temporal_accuracy_scorer() -> Scorer:
+    """Create a temporal accuracy scorer for Inspect AI."""
+    scorer_instance = TemporalAccuracyScorer()
+    return scorer_instance
+
+
+@scorer(metrics=[], name="alignment_scorer")
+def alignment_scorer(k: int = 10) -> Scorer:
+    """Create an alignment scorer for Inspect AI."""
+    scorer_instance = AlignmentScorer(k)
+    return scorer_instance
+
+
+@scorer(metrics=[], name="failure_analysis_scorer")
+def failure_analysis_scorer() -> Scorer:
+    """Create a failure analysis scorer for Inspect AI."""
+    scorer_instance = FailureAnalysisScorer()
+    return scorer_instance
+
+
+class VideoRetrievalScorer:
     """Comprehensive scorer for video retrieval tasks"""
     
     def __init__(self, metrics: List[str] = None):
@@ -56,21 +84,36 @@ class VideoRetrievalScorer(Scorer):
                 explanation="No expected videos specified"
             )
         
-        # Calculate scores for each configuration
+        # Calculate scores - handle both list and dict formats
         scores = {}
-        for config, search_results in results.items():
+        
+        if isinstance(results, dict):
+            # Dict of configs with results
+            for config, search_results in results.items():
+                config_scores = {}
+                for metric in self.metrics:
+                    if metric in self.metric_calculators:
+                        config_scores[metric] = self.metric_calculators[metric](
+                            search_results, expected
+                        )
+                scores[config] = config_scores
+        elif isinstance(results, list):
+            # Direct list of results
             config_scores = {}
-            
             for metric in self.metrics:
                 if metric in self.metric_calculators:
                     config_scores[metric] = self.metric_calculators[metric](
-                        search_results, expected
+                        results, expected
                     )
-            
-            scores[config] = config_scores
+            scores["default"] = config_scores
+        else:
+            # Unknown format
+            scores["default"] = {metric: 0.0 for metric in self.metrics}
         
-        # Log to Phoenix
-        with px.trace("scoring") as span:
+        # Log to Phoenix using OpenTelemetry
+        from opentelemetry import trace
+        tracer = trace.get_tracer(__name__)
+        with tracer.start_as_current_span("scoring") as span:
             span.set_attribute("scores", json.dumps(scores))
             span.set_attribute("query", state.input.text if hasattr(state.input, 'text') else str(state.input))
         
@@ -85,27 +128,43 @@ class VideoRetrievalScorer(Scorer):
             value=overall_score,
             answer=json.dumps(scores, indent=2),
             explanation=self._generate_explanation(scores),
-            metadata={"detailed_scores": scores}
+            metadata={"metrics": scores.get("default", scores) if len(scores) == 1 else scores}
         )
     
-    def _calculate_mrr(self, results: List[Dict], expected: List[str]) -> float:
+    def _calculate_mrr(self, results: List, expected: List[str]) -> float:
         """Calculate Mean Reciprocal Rank"""
         if not results:
             return 0.0
         
         for i, result in enumerate(results):
-            if result['video_id'] in expected:
+            # Handle both string and dict results
+            if isinstance(result, str):
+                video_id = result
+            elif isinstance(result, dict):
+                video_id = result.get('video_id', result.get('id', ''))
+            else:
+                continue
+                
+            if video_id in expected:
                 return 1.0 / (i + 1)
         
         return 0.0
     
-    def _calculate_ndcg(self, results: List[Dict], expected: List[str], k: int = 10) -> float:
+    def _calculate_ndcg(self, results: List, expected: List[str], k: int = 10) -> float:
         """Calculate Normalized Discounted Cumulative Gain"""
         if not results:
             return 0.0
         
         # Binary relevance: 1 if video is expected, 0 otherwise
-        relevances = [1 if r['video_id'] in expected else 0 for r in results[:k]]
+        relevances = []
+        for r in results[:k]:
+            if isinstance(r, str):
+                relevances.append(1 if r in expected else 0)
+            elif isinstance(r, dict):
+                video_id = r.get('video_id', r.get('id', ''))
+                relevances.append(1 if video_id in expected else 0)
+            else:
+                relevances.append(0)
         
         # Calculate DCG
         dcg = relevances[0] if relevances else 0
@@ -121,27 +180,43 @@ class VideoRetrievalScorer(Scorer):
         # Calculate NDCG
         return dcg / idcg if idcg > 0 else 0.0
     
-    def _calculate_precision(self, results: List[Dict], expected: List[str], k: int = 10) -> float:
+    def _calculate_precision(self, results: List, expected: List[str], k: int = 10) -> float:
         """Calculate Precision@k"""
         if not results:
             return 0.0
         
         top_k_results = results[:k]
-        relevant_found = sum(1 for r in top_k_results if r['video_id'] in expected)
+        relevant_found = 0
+        for r in top_k_results:
+            if isinstance(r, str):
+                if r in expected:
+                    relevant_found += 1
+            elif isinstance(r, dict):
+                video_id = r.get('video_id', r.get('id', ''))
+                if video_id in expected:
+                    relevant_found += 1
         
         return relevant_found / len(top_k_results)
     
-    def _calculate_recall(self, results: List[Dict], expected: List[str], k: int = 10) -> float:
+    def _calculate_recall(self, results: List, expected: List[str], k: int = 10) -> float:
         """Calculate Recall@k"""
         if not results or not expected:
             return 0.0
         
         top_k_results = results[:k]
-        relevant_found = sum(1 for r in top_k_results if r['video_id'] in expected)
+        relevant_found = 0
+        for r in top_k_results:
+            if isinstance(r, str):
+                if r in expected:
+                    relevant_found += 1
+            elif isinstance(r, dict):
+                video_id = r.get('video_id', r.get('id', ''))
+                if video_id in expected:
+                    relevant_found += 1
         
         return relevant_found / len(expected)
     
-    def _calculate_map(self, results: List[Dict], expected: List[str]) -> float:
+    def _calculate_map(self, results: List, expected: List[str]) -> float:
         """Calculate Mean Average Precision"""
         if not results or not expected:
             return 0.0
@@ -150,7 +225,13 @@ class VideoRetrievalScorer(Scorer):
         sum_precision = 0.0
         
         for i, result in enumerate(results):
-            if result['video_id'] in expected:
+            video_id = None
+            if isinstance(result, str):
+                video_id = result
+            elif isinstance(result, dict):
+                video_id = result.get('video_id', result.get('id', ''))
+            
+            if video_id and video_id in expected:
                 num_relevant += 1
                 precision_at_i = num_relevant / (i + 1)
                 sum_precision += precision_at_i
@@ -186,9 +267,11 @@ class VideoRetrievalScorer(Scorer):
         return "\n".join(explanations)
 
 
-@scorer
 class TemporalAccuracyScorer(Scorer):
     """Scorer for temporal understanding tasks"""
+    
+    def __init__(self):
+        self.name = "mrr"
     
     async def __call__(self, state, target) -> Score:
         """Score temporal understanding"""
@@ -206,8 +289,9 @@ class TemporalAccuracyScorer(Scorer):
         else:
             try:
                 expected_range = eval(target) if isinstance(target, str) else target
-            except:
-                pass
+            except (SyntaxError, NameError, ValueError) as e:
+                logger.warning(f"Failed to parse expected range from target: {e}")
+                expected_range = None
         
         if not expected_range or not temporal_info.get("extracted_range"):
             return Score(
@@ -254,9 +338,12 @@ class TemporalAccuracyScorer(Scorer):
         return intersection / union if union > 0 else 0.0
 
 
-@scorer  
 class AlignmentScorer(Scorer):
     """Scorer for multimodal alignment tasks"""
+    
+    def __init__(self, k: int = 10):
+        self.name = "ndcg"
+        self.k = k
     
     async def __call__(self, state, target) -> Score:
         """Score multimodal alignment"""
@@ -275,8 +362,9 @@ class AlignmentScorer(Scorer):
         else:
             try:
                 expected_alignment = eval(target) if isinstance(target, str) else target
-            except:
-                pass
+            except (SyntaxError, NameError, ValueError) as e:
+                logger.warning(f"Failed to parse expected alignment from target: {e}")
+                expected_alignment = None
         
         # Calculate accuracy
         if expected_alignment is not None:
@@ -296,7 +384,6 @@ class AlignmentScorer(Scorer):
         )
 
 
-@scorer
 class FailureAnalysisScorer(Scorer):
     """Scorer for failure analysis tasks"""
     

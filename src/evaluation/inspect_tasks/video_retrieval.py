@@ -11,8 +11,8 @@ from inspect_ai.dataset import Sample, Dataset
 from inspect_ai.solver import Solver, solver, generate
 from inspect_ai.scorer import Scorer, scorer, Score
 
-from src.search.search_service import SearchService
-from src.tools.config import get_config
+from src.app.search.service import SearchService
+from src.common.config import get_config
 from .solvers import (
     CogniverseRetrievalSolver,
     ResultRankingAnalyzer,
@@ -54,7 +54,7 @@ def video_retrieval_accuracy(
     
     # Default profiles and strategies if not specified
     if profiles is None:
-        profiles = ["frame_based_colpali", "direct_video_global"]
+        profiles = ["video_colpali_smol500_mv_frame", "video_videoprism_lvt_base_sv_global"]
     
     if strategies is None:
         strategies = ["float_float", "binary_binary", "hybrid_binary_bm25"]
@@ -106,7 +106,7 @@ def temporal_understanding(
     
     # Default profiles if not specified
     if profiles is None:
-        profiles = ["direct_video_global", "frame_based_colpali"]
+        profiles = ["video_videoprism_lvt_base_sv_global", "video_colpali_smol500_mv_frame"]
     
     # Load dataset
     dataset = load_temporal_dataset(dataset_path)
@@ -152,7 +152,7 @@ def multimodal_alignment(
     
     # Default profiles if not specified
     if profiles is None:
-        profiles = ["direct_video_global", "frame_based_colpali", "direct_video_colqwen"]
+        profiles = ["video_videoprism_base_sv_global", "video_colpali_smol500_mv_frame", "video_colqwen_omni_sv_chunk"]
     
     # Load dataset
     dataset = load_multimodal_dataset(dataset_path)
@@ -200,7 +200,7 @@ def failure_analysis(
     
     # Default profiles and strategies if not specified
     if profiles is None:
-        profiles = ["frame_based_colpali", "direct_video_global"]
+        profiles = ["video_colpali_smol500_mv_frame", "video_videoprism_lvt_base_sv_global"]
     
     if strategies is None:
         strategies = ["float_float", "binary_binary", "hybrid_binary_bm25"]

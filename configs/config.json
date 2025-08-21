@@ -67,8 +67,8 @@
     "serialization_format": "json"
   },
   "video_processing_profiles": {
-    "frame_based_colpali": {
-      "vespa_schema": "video_frame",
+    "video_colpali_smol500_mv_frame": {
+      "schema_name": "video_colpali_smol500_mv_frame",
       "embedding_model": "vidore/colsmol-500m",
       "pipeline_config": {
         "extract_keyframes": true,
@@ -77,6 +77,28 @@
         "generate_embeddings": true,
         "keyframe_strategy": "fps",
         "keyframe_fps": 1.0
+      },
+      "strategies": {
+        "segmentation": {
+          "class": "FrameSegmentationStrategy",
+          "params": {
+            "fps": 1.0,
+            "threshold": 0.999,
+            "max_frames": 3000
+          }
+        },
+        "transcription": {
+          "class": "AudioTranscriptionStrategy",
+          "params": {}
+        },
+        "description": {
+          "class": "VLMDescriptionStrategy",
+          "params": {}
+        },
+        "embedding": {
+          "class": "MultiVectorEmbeddingStrategy",
+          "params": {}
+        }
       },
       "embedding_type": "frame_based",
       "schema_config": {
@@ -87,33 +109,62 @@
         "binary_dim": 16
       }
     },
-    "direct_video_colqwen": {
-      "vespa_schema": "video_colqwen",
+    "video_colqwen_omni_mv_chunk_30s": {
+      "schema_name": "video_colqwen_omni_mv_chunk_30s",
       "embedding_model": "vidore/colqwen-omni-v0.1",
+      "process_type": "video_chunks",
       "pipeline_config": {
         "extract_keyframes": false,
         "transcribe_audio": true,
         "generate_descriptions": false,
         "generate_embeddings": true
       },
-      "embedding_type": "direct_video_segment",
+      "strategies": {
+        "segmentation": {
+          "class": "ChunkSegmentationStrategy",
+          "params": {
+            "chunk_duration": 30.0,
+            "chunk_overlap": 5.0,
+            "cache_chunks": false
+          }
+        },
+        "transcription": {
+          "class": "AudioTranscriptionStrategy",
+          "params": {}
+        },
+        "description": {
+          "class": "NoDescriptionStrategy",
+          "params": {}
+        },
+        "embedding": {
+          "class": "MultiVectorEmbeddingStrategy",
+          "params": {}
+        }
+      },
+      "embedding_type": "video_chunks",
       "model_specific": {
         "max_patches": 1024,
-        "segment_duration": 15.0,
-        "adaptive_segmentation": true,
+        "segment_duration": 30.0,
+        "chunk_duration": 30.0,
+        "chunk_overlap": 5.0,
+        "extract_audio": true,
+        "transcribe_audio": true,
+        "whisper_model": "base",
+        "store_as_single_doc": true,
+        "adaptive_segmentation": false,
         "max_pixels": 16777216,
         "sampling_fps": 1.0
       },
       "schema_config": {
-        "schema_name": "video_colqwen",
+        "schema_name": "video_colqwen_omni_mv_chunk_30s",
         "model_name": "ColQwen-Omni",
         "num_patches": 1024,
         "embedding_dim": 128,
         "binary_dim": 16
       }
     },
-    "direct_video_frame": {
-      "vespa_schema": "video_videoprism_base",
+    "video_videoprism_base_mv_chunk_30s": {
+      "schema_name": "video_videoprism_base_mv_chunk_30s",
       "embedding_model": "videoprism_public_v1_base_hf",
       "pipeline_config": {
         "extract_keyframes": false,
@@ -121,6 +172,28 @@
         "generate_descriptions": false,
         "generate_embeddings": true
       },
+      "strategies": {
+        "segmentation": {
+          "class": "ChunkSegmentationStrategy",
+          "params": {
+            "chunk_duration": 30.0,
+            "chunk_overlap": 0.0,
+            "cache_chunks": false
+          }
+        },
+        "transcription": {
+          "class": "AudioTranscriptionStrategy",
+          "params": {}
+        },
+        "description": {
+          "class": "NoDescriptionStrategy",
+          "params": {}
+        },
+        "embedding": {
+          "class": "MultiVectorEmbeddingStrategy",
+          "params": {}
+        }
+      },
       "embedding_type": "direct_video_segment",
       "model_specific": {
         "segment_duration": 30.0,
@@ -136,15 +209,15 @@
         "query_encoder": "vidore/colsmol-500m"
       },
       "schema_config": {
-        "schema_name": "video_videoprism_base",
+        "schema_name": "video_videoprism_base_mv_chunk_30s",
         "model_name": "VideoPrism-Base",
         "num_patches": 4096,
         "embedding_dim": 768,
         "binary_dim": 96
       }
     },
-    "direct_video_frame_large": {
-      "vespa_schema": "video_videoprism_large",
+    "video_videoprism_large_mv_chunk_30s": {
+      "schema_name": "video_videoprism_large_mv_chunk_30s",
       "embedding_model": "videoprism_public_v1_large_hf",
       "pipeline_config": {
         "extract_keyframes": false,
@@ -152,6 +225,28 @@
         "generate_descriptions": false,
         "generate_embeddings": true
       },
+      "strategies": {
+        "segmentation": {
+          "class": "ChunkSegmentationStrategy",
+          "params": {
+            "chunk_duration": 30.0,
+            "chunk_overlap": 0.0,
+            "cache_chunks": false
+          }
+        },
+        "transcription": {
+          "class": "AudioTranscriptionStrategy",
+          "params": {}
+        },
+        "description": {
+          "class": "NoDescriptionStrategy",
+          "params": {}
+        },
+        "embedding": {
+          "class": "MultiVectorEmbeddingStrategy",
+          "params": {}
+        }
+      },
       "embedding_type": "direct_video_segment",
       "model_specific": {
         "segment_duration": 30.0,
@@ -167,15 +262,15 @@
         "query_encoder": "vidore/colsmol-500m"
       },
       "schema_config": {
-        "schema_name": "video_videoprism_large",
+        "schema_name": "video_videoprism_large_mv_chunk_30s",
         "model_name": "VideoPrism-Large",
         "num_patches": 2048,
         "embedding_dim": 1024,
         "binary_dim": 128
       }
     },
-    "direct_video_global": {
-      "vespa_schema": "video_videoprism_global",
+    "video_videoprism_lvt_base_sv_chunk_6s": {
+      "schema_name": "video_videoprism_lvt_base_sv_chunk_6s",
       "embedding_model": "videoprism_lvt_public_v1_base",
       "pipeline_config": {
         "extract_keyframes": false,
@@ -183,27 +278,54 @@
         "generate_descriptions": false,
         "generate_embeddings": true
       },
-      "embedding_type": "direct_video_global",
+      "strategies": {
+        "segmentation": {
+          "class": "SingleVectorSegmentationStrategy",
+          "params": {
+            "strategy": "chunks",
+            "segment_duration": 6.0,
+            "segment_overlap": 1.0,
+            "sampling_fps": 2.0,
+            "max_frames_per_segment": 12,
+            "store_as_single_doc": true
+          }
+        },
+        "transcription": {
+          "class": "AudioTranscriptionStrategy",
+          "params": {}
+        },
+        "description": {
+          "class": "NoDescriptionStrategy",
+          "params": {}
+        },
+        "embedding": {
+          "class": "SingleVectorEmbeddingStrategy",
+          "params": {}
+        }
+      },
+      "embedding_type": "single_vector",
       "model_specific": {
-        "sampling_fps": 1.0,
-        "max_frames": 40,
-        "global_embedding": true
+        "chunk_duration": 6.0,
+        "chunk_overlap": 1.0,
+        "sampling_fps": 2.0,
+        "max_frames_per_chunk": 12,
+        "min_frames": 4
       },
       "inference_config": {
-        "model_type": "videoprism_global",
+        "model_type": "videoprism",
         "backend": "auto",
         "query_encoder": "videoprism_lvt_public_v1_base"
       },
       "schema_config": {
-        "schema_name": "video_videoprism_global",
+        "schema_name": "video_videoprism_lvt_base_sv_chunk_6s",
         "model_name": "VideoPrism-LVT-Base",
         "embedding_dim": 768,
         "binary_dim": 96,
-        "global_embedding": true
+        "chunk_based": true
       }
     },
-    "direct_video_global_large": {
-      "vespa_schema": "video_videoprism_global_large",
+    "video_videoprism_lvt_large_sv_chunk_6s": {
+      "schema_name": "video_videoprism_lvt_large_sv_chunk_6s",
       "embedding_model": "videoprism_lvt_public_v1_large",
       "pipeline_config": {
         "extract_keyframes": false,
@@ -211,44 +333,38 @@
         "generate_descriptions": false,
         "generate_embeddings": true
       },
-      "embedding_type": "direct_video_global_large",
-      "model_specific": {
-        "sampling_fps": 1.0,
-        "max_frames": 40,
-        "global_embedding": true
+      "strategies": {
+        "segmentation": {
+          "class": "SingleVectorSegmentationStrategy",
+          "params": {
+            "strategy": "chunks",
+            "segment_duration": 6.0,
+            "segment_overlap": 1.0,
+            "sampling_fps": 2.0,
+            "max_frames_per_segment": 12,
+            "store_as_single_doc": true
+          }
+        },
+        "transcription": {
+          "class": "AudioTranscriptionStrategy",
+          "params": {}
+        },
+        "description": {
+          "class": "NoDescriptionStrategy",
+          "params": {}
+        },
+        "embedding": {
+          "class": "SingleVectorEmbeddingStrategy",
+          "params": {}
+        }
       },
-      "inference_config": {
-        "model_type": "videoprism_global",
-        "backend": "auto",
-        "query_encoder": "videoprism_lvt_public_v1_large"
-      },
-      "schema_config": {
-        "schema_name": "video_videoprism_global",
-        "model_name": "VideoPrism-LVT-Large",
-        "embedding_dim": 1024,
-        "binary_dim": 128,
-        "global_embedding": true
-      }
-    },
-    "single__video_videoprism_large_6s": {
-      "vespa_schema": "video_chunks",
-      "embedding_model": "videoprism_lvt_public_v1_large",
-      "processing_type": "single_vector",
-      "pipeline_config": {
-        "extract_keyframes": false,
-        "transcribe_audio": true,
-        "generate_descriptions": false,
-        "generate_embeddings": true
-      },
-      "embedding_type": "video_chunks",
+      "embedding_type": "single_vector",
       "model_specific": {
         "chunk_duration": 6.0,
         "chunk_overlap": 1.0,
         "sampling_fps": 2.0,
         "max_frames_per_chunk": 12,
-        "min_frames": 4,
-        "store_as_single_doc": true,
-        "native_dimensions": true
+        "min_frames": 4
       },
       "inference_config": {
         "model_type": "videoprism",
@@ -256,15 +372,15 @@
         "query_encoder": "videoprism_lvt_public_v1_large"
       },
       "schema_config": {
-        "schema_name": "video_chunks",
-        "model_name": "VideoPrism-Large-Chunks",
+        "schema_name": "video_videoprism_lvt_large_sv_chunk_6s",
+        "model_name": "VideoPrism-LVT-Large",
         "embedding_dim": 1024,
         "binary_dim": 128,
         "chunk_based": true
       }
     }
   },
-  "active_video_profile": "frame_based_colpali",
+  "active_video_profile": "video_colpali_smol500_mv_frame",
   "query_inference_engine": {
     "mode": "llm",
     "available_gliner_models": [

@@ -12,9 +12,9 @@ from pathlib import Path
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.processing.vespa.vespa_schema_manager import VespaSchemaManager
-from src.processing.vespa.json_schema_parser import JsonSchemaParser
-from src.tools.config import get_config
+from src.backends.vespa.vespa_schema_manager import VespaSchemaManager
+from src.backends.vespa.json_schema_parser import JsonSchemaParser
+from src.common.config import get_config
 from vespa.package import ApplicationPackage
 
 def main():
@@ -78,7 +78,7 @@ def main():
             
             # Extract and save ranking strategies after schema deployment
             logger.info("📊 Extracting ranking strategies from all schemas...")
-            from src.processing.vespa.ranking_strategy_extractor import extract_all_ranking_strategies, save_ranking_strategies
+            from src.backends.vespa.ranking_strategy_extractor import extract_all_ranking_strategies, save_ranking_strategies
             
             strategies = extract_all_ranking_strategies(schemas_dir)
             save_ranking_strategies(strategies, schemas_dir / "ranking_strategies.json")

@@ -72,22 +72,21 @@ class VideoMetadataFetcher:
             Metadata dict or None
         """
         try:
-            # Import here to avoid circular dependencies
-            from src.search.vespa_search_backend import VespaSearchBackend
+            # Use search service instead of direct backend access
+            from src.app.search.service import SearchService
             
-            # Create a temporary backend instance
-            backend = VespaSearchBackend(self.config)
-            
-            # Query Vespa for the specific video - use correct field names!
-            query = f'select * from sources * where video_id contains "{video_id}"'
-            response = backend.app.query(
-                yql=query,
-                hits=1
+            # Use search service to find the video
+            # This keeps evaluation independent of backend implementation
+            search_service = SearchService(self.config, profile="video_colpali_smol500_mv_frame")
+            results = search_service.search(
+                query=f"video_id:{video_id}",
+                top_k=1
             )
             
-            if response.hits:
-                hit = response.hits[0]
-                fields = hit.get("fields", {})
+            if results:
+                # SearchService returns SearchResult objects
+                result = results[0]
+                fields = result.metadata if hasattr(result, 'metadata') else {}
                 
                 return {
                     "video_id": video_id,
