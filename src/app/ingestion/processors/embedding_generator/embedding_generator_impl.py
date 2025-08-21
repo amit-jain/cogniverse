@@ -15,8 +15,7 @@ import torch
 from PIL import Image
 
 from .embedding_generator import (
-    EmbeddingGenerator, ProcessingConfig,
-    EmbeddingResult
+    EmbeddingGenerator, EmbeddingResult
 )
 from src.common.document import Document, ContentType, ProcessingStatus
 

@@ -9,11 +9,11 @@ import pytest
 import tempfile
 import shutil
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock, patch
 import logging
 import numpy as np
 import cv2
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 # Test data constants
 TEST_VIDEO_WIDTH = 640

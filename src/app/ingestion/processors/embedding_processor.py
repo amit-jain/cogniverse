@@ -5,8 +5,7 @@ Embedding Processor - Pluggable embedding generation.
 Generates embeddings using the existing embedding generator system.
 """
 
-from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 import logging
 
 from ..processor_base import BaseProcessor
@@ -42,7 +41,7 @@ class EmbeddingProcessor(BaseProcessor):
     
     def generate_embeddings(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Generate embeddings (placeholder - delegates to existing system)."""
-        self.logger.info(f"🧬 Embedding generation delegated to existing system")
+        self.logger.info("🧬 Embedding generation delegated to existing system")
         
         # For now, return placeholder to avoid breaking the pipeline
         return {

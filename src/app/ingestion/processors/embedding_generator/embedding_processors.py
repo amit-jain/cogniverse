@@ -5,7 +5,7 @@ Embedding Processors - Handles the actual embedding generation and format conver
 
 import torch
 import numpy as np
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional
 from PIL import Image
 from pathlib import Path
 import logging

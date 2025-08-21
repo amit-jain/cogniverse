@@ -13,7 +13,7 @@ Provides a coherent interface for:
 3. Storage strategies (how to store embeddings)
 """
 
-from typing import Dict, Any, Optional, Literal, List
+from typing import Dict, Any, Literal
 from pathlib import Path
 import json
 import logging

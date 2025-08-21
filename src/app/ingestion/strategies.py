@@ -7,7 +7,6 @@ These strategies work with the pluggable ProcessorManager.
 
 from pathlib import Path
 from typing import Dict, Any, Optional
-import logging
 
 from .processor_base import BaseStrategy
 

@@ -21,7 +21,6 @@ from typing import Dict, List, Any, Optional, Tuple, Literal
 import numpy as np
 import cv2
 from dataclasses import dataclass
-import json
 import time
 import asyncio
 

@@ -33,29 +33,16 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from src.common.config import get_config
-from src.app.ingestion.processors import (
-    KeyframeExtractor,
-    AudioTranscriber,
-    VLMDescriptor
-)
-from src.app.ingestion.processors.keyframe_extractor_fps import FPSKeyframeExtractor
-from src.app.ingestion.processors.video_chunk_extractor import VideoChunkExtractor
+# Processors are imported dynamically by processor_manager
 from src.app.ingestion.processors.embedding_generator import create_embedding_generator
-from src.common.cache import CacheManager, CacheConfig
+# Cache imports removed - using pipeline_cache directly
 from src.common.cache.pipeline_cache import PipelineArtifactCache
-from src.app.ingestion.strategy import StrategyConfig
+# StrategyConfig imported locally where needed
 from src.app.ingestion.strategy_factory import StrategyFactory
 from src.app.ingestion.processor_manager import ProcessorManager
 from src.app.ingestion.exceptions import (
     PipelineException, 
-    ContentProcessingError, 
-    EmbeddingGenerationError, 
-    BackendError, 
-    ProcessorError,
-    wrap_content_error,
-    wrap_embedding_error,
-    wrap_backend_error,
-    wrap_processor_error
+    wrap_content_error
 )
 
 
@@ -291,7 +278,7 @@ class VideoIngestionPipeline:
             return
         
         # Get strategy from profile config
-        from src.app.ingestion.strategy import Strategy, StrategyConfig
+        from src.app.ingestion.strategy import StrategyConfig
         
         # Use StrategyConfig to properly resolve strategy (as in old implementation)
         if self.schema_name:
@@ -552,7 +539,7 @@ class VideoIngestionPipeline:
         if "transcript" in results.get("results", {}):
             video_data["transcript"] = results["results"]["transcript"]
             
-        self.logger.info(f"Using video chunks data")
+        self.logger.info("Using video chunks data")
         return video_data
     
     def _process_single_vector_data(self, video_data: Dict[str, Any], results: Dict[str, Any]) -> Dict[str, Any]:
@@ -942,7 +929,7 @@ class VideoIngestionPipeline:
         self.logger.info(f"Average time per video: {results['total_processing_time'] / len(video_files):.2f} seconds")
         self.logger.info(f"Summary saved to: {summary_file}")
         
-        print(f"\n🎉 Pipeline completed!")
+        print("\n🎉 Pipeline completed!")
         print(f"✅ Processed: {len(results['processed_videos'])}/{len(video_files)} videos")
         print(f"❌ Failed: {len(results['failed_videos'])} videos")
         print(f"⏱️ Total time: {results['total_processing_time']/60:.1f} minutes")

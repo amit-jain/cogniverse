@@ -8,7 +8,7 @@ without complex constructor parameters.
 
 from typing import Optional, Dict, Any
 from pathlib import Path
-import logging
+# Logging imported where needed
 
 from .pipeline import VideoIngestionPipeline, PipelineConfig
 from src.common.config import get_config

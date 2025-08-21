@@ -5,8 +5,7 @@ VLM Processor - Pluggable VLM description generation.
 Generates descriptions for video frames using VLM models.
 """
 
-from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 import logging
 
 from ..processor_base import BaseProcessor
@@ -42,7 +41,7 @@ class VLMProcessor(BaseProcessor):
     
     def generate_descriptions(self, frames_data: Dict[str, Any]) -> Dict[str, Any]:
         """Generate descriptions for frames (placeholder implementation)."""
-        self.logger.info(f"🎨 VLM description generation not implemented yet")
+        self.logger.info("🎨 VLM description generation not implemented yet")
         
         # For now, return empty descriptions to avoid breaking the pipeline
         return {

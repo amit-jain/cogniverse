@@ -8,11 +8,10 @@ import pytest
 import tempfile
 import shutil
 from pathlib import Path
-from typing import List, Dict, Any
 from unittest.mock import Mock, patch
 
 from tests.utils.markers import (
-    skip_if_no_vespa, skip_if_no_docker, skip_if_ci, 
+    skip_if_no_vespa, skip_if_ci, 
     skip_heavy_models_in_ci, skip_if_low_memory
 )
 

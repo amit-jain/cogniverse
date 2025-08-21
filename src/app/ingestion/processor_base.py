@@ -6,7 +6,7 @@ Provides foundation for pluggable processor architecture with auto-discovery.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 import logging
 
 
