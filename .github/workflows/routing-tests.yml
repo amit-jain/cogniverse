@@ -46,6 +46,14 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-pip-
     
+    - name: Cache GLiNER models
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/huggingface
+        key: ${{ runner.os }}-gliner-models-v1
+        restore-keys: |
+          ${{ runner.os }}-gliner-models-
+    
     - name: Install uv
       run: |
         curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -55,7 +63,7 @@ jobs:
       run: |
         uv pip install --system -e .
         uv pip install --system pytest pytest-cov pytest-mock pytest-asyncio tabulate
-        # Install GLiNER for unit tests (will be mocked)
+        # Install GLiNER - lightweight NER model that can run in CI/CD
         uv pip install --system gliner
     
     - name: Run routing unit tests
@@ -86,6 +94,14 @@ jobs:
       with:
         python-version: '3.12'
     
+    - name: Cache GLiNER models
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/huggingface
+        key: ${{ runner.os }}-gliner-models-v1
+        restore-keys: |
+          ${{ runner.os }}-gliner-models-
+    
     - name: Install uv
       run: |
         curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -100,8 +116,9 @@ jobs:
     - name: Run mocked integration tests
       run: |
         # Run integration tests that don't require real LLM services
+        # GLiNER tests can run since the model is small and fast
         pytest tests/integration/test_tiered_routing.py -v \
-          -m "not requires_ollama and not requires_gliner" \
+          -m "not requires_ollama" \
           --cov=src/app/routing \
           --cov-report=term-missing
       env:
