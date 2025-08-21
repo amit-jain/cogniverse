@@ -11,6 +11,10 @@ import numpy as np
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+from src.common.models import get_or_load_model
+from .document_builders import DocumentBuilderFactory, DocumentMetadata
+from .embedding_processors import EmbeddingProcessor
+
 @dataclass
 class EmbeddingResult:
     video_id: str
@@ -35,10 +39,6 @@ class BaseEmbeddingGenerator(ABC):
     @abstractmethod
     def generate_embeddings(self, video_data: Dict[str, Any], output_dir: Path) -> EmbeddingResult:
         pass
-
-from src.common.models import get_or_load_model
-from .document_builders import DocumentBuilderFactory, DocumentMetadata
-from .embedding_processors import EmbeddingProcessor
 
 
 class EmbeddingGenerator(BaseEmbeddingGenerator):

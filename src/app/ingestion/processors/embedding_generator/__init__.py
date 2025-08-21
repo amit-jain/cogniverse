@@ -37,6 +37,7 @@ __all__ = [
     # Main classes
     'EmbeddingGenerator',
     'EmbeddingGeneratorImpl',
+    'EmbeddingGeneratorFactory',
     'EmbeddingResult',
     'ProcessingConfig',
     'Document',

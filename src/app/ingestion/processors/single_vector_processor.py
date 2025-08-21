@@ -270,7 +270,7 @@ class SingleVectorVideoProcessor(BaseProcessor):
         if self.cache:
             # Handle asyncio.run() in nested event loop
             try:
-                loop = asyncio.get_running_loop()
+                asyncio.get_running_loop()
                 # We're already in an event loop, use ThreadPoolExecutor
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -343,7 +343,7 @@ class SingleVectorVideoProcessor(BaseProcessor):
         if self.cache and frames:
             # Handle asyncio.run() in nested event loop
             try:
-                loop = asyncio.get_running_loop()
+                asyncio.get_running_loop()
                 # We're already in an event loop, use ThreadPoolExecutor
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as executor:
