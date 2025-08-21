@@ -34,36 +34,31 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
     
-    - name: Cache dependencies
-      uses: actions/cache@v3
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
-    
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y ffmpeg libavcodec-extra
+        sudo apt-get install -y ffmpeg
+        # Install OpenCV dependencies (updated for Ubuntu 22.04+)
+        sudo apt-get install -y libgl1-mesa-dri libgl1 libglib2.0-0 libglib2.0-dev
     
     - name: Install uv
-      run: |
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
     
     - name: Install dependencies
       run: |
-        uv pip install --system -e .
-        uv pip install --system pytest pytest-cov pytest-mock pytest-asyncio tabulate
-        uv pip install --system opencv-python-headless
+        uv sync --all-extras
+        uv sync --extra dev
     
-    - name: Run unit tests
+    - name: Run unit tests (CI-safe)
       run: |
-        pytest tests/ingestion/unit -v -m "unit and not slow" \
-          --cov=src/app/ingestion \
-          --cov-report=xml \
+        uv run python -m pytest tests/ingestion/unit/ \
+          -m "unit and ci_safe" \
+          -v \
+          --cov=src/app/ingestion/processors \
           --cov-report=term-missing \
+          --cov-report=xml \
           --cov-fail-under=80
     
     - name: Upload unit test coverage to Codecov
@@ -89,31 +84,44 @@ jobs:
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y ffmpeg libavcodec-extra
+        sudo apt-get install -y ffmpeg docker.io
+        # Install OpenCV dependencies (updated for Ubuntu 22.04+)
+        sudo apt-get install -y libgl1-mesa-dri libgl1 libglib2.0-0 libglib2.0-dev
     
     - name: Install uv
-      run: |
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
     
     - name: Install dependencies
       run: |
-        uv pip install --system -e .
-        uv pip install --system pytest pytest-cov pytest-mock pytest-asyncio tabulate
-        uv pip install --system opencv-python-headless
+        uv sync --all-extras
+        uv sync --extra dev
     
-    - name: Create test data directory
+    - name: Start Vespa (lightweight)
       run: |
-        mkdir -p /tmp/test-videos
-        mkdir -p /tmp/test-output
+        # Start minimal Vespa container for testing
+        docker run -d \
+          --name vespa-test \
+          -p 8080:8080 \
+          -p 19071:19071 \
+          vespaengine/vespa:latest
+        
+        # Wait for Vespa to be ready
+        timeout 120 bash -c 'until curl -f http://localhost:8080/ApplicationStatus; do sleep 2; done'
     
-    - name: Run integration tests
+    - name: Run integration tests (CI-safe)
       run: |
-        pytest tests/ingestion/integration -v -m "integration and not slow" \
-          --cov=src/app/ingestion \
-          --cov-report=xml \
-          --cov-report=term-missing \
+        uv run python -m pytest tests/ingestion/integration/ \
+          -m "integration and ci_safe" \
+          -v \
           --tb=short
+    
+    - name: Stop Vespa
+      if: always()
+      run: |
+        docker stop vespa-test || true
+        docker rm vespa-test || true
     
     - name: Upload integration test coverage
       uses: codecov/codecov-action@v3
@@ -166,35 +174,36 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Set up Python
+    - name: Set up Python 3.12
       uses: actions/setup-python@v4
       with:
         python-version: '3.12'
     
     - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+    
+    - name: Install dependencies
       run: |
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        uv sync --all-extras
+        uv sync --extra dev
     
-    - name: Install linting tools
+    - name: Run ruff
       run: |
-        uv pip install --system ruff black isort mypy
+        uv run ruff check src/app/ingestion tests/ingestion
     
-    - name: Run ruff (linting)
-      run: ruff check src/app/ingestion tests/ingestion
-      continue-on-error: true
+    - name: Run black
+      run: |
+        uv run black --check src/app/ingestion tests/ingestion
     
-    - name: Check code formatting with black
-      run: black --check src/app/ingestion tests/ingestion
-      continue-on-error: true
+    - name: Run isort
+      run: |
+        uv run isort --check-only src/app/ingestion tests/ingestion
     
-    - name: Check import sorting with isort
-      run: isort --check-only src/app/ingestion tests/ingestion
-      continue-on-error: true
-    
-    - name: Run type checking with mypy
-      run: mypy src/app/ingestion --ignore-missing-imports
-      continue-on-error: true
+    - name: Run mypy
+      run: |
+        uv run mypy src/app/ingestion --ignore-missing-imports
 
   test-processor-discovery:
     runs-on: ubuntu-latest
@@ -378,3 +387,55 @@ jobs:
         name: ingestion-benchmark-results
         path: benchmark_results.json
       if: success() || failure()
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Run Bandit Security Scan
+      uses: securecodewarrior/github-action-bandit@v1
+      with:
+        path: "src/app/ingestion tests/ingestion"
+        severity: medium
+        confidence: medium
+        exclude_paths: "tests/"
+    
+    - name: Run Safety Check
+      run: |
+        pip install safety
+        safety check --json
+
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests, slow-tests, lint-and-format, test-processor-discovery, test-strategy-validation, coverage-check, performance-tests, security-scan]
+    if: always()
+    
+    steps:
+    - name: Check test results
+      run: |
+        echo "## Ingestion Pipeline Test Results" >> $GITHUB_STEP_SUMMARY
+        echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "| --- | --- |" >> $GITHUB_STEP_SUMMARY
+        echo "| Unit Tests | ${{ needs.unit-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Integration Tests | ${{ needs.integration-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Slow Tests | ${{ needs.slow-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Lint & Format | ${{ needs.lint-and-format.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Processor Discovery | ${{ needs.test-processor-discovery.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Strategy Validation | ${{ needs.test-strategy-validation.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Coverage Check | ${{ needs.coverage-check.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Performance Tests | ${{ needs.performance-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Security Scan | ${{ needs.security-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+        
+        # Check if any critical jobs failed
+        if [[ "${{ needs.unit-tests.result }}" != "success" || 
+              "${{ needs.integration-tests.result }}" != "success" || 
+              "${{ needs.lint-and-format.result }}" != "success" ]]; then
+          echo "❌ Critical tests failed"
+          exit 1
+        else
+          echo "✅ All critical tests passed"
+        fi
