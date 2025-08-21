@@ -39,8 +39,8 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y ffmpeg
-        # Install OpenCV dependencies
-        sudo apt-get install -y libgl1-mesa-glx libglib2.0-0
+        # Install OpenCV dependencies (updated for Ubuntu 22.04+)
+        sudo apt-get install -y libgl1-mesa-dri libgl1 libglib2.0-0 libglib2.0-dev
     
     - name: Install uv
       uses: astral-sh/setup-uv@v4
@@ -85,7 +85,8 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y ffmpeg docker.io
-        sudo apt-get install -y libgl1-mesa-glx libglib2.0-0
+        # Install OpenCV dependencies (updated for Ubuntu 22.04+)
+        sudo apt-get install -y libgl1-mesa-dri libgl1 libglib2.0-0 libglib2.0-dev
     
     - name: Install uv
       uses: astral-sh/setup-uv@v4
