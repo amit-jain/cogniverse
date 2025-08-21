@@ -428,7 +428,7 @@ class KeywordRoutingStrategy(RoutingStrategy):
         self.text_keywords = config.get("text_keywords", [
             "document", "report", "text", "article", "information", "data",
             "details", "analysis", "research", "study", "paper", "blog",
-            "documentation", "guide", "manual"
+            "documentation", "guide", "manual", "transcript", "transcription"
         ])
         self.summary_keywords = config.get("summary_keywords", [
             "summary", "summarize", "brief", "overview", "main points",
