@@ -169,6 +169,7 @@ class TestLLMRoutingStrategy:
     
     @pytest.mark.unit
     @pytest.mark.asyncio
+    @pytest.mark.requires_ollama
     async def test_structured_extraction_low_confidence(self, strategy):
         """Test that structured extraction queries get lower confidence."""
         decision = await strategy.route("extract specific timestamps in JSON format")
