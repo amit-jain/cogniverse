@@ -11,14 +11,19 @@ from dataclasses import dataclass
 from inspect_ai.solver import Solver, solver
 from inspect_ai.model import GenerateConfig
 
-import phoenix as px
-from src.search.search_service import SearchService
-from src.tools.config import get_config
+from src.app.search.service import SearchService
+from src.common.config import get_config
 
 logger = logging.getLogger(__name__)
 
 
-@solver
+# Factory functions for Inspect AI registration
+@solver(name="cogniverse_retrieval_solver")
+def cogniverse_retrieval_solver(profiles: List[str], strategies: List[str]) -> Solver:
+    """Create a Cogniverse retrieval solver for Inspect AI."""
+    return CogniverseRetrievalSolver(profiles, strategies)
+
+
 class CogniverseRetrievalSolver(Solver):
     """Custom solver for Cogniverse retrieval evaluation"""
     
@@ -52,50 +57,47 @@ class CogniverseRetrievalSolver(Solver):
             for strategy in self.strategies:
                 config_key = f"{profile}_{strategy}"
                 
-                # Trace with Phoenix
-                with px.trace(
-                    name="retrieval_solve",
-                    attributes={
-                        "profile": profile,
-                        "strategy": strategy,
-                        "query": query
-                    }
-                ) as span:
-                    try:
-                        start_time = time.time()
-                        
-                        # Execute search
-                        search_results = search_service.search(
-                            query=query,
-                            top_k=10,
-                            ranking_strategy=strategy
-                        )
-                        
-                        # Convert results to serializable format
-                        serialized_results = []
-                        for result in search_results:
-                            result_dict = result.to_dict()
-                            # Extract video ID from document
-                            video_id = result_dict.get('source_id', 
-                                                      result_dict['document_id'].split('_')[0])
-                            serialized_results.append({
-                                'video_id': video_id,
-                                'score': result_dict['score'],
-                                'document_id': result_dict['document_id']
-                            })
-                        
-                        results[config_key] = serialized_results
-                        
-                        # Add span attributes
-                        span.set_attribute("num_results", len(serialized_results))
-                        span.set_attribute("latency_ms", (time.time() - start_time) * 1000)
-                        if serialized_results:
-                            span.set_attribute("top_score", serialized_results[0]['score'])
-                        
-                    except Exception as e:
-                        logger.error(f"Search failed for {config_key}: {e}")
-                        results[config_key] = []
-                        span.set_attribute("error", str(e))
+                # Execute search with OpenTelemetry tracing
+                from opentelemetry import trace
+                tracer = trace.get_tracer(__name__)
+                
+                with tracer.start_as_current_span("retrieval_solve") as span:
+                    span.set_attribute("profile", profile)
+                    span.set_attribute("strategy", strategy)
+                    span.set_attribute("query", query)
+                    
+                    start_time = time.time()
+                    
+                    # Execute search (Phoenix experiment system handles project isolation)  
+                    search_results = search_service.search(
+                        query=query,
+                        top_k=10,
+                        ranking_strategy=strategy
+                    )
+                    
+                    # Convert results to serializable format
+                    serialized_results = []
+                    for result in search_results:
+                        result_dict = result.to_dict()
+                        # Extract video ID from document
+                        video_id = result_dict.get('source_id', 
+                                                  result_dict['document_id'].split('_')[0])
+                        serialized_results.append({
+                            'video_id': video_id,
+                            'score': result_dict['score'],
+                            'document_id': result_dict['document_id']
+                        })
+                    
+                    results[config_key] = serialized_results
+                    
+                    # Add span attributes
+                    latency_ms = (time.time() - start_time) * 1000
+                    span.set_attribute("num_results", len(serialized_results))
+                    span.set_attribute("latency_ms", latency_ms)
+                    if serialized_results:
+                        span.set_attribute("top_score", serialized_results[0]['score'])
+                    
+                    logger.info(f"Search completed for {config_key}: {len(serialized_results)} results in {latency_ms:.2f}ms")
         
         # Store results in state metadata
         if not hasattr(state, 'metadata'):
@@ -105,7 +107,6 @@ class CogniverseRetrievalSolver(Solver):
         return state
 
 
-@solver
 class ResultRankingAnalyzer(Solver):
     """Analyze ranking quality across different strategies"""
     
@@ -170,7 +171,6 @@ class ResultRankingAnalyzer(Solver):
         }
 
 
-@solver
 class RelevanceJudgmentCollector(Solver):
     """Collect relevance judgments for results"""
     
@@ -205,7 +205,6 @@ class RelevanceJudgmentCollector(Solver):
         return state
 
 
-@solver
 class TemporalQueryProcessor(Solver):
     """Process temporal queries to extract time ranges"""
     
@@ -270,7 +269,6 @@ class TemporalQueryProcessor(Solver):
         return temporal_info
 
 
-@solver
 class TimeRangeExtractor(Solver):
     """Extract specific time ranges from videos"""
     
@@ -295,7 +293,6 @@ class TimeRangeExtractor(Solver):
         return state
 
 
-@solver
 class VisualQueryEncoder(Solver):
     """Encode visual aspects of queries"""
     
@@ -317,7 +314,6 @@ class VisualQueryEncoder(Solver):
         return state
 
 
-@solver
 class TextQueryEncoder(Solver):
     """Encode textual aspects of queries"""
     
@@ -328,7 +324,6 @@ class TextQueryEncoder(Solver):
         return state
 
 
-@solver
 class CrossModalAlignmentChecker(Solver):
     """Check alignment between visual and text modalities"""
     
@@ -366,7 +361,6 @@ class CrossModalAlignmentChecker(Solver):
         return len(intersection) / len(union)
 
 
-@solver
 class FailureAnalyzer(Solver):
     """Analyze failure cases in retrieval"""
     
@@ -397,7 +391,6 @@ class FailureAnalyzer(Solver):
         return state
 
 
-@solver
 class ErrorPatternDetector(Solver):
     """Detect patterns in errors and failures"""
     

@@ -17,8 +17,8 @@ from collections import defaultdict
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.search.search_service import SearchService
-from src.tools.config import get_config
+from src.app.search.service import SearchService
+from src.common.config import get_config
 
 # Setup logging with more verbose output
 logging.basicConfig(
@@ -35,7 +35,7 @@ def create_search_services(config):
     # Define profiles to test
     profiles = [
         "frame_based_colpali",
-        "direct_video_colqwen",
+        "colqwen_chunks",
         "direct_video_frame",
         "direct_video_global"
     ]
@@ -148,7 +148,7 @@ def test_ranking_strategies(query=None, table_output=False, show_analysis=True):
     print("\n--- STARTING test_ranking_strategies ---")
     
     # Always save results to test_results directory
-    from src.utils.output_manager import get_output_manager
+    from src.common.utils.output_manager import get_output_manager
     from datetime import datetime
     output_manager = get_output_manager()
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -472,7 +472,7 @@ def save_results_to_csv(all_results, filename):
     """Save all results to CSV file"""
     # If filename doesn't include a directory, use OutputManager
     if '/' not in filename:
-        from src.utils.output_manager import get_output_manager
+        from src.common.utils.output_manager import get_output_manager
         output_manager = get_output_manager()
         filepath = output_manager.get_test_results_dir() / filename
     else:

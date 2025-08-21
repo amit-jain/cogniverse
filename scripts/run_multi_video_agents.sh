@@ -20,9 +20,9 @@ if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     echo "Usage: $0 [profile1:port1] [profile2:port2] ..."
     echo ""
     echo "Example:"
-    echo "  $0 frame_based_colpali:8001 direct_video_colqwen:8002"
+    echo "  $0 frame_based_colpali:8001 colqwen_chunks:8002"
     echo ""
-    echo "Default: Runs two instances with frame_based_colpali on 8001 and direct_video_colqwen on 8002"
+    echo "Default: Runs two instances with frame_based_colpali on 8001 and colqwen_chunks on 8002"
     exit 0
 fi
 
@@ -32,7 +32,7 @@ mkdir -p "$LOG_DIR"
 
 # Default configurations if none provided
 if [ $# -eq 0 ]; then
-    CONFIGS=("frame_based_colpali:8001" "direct_video_colqwen:8002")
+    CONFIGS=("frame_based_colpali:8001" "colqwen_chunks:8002")
 else
     CONFIGS=("$@")
 fi

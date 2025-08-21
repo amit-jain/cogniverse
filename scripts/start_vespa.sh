@@ -25,11 +25,15 @@ if docker ps -a --format '{{.Names}}' | grep -q "^vespa$"; then
     docker rm vespa 2>/dev/null || true
 fi
 
-# Start Vespa container with proper volume mounts
-echo "🐳 Starting Vespa container with persistent volumes..."
+# Start Vespa container with proper volume mounts and increased memory
+# JVM heap for main container is configured via services.xml (4GB heap)
+echo "🐳 Starting Vespa container with persistent volumes and 8GB memory limit..."
 docker run --detach --name vespa \
+  --memory="8g" \
+  --memory-swap="8g" \
   --volume "$VESPA_VAR_STORAGE:/opt/vespa/var" \
   --volume "$VESPA_LOG_STORAGE:/opt/vespa/logs" \
+  --volume "$PROJECT_ROOT/configs:/opt/vespa/conf/custom" \
   --publish 8080:8080 --publish 19071:19071 \
   vespaengine/vespa
 

@@ -1,0 +1,17 @@
+{
+  "name": "colqwen_chunks",
+  "description": "ColQwen with chunk-based storage and audio transcripts",
+  "process_type": "video_chunks",
+  "schema_name": "video_colqwen_chunks",
+  "embedding_model": "vidore/colqwen-omni-v0.1",
+  "model_config": {
+    "segment_duration": 30.0,
+    "extract_audio": true,
+    "transcribe_audio": true,
+    "audio_model": "openai/whisper-base"
+  },
+  "vespa_config": {
+    "schema": "video_colqwen_chunks",
+    "ranking_profile": "hybrid_binary_bm25"
+  }
+}

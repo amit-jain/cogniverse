@@ -16,8 +16,8 @@ from datetime import datetime
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.search.search_service import SearchService
-from src.tools.config import get_config
+from src.app.search.service import SearchService
+from src.common.config import get_config
 import torch
 
 
@@ -192,10 +192,10 @@ def main():
                 "profile": "frame_based_colpali"
             },
             {
-                "name": "direct_video_colqwen",
+                "name": "colqwen_chunks",
                 "url": "localhost",
                 "port": 8002,
-                "profile": "direct_video_colqwen"
+                "profile": "colqwen_chunks"
             }
         ]
     

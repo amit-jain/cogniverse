@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cogniverse-vespa-backend"
+version = "0.1.0"
+description = "Vespa backend implementation for Cogniverse"
+authors = [{name = "Cogniverse Team"}]
+requires-python = ">=3.8"
+dependencies = [
+    "cogniverse-core>=0.1.0",
+    "pyvespa>=0.33.0",
+    "httpx>=0.24.0",
+    "tenacity>=8.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[project.entry-points."cogniverse.backends"]
+vespa = "vespa:VespaBackend"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vespa*", "backend*", "ingestion_client*", "search_backend*", "embedding_processor*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.json", "*.yaml", "*.yml"]

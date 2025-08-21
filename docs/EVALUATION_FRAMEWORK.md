@@ -162,40 +162,128 @@ export PHOENIX_ENABLE_CORS=true            # Enable CORS for API access
 
 ## Running Evaluations
 
-### Full Evaluation
+### Using the New Experiment Tracker
 
-Run a comprehensive evaluation across multiple profiles and strategies:
-
-```bash
-python scripts/run_evaluation.py full \
-  --name "video_rag_eval_v1" \
-  --profiles frame_based_colpali direct_video_global \
-  --strategies binary_binary float_float hybrid_binary_bm25 \
-  --tasks video_retrieval_accuracy temporal_understanding \
-  --config configs/evaluation/eval_config.yaml
-```
-
-### Phoenix Experiments with Custom Evaluators
-
-Run experiments with quality and LLM evaluators:
+The experiment tracker uses the new Inspect AI-based evaluation framework:
 
 ```bash
-# With quality evaluators only
-uv run python scripts/run_experiments_with_visualization.py \
+# Basic experiment with quality evaluators
+uv run python src/evaluation/core/experiment_tracker.py \
+  --dataset-name golden_eval_v1 \
   --profiles frame_based_colpali \
-  --strategies binary_binary \
-  --quality-evaluators \
-  --dataset-name golden_eval_v1
+  --strategies binary_binary float_float \
+  --quality-evaluators
 
-# With visual evaluation
-uv run python scripts/run_experiments_with_visualization.py \
-  --profiles frame_based_colpali \
-  --strategies binary_binary \
+# With LLM visual evaluators
+uv run python src/evaluation/core/experiment_tracker.py \
+  --dataset-name test_visual_eval \
+  --profiles direct_video_global \
   --llm-evaluators \
   --evaluator visual_judge \
-  --dataset-name test_visual_eval
+  --llm-model ollama/llama3.2-vision:11b
 
-# Full suite
+# Test all strategies
+uv run python src/evaluation/core/experiment_tracker.py \
+  --dataset-name golden_eval_v1 \
+  --profiles frame_based_colpali direct_video_global \
+  --all-strategies \
+  --quality-evaluators \
+  --llm-evaluators
+```
+
+**Options:**
+- `--dataset-name`: Use existing dataset
+- `--csv-path`: Create new dataset from CSV
+- `--force-new`: Force create new dataset
+- `--profiles`: Specific profiles to test
+- `--strategies`: Specific strategies to test  
+- `--all-strategies`: Test all available strategies
+- `--quality-evaluators`: Enable quality metrics
+- `--llm-evaluators`: Enable LLM-based evaluation
+- `--evaluator`: Evaluator config name (default: visual_judge)
+
+### Creating Evaluation Datasets
+
+#### 1. Bootstrap from Production Traces
+Extract high-confidence results from Phoenix traces as ground truth:
+
+```bash
+uv run python scripts/bootstrap_dataset_from_traces.py \
+  --hours 48 \
+  --min-score 0.8 \
+  --dataset-name production_bootstrap_v1 \
+  --dedupe
+```
+
+**Options:**
+- `--hours`: Hours to look back (default: 24)
+- `--min-score`: Minimum confidence score (default: 0.7)
+- `--min-results` / `--max-results`: Result count limits
+- `--filter-profile` / `--filter-strategy`: Filter specific configs
+- `--output-csv` / `--output-json`: Export to file
+- `--dedupe`: Remove duplicate queries
+
+#### 2. Generate from Videos
+Auto-generate queries from video content:
+
+```bash
+uv run python scripts/generate_dataset_from_videos.py \
+  --video-dir data/testset/evaluation/sample_videos \
+  --num-queries 100 \
+  --use-llm \
+  --dataset-name synthetic_queries_v1
+```
+
+**Options:**
+- `--video-dir`: Directory containing videos
+- `--metadata-file`: Optional JSON with video metadata
+- `--num-queries`: Number to generate (default: 50)
+- `--use-llm`: Use LLM for sophisticated query generation
+- `--output-json`: Save to JSON file
+
+#### 3. Import Standard Benchmarks
+Import MSR-VTT, ActivityNet, or custom formats:
+
+```bash
+uv run python scripts/import_benchmark_dataset.py \
+  --format msr-vtt \
+  --input-file benchmarks/msr_vtt.json \
+  --dataset-name msr_vtt_eval \
+  --max-queries 500
+```
+
+**Supported Formats:**
+- `msr-vtt`: Microsoft Research Video to Text
+- `activitynet`: ActivityNet Captions
+- `didemo`: Distinct Describable Moments
+- `custom`: Custom JSON format
+
+**Options:**
+- `--video-mapping`: JSON mapping benchmark IDs to your video IDs
+- `--max-queries`: Limit number of queries imported
+
+#### 4. Interactive Dataset Builder
+Manually create high-quality datasets through search and annotation:
+
+```bash
+uv run python scripts/interactive_dataset_builder.py \
+  --profile frame_based_colpali \
+  --strategy binary_binary
+```
+
+**Interactive Flow:**
+1. Enter search query
+2. Review search results
+3. Mark relevant results (e.g., "1,3,5")
+4. Save to dataset
+5. Continue with next query
+
+### Legacy Experiment Runner (Deprecated)
+
+The original experiment runner is still available but deprecated:
+
+```bash
+# Legacy command (use experiment_tracker.py instead)
 uv run python scripts/run_experiments_with_visualization.py \
   --profiles frame_based_colpali direct_video_global \
   --strategies binary_binary maxsim \
@@ -225,7 +313,7 @@ python scripts/run_evaluation.py batch \
 Run a minimal evaluation for testing:
 
 ```bash
-python scripts/run_evaluation.py test --config configs/evaluation/eval_config.yaml
+python scripts/run_evaluation.py test --config config.json
 ```
 
 ### Using Configuration Files
@@ -516,7 +604,7 @@ For large-scale evaluations:
 from src.evaluation.pipeline.orchestrator import EvaluationPipeline
 
 # Initialize pipeline
-pipeline = EvaluationPipeline(config_path="configs/evaluation/eval_config.yaml")
+pipeline = EvaluationPipeline(config_path="config.json")
 
 # Run evaluation
 results = await pipeline.run_comprehensive_evaluation(
