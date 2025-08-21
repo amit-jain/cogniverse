@@ -1,88 +1,54 @@
-# Cogniverse Test Suite
+# Routing System Test Suite
 
-This directory contains all tests for the cogniverse multi-modal retrieval system.
+## Overview
+Comprehensive test suite for the multi-tiered routing system with proper unit tests, integration tests, and demonstrations.
 
-## Directory Structure
-
-### `/routing/` 
-Query routing and temporal extraction tests and optimizations:
-- **`test_combined_routing.py`** - Main unified test suite for LLM and GLiNER routing models
-- **`combined_comparison_report.json`** - Consolidated test results (14 models: 10 LLM + 4 GLiNER)
-- **`combined_test_results.csv`** - Detailed per-query results
-- **`test_queries.txt`** - Test query dataset for routing evaluation
-- **`gliner_optimizer.py`** - GLiNER model optimization and hyperparameter tuning
-- **`teacher_student_optimizer.py`** - Teacher-student model optimization
-- **`dspy_optimizer.py`** - DSPy framework optimization
-- **`analyze_failures.py`** - Routing failure analysis tools
-
-### Main Directory
-- **`test_system.py`** - Comprehensive multi-agent system tests with optional test selection
-- **`test_colpali_search.py`** - Text-to-video semantic search using ColPali embeddings
-- **`test_document_similarity.py`** - Document similarity search (find similar frames)
-- **`__init__.py`** - Test package initialization
-
-## Running Tests
-
-### Comprehensive System Tests
+## Quick Start
 ```bash
-# Run all tests (from project root)
-python tests/test_system.py
+# Install test dependencies
+uv pip install pytest pytest-asyncio pytest-cov
 
-# Run specific tests
-python tests/test_system.py --tests colpali_search end_to_end_system
+# Run all tests
+uv run python run_tests.py
 
-# List available tests
-python tests/test_system.py --list
-
-# Available individual tests:
-# - configuration: Config loading and validation
-# - model_imports: Required library imports
-# - data_directories: Data directory structure
-# - local_llm_connectivity: Ollama server connection
-# - agent_connectivity: A2A protocol communication
-# - agent_discovery: Agent service discovery
-# - video_search_agent: Video search functionality
-# - colpali_search: Text-to-video semantic search
-# - document_similarity: Frame similarity search
-# - end_to_end_system: Complete multi-agent workflow
+# Run specific suite
+uv run python run_tests.py --suite unit
+uv run python run_tests.py --suite integration
+uv run python run_tests.py --suite demo
 ```
 
-### Individual Component Tests
+## Test Organization
+
+### Unit Tests (`tests/unit/`)
+- **test_routing_strategies.py**: Tests each routing strategy in isolation
+  - GLiNER strategy with mocked models
+  - LLM strategy with mocked API calls
+  - Keyword strategy logic
+  - LangExtract strategy with mocked Ollama
+
+### Integration Tests (`tests/integration/`)
+- **test_tiered_routing.py**: Tests complete routing flow
+  - Tier escalation logic
+  - Generation type classification
+  - Search modality detection
+  - Caching behavior
+  - Error handling
+
+### Demonstration (`demo_routing_tiers.py`)
+- Interactive demonstration of all 4 tiers
+- Shows confidence scores and escalation decisions
+- Provides performance statistics
+
+## Key Test Features
+- ✅ Mocked dependencies for unit tests
+- ✅ Real model testing for integration (when available)
+- ✅ Async test support
+- ✅ Parametrized test cases
+- ✅ Coverage reporting
+- ✅ CI/CD ready
+
+## Running Tests with Coverage
 ```bash
-# Test ColPali semantic search
-python tests/test_colpali_search.py
-
-# Test document similarity (useful for UI "find similar" features)
-python tests/test_document_similarity.py
+uv run pytest --cov=src/routing --cov-report=html
+# Open htmlcov/index.html to view coverage report
 ```
-
-### Routing Tests
-```bash
-# Run all routing tests (LLM + GLiNER)
-python tests/routing/test_combined_routing.py
-
-# Quick test (6 queries, all models)
-python tests/routing/test_combined_routing.py quick
-
-# Test only LLM models
-python tests/routing/test_combined_routing.py llm-only
-
-# Test only GLiNER models  
-python tests/routing/test_combined_routing.py gliner-only
-```
-
-## Test Results
-
-Current best performers (from consolidated results):
-- **🥇 Overall Accuracy**: GLiNER Large (75.0%)
-- **🎯 Best Routing**: GLiNER Large (83.3%) 
-- **⏰ Best Temporal**: GLiNER Small/Medium/Multi (66.7%)
-- **⚡ Fastest**: GLiNER Small (0.06s)
-
-## Future Additions
-
-This structure allows for easy addition of:
-- `/video/` - Video processing and analysis tests
-- `/text/` - Text processing and retrieval tests  
-- `/multimodal/` - Cross-modal interaction tests
-- `/performance/` - Performance and benchmarking tests 

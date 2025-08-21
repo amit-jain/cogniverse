@@ -64,7 +64,7 @@ def main():
     
     if args.coverage:
         base_cmd.extend([
-            "--cov=src/routing",
+            "--cov=src/app/routing",
             "--cov-report=term-missing",
             "--cov-report=html"
         ])
