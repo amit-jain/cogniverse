@@ -14,8 +14,8 @@ import argparse
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.routing import TieredRouter
-from src.routing.router import RoutingTier
+from src.app.routing import TieredRouter
+from src.app.routing.router import RoutingTier
 
 
 class RouterWithTracking(TieredRouter):

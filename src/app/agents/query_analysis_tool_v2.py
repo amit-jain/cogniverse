@@ -11,14 +11,14 @@ from datetime import datetime
 from google.adk.tools import BaseTool
 
 # Import the new comprehensive routing system
-from src.routing import (
+from src.app.routing import (
     ComprehensiveRouter,
     TieredRouter,
     RoutingConfig,
     AutoTuningOptimizer,
     load_config
 )
-from src.routing.base import SearchModality, GenerationType
+from src.app.routing.base import SearchModality, GenerationType
 
 logger = logging.getLogger(__name__)
 
