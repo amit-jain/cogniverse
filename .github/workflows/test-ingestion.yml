@@ -1,0 +1,199 @@
+name: Ingestion Module Tests
+
+on:
+  push:
+    branches: [ main, refactor/pipeline-improvements ]
+    paths:
+      - 'src/app/ingestion/**'
+      - 'tests/ingestion/**'
+      - 'pytest.ini'
+      - '.github/workflows/test-ingestion.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'src/app/ingestion/**'
+      - 'tests/ingestion/**'
+      - 'pytest.ini'
+      - '.github/workflows/test-ingestion.yml'
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg
+        # Install OpenCV dependencies
+        sudo apt-get install -y libgl1-mesa-glx libglib2.0-0
+    
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+    
+    - name: Install dependencies
+      run: |
+        uv sync --all-extras
+    
+    - name: Run unit tests (CI-safe)
+      run: |
+        uv run python -m pytest tests/ingestion/unit/ \
+          -m "unit and ci_safe" \
+          -v \
+          --cov=src/app/ingestion/processors \
+          --cov-report=term-missing \
+          --cov-report=xml \
+          --cov-fail-under=80
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: ingestion-unit
+        name: ingestion-unit-${{ matrix.python-version }}
+
+  integration-tests-light:
+    name: Light Integration Tests
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.12"
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg docker.io
+        sudo apt-get install -y libgl1-mesa-glx libglib2.0-0
+    
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+    
+    - name: Install dependencies
+      run: |
+        uv sync --all-extras
+    
+    - name: Start Vespa (lightweight)
+      run: |
+        # Start minimal Vespa container for testing
+        docker run -d \
+          --name vespa-test \
+          -p 8080:8080 \
+          -p 19071:19071 \
+          vespaengine/vespa:latest
+        
+        # Wait for Vespa to be ready
+        timeout 120 bash -c 'until curl -f http://localhost:8080/ApplicationStatus; do sleep 2; done'
+    
+    - name: Run integration tests (CI-safe)
+      run: |
+        uv run python -m pytest tests/ingestion/integration/ \
+          -m "integration and ci_safe" \
+          -v \
+          --tb=short
+    
+    - name: Stop Vespa
+      if: always()
+      run: |
+        docker stop vespa-test || true
+        docker rm vespa-test || true
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Run Bandit Security Scan
+      uses: securecodewarrior/github-action-bandit@v1
+      with:
+        path: "src/app/ingestion tests/ingestion"
+        severity: medium
+        confidence: medium
+        exclude_paths: "tests/"
+    
+    - name: Run Safety Check
+      run: |
+        pip install safety
+        safety check --json
+
+  lint:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.12"
+    
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+    
+    - name: Install dependencies
+      run: |
+        uv sync --all-extras
+    
+    - name: Run ruff
+      run: |
+        uv run ruff check src/app/ingestion tests/ingestion
+    
+    - name: Run black
+      run: |
+        uv run black --check src/app/ingestion tests/ingestion
+    
+    - name: Run mypy
+      run: |
+        uv run mypy src/app/ingestion --ignore-missing-imports
+
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests-light, security-scan, lint]
+    if: always()
+    
+    steps:
+    - name: Check test results
+      run: |
+        echo "Unit tests: ${{ needs.unit-tests.result }}"
+        echo "Integration tests: ${{ needs.integration-tests-light.result }}"
+        echo "Security scan: ${{ needs.security-scan.result }}"
+        echo "Lint: ${{ needs.lint.result }}"
+        
+        if [[ "${{ needs.unit-tests.result }}" != "success" || 
+              "${{ needs.integration-tests-light.result }}" != "success" || 
+              "${{ needs.security-scan.result }}" != "success" || 
+              "${{ needs.lint.result }}" != "success" ]]; then
+          echo "❌ Some tests failed"
+          exit 1
+        else
+          echo "✅ All tests passed"
+        fi
