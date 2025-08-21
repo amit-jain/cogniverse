@@ -324,6 +324,41 @@ class AutoTuningOptimizer(RoutingOptimizer):
         self.optimization_attempts = 0
         self.best_params: Optional[Dict[str, Any]] = None
         self.best_performance = 0.0
+        self.training_examples = []
+        self.label_performance = {}
+        self.threshold_performance = {}
+        self.temperature_performance = {}
+    
+    async def record_performance(self, query: str, decision: RoutingDecision, 
+                                latency_ms: float, actual_modality: Optional[SearchModality] = None):
+        """
+        Record performance for a routing decision.
+        
+        Args:
+            query: The query that was routed
+            decision: The routing decision made
+            latency_ms: Latency in milliseconds
+            actual_modality: The actual/correct modality (if known)
+        """
+        # Convert to format expected by track_performance
+        actual_decision = None
+        if actual_modality:
+            actual_decision = RoutingDecision(
+                search_modality=actual_modality,
+                generation_type=decision.generation_type,
+                confidence_score=1.0,
+                routing_method="ground_truth"
+            )
+        
+        # Update metadata with latency
+        decision.metadata["latency_ms"] = latency_ms
+        
+        # Track the performance
+        self.track_performance(query, decision, actual_decision)
+    
+    def should_optimize(self) -> bool:
+        """Check if optimization should be triggered."""
+        return self._should_optimize()
     
     async def optimize(self):
         """
@@ -656,3 +691,29 @@ class AutoTuningOptimizer(RoutingOptimizer):
         self.best_performance = checkpoint.get("best_performance", 0.0)
         
         logger.info(f"Loaded checkpoint from {filepath}")
+    
+    def get_performance_report(self) -> Dict[str, Any]:
+        """
+        Get a performance report for the optimizer.
+        
+        Returns:
+            Dictionary containing performance metrics
+        """
+        metrics = self._calculate_current_metrics()
+        
+        report = {
+            "total_samples": len(self.performance_history),
+            "average_accuracy": metrics.accuracy,
+            "average_precision": metrics.precision,
+            "average_recall": metrics.recall,
+            "average_f1_score": metrics.f1_score,
+            "average_latency_ms": metrics.avg_latency,
+            "confidence_correlation": metrics.confidence_correlation,
+            "error_rate": metrics.error_rate,
+            "optimization_attempts": self.optimization_attempts,
+            "best_performance": self.best_performance,
+            "strategy_name": self.strategy.__class__.__name__,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        return report
