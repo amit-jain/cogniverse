@@ -5,11 +5,10 @@ Chunk Processor - Pluggable video chunk extraction.
 Extracts video chunks for processing with models like ColQwen.
 """
 
-import os
 import json
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any
 import logging
 
 from ..processor_base import BaseProcessor
@@ -68,7 +67,7 @@ class ChunkProcessor(BaseProcessor):
         # Get video duration
         duration = self._get_video_duration(video_path)
         if duration <= 0:
-            self.logger.error(f"   ❌ Could not determine video duration")
+            self.logger.error("   ❌ Could not determine video duration")
             return {"chunks": [], "metadata": {}}
         
         # Calculate chunk positions

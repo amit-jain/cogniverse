@@ -6,10 +6,9 @@ and FPS-based extraction methods.
 """
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 import numpy as np
 import cv2
-import json
 from pathlib import Path
 
 from src.app.ingestion.processors.keyframe_processor import KeyframeProcessor

@@ -5,13 +5,11 @@ FPS-based Keyframe Extraction Step
 Extracts keyframes at fixed frame-per-second intervals from videos.
 """
 
-import os
 import json
 import time
 import cv2
-import numpy as np
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any
 
 
 class FPSKeyframeExtractor:

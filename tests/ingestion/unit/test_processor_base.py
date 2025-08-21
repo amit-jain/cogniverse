@@ -6,7 +6,6 @@ and BaseStrategy classes.
 """
 
 import pytest
-from unittest.mock import Mock, patch
 import logging
 from typing import Dict, Any
 

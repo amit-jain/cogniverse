@@ -5,10 +5,7 @@ Tests video chunking functionality for time-based segmentation.
 """
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
-import numpy as np
-import json
-from pathlib import Path
+from unittest.mock import Mock, patch
 
 from src.app.ingestion.processors.chunk_processor import ChunkProcessor
 

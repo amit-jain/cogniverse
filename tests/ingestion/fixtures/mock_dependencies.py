@@ -6,7 +6,7 @@ dependencies used by the ingestion pipeline.
 """
 
 import numpy as np
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
@@ -78,7 +78,7 @@ class MockWhisperModel:
                 {
                     "start": 0.0,
                     "end": 2.5,
-                    "text": f"This is a mock transcription"
+                    "text": "This is a mock transcription"
                 },
                 {
                     "start": 2.5,

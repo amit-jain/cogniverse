@@ -8,10 +8,9 @@ that can be processed directly by multi-vector models.
 """
 
 import subprocess
-import tempfile
 import logging
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, Any, Optional
 import cv2
 import numpy as np
 import json

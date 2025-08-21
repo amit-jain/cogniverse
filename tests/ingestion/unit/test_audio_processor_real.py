@@ -5,12 +5,9 @@ Tests real audio transcription functionality using Whisper.
 """
 
 import pytest
-import json
-from unittest.mock import Mock, patch, MagicMock
-from pathlib import Path
+from unittest.mock import Mock, patch
 
 from src.app.ingestion.processors.audio_processor import AudioProcessor
-from tests.utils.markers import skip_if_no_whisper
 
 
 @pytest.mark.unit

@@ -5,13 +5,11 @@ Keyframe Processor - Pluggable keyframe extraction.
 Extracts representative keyframes from videos using histogram comparison.
 """
 
-import os
 import json
 import time
 import cv2
-import numpy as np
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any, Optional
 import logging
 
 from ..processor_base import BaseProcessor

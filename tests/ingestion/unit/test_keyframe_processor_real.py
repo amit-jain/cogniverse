@@ -5,13 +5,10 @@ Tests the real keyframe extraction functionality including FPS and histogram mod
 """
 
 import pytest
-import json
 import numpy as np
-from unittest.mock import Mock, patch, MagicMock
-from pathlib import Path
+from unittest.mock import Mock, patch
 
 from src.app.ingestion.processors.keyframe_processor import KeyframeProcessor
-from tests.utils.markers import skip_if_no_cv2
 
 
 @pytest.mark.unit

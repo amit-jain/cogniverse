@@ -6,11 +6,7 @@ and individual processors in the ingestion pipeline.
 """
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
-import tempfile
-import json
-from pathlib import Path
-from typing import Dict, Any
+from unittest.mock import Mock, patch
 
 from src.app.ingestion.processor_manager import ProcessorManager
 from src.app.ingestion.processing_strategy_set import ProcessingStrategySet
@@ -257,7 +253,6 @@ class TestPipelineOrchestration:
     def test_concurrent_processor_access(self, mock_logger, strategy_set):
         """Test that processor manager handles concurrent access safely."""
         import threading
-        import time
         
         with patch('src.app.ingestion.processor_manager.pkgutil.iter_modules') as mock_iter:
             mock_iter.return_value = []

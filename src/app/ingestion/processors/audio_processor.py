@@ -8,7 +8,7 @@ Transcribes audio from videos using Whisper.
 import json
 import time
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 import logging
 
 from ..processor_base import BaseProcessor

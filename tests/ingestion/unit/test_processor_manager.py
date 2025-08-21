@@ -5,14 +5,12 @@ Tests the processor discovery, registration, and management functionality.
 """
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from pathlib import Path
 import logging
-from typing import Dict, Any
 
 from src.app.ingestion.processor_manager import ProcessorManager
 from src.app.ingestion.processor_base import BaseProcessor
-from src.app.ingestion.processing_strategy_set import ProcessingStrategySet
 
 
 class MockProcessorA(BaseProcessor):
@@ -142,7 +140,6 @@ class TestProcessorManager:
     
     def test_initialize_from_strategies(self, manager):
         """Test initializing processors from strategy set."""
-        from src.app.ingestion.strategies import ChunkSegmentationStrategy
         
         # Mock strategy that requires our test processors
         mock_strategy = Mock()

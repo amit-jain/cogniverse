@@ -7,7 +7,7 @@ Container for processing strategies that works with any number and type of strat
 
 from pathlib import Path
 from typing import Dict, Any, List
-import logging
+# Logging imported where needed
 
 from .processor_base import BaseStrategy
 
@@ -163,7 +163,7 @@ class ProcessingStrategySet:
         
         elif 'single_vector' in requirements:
             # Handle single-vector processing through strategy's segment method
-            transcript_data = accumulated_results.get('transcript')
+            transcript_data = None  # Transcript data handled by strategy
             
             result = await strategy.segment(video_path, pipeline_context, transcript_data)
             num_segments = len(result.get('single_vector_processing', {}).get('segments', [])) if result else 0
@@ -172,7 +172,7 @@ class ProcessingStrategySet:
         
         elif hasattr(strategy, 'segment') and callable(strategy.segment):
             # Handle strategies that do their own processing (like SingleVectorSegmentationStrategy)
-            transcript_data = accumulated_results.get('transcript')
+            transcript_data = None  # Transcript data handled by strategy
             
             result = await strategy.segment(video_path, pipeline_context, transcript_data)
             if 'single_vector_processing' in result:

@@ -6,14 +6,9 @@ including keyframe extraction, audio transcription, and embedding generation.
 """
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
-import tempfile
-import json
+from unittest.mock import Mock, patch
 import numpy as np
-from pathlib import Path
-from typing import Dict, Any
 
-from src.app.ingestion.pipeline import VideoIngestionPipeline
 from src.app.ingestion.processor_manager import ProcessorManager
 from src.app.ingestion.processing_strategy_set import ProcessingStrategySet
 from src.app.ingestion.strategies import FrameSegmentationStrategy, ChunkSegmentationStrategy

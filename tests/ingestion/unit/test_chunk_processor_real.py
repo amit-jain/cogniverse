@@ -5,13 +5,11 @@ Tests real video chunk extraction functionality using ffmpeg.
 """
 
 import pytest
-import json
 import subprocess
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 from src.app.ingestion.processors.chunk_processor import ChunkProcessor
-from tests.utils.markers import skip_if_no_ffmpeg
 
 
 @pytest.mark.unit
