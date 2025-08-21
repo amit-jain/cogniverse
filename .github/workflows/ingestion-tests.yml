@@ -1,0 +1,380 @@
+name: Ingestion Pipeline Tests
+
+on:
+  push:
+    branches: [ main, develop, feature/* ]
+    paths:
+      - 'src/app/ingestion/**'
+      - 'src/common/**'
+      - 'tests/ingestion/**'
+      - 'pytest.ini'
+      - 'pyproject.toml'
+      - '.github/workflows/ingestion-tests.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'src/app/ingestion/**'
+      - 'src/common/**'
+      - 'tests/ingestion/**'
+      - 'pytest.ini'
+      - 'pyproject.toml'
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.12']
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg libavcodec-extra
+    
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+    
+    - name: Install dependencies
+      run: |
+        uv pip install --system -e .
+        uv pip install --system pytest pytest-cov pytest-mock pytest-asyncio tabulate
+        uv pip install --system opencv-python-headless
+    
+    - name: Run unit tests
+      run: |
+        pytest tests/ingestion/unit -v -m "unit and not slow" \
+          --cov=src/app/ingestion \
+          --cov-report=xml \
+          --cov-report=term-missing \
+          --cov-fail-under=80
+    
+    - name: Upload unit test coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests-ingestion
+        name: codecov-ingestion-unit
+        fail_ci_if_error: false
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg libavcodec-extra
+    
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+    
+    - name: Install dependencies
+      run: |
+        uv pip install --system -e .
+        uv pip install --system pytest pytest-cov pytest-mock pytest-asyncio tabulate
+        uv pip install --system opencv-python-headless
+    
+    - name: Create test data directory
+      run: |
+        mkdir -p /tmp/test-videos
+        mkdir -p /tmp/test-output
+    
+    - name: Run integration tests
+      run: |
+        pytest tests/ingestion/integration -v -m "integration and not slow" \
+          --cov=src/app/ingestion \
+          --cov-report=xml \
+          --cov-report=term-missing \
+          --tb=short
+    
+    - name: Upload integration test coverage
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: integration-ingestion
+        name: codecov-ingestion-integration
+        fail_ci_if_error: false
+
+  slow-tests:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg libavcodec-extra
+    
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+    
+    - name: Install dependencies
+      run: |
+        uv pip install --system -e .
+        uv pip install --system pytest pytest-cov pytest-mock pytest-asyncio tabulate
+        uv pip install --system opencv-python-headless
+    
+    - name: Run slow tests
+      run: |
+        pytest tests/ingestion -v -m "slow" \
+          --cov=src/app/ingestion \
+          --cov-report=term-missing \
+          --timeout=300
+      timeout-minutes: 10
+
+  lint-and-format:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+    
+    - name: Install linting tools
+      run: |
+        uv pip install --system ruff black isort mypy
+    
+    - name: Run ruff (linting)
+      run: ruff check src/app/ingestion tests/ingestion
+      continue-on-error: true
+    
+    - name: Check code formatting with black
+      run: black --check src/app/ingestion tests/ingestion
+      continue-on-error: true
+    
+    - name: Check import sorting with isort
+      run: isort --check-only src/app/ingestion tests/ingestion
+      continue-on-error: true
+    
+    - name: Run type checking with mypy
+      run: mypy src/app/ingestion --ignore-missing-imports
+      continue-on-error: true
+
+  test-processor-discovery:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+    
+    - name: Install package
+      run: |
+        uv pip install --system -e .
+        uv pip install --system pytest
+    
+    - name: Test processor auto-discovery
+      run: |
+        python -c "
+        from src.app.ingestion.processor_manager import ProcessorManager
+        import logging
+        
+        logger = logging.getLogger('test')
+        manager = ProcessorManager(logger)
+        
+        processors = manager.list_available_processors()
+        print(f'Discovered processors: {processors}')
+        
+        # Verify core processors are discovered
+        expected = ['keyframe', 'audio', 'chunk', 'embedding']
+        found = [p for p in expected if p in processors]
+        print(f'Found expected processors: {found}')
+        
+        if len(found) < len(expected):
+            missing = [p for p in expected if p not in processors]
+            print(f'Missing processors: {missing}')
+            exit(1)
+        
+        print('✅ All core processors discovered successfully')
+        "
+
+  test-strategy-validation:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+    
+    - name: Install package
+      run: |
+        uv pip install --system -e .
+    
+    - name: Test strategy configurations
+      run: |
+        python -c "
+        from src.app.ingestion.strategies_new import FrameSegmentationStrategy, ChunkSegmentationStrategy
+        from src.app.ingestion.processing_strategy_set import ProcessingStrategySet
+        
+        # Test frame strategy
+        frame_strategy = FrameSegmentationStrategy(max_frames=10, fps=1.0)
+        frame_set = ProcessingStrategySet(segmentation=frame_strategy)
+        frame_reqs = frame_set.get_all_required_processors()
+        print(f'Frame strategy requirements: {list(frame_reqs.keys())}')
+        
+        # Test chunk strategy
+        chunk_strategy = ChunkSegmentationStrategy(chunk_duration=30.0, chunk_overlap=2.0)
+        chunk_set = ProcessingStrategySet(segmentation=chunk_strategy)
+        chunk_reqs = chunk_set.get_all_required_processors()
+        print(f'Chunk strategy requirements: {list(chunk_reqs.keys())}')
+        
+        print('✅ Strategy validation successful')
+        "
+
+  coverage-check:
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg libavcodec-extra
+    
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+    
+    - name: Install dependencies
+      run: |
+        uv pip install --system -e .
+        uv pip install --system pytest pytest-cov pytest-mock pytest-asyncio tabulate
+        uv pip install --system opencv-python-headless
+    
+    - name: Generate comprehensive coverage report
+      run: |
+        echo "📊 Generating comprehensive coverage report for ingestion module..."
+        pytest tests/ingestion -v \
+          --cov=src/app/ingestion \
+          --cov-report=html \
+          --cov-report=term-missing \
+          --cov-report=xml \
+          -m "not slow"
+      continue-on-error: true
+    
+    - name: Upload coverage HTML report
+      uses: actions/upload-artifact@v4
+      with:
+        name: ingestion-coverage-report
+        path: htmlcov/
+    
+    - name: Coverage summary
+      run: |
+        echo "## Ingestion Module Coverage Summary" >> $GITHUB_STEP_SUMMARY
+        echo "Coverage report has been generated and uploaded as an artifact." >> $GITHUB_STEP_SUMMARY
+        echo "📈 View detailed coverage in the 'ingestion-coverage-report' artifact." >> $GITHUB_STEP_SUMMARY
+
+  performance-tests:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    if: github.event_name == 'push'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg libavcodec-extra
+    
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+    
+    - name: Install dependencies
+      run: |
+        uv pip install --system -e .
+        uv pip install --system pytest pytest-benchmark
+        uv pip install --system opencv-python-headless
+    
+    - name: Run performance benchmarks
+      run: |
+        pytest tests/ingestion -v -m "benchmark" \
+          --benchmark-only \
+          --benchmark-json=benchmark_results.json
+      continue-on-error: true
+    
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v4
+      with:
+        name: ingestion-benchmark-results
+        path: benchmark_results.json
+      if: success() || failure()
