@@ -300,7 +300,7 @@ class TestKeyframeProcessor:
     
     def test_get_config_method(self, processor):
         """Test the get_config method from BaseProcessor."""
-        config = processor.get_config()
+        processor.get_config()
         
         # The base processor only stores kwargs passed to super().__init__
         # Since KeyframeProcessor doesn't pass its params as kwargs, config will be empty

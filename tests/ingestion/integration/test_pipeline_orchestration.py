@@ -98,7 +98,7 @@ class TestPipelineOrchestration:
     def test_multiple_strategies_processor_requirements(self, mock_logger):
         """Test combining multiple strategies in a strategy set."""
         frame_strategy = FrameSegmentationStrategy(max_frames=25)
-        chunk_strategy = ChunkSegmentationStrategy(chunk_duration=20.0)
+        ChunkSegmentationStrategy(chunk_duration=20.0)
         
         # Note: This tests the theoretical case where both strategies might be used
         # In practice, segmentation strategies are typically mutually exclusive

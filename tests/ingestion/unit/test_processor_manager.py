@@ -64,7 +64,7 @@ class TestProcessorManager:
         with patch('src.app.ingestion.processor_manager.pkgutil.iter_modules') as mock_iter:
             mock_iter.return_value = []
             
-            manager = ProcessorManager(mock_logger)
+            ProcessorManager(mock_logger)
             
             # Should log discovery results
             mock_logger.info.assert_called()
@@ -212,7 +212,7 @@ class TestProcessorDiscovery:
         with patch('src.app.ingestion.processor_manager.pkgutil.iter_modules') as mock_iter:
             mock_iter.return_value = []
             
-            manager = ProcessorManager(mock_logger, plugin_dir=fake_path)
+            ProcessorManager(mock_logger, plugin_dir=fake_path)
             
             # Should log warning about missing directory
             mock_logger.warning.assert_called()
@@ -238,7 +238,7 @@ class TestProcessorDiscovery:
         mock_module.__dict__ = {"TestProcessor": mock_processor_class}
         mock_import.return_value = mock_module
         
-        manager = ProcessorManager(mock_logger)
+        ProcessorManager(mock_logger)
         
         # Should attempt to import modules
         assert mock_import.call_count >= 1
@@ -254,7 +254,7 @@ class TestProcessorDiscovery:
         mock_import.side_effect = ImportError("Module not found")
         
         # Should not raise exception
-        manager = ProcessorManager(mock_logger)
+        ProcessorManager(mock_logger)
         
         # Should log the error
         mock_logger.error.assert_called()
