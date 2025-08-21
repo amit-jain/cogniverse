@@ -16,10 +16,10 @@ import logging
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import the base module first
-from src.cache.base import CacheBackend
+from src.common.cache.base import CacheBackend
 
 # Now import the backend
-from src.cache.backends.structured_filesystem import StructuredFilesystemBackend, StructuredFilesystemConfig
+from src.common.cache.backends.structured_filesystem import StructuredFilesystemBackend, StructuredFilesystemConfig
 
 # Training examples from COMPREHENSIVE_ROUTING.md
 TRAINING_EXAMPLES = [

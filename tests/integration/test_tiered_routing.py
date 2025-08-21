@@ -14,9 +14,9 @@ from unittest.mock import patch, Mock
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.routing import TieredRouter, ComprehensiveRouter
-from src.routing.base import SearchModality, GenerationType
-from src.routing.router import RoutingTier
+from src.app.routing import TieredRouter, ComprehensiveRouter
+from src.app.routing.base import SearchModality, GenerationType
+from src.app.routing.router import RoutingTier
 
 
 @pytest.fixture

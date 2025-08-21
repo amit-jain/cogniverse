@@ -56,7 +56,7 @@ def sample_queries():
 @pytest.fixture
 def mock_gliner_model():
     """Mock GLiNER model for unit tests."""
-    with patch('src.routing.strategies.GLiNER') as mock_gliner:
+    with patch('src.app.routing.strategies.GLiNER') as mock_gliner:
         mock_model = Mock()
         mock_model.predict_entities = Mock(return_value=[])
         mock_gliner.from_pretrained.return_value = mock_model
@@ -137,7 +137,7 @@ def assert_routing_decision():
     """Helper to assert routing decision properties."""
     def _assert(decision, expected_modality=None, expected_type=None, 
                 min_confidence=0.0, max_confidence=1.0):
-        from src.routing.base import RoutingDecision, SearchModality, GenerationType
+        from src.app.routing.base import RoutingDecision, SearchModality, GenerationType
         
         assert isinstance(decision, RoutingDecision)
         

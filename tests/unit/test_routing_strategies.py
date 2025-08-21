@@ -13,13 +13,13 @@ import json
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.routing.strategies import (
+from src.app.routing.strategies import (
     GLiNERRoutingStrategy,
     LLMRoutingStrategy,
     KeywordRoutingStrategy,
     LangExtractRoutingStrategy
 )
-from src.routing.base import SearchModality, GenerationType, RoutingDecision
+from src.app.routing.base import SearchModality, GenerationType, RoutingDecision
 
 
 class TestGLiNERRoutingStrategy:
