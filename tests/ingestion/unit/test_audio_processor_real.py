@@ -72,11 +72,11 @@ class TestAudioProcessor:
         assert processor.model == "whisper-small"
         assert processor.language == "auto"  # default
     
-    @patch('whisper.load_model')
-    def test_lazy_whisper_loading(self, mock_load_model, processor):
+    @patch('src.app.ingestion.processors.audio_processor.whisper')
+    def test_lazy_whisper_loading(self, mock_whisper, processor):
         """Test that Whisper model is loaded lazily."""
         mock_model = Mock()
-        mock_load_model.return_value = mock_model
+        mock_whisper.load_model.return_value = mock_model
         
         # Initially no model loaded
         assert processor._whisper is None
@@ -86,17 +86,17 @@ class TestAudioProcessor:
         
         # Model should be loaded and cached
         assert processor._whisper == mock_model
-        mock_load_model.assert_called_once_with("base")  # whisper-base maps to "base"
+        mock_whisper.load_model.assert_called_once_with("base")  # whisper-base maps to "base"
         
         # Second call should use cached model
         processor._load_whisper()
-        mock_load_model.assert_called_once()  # Still only called once
+        mock_whisper.load_model.assert_called_once()  # Still only called once
     
-    @patch('whisper.load_model')
-    def test_model_name_mapping(self, mock_load_model, mock_logger):
+    @patch('src.app.ingestion.processors.audio_processor.whisper')
+    def test_model_name_mapping(self, mock_whisper, mock_logger):
         """Test that model names are correctly mapped."""
         mock_model = Mock()
-        mock_load_model.return_value = mock_model
+        mock_whisper.load_model.return_value = mock_model
         
         test_cases = [
             ("whisper-large-v3", "large-v3"),
@@ -113,14 +113,14 @@ class TestAudioProcessor:
             processor._load_whisper()
             
             # Check that the correct model was requested
-            calls = mock_load_model.call_args_list
+            calls = mock_whisper.load_model.call_args_list
             last_call = calls[-1]
             assert last_call[0][0] == expected_whisper_model
     
-    @patch('whisper.load_model')
-    def test_whisper_loading_error_handling(self, mock_load_model, processor):
+    @patch('src.app.ingestion.processors.audio_processor.whisper')
+    def test_whisper_loading_error_handling(self, mock_whisper, processor):
         """Test handling of Whisper model loading errors."""
-        mock_load_model.side_effect = Exception("Model loading failed")
+        mock_whisper.load_model.side_effect = Exception("Model loading failed")
         
         with pytest.raises(Exception, match="Model loading failed"):
             processor._load_whisper()
@@ -128,12 +128,12 @@ class TestAudioProcessor:
         # Should log error
         processor.logger.error.assert_called()
     
-    @patch('whisper.load_model')
+    @patch('src.app.ingestion.processors.audio_processor.whisper')
     @patch('src.common.utils.output_manager.get_output_manager')
     @patch('builtins.open', create=True)
     @patch('json.dump')
     def test_transcribe_audio_success(self, mock_json_dump, mock_open, mock_output_manager,
-                                     mock_load_model, processor, temp_dir, sample_video_path):
+                                     mock_whisper, processor, temp_dir, sample_video_path):
         """Test successful audio transcription."""
         # Mock Whisper model
         mock_model = Mock()
