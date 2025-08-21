@@ -278,7 +278,7 @@ class TestAudioProcessor:
         mock_output_manager.return_value = mock_manager
         
         with patch('builtins.open', create=True), patch('json.dump'):
-            result = processor.transcribe_audio(sample_video_path, cache=mock_cache)
+            processor.transcribe_audio(sample_video_path, cache=mock_cache)
         
         # Should have checked cache first
         mock_cache.get_transcript.assert_called_once_with(sample_video_path, "test_video")
@@ -322,7 +322,7 @@ class TestAudioProcessor:
     
     def test_get_config_method(self, processor):
         """Test the get_config method from BaseProcessor."""
-        config = processor.get_config()
+        processor.get_config()
         
         # The base processor only stores kwargs passed to super().__init__
         # Since AudioProcessor doesn't pass its params as kwargs, config will be empty

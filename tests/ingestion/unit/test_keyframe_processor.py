@@ -101,7 +101,7 @@ class TestKeyframeProcessor:
         mock_cap.read.side_effect = mock_read
         mock_cv2.return_value = mock_cap
         
-        with patch('cv2.imwrite') as mock_imwrite:
+        with patch('cv2.imwrite'):
             result = fps_processor.extract_keyframes(sample_video_path, temp_dir)
         
         # Verify results
@@ -139,7 +139,7 @@ class TestKeyframeProcessor:
         mock_cap.read.side_effect = mock_read
         mock_cv2.return_value = mock_cap
         
-        with patch('cv2.imwrite') as mock_imwrite, \
+        with patch('cv2.imwrite'), \
              patch('cv2.calcHist') as mock_calc_hist, \
              patch('cv2.compareHist') as mock_compare_hist:
             
@@ -195,7 +195,7 @@ class TestKeyframeProcessor:
         mock_cap.read.side_effect = mock_read
         mock_cv2.return_value = mock_cap
         
-        with patch('cv2.imwrite') as mock_imwrite, \
+        with patch('cv2.imwrite'), \
              patch('cv2.calcHist') as mock_calc_hist, \
              patch('cv2.compareHist') as mock_compare_hist:
             
@@ -239,8 +239,8 @@ class TestKeyframeProcessor:
             result = processor.extract_keyframes(sample_video_path, temp_dir)
         
         # Check that directories were created
-        expected_keyframes_dir = temp_dir / "keyframes" / "test_video"
-        expected_metadata_dir = temp_dir / "metadata"
+        temp_dir / "keyframes" / "test_video"
+        temp_dir / "metadata"
         
         # The processor should have attempted to create these directories
         # (we can't easily test the actual creation without more complex mocking)

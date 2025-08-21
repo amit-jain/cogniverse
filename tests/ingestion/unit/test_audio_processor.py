@@ -182,7 +182,7 @@ class TestAudioProcessor:
             mock_output_manager.get_processing_dir.return_value = temp_dir
             mock_get_output_manager.return_value = mock_output_manager
             
-            result = processor.transcribe_audio(sample_video_path)
+            processor.transcribe_audio(sample_video_path)
         
         # Should pass language parameter to Whisper
         mock_model.transcribe.assert_called_once()
@@ -242,7 +242,7 @@ class TestAudioProcessor:
             mock_output_manager.get_processing_dir.return_value = temp_dir
             mock_get_output_manager.return_value = mock_output_manager
             
-            result = processor.transcribe_audio(sample_video_path)
+            processor.transcribe_audio(sample_video_path)
         
         # Should use output manager to get correct directory structure
         mock_get_output_manager.assert_called_once()
@@ -271,7 +271,7 @@ class TestAudioProcessor:
             mock_file = Mock()
             mock_open.return_value.__enter__.return_value = mock_file
             
-            result = processor.transcribe_audio(sample_video_path)
+            processor.transcribe_audio(sample_video_path)
         
         # Should have saved transcription to JSON file
         mock_json_dump.assert_called()

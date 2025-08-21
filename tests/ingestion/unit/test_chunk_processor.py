@@ -196,7 +196,7 @@ class TestChunkProcessor:
                 mock_output_manager.get_processing_dir.return_value = temp_dir
                 mock_get_output_manager.return_value = mock_output_manager
                 
-                result1 = processor.extract_chunks(sample_video_path, video_duration=60.0)
+                processor.extract_chunks(sample_video_path, video_duration=60.0)
             
             # Should have cached the result
             mock_cache_manager.set.assert_called_once()
