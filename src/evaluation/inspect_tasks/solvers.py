@@ -68,7 +68,7 @@ class CogniverseRetrievalSolver(Solver):
                     
                     start_time = time.time()
                     
-                    # Execute search
+                    # Execute search (Phoenix experiment system handles project isolation)  
                     search_results = search_service.search(
                         query=query,
                         top_k=10,

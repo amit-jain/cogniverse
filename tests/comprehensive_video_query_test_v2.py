@@ -542,8 +542,9 @@ def test_profile_with_queries(profile: str, queries: List[Dict], test_multiple_s
             expected_videos = query_data['expected_videos']
             
             try:
-                # Execute search using SearchService with optional ranking strategy
-                search_results = search_service.search(query, top_k=10, ranking_strategy=strategy)
+                # Execute search using SearchService with optional ranking strategy and tenant_id
+                tenant_id = f"test-tenant-{datetime.now().strftime('%Y%m%d')}"
+                search_results = search_service.search(query, top_k=10, ranking_strategy=strategy, tenant_id=tenant_id)
                 
                 # Convert SearchResult objects to dicts and extract video IDs
                 result_dicts = [r.to_dict() for r in search_results]
