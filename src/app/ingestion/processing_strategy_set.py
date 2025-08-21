@@ -47,6 +47,14 @@ class ProcessingStrategySet:
         """List all strategy names."""
         return list(self._strategies.keys())
     
+    def get_all_required_processors(self) -> Dict[str, Dict[str, Any]]:
+        """Get all required processors from all strategies."""
+        all_requirements = {}
+        for strategy in self._strategies.values():
+            requirements = strategy.get_required_processors()
+            all_requirements.update(requirements)
+        return all_requirements
+    
     # Backward compatibility properties
     @property
     def segmentation(self):

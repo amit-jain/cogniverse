@@ -16,7 +16,7 @@ from typing import Dict, Any
 from src.app.ingestion.pipeline import VideoIngestionPipeline
 from src.app.ingestion.processor_manager import ProcessorManager
 from src.app.ingestion.processing_strategy_set import ProcessingStrategySet
-from src.app.ingestion.strategies_new import FrameSegmentationStrategy, ChunkSegmentationStrategy
+from src.app.ingestion.strategies import FrameSegmentationStrategy, ChunkSegmentationStrategy
 
 
 @pytest.mark.integration

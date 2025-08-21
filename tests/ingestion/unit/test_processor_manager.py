@@ -142,7 +142,7 @@ class TestProcessorManager:
     
     def test_initialize_from_strategies(self, manager):
         """Test initializing processors from strategy set."""
-        from src.app.ingestion.strategies_new import ChunkSegmentationStrategy
+        from src.app.ingestion.strategies import ChunkSegmentationStrategy
         
         # Mock strategy that requires our test processors
         mock_strategy = Mock()
