@@ -68,8 +68,8 @@ jobs:
     
     - name: Run routing unit tests
       run: |
-        pytest tests/unit/test_routing_strategies.py tests/unit/test_router_comprehensive.py -v \
-          -m "(unit or not requires_ollama) and not local_only" \
+        pytest tests/unit/test_routing_strategies.py tests/unit/test_router_unit.py -v \
+          -m "unit and not requires_ollama and not local_only" \
           --cov=src/app/routing \
           --cov-report=xml \
           --cov-report=term-missing
@@ -118,8 +118,8 @@ jobs:
         # Run integration tests that don't require real LLM services
         # GLiNER tests can run since the model is small and fast
         # Exclude local_only tests which need full environment
-        pytest tests/integration/test_tiered_routing.py -v \
-          -m "not requires_ollama and not local_only" \
+        pytest tests/integration/test_tiered_routing.py tests/integration/test_router_comprehensive.py -v \
+          -m "integration and not requires_ollama and not local_only" \
           --cov=src/app/routing \
           --cov-report=term-missing
       env:
@@ -226,7 +226,7 @@ jobs:
     - name: Generate combined coverage report
       run: |
         echo "Routing module coverage report:"
-        pytest tests/unit/test_routing_strategies.py tests/integration/test_tiered_routing.py \
+        pytest tests/unit/test_routing_strategies.py tests/unit/test_router_unit.py tests/integration/test_tiered_routing.py tests/integration/test_router_comprehensive.py \
           -v -m "not requires_ollama" \
           --cov=src/app/routing \
           --cov-report=html \
