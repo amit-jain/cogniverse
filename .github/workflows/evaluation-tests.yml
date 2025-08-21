@@ -6,7 +6,7 @@ on:
     paths:
       - 'src/evaluation/**'
       - 'src/common/**'
-      - 'tests/**'
+      - 'src/evaluation/tests/**'
       - 'pytest.ini'
       - 'pyproject.toml'
       - '.github/workflows/evaluation-tests.yml'
@@ -15,7 +15,7 @@ on:
     paths:
       - 'src/evaluation/**'
       - 'src/common/**'
-      - 'tests/**'
+      - 'src/evaluation/tests/**'
       - 'pytest.ini'
       - 'pyproject.toml'
 
