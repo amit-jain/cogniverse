@@ -149,24 +149,25 @@ jobs:
         curl -LsSf https://astral.sh/uv/install.sh | sh
         echo "$HOME/.cargo/bin" >> $GITHUB_PATH
     
-    - name: Install linting tools
+    - name: Install dependencies with dev tools
       run: |
-        uv pip install --system ruff black isort mypy
+        uv sync --all-extras
+        uv sync --extra dev
     
     - name: Run ruff
-      run: ruff check src/app/routing
+      run: uv run ruff check src/app/routing
       continue-on-error: true
     
     - name: Check formatting with black
-      run: black --check src/app/routing
+      run: uv run black --check src/app/routing
       continue-on-error: true
     
     - name: Check import sorting
-      run: isort --check-only src/app/routing
+      run: uv run isort --check-only src/app/routing
       continue-on-error: true
     
     - name: Run mypy
-      run: mypy src/app/routing --ignore-missing-imports
+      run: uv run mypy src/app/routing --ignore-missing-imports
       continue-on-error: true
 
   test-routing-cli:

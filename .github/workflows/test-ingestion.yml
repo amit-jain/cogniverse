@@ -161,19 +161,19 @@ jobs:
     - name: Install dependencies
       run: |
         uv sync --all-extras
-        uv pip install --system ruff black mypy
+        uv sync --extra dev
     
     - name: Run ruff
       run: |
-        ruff check src/app/ingestion tests/ingestion
+        uv run ruff check src/app/ingestion tests/ingestion
     
     - name: Run black
       run: |
-        black --check src/app/ingestion tests/ingestion
+        uv run black --check src/app/ingestion tests/ingestion
     
     - name: Run mypy
       run: |
-        mypy src/app/ingestion --ignore-missing-imports
+        uv run mypy src/app/ingestion --ignore-missing-imports
 
   test-summary:
     name: Test Summary
