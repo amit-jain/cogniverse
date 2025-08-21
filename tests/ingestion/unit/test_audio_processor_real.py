@@ -152,7 +152,7 @@ class TestAudioProcessor:
             ]
         }
         mock_model.transcribe.return_value = mock_transcription
-        mock_load_model.return_value = mock_model
+        mock_whisper.load_model.return_value = mock_model
         
         # Mock output manager
         mock_manager = Mock()
@@ -214,7 +214,7 @@ class TestAudioProcessor:
             "segments": [{"start": 0.0, "end": 2.0, "text": " Hola mundo"}]
         }
         mock_model.transcribe.return_value = mock_transcription
-        mock_load_model.return_value = mock_model
+        mock_whisper.load_model.return_value = mock_model
         
         # Mock output manager
         mock_manager = Mock()
@@ -270,7 +270,7 @@ class TestAudioProcessor:
             "segments": [{"start": 0.0, "end": 3.0, "text": " New transcript"}]
         }
         mock_model.transcribe.return_value = mock_transcription
-        mock_load_model.return_value = mock_model
+        mock_whisper.load_model.return_value = mock_model
         
         # Mock output manager
         mock_manager = Mock()
@@ -295,7 +295,7 @@ class TestAudioProcessor:
         """Test handling of Whisper transcription errors."""
         mock_model = Mock()
         mock_model.transcribe.side_effect = Exception("Whisper transcription failed")
-        mock_load_model.return_value = mock_model
+        mock_whisper.load_model.return_value = mock_model
         
         with patch('src.common.utils.output_manager.get_output_manager'):
             result = processor.transcribe_audio(sample_video_path)

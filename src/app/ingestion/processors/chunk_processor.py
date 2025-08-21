@@ -153,7 +153,7 @@ class ChunkProcessor(BaseProcessor):
                 str(chunk_path)
             ]
             
-            result = subprocess.run(cmd, capture_output=True, check=True)
+            subprocess.run(cmd, capture_output=True, check=True)
             return chunk_path.exists() and chunk_path.stat().st_size > 0
             
         except Exception as e:

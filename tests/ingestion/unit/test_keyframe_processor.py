@@ -260,7 +260,7 @@ class TestKeyframeProcessor:
             
             try:
                 processor.extract_keyframes(sample_video_path)  # No output_dir
-            except:
+            except Exception:
                 pass  # Expected to fail due to mock setup
         
         # Should have called output manager
