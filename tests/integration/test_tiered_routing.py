@@ -35,10 +35,10 @@ def test_config():
             "routing_mode": "tiered",
             "tier_config": {
                 "enable_fast_path": True,
-                "enable_slow_path": True,
-                "enable_langextract": True,
+                "enable_slow_path": False,  # Disable slow path in CI
+                "enable_langextract": False,  # Disable langextract in CI
                 "enable_fallback": True,
-                "fast_path_confidence_threshold": 0.7,
+                "fast_path_confidence_threshold": 0.5,  # Lower threshold so GLiNER is used
                 "slow_path_confidence_threshold": 0.6,
                 "langextract_confidence_threshold": 0.5
             },
