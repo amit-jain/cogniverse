@@ -239,6 +239,13 @@ class MockProcessor:
         self._config = kwargs
         self.PROCESSOR_NAME = name
 
+    @classmethod
+    def from_config(cls, config: dict[str, Any], logger: logging.Logger):
+        """Create MockProcessor from config, extracting name from config or using 'mock'."""
+        # The processor name should be passed through config by the ProcessorManager
+        name = config.get("processor_name", "mock")
+        return cls(name, logger, **config)
+
     def get_config(self) -> dict[str, Any]:
         return self._config
 

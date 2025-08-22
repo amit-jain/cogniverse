@@ -100,8 +100,11 @@ class ProcessorManager:
                 self.logger.info(f"🔧 Creating {processor_name}")
 
                 try:
+                    # Add processor name to config for processors that need it
+                    config_with_name = processor_config.copy()
+                    config_with_name["processor_name"] = processor_name
                     processor = processor_class.from_config(
-                        processor_config, self.logger
+                        config_with_name, self.logger
                     )
                     self._processors[processor_name] = processor
                     self.logger.info(f"   ✅ {processor_name} initialized successfully")

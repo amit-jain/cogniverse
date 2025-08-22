@@ -135,6 +135,7 @@ class TestPipelineOrchestration:
         }
         mock_keyframe.extract_keyframes.return_value = mock_keyframe_result
         mock_keyframe_class.return_value = mock_keyframe
+        mock_keyframe_class.from_config = Mock(return_value=mock_keyframe)
 
         with patch(
             "src.app.ingestion.processor_manager.pkgutil.iter_modules"
@@ -183,6 +184,7 @@ class TestPipelineOrchestration:
         }
         mock_chunk.extract_chunks.return_value = mock_chunk_result
         mock_chunk_class.return_value = mock_chunk
+        mock_chunk_class.from_config = Mock(return_value=mock_chunk)
 
         with patch(
             "src.app.ingestion.processor_manager.pkgutil.iter_modules"
@@ -239,6 +241,10 @@ class TestPipelineOrchestration:
 
                 def __init__(self, logger, **kwargs):
                     self.logger = logger
+
+                @classmethod
+                def from_config(cls, config, logger):
+                    return cls(logger, **config)
 
                 def extract_keyframes(self, *args, **kwargs):
                     raise Exception("Processing failed")

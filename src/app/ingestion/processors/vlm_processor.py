@@ -45,6 +45,13 @@ class VLMProcessor(BaseProcessor):
             batch_size=config.get("batch_size", 10),
         )
 
+    def process(self, *args, **kwargs) -> Any:
+        """Process input data (implements BaseProcessor abstract method)."""
+        # Delegate to generate_descriptions for backwards compatibility
+        if args and isinstance(args[0], dict):
+            return self.generate_descriptions(args[0])
+        return self.generate_descriptions(kwargs)
+
     def generate_descriptions(self, frames_data: dict[str, Any]) -> dict[str, Any]:
         """Generate descriptions for frames (placeholder implementation)."""
         self.logger.info("🎨 VLM description generation not implemented yet")
