@@ -44,6 +44,7 @@ jobs:
     - name: Install dependencies
       run: |
         uv sync --all-extras
+        uv pip install pytest-cov torch
     
     - name: Run unit tests
       run: |
@@ -79,6 +80,7 @@ jobs:
     - name: Install dependencies
       run: |
         uv sync --all-extras
+        uv pip install pytest-cov torch
     
     - name: Run linting
       run: |
@@ -109,17 +111,18 @@ jobs:
     - name: Install dependencies
       run: |
         uv sync --all-extras
+        uv pip install pytest-cov torch
     
     - name: Test ingestion scripts
       run: |
         # Test ingestion script help/import
-        python scripts/run_ingestion.py --help
+        uv run python scripts/run_ingestion.py --help
         
         # Test pipeline module can be imported
-        python -c "from src.app.ingestion.pipeline import VideoIngestionPipeline; print('Pipeline import successful')"
+        uv run python -c "from src.app.ingestion.pipeline import VideoIngestionPipeline; print('Pipeline import successful')"
         
         # Test processor discovery
-        python -c "
+        uv run python -c "
         from src.app.ingestion.processor_manager import ProcessorManager
         import logging
         logger = logging.getLogger('test')
@@ -157,6 +160,7 @@ jobs:
     - name: Install dependencies
       run: |
         uv sync --all-extras
+        uv pip install pytest-cov torch
     
     - name: Start Vespa
       run: |
