@@ -5,6 +5,7 @@ Base class for evaluators without tracing
 import os
 from contextlib import contextmanager
 
+
 @contextmanager
 def no_tracing():
     """Context manager to temporarily disable tracing"""

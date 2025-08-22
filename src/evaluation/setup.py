@@ -18,7 +18,9 @@ setup(
     description="Evaluation framework for Cogniverse video RAG system",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    packages=find_packages(include=["cogniverse_evaluation", "cogniverse_evaluation.*"]),
+    packages=find_packages(
+        include=["cogniverse_evaluation", "cogniverse_evaluation.*"]
+    ),
     package_dir={"cogniverse_evaluation": "."},
     python_requires=">=3.9",
     install_requires=[
@@ -44,7 +46,7 @@ setup(
         "visual": [
             "openai>=1.0.0",  # For visual evaluation with GPT-4V
             "anthropic>=0.7.0",  # For visual evaluation with Claude
-        ]
+        ],
     },
     entry_points={
         "console_scripts": [
