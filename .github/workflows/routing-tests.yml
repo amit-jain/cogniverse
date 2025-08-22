@@ -73,8 +73,17 @@ jobs:
           --cov-report=term-missing \
           --cov-report=xml:coverage_routing.xml \
           --cov-fail-under=43
+        # Debug: Check what files were created
+        echo "📁 Files after test run:"
+        ls -la .coverage* 2>/dev/null || echo "No .coverage files found"
+        ls -la coverage* 2>/dev/null || echo "No coverage XML files found"
         # Rename the coverage file to avoid conflicts
-        mv .coverage .coverage.unit
+        if [ -f .coverage ]; then
+          echo "✅ Coverage file found, renaming to .coverage.unit"
+          mv .coverage .coverage.unit
+        else
+          echo "⚠️ No .coverage file found - this will affect coverage combining"
+        fi
     
     - name: Check coverage files
       run: |
@@ -128,8 +137,17 @@ jobs:
           --cov=src/app/routing \
           --cov-report=term-missing \
           --cov-report=xml:coverage_routing_integration.xml
+        # Debug: Check what files were created
+        echo "📁 Files after integration test run:"
+        ls -la .coverage* 2>/dev/null || echo "No .coverage files found"
+        ls -la coverage* 2>/dev/null || echo "No coverage XML files found"
         # Rename the coverage file to avoid conflicts
-        mv .coverage .coverage.integration
+        if [ -f .coverage ]; then
+          echo "✅ Integration coverage file found, renaming to .coverage.integration"
+          mv .coverage .coverage.integration
+        else
+          echo "⚠️ No .coverage file found - this will affect coverage combining"
+        fi
     
     - name: Upload coverage data
       if: always()
