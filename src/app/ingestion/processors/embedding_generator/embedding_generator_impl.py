@@ -6,16 +6,18 @@ This module provides a simplified, strategy-driven embedding generator that hand
 all video processing profiles through a single generic method.
 """
 
-from pathlib import Path
-from typing import Dict, List, Any, Optional
 import logging
 import time
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
 import numpy as np
 import torch
 from PIL import Image
 
+from src.common.document import ContentType, Document, ProcessingStatus
+
 from .embedding_generator import EmbeddingGenerator, EmbeddingResult
-from src.common.document import Document, ContentType, ProcessingStatus
 
 
 class EmbeddingGeneratorImpl(EmbeddingGenerator):

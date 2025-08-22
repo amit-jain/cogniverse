@@ -3,8 +3,9 @@
 Backend Factory - Creates backend clients
 """
 
-from typing import Dict, Any, Optional
 import logging
+from typing import Any, Dict, Optional
+
 from src.common.core.backend_registry import get_backend_registry
 from src.common.core.interfaces import IngestionBackend
 

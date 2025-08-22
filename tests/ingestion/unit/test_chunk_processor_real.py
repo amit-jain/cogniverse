@@ -4,10 +4,11 @@ Unit tests for ChunkProcessor - Testing actual implementation.
 Tests real video chunk extraction functionality using ffmpeg.
 """
 
-import pytest
 import subprocess
-from unittest.mock import Mock, patch
 from pathlib import Path
+from unittest.mock import Mock, patch
+
+import pytest
 
 from src.app.ingestion.processors.chunk_processor import ChunkProcessor
 

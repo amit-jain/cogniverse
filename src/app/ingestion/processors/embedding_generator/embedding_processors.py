@@ -3,12 +3,13 @@
 Embedding Processors - Handles the actual embedding generation and format conversion
 """
 
-import torch
-import numpy as np
-from typing import Dict, Any, Optional
-from PIL import Image
-from pathlib import Path
 import logging
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+import numpy as np
+import torch
+from PIL import Image
 
 
 class EmbeddingProcessor:
@@ -51,9 +52,9 @@ class EmbeddingProcessor:
     ) -> Optional[np.ndarray]:
         """Generate embeddings from a video segment"""
         try:
-            import tempfile
-            import subprocess
             import os
+            import subprocess
+            import tempfile
 
             # Extract segment
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_file:

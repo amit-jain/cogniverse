@@ -5,15 +5,16 @@ Provides common test utilities, mock objects, and fixtures
 for testing the video processing pipeline.
 """
 
-import pytest
-import tempfile
-import shutil
-from pathlib import Path
-from unittest.mock import Mock, patch
 import logging
-import numpy as np
+import shutil
+import tempfile
+from pathlib import Path
+from typing import Any, Dict
+from unittest.mock import Mock, patch
+
 import cv2
-from typing import Dict, Any
+import numpy as np
+import pytest
 
 # Test data constants
 TEST_VIDEO_WIDTH = 640

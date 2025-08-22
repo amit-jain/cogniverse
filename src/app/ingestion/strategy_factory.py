@@ -6,7 +6,7 @@ Uses actual class names in config - no string mappings or if/elif logic.
 """
 
 import importlib
-from typing import Dict, Any
+from typing import Any, Dict
 
 from .processing_strategy_set import ProcessingStrategySet
 from .processor_base import BaseStrategy

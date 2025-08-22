@@ -5,9 +5,9 @@ Base classes for processors in the ingestion pipeline.
 Provides foundation for pluggable processor architecture with auto-discovery.
 """
 
-from abc import ABC, abstractmethod
-from typing import Dict, Any
 import logging
+from abc import ABC, abstractmethod
+from typing import Any, Dict
 
 
 class BaseProcessor(ABC):

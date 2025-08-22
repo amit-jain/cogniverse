@@ -5,15 +5,13 @@ Unit tests for VideoIngestionPipeline.
 Tests the video processing pipeline functionality with proper mocking.
 """
 
-import pytest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from src.app.ingestion.pipeline import (
-    VideoIngestionPipeline,
-    PipelineConfig,
-    PipelineStep,
-)
+import pytest
+
+from src.app.ingestion.pipeline import (PipelineConfig, PipelineStep,
+                                        VideoIngestionPipeline)
 
 
 @pytest.mark.unit

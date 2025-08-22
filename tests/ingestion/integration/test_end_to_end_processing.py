@@ -5,16 +5,15 @@ Tests the complete pipeline from video input to final processed output,
 including keyframe extraction, audio transcription, and embedding generation.
 """
 
-import pytest
 from unittest.mock import Mock, patch
-import numpy as np
 
-from src.app.ingestion.processor_manager import ProcessorManager
+import numpy as np
+import pytest
+
 from src.app.ingestion.processing_strategy_set import ProcessingStrategySet
-from src.app.ingestion.strategies import (
-    FrameSegmentationStrategy,
-    ChunkSegmentationStrategy,
-)
+from src.app.ingestion.processor_manager import ProcessorManager
+from src.app.ingestion.strategies import (ChunkSegmentationStrategy,
+                                          FrameSegmentationStrategy)
 
 
 @pytest.mark.integration

@@ -15,14 +15,15 @@ The same processor can be used for:
 - single__video_anymodel_anystrategy (any future approach)
 """
 
-import logging
-from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple, Literal
-import numpy as np
-import cv2
-from dataclasses import dataclass
-import time
 import asyncio
+import logging
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional, Tuple
+
+import cv2
+import numpy as np
 
 from ..processor_base import BaseProcessor
 

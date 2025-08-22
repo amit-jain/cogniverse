@@ -3,11 +3,11 @@
 Document Builders - Handles creation of documents for different backends and schemas
 """
 
-from typing import Dict, Any, Optional
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-import sys
+from typing import Any, Dict, Optional
 
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent.parent.parent))

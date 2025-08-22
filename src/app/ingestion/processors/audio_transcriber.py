@@ -7,9 +7,10 @@ Extracts and transcribes audio from videos using Faster-Whisper.
 
 import json
 import time
-import torch
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
+import torch
 
 
 class AudioTranscriber:

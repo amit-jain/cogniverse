@@ -4,8 +4,9 @@ Unit tests for AudioProcessor.
 Tests audio transcription functionality using Whisper models.
 """
 
-import pytest
 from unittest.mock import Mock, patch
+
+import pytest
 
 from src.app.ingestion.processors.audio_processor import AudioProcessor
 

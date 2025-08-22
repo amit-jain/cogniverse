@@ -4,17 +4,16 @@ Comprehensive unit tests for EmbeddingGeneratorImpl to improve coverage.
 Tests the unified embedding generation logic with proper mocking.
 """
 
-import pytest
-from unittest.mock import Mock, patch
 from pathlib import Path
-import numpy as np
+from unittest.mock import Mock, patch
 
-from src.app.ingestion.processors.embedding_generator.embedding_generator_impl import (
-    EmbeddingGeneratorImpl,
-)
-from src.app.ingestion.processors.embedding_generator.embedding_generator import (
-    EmbeddingResult,
-)
+import numpy as np
+import pytest
+
+from src.app.ingestion.processors.embedding_generator.embedding_generator import \
+    EmbeddingResult
+from src.app.ingestion.processors.embedding_generator.embedding_generator_impl import \
+    EmbeddingGeneratorImpl
 
 
 @pytest.mark.unit

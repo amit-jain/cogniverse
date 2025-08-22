@@ -3,15 +3,17 @@
 Generic Embedding Generator - Backend-agnostic implementation
 """
 
-from pathlib import Path
-from typing import Dict, List, Any, Optional
 import logging
 import time
-import numpy as np
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import numpy as np
 
 from src.common.models import get_or_load_model
+
 from .document_builders import DocumentBuilderFactory, DocumentMetadata
 from .embedding_processors import EmbeddingProcessor
 

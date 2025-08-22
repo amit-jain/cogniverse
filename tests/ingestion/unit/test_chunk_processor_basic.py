@@ -4,9 +4,10 @@ Basic unit tests for ChunkProcessor to improve coverage.
 Tests basic initialization and configuration without external dependencies.
 """
 
-import pytest
-from unittest.mock import Mock, patch
 from pathlib import Path
+from unittest.mock import Mock, patch
+
+import pytest
 
 from src.app.ingestion.processors.chunk_processor import ChunkProcessor
 

@@ -4,15 +4,14 @@ Basic unit tests for SingleVectorVideoProcessor to improve coverage.
 Tests basic initialization and configuration without external dependencies.
 """
 
-import pytest
-from unittest.mock import Mock, patch
 from pathlib import Path
+from unittest.mock import Mock, patch
+
 import numpy as np
+import pytest
 
 from src.app.ingestion.processors.single_vector_processor import (
-    SingleVectorVideoProcessor,
-    VideoSegment,
-)
+    SingleVectorVideoProcessor, VideoSegment)
 
 
 @pytest.mark.unit

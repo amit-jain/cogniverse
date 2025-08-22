@@ -3,13 +3,15 @@
 Unit tests for VideoChunkExtractor.
 """
 
-import pytest
 import json
 import subprocess
-from unittest.mock import Mock, patch, mock_open
-import numpy as np
+from unittest.mock import Mock, mock_open, patch
 
-from src.app.ingestion.processors.video_chunk_extractor import VideoChunkExtractor
+import numpy as np
+import pytest
+
+from src.app.ingestion.processors.video_chunk_extractor import \
+    VideoChunkExtractor
 
 
 @pytest.mark.unit

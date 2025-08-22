@@ -4,9 +4,10 @@ Unit tests for KeyframeProcessor - Testing actual implementation.
 Tests the real keyframe extraction functionality including FPS and histogram modes.
 """
 
-import pytest
-import numpy as np
 from unittest.mock import Mock, patch
+
+import numpy as np
+import pytest
 
 from src.app.ingestion.processors.keyframe_processor import KeyframeProcessor
 

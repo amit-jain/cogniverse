@@ -4,13 +4,14 @@ Unit tests for ProcessorManager.
 Tests the processor discovery, registration, and management functionality.
 """
 
-import pytest
-from unittest.mock import Mock, patch
-from pathlib import Path
 import logging
+from pathlib import Path
+from unittest.mock import Mock, patch
 
-from src.app.ingestion.processor_manager import ProcessorManager
+import pytest
+
 from src.app.ingestion.processor_base import BaseProcessor
+from src.app.ingestion.processor_manager import ProcessorManager
 
 
 class MockProcessorA(BaseProcessor):

@@ -6,10 +6,10 @@ Extracts video chunks for processing with models like ColQwen.
 """
 
 import json
+import logging
 import subprocess
 from pathlib import Path
-from typing import Dict, Any
-import logging
+from typing import Any, Dict
 
 from ..processor_base import BaseProcessor
 
