@@ -908,11 +908,12 @@ class LangExtractRoutingStrategy(RoutingStrategy):
         """Initialize the structured extraction using Ollama."""
         # Skip initialization in CI environment
         import os
+
         if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
             print("⏭️ Skipping structured extraction initialization in CI")
             self.extractor = None
             return
-            
+
         try:
             import httpx
 
