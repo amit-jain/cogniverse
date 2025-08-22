@@ -81,6 +81,13 @@ jobs:
         flags: routing-unittests
         name: routing-coverage
         fail_ci_if_error: false
+    
+    - name: Upload coverage data
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-unit
+        path: .coverage
+        retention-days: 1
 
   integration-tests-mocked:
     runs-on: ubuntu-latest
@@ -121,17 +128,25 @@ jobs:
         pytest tests/integration/test_tiered_routing.py tests/integration/test_router_comprehensive.py -v \
           -m "integration and not requires_ollama and not local_only" \
           --cov=src/app/routing \
+          --cov-report=xml \
           --cov-report=term-missing
       env:
         MOCK_LLM_RESPONSES: "true"
     
-    - name: Upload coverage
+    - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
       with:
         file: ./coverage.xml
         flags: routing-integration
         name: routing-coverage
         fail_ci_if_error: false
+    
+    - name: Upload coverage data
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-integration
+        path: .coverage
+        retention-days: 1
 
   lint:
     runs-on: ubuntu-latest
@@ -213,28 +228,51 @@ jobs:
       with:
         python-version: '3.12'
     
-    - name: Install uv
+    - name: Install coverage tool
       run: |
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        pip install coverage[toml]
     
-    - name: Install dependencies
-      run: |
-        uv pip install --system -e .
-        uv pip install --system pytest pytest-cov pytest-asyncio tabulate gliner
+    - name: Download unit test coverage
+      uses: actions/download-artifact@v4
+      with:
+        name: coverage-unit
+        path: ./coverage-unit/
     
-    - name: Generate combined coverage report
+    - name: Download integration test coverage
+      uses: actions/download-artifact@v4
+      with:
+        name: coverage-integration
+        path: ./coverage-integration/
+    
+    - name: Combine coverage data
       run: |
-        echo "Routing module coverage report:"
-        pytest tests/unit/test_routing_strategies.py tests/unit/test_router_unit.py tests/integration/test_tiered_routing.py tests/integration/test_router_comprehensive.py \
-          -v -m "not requires_ollama" \
-          --cov=src/app/routing \
-          --cov-report=html \
-          --cov-report=term-missing
-      continue-on-error: true
+        # Move coverage files to working directory with unique names
+        cp ./coverage-unit/.coverage ./.coverage.unit
+        cp ./coverage-integration/.coverage ./.coverage.integration
+        
+        # Combine all coverage files
+        coverage combine ./.coverage.*
+        
+        # Generate reports
+        echo "## Routing Module Combined Coverage Report" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        coverage report --show-missing | tee -a $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        
+        # Generate HTML and XML reports
+        coverage html
+        coverage xml
     
     - name: Upload coverage HTML report
       uses: actions/upload-artifact@v4
       with:
         name: routing-coverage-report
         path: htmlcov/
+    
+    - name: Upload combined coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: routing-combined
+        name: routing-coverage-combined
+        fail_ci_if_error: false
