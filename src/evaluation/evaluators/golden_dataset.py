@@ -217,7 +217,7 @@ def create_low_scoring_golden_dataset() -> Dict[str, Dict[str, Any]]:
     """
     # Import here to avoid circular imports
 
-    golden_dataset = {
+    _ = {  # noqa: F841
         # Ambiguous queries that should return diverse results
         "object in motion": {
             "expected_videos": ["v_gkSMwfO1q1I", "v_0NIKVT3kmT4"],

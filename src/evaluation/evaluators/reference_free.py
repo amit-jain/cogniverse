@@ -271,8 +271,8 @@ class CompositeEvaluator(Evaluator):
             result.score * weight for result, weight in zip(results, self.weights)
         )
 
-        # Collect all labels
-        labels = [result.label for result in results]
+        # Collect all labels  
+        _ = [result.label for result in results]  # noqa: F841
 
         # Create detailed explanation
         explanations = []

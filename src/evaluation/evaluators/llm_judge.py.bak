@@ -158,7 +158,7 @@ class LLMJudgeBase:
                     else:
                         score = raw_score
                     break
-                except Exception:
+                except:
                     continue
 
         # Extract explanation (first sentence or full response)
@@ -405,7 +405,7 @@ class SyncLLMReferenceBasedEvaluator(Evaluator, LLMJudgeBase):
             if isinstance(expected, str):
                 try:
                     expected_videos = json.loads(expected)
-                except Exception:
+                except:
                     expected_videos = [expected]
             elif isinstance(expected, list):
                 expected_videos = expected
