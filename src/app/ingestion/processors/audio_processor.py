@@ -166,6 +166,13 @@ class AudioProcessor(BaseProcessor):
                 "segments": [],
             }
 
+    def process(
+        self, video_path: Path, output_dir: Path = None, **kwargs
+    ) -> dict[str, Any]:
+        """Process video by transcribing audio."""
+        cache = kwargs.get("cache")
+        return self.transcribe_audio(video_path, output_dir, cache)
+
     def cleanup(self):
         """Clean up Whisper model."""
         if self._whisper is not None:

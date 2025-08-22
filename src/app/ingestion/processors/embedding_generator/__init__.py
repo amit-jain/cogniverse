@@ -3,19 +3,19 @@
 # Import new generic Document only
 from src.common.document import ContentType, Document, ProcessingStatus
 from src.common.models import (
-                               ColPaliModelLoader,
-                               ColQwenModelLoader,
-                               ModelLoader,
-                               ModelLoaderFactory,
-                               VideoPrismModelLoader,
-                               get_or_load_model,
+    ColPaliModelLoader,
+    ColQwenModelLoader,
+    ModelLoader,
+    ModelLoaderFactory,
+    VideoPrismModelLoader,
+    get_or_load_model,
 )
 
 from .backend_factory import BackendFactory
 from .embedding_generator import EmbeddingGenerator, EmbeddingResult, ProcessingConfig
 from .embedding_generator_factory import (
-                               EmbeddingGeneratorFactory,
-                               create_embedding_generator,
+    EmbeddingGeneratorFactory,
+    create_embedding_generator,
 )
 from .embedding_generator_impl import EmbeddingGeneratorImpl
 from .embedding_processors import EmbeddingProcessor

@@ -188,6 +188,12 @@ class ChunkProcessor(BaseProcessor):
             self.logger.error(f"Error extracting chunk at {start_time}s: {e}")
             return False
 
+    def process(
+        self, video_path: Path, output_dir: Path = None, **kwargs
+    ) -> dict[str, Any]:
+        """Process video by extracting chunks."""
+        return self.extract_chunks(video_path, output_dir)
+
     def cleanup(self):
         """Clean up temporary files if needed."""
         pass

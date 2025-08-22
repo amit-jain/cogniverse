@@ -476,3 +476,9 @@ class SingleVectorVideoProcessor(BaseProcessor):
             )
 
         return prepared
+
+    def process(
+        self, video_path: Path, output_dir: Path = None, **kwargs
+    ) -> dict[str, Any]:
+        """Process video using single vector approach."""
+        return self.process_video(video_path, output_dir)
