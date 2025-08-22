@@ -1,7 +1,7 @@
 # Cogniverse Development Toolkit
 # Provides clean, module-specific development workflow with proper isolation
 
-.PHONY: help test-ingestion test-routing test-evaluation test-all-modules test-integration \
+.PHONY: help test-ingestion test-ingestion-integration test-routing test-evaluation test-all-modules test-integration \
         lint-ingestion lint-routing lint-evaluation lint-all \
         format-ingestion format-routing format-evaluation format-all \
         typecheck-ingestion typecheck-routing typecheck-evaluation typecheck-all \
@@ -20,7 +20,8 @@ help:
 	@echo "  test-all-modules   Run all module tests separately (recommended)"
 	@echo ""
 	@echo "🔗 INTEGRATION TESTING:"
-	@echo "  test-integration   Run integration tests across modules"
+	@echo "  test-ingestion-integration  Run ingestion integration tests (no coverage)"
+	@echo "  test-integration             Run integration tests across modules"
 	@echo ""
 	@echo "🔍 LINTING (per module):"
 	@echo "  lint-ingestion     Lint ingestion module only"
@@ -60,6 +61,10 @@ help:
 test-ingestion:
 	@echo "🧪 Running ingestion tests..."
 	JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/ingestion/unit -m unit
+
+test-ingestion-integration:
+	@echo "🔗 Running ingestion integration tests..."
+	JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/ingestion/integration -m integration --no-cov
 
 test-routing:
 	@echo "🧪 Running routing tests..."

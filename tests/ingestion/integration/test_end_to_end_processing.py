@@ -449,10 +449,12 @@ class TestEndToEndVideoProcessing:
         mock_embedding = Mock()
         mock_embedding_result = {
             "video_id": "test_video",
-            "embeddings": {"frame_embeddings": [
-                {"frame_index": 0, "embedding": [0.1, 0.2, 0.3]},
-                {"frame_index": 1, "embedding": [0.4, 0.5, 0.6]},
-            ]},
+            "embeddings": {
+                "frame_embeddings": [
+                    {"frame_index": 0, "embedding": [0.1, 0.2, 0.3]},
+                    {"frame_index": 1, "embedding": [0.4, 0.5, 0.6]},
+                ]
+            },
         }
         mock_embedding.generate_embeddings.return_value = mock_embedding_result
         mock_embedding_class.return_value = mock_embedding
@@ -484,13 +486,16 @@ class TestEndToEndVideoProcessing:
             transcript = audio_processor.transcribe_audio(sample_video_path)
 
             # Step 3: Generate embeddings
-            embeddings = embedding_processor.generate_embeddings({
-                "keyframes": keyframes,
-                "transcript": transcript
-            })
+            embeddings = embedding_processor.generate_embeddings(
+                {"keyframes": keyframes, "transcript": transcript}
+            )
 
             # Verify data consistency
-            assert keyframes["video_id"] == transcript["video_id"] == embeddings["video_id"]
+            assert (
+                keyframes["video_id"]
+                == transcript["video_id"]
+                == embeddings["video_id"]
+            )
             assert keyframes["video_id"] == "test_video"
 
             # Verify data format compliance
@@ -586,7 +591,7 @@ class TestEndToEndVideoProcessing:
             def transcribe_audio(self, *args, **kwargs):
                 return {"text": "test audio", "language": "en"}
 
-        # Mock working embedding processor  
+        # Mock working embedding processor
         class WorkingEmbeddingProcessor:
             PROCESSOR_NAME = "embedding"
 
