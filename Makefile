@@ -56,33 +56,18 @@ help:
 	@echo "  make format-all             # Format all code"
 	@echo "  make check-all              # Full check on all modules"
 
-# Individual module tests with clean coverage
+# Individual module tests (coverage from pytest.ini)
 test-ingestion:
-	@echo "🧪 Running ingestion tests with clean coverage..."
-	JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/ingestion/unit -m unit \
-		--cov=src/app/ingestion \
-		--cov-report=term-missing \
-		--cov-report=html:htmlcov_ingestion \
-		--cov-report=xml:coverage_ingestion.xml \
-		--tb=short
+	@echo "🧪 Running ingestion tests..."
+	JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/ingestion/unit -m unit
 
 test-routing:
-	@echo "🧪 Running routing tests with clean coverage..."
-	uv run python -m pytest tests/routing/unit -m unit \
-		--cov=src/app/routing \
-		--cov-report=term-missing \
-		--cov-report=html:htmlcov_routing \
-		--cov-report=xml:coverage_routing.xml \
-		--tb=short
+	@echo "🧪 Running routing tests..."
+	uv run python -m pytest tests/routing/unit -m unit
 
 test-evaluation:
-	@echo "🧪 Running evaluation tests with clean coverage..."
-	uv run python -m pytest src/evaluation/tests -m unit \
-		--cov=src/evaluation \
-		--cov-report=term-missing \
-		--cov-report=html:htmlcov_evaluation \
-		--cov-report=xml:coverage_evaluation.xml \
-		--tb=short
+	@echo "🧪 Running evaluation tests..."
+	uv run python -m pytest src/evaluation/tests -m unit
 
 # Run all modules separately (recommended approach)
 test-all-modules: test-ingestion test-routing test-evaluation
@@ -200,26 +185,14 @@ dev-ingestion: clean-coverage test-ingestion
 	@echo "🚀 Ingestion development cycle complete"
 	@echo "📊 Coverage report: htmlcov_ingestion/index.html"
 
-# CI-friendly targets (no colors, machine readable)
+# CI-friendly targets (quiet mode, coverage from pytest.ini)
 ci-test-ingestion:
-	JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/ingestion/unit -m unit \
-		--cov=src/app/ingestion \
-		--cov-report=xml:coverage_ingestion.xml \
-		--tb=short \
-		--quiet
+	JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/ingestion/unit -m unit --quiet
 
 ci-test-routing:
-	uv run python -m pytest tests/routing/unit -m unit \
-		--cov=src/app/routing \
-		--cov-report=xml:coverage_routing.xml \
-		--tb=short \
-		--quiet
+	uv run python -m pytest tests/routing/unit -m unit --quiet
 
 ci-test-evaluation:
-	uv run python -m pytest src/evaluation/tests -m unit \
-		--cov=src/evaluation \
-		--cov-report=xml:coverage_evaluation.xml \
-		--tb=short \
-		--quiet
+	uv run python -m pytest src/evaluation/tests -m unit --quiet
 
 ci-test-all: ci-test-ingestion ci-test-routing ci-test-evaluation
