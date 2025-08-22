@@ -487,7 +487,11 @@ class AutoTuningOptimizer(RoutingOptimizer):
             return
 
         try:
-            import dspy
+            import importlib.util
+            if importlib.util.find_spec("dspy") is None:
+                raise ImportError("DSPy not available")
+                
+            import dspy  # noqa: F401
             from dspy.teleprompt import BootstrapFewShotWithRandomSearch
 
             # Prepare training data from history
@@ -498,7 +502,7 @@ class AutoTuningOptimizer(RoutingOptimizer):
                 return
 
             # Create DSPy optimizer
-            optimizer = BootstrapFewShotWithRandomSearch(
+            _ = BootstrapFewShotWithRandomSearch(
                 metric=self._create_dspy_metric(),
                 max_bootstrapped_demos=self.config.dspy_max_bootstrapped_demos,
                 max_labeled_demos=self.config.dspy_max_labeled_demos,

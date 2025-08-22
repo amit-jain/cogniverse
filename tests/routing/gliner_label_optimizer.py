@@ -244,9 +244,9 @@ class GLiNERLabelOptimizer:
             reverse=True,
         )[:2]
 
-        print(f"\n✅ Top video labels: {[l[0] for l in top_video_labels]}")
-        print(f"✅ Top document labels: {[l[0] for l in top_doc_labels]}")
-        print(f"✅ Top temporal labels: {[l[0] for l in top_temporal_labels]}")
+        print(f"\n✅ Top video labels: {[label[0] for label in top_video_labels]}")
+        print(f"✅ Top document labels: {[label[0] for label in top_doc_labels]}")
+        print(f"✅ Top temporal labels: {[label[0] for label in top_temporal_labels]}")
 
         # Test combinations
         best_accuracy = 0
@@ -258,9 +258,9 @@ class GLiNERLabelOptimizer:
                 for n_temporal in [1, 2]:
                     # Create combination
                     labels = (
-                        [l[0] for l in top_video_labels[:n_video]]
-                        + [l[0] for l in top_doc_labels[:n_doc]]
-                        + [l[0] for l in top_temporal_labels[:n_temporal]]
+                        [label[0] for label in top_video_labels[:n_video]]
+                        + [label[0] for label in top_doc_labels[:n_doc]]
+                        + [label[0] for label in top_temporal_labels[:n_temporal]]
                     )
 
                     # Test this combination

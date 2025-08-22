@@ -622,7 +622,6 @@ class KeywordRoutingStrategy(RoutingStrategy):
         """Calculate confidence based on keyword matches."""
         query_lower = query.lower()
         match_count = 0
-        total_keywords = len(self.video_keywords) + len(self.text_keywords)
 
         for kw in self.video_keywords + self.text_keywords:
             if kw in query_lower:

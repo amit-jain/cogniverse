@@ -311,7 +311,7 @@ class OllamaDistillation:
                 score = routing_accuracy(example, pred)
                 if score >= 0.8:  # Consider >= 80% match as correct
                     val_correct += 1
-            except:
+            except Exception:
                 pass
 
         val_accuracy = val_correct / len(val_set) if val_set else 0

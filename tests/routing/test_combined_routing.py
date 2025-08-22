@@ -292,7 +292,6 @@ class CombinedRoutingTester:
 
             # Show raw response if captured - simplified
             if raw_response_debug["response"]:
-                raw_resp = raw_response_debug["response"]
                 # Already shown above in debug_extract_json
                 pass
 
