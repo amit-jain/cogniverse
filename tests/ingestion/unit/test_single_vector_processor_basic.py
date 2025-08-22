@@ -5,7 +5,7 @@ Tests basic initialization and configuration without external dependencies.
 """
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from pathlib import Path
 import numpy as np
 
