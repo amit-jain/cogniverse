@@ -57,14 +57,19 @@ help:
 	@echo "  make format-all             # Format all code"
 	@echo "  make check-all              # Full check on all modules"
 
-# Individual module tests (coverage from pytest.ini)
+# Individual module tests (coverage configured per target)
 test-ingestion:
 	@echo "🧪 Running ingestion tests..."
-	JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/ingestion/unit -m unit
+	JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/ingestion/unit -m unit \
+		--cov=src/app/ingestion \
+		--cov-report=term-missing \
+		--cov-report=html:htmlcov_ingestion \
+		--cov-report=xml:coverage_ingestion.xml \
+		--cov-fail-under=46
 
 test-ingestion-integration:
 	@echo "🔗 Running ingestion integration tests..."
-	JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/ingestion/integration -m integration --no-cov
+	JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/ingestion/integration -m integration
 
 test-routing:
 	@echo "🧪 Running routing tests..."
