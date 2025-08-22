@@ -7,8 +7,8 @@ This shows what DSPy MIPROv2 actually optimizes:
 - BUT the logic for converting GLiNER entities to routing decisions
 """
 
+
 import dspy
-from typing import List, Dict
 
 
 class GLiNERRoutingSignature(dspy.Signature):
@@ -30,7 +30,7 @@ class GLiNERRoutingSignature(dspy.Signature):
 class DSPyGLiNERRouter(dspy.Module):
     """This is what DSPy actually optimizes."""
 
-    def __init__(self, gliner_labels: List[str], gliner_threshold: float):
+    def __init__(self, gliner_labels: list[str], gliner_threshold: float):
         super().__init__()
         # Fixed GLiNER configuration - NOT optimized by DSPy
         self.gliner_labels = gliner_labels
@@ -39,7 +39,7 @@ class DSPyGLiNERRouter(dspy.Module):
         # What DSPy optimizes: the routing logic
         self.route = dspy.ChainOfThought(GLiNERRoutingSignature)
 
-    def forward(self, query: str, gliner_entities: List[Dict]):
+    def forward(self, query: str, gliner_entities: list[dict]):
         """
         DSPy optimizes THIS logic - how to convert entities to routing.
         """

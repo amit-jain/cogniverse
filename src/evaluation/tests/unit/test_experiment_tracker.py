@@ -2,10 +2,11 @@
 Unit tests for experiment tracker module.
 """
 
-import pytest
-from unittest.mock import Mock, patch, mock_open, AsyncMock
 from pathlib import Path
+from unittest.mock import AsyncMock, Mock, mock_open, patch
+
 import pandas as pd
+import pytest
 
 from src.evaluation.core.experiment_tracker import ExperimentTracker
 

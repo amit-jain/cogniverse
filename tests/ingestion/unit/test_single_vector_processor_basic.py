@@ -11,7 +11,9 @@ import numpy as np
 import pytest
 
 from src.app.ingestion.processors.single_vector_processor import (
-    SingleVectorVideoProcessor, VideoSegment)
+    SingleVectorVideoProcessor,
+    VideoSegment,
+)
 
 
 @pytest.mark.unit

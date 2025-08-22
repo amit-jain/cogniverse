@@ -2,15 +2,16 @@
 End-to-end integration tests for evaluation framework.
 """
 
-import pytest
-from unittest.mock import patch
-import tempfile
 import json
 import os
+import tempfile
+from unittest.mock import patch
 
+import pytest
 from inspect_ai import eval as inspect_eval
-from src.evaluation.core.task import evaluation_task
+
 from src.evaluation.cli import cli
+from src.evaluation.core.task import evaluation_task
 
 
 @pytest.mark.integration
@@ -182,7 +183,7 @@ class TestEndToEnd:
                         assert os.path.exists(output_file)
 
                         # Verify JSON structure
-                        with open(output_file, "r") as f:
+                        with open(output_file) as f:
                             data = json.load(f)
                             assert data["mode"] == "experiment"
                             assert data["dataset"] == "test_dataset"

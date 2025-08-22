@@ -7,19 +7,19 @@ It focuses on comparing optimization strategies rather than full DSPy features.
 """
 
 import asyncio
-import sys
+import json
 import os
 import random
-from typing import List, Dict, Any
-import json
+import sys
 import time
+from typing import Any
 
 # Add src directory to path
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 sys.path.insert(0, os.path.join(project_root, "src"))
 
-from src.tools.query_analyzer import QueryAnalyzer
-from src.common.config import get_config
+from src.common.config import get_config  # noqa: E402
+from src.tools.query_analyzer import QueryAnalyzer  # noqa: E402
 
 
 class SimpleGLiNEROptimizer:
@@ -107,13 +107,13 @@ class SimpleGLiNEROptimizer:
             },
         ]
 
-    def load_test_queries(self) -> List[Dict[str, Any]]:
+    def load_test_queries(self) -> list[dict[str, Any]]:
         """Load test queries from file or use defaults."""
         queries = []
         test_file = os.path.join(os.path.dirname(__file__), "test_queries.txt")
 
         try:
-            with open(test_file, "r") as f:
+            with open(test_file) as f:
                 for line in f:
                     line = line.strip()
                     if not line or line.startswith("#"):
@@ -222,8 +222,8 @@ class SimpleGLiNEROptimizer:
         return queries
 
     async def evaluate_configuration(
-        self, config: Dict[str, Any], test_queries: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        self, config: dict[str, Any], test_queries: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         """Evaluate a specific GLiNER configuration."""
         # Store original configuration
         original_labels = self.analyzer.gliner_labels
@@ -304,7 +304,7 @@ class SimpleGLiNEROptimizer:
             self.analyzer.gliner_labels = original_labels
             self.analyzer.gliner_threshold = original_threshold
 
-    async def run_optimization(self) -> Dict[str, Any]:
+    async def run_optimization(self) -> dict[str, Any]:
         """Run optimization across all test configurations."""
         print("🚀 Simple GLiNER Optimization")
         print("=" * 50)
@@ -358,7 +358,7 @@ class SimpleGLiNEROptimizer:
 
         return results
 
-    def print_optimization_summary(self, results: Dict[str, Any]):
+    def print_optimization_summary(self, results: dict[str, Any]):
         """Print comprehensive optimization results."""
         print("\n" + "=" * 60)
         print("🏆 SIMPLE GLINER OPTIMIZATION RESULTS")
@@ -459,7 +459,7 @@ async def main():
     try:
         manual_results_file = "gliner_optimization_results.json"
         if os.path.exists(manual_results_file):
-            with open(manual_results_file, "r") as f:
+            with open(manual_results_file) as f:
                 manual_results = json.load(f)
 
             print("\n🔄 Comparison with Manual Optimization:")

@@ -7,7 +7,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent.parent.parent))
@@ -45,9 +45,9 @@ class DocumentBuilder:
     def build_document(
         self,
         metadata: DocumentMetadata,
-        embeddings: Dict[str, Any],
-        additional_fields: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        embeddings: dict[str, Any],
+        additional_fields: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Build a document for any schema"""
 
         doc_id = self.create_document_id(metadata)
@@ -90,7 +90,7 @@ class DocumentBuilder:
         """Create a unique document ID"""
         return f"{metadata.video_id}_segment_{metadata.segment_idx}"
 
-    def _get_field_names(self) -> Dict[str, str]:
+    def _get_field_names(self) -> dict[str, str]:
         """Get field names from unified strategy"""
         try:
             # All schemas now use the same field names

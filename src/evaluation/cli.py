@@ -3,17 +3,19 @@
 Unified CLI for evaluation framework.
 """
 
-import click
+import json
 import logging
 import sys
-from pathlib import Path
-import json
 from datetime import datetime
+from pathlib import Path
+
+import click
 
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from inspect_ai import eval as inspect_eval
+
 from src.evaluation.core import evaluation_task
 from src.evaluation.data import DatasetManager, TraceManager
 
@@ -58,16 +60,16 @@ def cli(verbose):
 def evaluate(mode, dataset, profiles, strategies, trace_ids, config, output, verbose):
     """
     Run evaluation in specified mode.
-    
+
     Examples:
         # Run new experiment
         cogniverse-eval evaluate --mode experiment --dataset test_dataset \\
             -p frame_based_colpali -s binary_binary
-        
+
         # Evaluate existing traces
         cogniverse-eval evaluate --mode batch --dataset test_dataset \\
             -t trace_id_1 -t trace_id_2
-        
+
         # Live evaluation
         cogniverse-eval evaluate --mode live --dataset test_dataset
     """
@@ -84,7 +86,7 @@ def evaluate(mode, dataset, profiles, strategies, trace_ids, config, output, ver
     # Load configuration if provided
     eval_config = {}
     if config:
-        with open(config, "r") as f:
+        with open(config) as f:
             if config.endswith(".json"):
                 eval_config = json.load(f)
             else:
@@ -194,7 +196,7 @@ def create_dataset(name, csv, queries_json, description):
             )
         else:
             click.echo(f"Creating dataset from JSON: {queries_json}")
-            with open(queries_json, "r") as f:
+            with open(queries_json) as f:
                 queries = json.load(f)
             dataset_id = dataset_manager.create_from_queries(
                 queries=queries, dataset_name=name, description=description

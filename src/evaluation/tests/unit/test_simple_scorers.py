@@ -2,8 +2,9 @@
 Unit tests for simple scorers.
 """
 
-import pytest
 from unittest.mock import Mock
+
+import pytest
 
 from src.evaluation.core.simple_scorers import (
     get_configured_scorers,

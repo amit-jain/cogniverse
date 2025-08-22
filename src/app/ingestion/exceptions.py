@@ -6,13 +6,13 @@ Simplified exception hierarchy for any type of content ingestion.
 """
 
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 class PipelineException(Exception):
     """Base exception for all pipeline-related errors."""
 
-    def __init__(self, message: str, context: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, context: dict[str, Any] | None = None):
         super().__init__(message)
         self.context = context or {}
 
@@ -29,9 +29,9 @@ class ContentProcessingError(PipelineException):
     def __init__(
         self,
         message: str,
-        content_path: Optional[Path] = None,
-        stage: Optional[str] = None,
-        profile: Optional[str] = None,
+        content_path: Path | None = None,
+        stage: str | None = None,
+        profile: str | None = None,
         **context,
     ):
         context.update(
@@ -50,9 +50,9 @@ class EmbeddingGenerationError(PipelineException):
     def __init__(
         self,
         message: str,
-        model_name: Optional[str] = None,
-        segment_count: Optional[int] = None,
-        embedding_type: Optional[str] = None,
+        model_name: str | None = None,
+        segment_count: int | None = None,
+        embedding_type: str | None = None,
         **context,
     ):
         context.update(
@@ -71,9 +71,9 @@ class BackendError(PipelineException):
     def __init__(
         self,
         message: str,
-        backend_type: Optional[str] = None,
-        operation: Optional[str] = None,
-        schema: Optional[str] = None,
+        backend_type: str | None = None,
+        operation: str | None = None,
+        schema: str | None = None,
         **context,
     ):
         context.update(
@@ -85,7 +85,7 @@ class BackendError(PipelineException):
 class ProcessorError(PipelineException):
     """Raised when a processor fails."""
 
-    def __init__(self, message: str, processor_type: Optional[str] = None, **context):
+    def __init__(self, message: str, processor_type: str | None = None, **context):
         context["processor_type"] = processor_type
         super().__init__(message, context)
 

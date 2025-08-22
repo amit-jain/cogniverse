@@ -6,7 +6,7 @@ Generates embeddings using the existing embedding generator system.
 """
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from ..processor_base import BaseProcessor
 
@@ -36,7 +36,7 @@ class EmbeddingProcessor(BaseProcessor):
 
     @classmethod
     def from_config(
-        cls, config: Dict[str, Any], logger: logging.Logger
+        cls, config: dict[str, Any], logger: logging.Logger
     ) -> "EmbeddingProcessor":
         """Create embedding processor from configuration."""
         return cls(
@@ -45,7 +45,7 @@ class EmbeddingProcessor(BaseProcessor):
             model_name=config.get("model_name", "vidore/colpali-v1.2"),
         )
 
-    def generate_embeddings(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def generate_embeddings(self, data: dict[str, Any]) -> dict[str, Any]:
         """Generate embeddings (placeholder - delegates to existing system)."""
         self.logger.info("🧬 Embedding generation delegated to existing system")
 

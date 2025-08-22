@@ -7,12 +7,12 @@ including request statistics, response time analysis, and outlier detection.
 
 import json
 import logging
-from typing import Dict, List, Any, Optional
-from datetime import datetime
 from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any
+
 import numpy as np
 import pandas as pd
-
 import phoenix as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -29,10 +29,10 @@ class TraceMetrics:
     duration_ms: float
     operation: str
     status: str
-    profile: Optional[str] = None
-    strategy: Optional[str] = None
-    error: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    profile: str | None = None
+    strategy: str | None = None
+    error: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class PhoenixAnalytics:
@@ -45,11 +45,11 @@ class PhoenixAnalytics:
 
     def get_traces(
         self,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
-        operation_filter: Optional[str] = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        operation_filter: str | None = None,
         limit: int = 10000,
-    ) -> List[TraceMetrics]:
+    ) -> list[TraceMetrics]:
         """
         Fetch traces from Phoenix with optional filters
 
@@ -153,8 +153,8 @@ class PhoenixAnalytics:
         return metrics
 
     def calculate_statistics(
-        self, traces: List[TraceMetrics], group_by: Optional[str] = None
-    ) -> Dict[str, Any]:
+        self, traces: list[TraceMetrics], group_by: str | None = None
+    ) -> dict[str, Any]:
         """
         Calculate comprehensive statistics from traces
 
@@ -291,7 +291,7 @@ class PhoenixAnalytics:
 
     def create_time_series_plot(
         self,
-        traces: List[TraceMetrics],
+        traces: list[TraceMetrics],
         metric: str = "duration_ms",
         aggregation: str = "mean",
         time_window: str = "1min",
@@ -361,8 +361,8 @@ class PhoenixAnalytics:
                 y=aggregated.values,
                 mode="lines+markers",
                 name=y_title,
-                line=dict(color="blue", width=2),
-                marker=dict(size=6),
+                line={"color": "blue", "width": 2},
+                marker={"size": 6},
             )
         )
 
@@ -377,7 +377,7 @@ class PhoenixAnalytics:
                     y=p95.values,
                     mode="lines",
                     name="P95",
-                    line=dict(color="red", width=1, dash="dash"),
+                    line={"color": "red", "width": 1, "dash": "dash"},
                 )
             )
 
@@ -387,7 +387,7 @@ class PhoenixAnalytics:
                     y=p50.values,
                     mode="lines",
                     name="P50 (Median)",
-                    line=dict(color="green", width=1, dash="dot"),
+                    line={"color": "green", "width": 1, "dash": "dot"},
                 )
             )
 
@@ -404,9 +404,9 @@ class PhoenixAnalytics:
 
     def create_distribution_plot(
         self,
-        traces: List[TraceMetrics],
+        traces: list[TraceMetrics],
         metric: str = "duration_ms",
-        group_by: Optional[str] = None,
+        group_by: str | None = None,
     ) -> go.Figure:
         """
         Create distribution plot of metrics
@@ -530,7 +530,7 @@ class PhoenixAnalytics:
 
     def create_heatmap(
         self,
-        traces: List[TraceMetrics],
+        traces: list[TraceMetrics],
         x_field: str = "hour",
         y_field: str = "day",
         metric: str = "duration_ms",
@@ -599,7 +599,7 @@ class PhoenixAnalytics:
                 x=pivot_table.columns,
                 y=pivot_table.index,
                 colorscale="Viridis",
-                colorbar=dict(title=z_label),
+                colorbar={"title": z_label},
             )
         )
 
@@ -613,7 +613,7 @@ class PhoenixAnalytics:
         return fig
 
     def create_outlier_plot(
-        self, traces: List[TraceMetrics], metric: str = "duration_ms"
+        self, traces: list[TraceMetrics], metric: str = "duration_ms"
     ) -> go.Figure:
         """
         Create plot highlighting outliers
@@ -694,7 +694,7 @@ class PhoenixAnalytics:
                 y=normal_points[metric],
                 mode="markers",
                 name="Normal",
-                marker=dict(color="blue", size=6, opacity=0.6),
+                marker={"color": "blue", "size": 6, "opacity": 0.6},
                 text=normal_points["operation"],
                 hovertemplate=hover_format,
             )
@@ -707,7 +707,7 @@ class PhoenixAnalytics:
                 y=outlier_points[metric],
                 mode="markers",
                 name="Outliers",
-                marker=dict(color="red", size=10, symbol="x"),
+                marker={"color": "red", "size": 10, "symbol": "x"},
                 text=outlier_points["operation"],
                 hovertemplate=outlier_hover_format,
                 customdata=outlier_points["trace_id"],
@@ -775,7 +775,7 @@ class PhoenixAnalytics:
 
     def create_comparison_plot(
         self,
-        traces: List[TraceMetrics],
+        traces: list[TraceMetrics],
         compare_field: str = "profile",
         metric: str = "duration_ms",
     ) -> go.Figure:
@@ -853,10 +853,10 @@ class PhoenixAnalytics:
 
     def generate_report(
         self,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
-        output_file: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        output_file: str | None = None,
+    ) -> dict[str, Any]:
         """
         Generate comprehensive analytics report
 

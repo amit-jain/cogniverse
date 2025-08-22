@@ -7,7 +7,7 @@ without complex constructor parameters.
 """
 
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 from src.common.config import get_config
 
@@ -21,14 +21,14 @@ class VideoIngestionPipelineBuilder:
 
     def __init__(self):
         """Initialize builder with default values."""
-        self._config: Optional[PipelineConfig] = None
-        self._app_config: Optional[Dict[str, Any]] = None
-        self._schema_name: Optional[str] = None
+        self._config: PipelineConfig | None = None
+        self._app_config: dict[str, Any] | None = None
+        self._schema_name: str | None = None
         self._debug_mode: bool = False
-        self._video_dir: Optional[Path] = None
-        self._output_dir: Optional[Path] = None
-        self._backend: Optional[str] = None
-        self._max_frames: Optional[int] = None
+        self._video_dir: Path | None = None
+        self._output_dir: Path | None = None
+        self._backend: str | None = None
+        self._max_frames: int | None = None
         self._max_concurrent: int = 3
 
     def with_config(self, config: PipelineConfig) -> "VideoIngestionPipelineBuilder":
@@ -37,7 +37,7 @@ class VideoIngestionPipelineBuilder:
         return self
 
     def with_app_config(
-        self, app_config: Dict[str, Any]
+        self, app_config: dict[str, Any]
     ) -> "VideoIngestionPipelineBuilder":
         """Set application configuration."""
         self._app_config = app_config

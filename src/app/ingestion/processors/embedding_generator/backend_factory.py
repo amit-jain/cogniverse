@@ -4,7 +4,7 @@ Backend Factory - Creates backend clients
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
 from src.common.core.backend_registry import get_backend_registry
 from src.common.core.interfaces import IngestionBackend
@@ -17,8 +17,8 @@ class BackendFactory:
     def create(
         cls,
         backend_type: str,
-        config: Dict[str, Any],
-        logger: Optional[logging.Logger] = None,
+        config: dict[str, Any],
+        logger: logging.Logger | None = None,
     ) -> IngestionBackend:
         """Create a backend of the specified type using the backend registry
 

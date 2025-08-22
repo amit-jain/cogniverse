@@ -7,11 +7,10 @@ Provides three types of LLM-based evaluation:
 3. Hybrid: Combines both approaches for comprehensive evaluation
 """
 
-import logging
-import json
-from typing import List, Optional, Tuple
-from dataclasses import dataclass
 import asyncio
+import json
+import logging
+from dataclasses import dataclass
 
 from phoenix.experiments.evaluators.base import Evaluator
 from phoenix.experiments.types import EvaluationResult
@@ -24,12 +23,12 @@ class VideoMetadata:
     """Metadata for a video retrieved from database"""
 
     video_id: str
-    title: Optional[str] = None
-    description: Optional[str] = None
-    transcript: Optional[str] = None
-    tags: Optional[List[str]] = None
-    duration: Optional[float] = None
-    frame_descriptions: Optional[List[str]] = None
+    title: str | None = None
+    description: str | None = None
+    transcript: str | None = None
+    tags: list[str] | None = None
+    duration: float | None = None
+    frame_descriptions: list[str] | None = None
 
 
 class LLMJudgeBase:
@@ -126,7 +125,7 @@ class LLMJudgeBase:
             logger.error(f"LLM call failed: {e}")
             return f"Evaluation failed: {str(e)}"
 
-    def _extract_score_from_response(self, response: str) -> Tuple[float, str]:
+    def _extract_score_from_response(self, response: str) -> tuple[float, str]:
         """
         Extract numerical score and explanation from LLM response
 
@@ -223,7 +222,7 @@ class SyncLLMReferenceFreeEvaluator(Evaluator, LLMJudgeBase):
             )
 
         # Prepare prompt for multimodal LLM
-        system_prompt = """You are an expert evaluator for video search systems. 
+        system_prompt = """You are an expert evaluator for video search systems.
 You will be shown video frames from search results and need to evaluate how well they match the query.
 Provide a score from 0 to 10 and a brief explanation.
 Consider visual relevance, content match, and result quality."""
@@ -275,7 +274,7 @@ Please evaluate:
 Provide a score from 0-10 where:
 - 10 = Perfect match, exactly what was searched for
 - 7-9 = Good match, clearly relevant
-- 4-6 = Partial match, somewhat relevant  
+- 4-6 = Partial match, somewhat relevant
 - 1-3 = Poor match, barely relevant
 - 0 = No match at all
 
@@ -661,7 +660,7 @@ def create_llm_evaluators(
     model_name: str = "llava:7b",
     base_url: str = "http://localhost:11434",
     include_hybrid: bool = True,
-) -> List[Evaluator]:
+) -> list[Evaluator]:
     """
     Create LLM-based evaluators for Phoenix experiments
 

@@ -8,7 +8,7 @@ Extracts and transcribes audio from videos using Faster-Whisper.
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import torch
 
@@ -16,7 +16,7 @@ import torch
 class AudioTranscriber:
     """Handles audio transcription from videos"""
 
-    def __init__(self, model_size: str = "base", device: Optional[str] = None):
+    def __init__(self, model_size: str = "base", device: str | None = None):
         self.model_size = model_size
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self._model = None
@@ -30,11 +30,11 @@ class AudioTranscriber:
                 self._model = WhisperModel(self.model_size, device=self.device)
                 print(f"  📝 Loaded Whisper model: {self.model_size} on {self.device}")
             except ImportError as e:
-                raise ImportError(f"faster-whisper import failed: {e}")
+                raise ImportError(f"faster-whisper import failed: {e}") from e
 
     def transcribe_audio(
         self, video_path: Path, output_dir: Path = None
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Extract and transcribe audio from video"""
         print(f"🎵 Transcribing audio from: {video_path.name}")
 

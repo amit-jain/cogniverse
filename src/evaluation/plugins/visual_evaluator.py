@@ -5,7 +5,8 @@ This plugin provides visual judge and quality evaluators for video search result
 """
 
 import logging
-from typing import Dict, Any, List
+from typing import Any
+
 from inspect_ai.scorer import Score, scorer
 
 logger = logging.getLogger(__name__)
@@ -29,10 +30,10 @@ class VisualEvaluatorPlugin:
 
         async def score(state, target=None) -> Score:
             """Score video search results using visual judge."""
+            from src.common.config import get_config
             from src.evaluation.evaluators.configurable_visual_judge import (
                 ConfigurableVisualJudge,
             )
-            from src.common.config import get_config
 
             config = get_config()
             evaluator_config = config.get("evaluators", {}).get(evaluator_name, {})
@@ -180,7 +181,7 @@ def register():
     return True
 
 
-def get_visual_scorers(config: Dict[str, Any]) -> List:
+def get_visual_scorers(config: dict[str, Any]) -> list:
     """
     Get visual evaluator scorers based on configuration.
 

@@ -4,25 +4,25 @@ Comprehensive Router implementation with tiered architecture.
 Implements the hybrid approach described in COMPREHENSIVE_ROUTING.md.
 """
 
+import json
 import logging
 import time
-from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass
 from enum import Enum
-import json
+from typing import Any
 
 from .base import (
-    RoutingStrategy,
-    RoutingDecision,
-    SearchModality,
     GenerationType,
+    RoutingDecision,
     RoutingMetrics,
+    RoutingStrategy,
+    SearchModality,
 )
 from .strategies import (
     GLiNERRoutingStrategy,
-    LLMRoutingStrategy,
     KeywordRoutingStrategy,
     LangExtractRoutingStrategy,
+    LLMRoutingStrategy,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,10 +62,10 @@ class RouterConfig:
     metrics_batch_size: int = 100
 
     # Strategy configurations
-    gliner_config: Optional[Dict[str, Any]] = None
-    llm_config: Optional[Dict[str, Any]] = None
-    langextract_config: Optional[Dict[str, Any]] = None
-    keyword_config: Optional[Dict[str, Any]] = None
+    gliner_config: dict[str, Any] | None = None
+    llm_config: dict[str, Any] | None = None
+    langextract_config: dict[str, Any] | None = None
+    keyword_config: dict[str, Any] | None = None
 
     # Auto-optimization settings
     enable_auto_optimization: bool = True
@@ -83,7 +83,7 @@ class ComprehensiveRouter:
     - Tier 3 (Fallback): Keyword-based for ultimate reliability
     """
 
-    def __init__(self, config: Optional[RouterConfig] = None):
+    def __init__(self, config: RouterConfig | None = None):
         """
         Initialize the comprehensive router.
 
@@ -91,10 +91,10 @@ class ComprehensiveRouter:
             config: Router configuration
         """
         self.config = config or RouterConfig()
-        self.strategies: Dict[RoutingTier, RoutingStrategy] = {}
+        self.strategies: dict[RoutingTier, RoutingStrategy] = {}
         self._initialize_strategies()
-        self.cache: Dict[str, Tuple[RoutingDecision, float]] = {}
-        self.metrics_buffer: List[RoutingMetrics] = []
+        self.cache: dict[str, tuple[RoutingDecision, float]] = {}
+        self.metrics_buffer: list[RoutingMetrics] = []
         self.query_count = 0
 
     def _initialize_strategies(self):
@@ -147,7 +147,7 @@ class ComprehensiveRouter:
             logger.info("Initialized Fallback (Keyword) routing strategy")
 
     async def route(
-        self, query: str, context: Optional[Dict[str, Any]] = None
+        self, query: str, context: dict[str, Any] | None = None
     ) -> RoutingDecision:
         """
         Route a query through the tiered architecture.
@@ -268,8 +268,8 @@ class ComprehensiveRouter:
         return default_decision
 
     async def _try_fast_path(
-        self, query: str, context: Optional[Dict[str, Any]]
-    ) -> Optional[RoutingDecision]:
+        self, query: str, context: dict[str, Any] | None
+    ) -> RoutingDecision | None:
         """
         Try the fast path (GLiNER) routing.
 
@@ -294,9 +294,9 @@ class ComprehensiveRouter:
     async def _try_slow_path(
         self,
         query: str,
-        context: Optional[Dict[str, Any]],
-        fast_decision: Optional[RoutingDecision],
-    ) -> Optional[RoutingDecision]:
+        context: dict[str, Any] | None,
+        fast_decision: RoutingDecision | None,
+    ) -> RoutingDecision | None:
         """
         Try the slow path (LLM) routing.
 
@@ -333,8 +333,8 @@ class ComprehensiveRouter:
             return None
 
     async def _try_langextract(
-        self, query: str, context: Optional[Dict[str, Any]]
-    ) -> Optional[RoutingDecision]:
+        self, query: str, context: dict[str, Any] | None
+    ) -> RoutingDecision | None:
         """
         Try LangExtract routing for structured extraction.
 
@@ -357,7 +357,7 @@ class ComprehensiveRouter:
             return None
 
     async def _try_fallback(
-        self, query: str, context: Optional[Dict[str, Any]]
+        self, query: str, context: dict[str, Any] | None
     ) -> RoutingDecision:
         """
         Try the fallback (keyword) routing.
@@ -374,7 +374,7 @@ class ComprehensiveRouter:
         decision.metadata["tier"] = RoutingTier.FALLBACK.value
         return decision
 
-    def _check_cache(self, query: str) -> Optional[RoutingDecision]:
+    def _check_cache(self, query: str) -> RoutingDecision | None:
         """
         Check if a routing decision is cached.
 
@@ -432,7 +432,7 @@ class ComprehensiveRouter:
         query: str,
         decision: RoutingDecision,
         execution_time: float,
-        tier: Optional[RoutingTier],
+        tier: RoutingTier | None,
     ):
         """
         Record routing metrics for analysis.
@@ -493,7 +493,7 @@ class ComprehensiveRouter:
 
             self.metrics_buffer.clear()
 
-    def get_performance_report(self) -> Dict[str, Any]:
+    def get_performance_report(self) -> dict[str, Any]:
         """
         Get a comprehensive performance report.
 
@@ -513,7 +513,7 @@ class ComprehensiveRouter:
         return report
 
     async def optimize_routing(
-        self, training_data: Optional[List[Tuple[str, RoutingDecision]]] = None
+        self, training_data: list[tuple[str, RoutingDecision]] | None = None
     ):
         """
         Optimize routing strategies based on collected metrics.
@@ -589,13 +589,13 @@ class TieredRouter(ComprehensiveRouter):
     Provides additional methods for tier management and optimization.
     """
 
-    def __init__(self, config: Optional[RouterConfig] = None):
+    def __init__(self, config: RouterConfig | None = None):
         super().__init__(config)
-        self.tier_usage_stats = {tier: 0 for tier in RoutingTier}
-        self.tier_success_stats = {tier: 0 for tier in RoutingTier}
+        self.tier_usage_stats = dict.fromkeys(RoutingTier, 0)
+        self.tier_success_stats = dict.fromkeys(RoutingTier, 0)
 
     async def route(
-        self, query: str, context: Optional[Dict[str, Any]] = None
+        self, query: str, context: dict[str, Any] | None = None
     ) -> RoutingDecision:
         """Enhanced routing with tier tracking."""
         decision = await super().route(query, context)
@@ -641,7 +641,7 @@ class TieredRouter(ComprehensiveRouter):
                 "Consider improving primary strategies."
             )
 
-    def get_tier_statistics(self) -> Dict[str, Any]:
+    def get_tier_statistics(self) -> dict[str, Any]:
         """Get detailed statistics for each tier."""
         stats = {}
 

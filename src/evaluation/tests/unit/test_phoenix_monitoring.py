@@ -2,10 +2,11 @@
 Unit tests for Phoenix monitoring module.
 """
 
-import pytest
-from unittest.mock import Mock, patch
 import threading
 import time
+from unittest.mock import Mock, patch
+
+import pytest
 
 from src.evaluation.phoenix.monitoring import (
     AlertThresholds,

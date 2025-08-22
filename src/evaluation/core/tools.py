@@ -2,8 +2,8 @@
 Tools for Inspect AI solvers to interact with external services.
 """
 
-from typing import List, Dict, Any
 import logging
+from typing import Any
 
 from inspect_ai.tool import tool
 
@@ -18,7 +18,7 @@ def video_search_tool():
 
     async def run(
         query: str, profile: str, strategy: str, top_k: int = 10
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Execute a search using the Cogniverse search service.
 

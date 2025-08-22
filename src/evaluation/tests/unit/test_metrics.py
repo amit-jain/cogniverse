@@ -5,12 +5,12 @@ Unit tests for evaluation metrics.
 import pytest
 
 from src.evaluation.metrics.custom import (
-    calculate_mrr,
-    calculate_recall_at_k,
-    calculate_precision_at_k,
-    calculate_ndcg,
     calculate_map,
     calculate_metrics_suite,
+    calculate_mrr,
+    calculate_ndcg,
+    calculate_precision_at_k,
+    calculate_recall_at_k,
 )
 
 
@@ -136,7 +136,7 @@ class TestReferenceBasedMetrics:
         assert "precision@5" in metrics
 
         # Check metric values are in valid range
-        for key, value in metrics.items():
+        for _key, value in metrics.items():
             assert 0 <= value <= 1
 
 

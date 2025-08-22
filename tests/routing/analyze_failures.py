@@ -5,8 +5,8 @@ Analyze current failures to identify optimization opportunities.
 """
 
 import asyncio
-import sys
 import os
+import sys
 from collections import defaultdict
 
 # Add src directory to path
@@ -20,7 +20,7 @@ def load_test_queries(filename="test_queries.txt"):
     queries = []
     test_file = os.path.join(os.path.dirname(__file__), filename)
 
-    with open(test_file, "r") as f:
+    with open(test_file) as f:
         for line_num, line in enumerate(f, 1):
             line = line.strip()
             if not line or line.startswith("#"):

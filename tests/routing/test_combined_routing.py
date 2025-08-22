@@ -6,15 +6,15 @@ Tests both LLM and GLiNER models on query analysis, routing decisions, and tempo
 """
 
 import asyncio
-import json
 import csv
+import datetime
+import json
+import re
 import sys
 import time
-import datetime
-import re
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple, Any
-from dataclasses import dataclass, asdict
+from typing import Any
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -69,7 +69,7 @@ class CombinedRoutingTester:
     def __init__(self):
         self.config = get_config()
 
-    def load_test_queries(self, filename: str = "test_queries.txt") -> List[TestQuery]:
+    def load_test_queries(self, filename: str = "test_queries.txt") -> list[TestQuery]:
         """Load test queries from file."""
         queries = []
 
@@ -91,7 +91,7 @@ class CombinedRoutingTester:
             sys.exit(1)
 
         try:
-            with open(test_file, "r") as f:
+            with open(test_file) as f:
                 for line_num, line in enumerate(f, 1):
                     line = line.strip()
 
@@ -120,7 +120,7 @@ class CombinedRoutingTester:
         print(f"✅ Loaded {len(queries)} test queries from {test_file}")
         return queries
 
-    def normalize_routing(self, routing_result: Dict[str, Any]) -> str:
+    def normalize_routing(self, routing_result: dict[str, Any]) -> str:
         """Convert routing analysis to normalized format."""
         needs_video = routing_result.get("needs_video_search", False)
         needs_text = routing_result.get("needs_text_search", False)
@@ -134,7 +134,7 @@ class CombinedRoutingTester:
         else:
             return "video"  # Default fallback
 
-    def normalize_temporal_llm(self, temporal_info: Dict[str, Any]) -> str:
+    def normalize_temporal_llm(self, temporal_info: dict[str, Any]) -> str:
         """Convert LLM temporal analysis to normalized format."""
         if not temporal_info:
             return "none"
@@ -160,7 +160,7 @@ class CombinedRoutingTester:
         else:
             return "none"
 
-    def normalize_temporal_gliner(self, result: Dict[str, Any]) -> str:
+    def normalize_temporal_gliner(self, result: dict[str, Any]) -> str:
         """Convert GLiNER temporal analysis to normalized format."""
         return result.get("temporal_pattern", "none")
 
@@ -395,8 +395,8 @@ class CombinedRoutingTester:
             )
 
     async def test_llm_model(
-        self, model_name: str, queries: List[TestQuery]
-    ) -> List[TestResult]:
+        self, model_name: str, queries: list[TestQuery]
+    ) -> list[TestResult]:
         """Test all queries with a specific LLM model."""
         print(f"\n🧪 Testing LLM: {model_name}")
         print(f"📊 Running {len(queries)} queries...")
@@ -416,7 +416,7 @@ class CombinedRoutingTester:
 
     # =================== GLiNER TESTING METHODS ===================
 
-    def convert_queries_to_gliner_format(self, queries: List[TestQuery]) -> List[Tuple]:
+    def convert_queries_to_gliner_format(self, queries: list[TestQuery]) -> list[tuple]:
         """Convert TestQuery objects to GLiNER test format."""
         gliner_queries = []
         for query in queries:
@@ -429,7 +429,7 @@ class CombinedRoutingTester:
         return gliner_queries
 
     async def test_query_with_gliner_model(
-        self, analyzer: QueryAnalyzer, query_tuple: Tuple, model_name: str
+        self, analyzer: QueryAnalyzer, query_tuple: tuple, model_name: str
     ) -> TestResult:
         """Test a single query with GLiNER model."""
         query, expected_video, expected_text, expected_temporal = query_tuple
@@ -520,8 +520,8 @@ class CombinedRoutingTester:
             )
 
     async def test_gliner_model(
-        self, model_name: str, query_tuples: List[Tuple]
-    ) -> List[TestResult]:
+        self, model_name: str, query_tuples: list[tuple]
+    ) -> list[TestResult]:
         """Test all queries with a specific GLiNER model."""
         print(f"\n🤖 Testing GLiNER: {model_name.split('/')[-1]}")
         print(f"📊 Running {len(query_tuples)} queries...")
@@ -553,7 +553,7 @@ class CombinedRoutingTester:
 
     # =================== SCORING AND REPORTING ===================
 
-    def calculate_score(self, results: List[TestResult]) -> ModelScore:
+    def calculate_score(self, results: list[TestResult]) -> ModelScore:
         """Calculate overall score for a model."""
         if not results:
             return None
@@ -591,7 +591,7 @@ class CombinedRoutingTester:
         )
 
     def save_detailed_results(
-        self, all_results: List[TestResult], filename: str = "combined_test_results.csv"
+        self, all_results: list[TestResult], filename: str = "combined_test_results.csv"
     ):
         """Save detailed results to CSV."""
         with open(filename, "w", newline="") as csvfile:
@@ -632,7 +632,7 @@ class CombinedRoutingTester:
 
     def save_summary_report(
         self,
-        scores: List[ModelScore],
+        scores: list[ModelScore],
         filename: str = "combined_comparison_report.json",
     ):
         """Save summary report to JSON."""
@@ -666,7 +666,7 @@ class CombinedRoutingTester:
 
         print(f"📊 Summary report saved to: {filename}")
 
-    def print_results(self, scores: List[ModelScore]):
+    def print_results(self, scores: list[ModelScore]):
         """Print formatted results to console."""
         print("\n" + "=" * 80)
         print("🏆 COMBINED LLM & GLiNER ROUTING TEST RESULTS")
@@ -733,9 +733,9 @@ class CombinedRoutingTester:
 
     async def run_combined_test(
         self,
-        llm_models: List[str] = None,
+        llm_models: list[str] = None,
         test_gliner: bool = True,
-        queries: List[TestQuery] = None,
+        queries: list[TestQuery] = None,
     ):
         """Run comprehensive test of both LLM and GLiNER models."""
         print("🚀 Starting Combined LLM & GLiNER Routing Test Suite")

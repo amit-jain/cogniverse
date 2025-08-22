@@ -6,12 +6,12 @@ Use a larger teacher model to generate high-quality routing decisions,
 then distill this knowledge into a smaller student model (DeepSeek 1.5b or Gemma 1b).
 """
 
-import dspy
-import json
 import asyncio
-from typing import List, Dict, Tuple
+import json
 import time
 from datetime import datetime
+
+import dspy
 
 
 class QueryRoutingSignature(dspy.Signature):
@@ -72,7 +72,7 @@ class RoutingDistillation:
         self.teacher = TeacherRouter()
         self.student = StudentRouter()
 
-    def generate_training_data(self, queries: List[str]) -> List[dspy.Example]:
+    def generate_training_data(self, queries: list[str]) -> list[dspy.Example]:
         """Use teacher model to generate high-quality training data."""
         print("🧑‍🏫 Generating training data with teacher model...")
         print(f"   Teacher: {self.teacher_model}")
@@ -115,7 +115,7 @@ class RoutingDistillation:
         return training_examples
 
     def distill_to_student(
-        self, training_examples: List[dspy.Example]
+        self, training_examples: list[dspy.Example]
     ) -> StudentRouter:
         """Distill teacher's knowledge to student model using DSPy optimization."""
         print("\n🎓 Distilling to student model...")
@@ -167,7 +167,7 @@ class RoutingDistillation:
         return optimized_student
 
     def evaluate_student(
-        self, student: StudentRouter, test_queries: List[Tuple[str, Dict]]
+        self, student: StudentRouter, test_queries: list[tuple[str, dict]]
     ):
         """Evaluate distilled student model."""
         print("\n📊 Evaluating student model...")
@@ -222,7 +222,7 @@ class RoutingDistillation:
         return accuracy
 
 
-def create_comprehensive_query_set() -> List[str]:
+def create_comprehensive_query_set() -> list[str]:
     """Create diverse queries for teacher to label."""
     queries = [
         # Video queries

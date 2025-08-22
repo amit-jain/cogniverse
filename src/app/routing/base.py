@@ -3,12 +3,12 @@
 Base classes and interfaces for the comprehensive routing system.
 """
 
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional, List
 from datetime import datetime
 from enum import Enum
-import json
+from typing import Any
 
 
 class SearchModality(Enum):
@@ -38,12 +38,12 @@ class RoutingDecision:
     generation_type: GenerationType
     confidence_score: float = 0.0
     routing_method: str = ""
-    temporal_info: Optional[Dict[str, Any]] = None
-    entities_detected: Optional[List[Dict[str, Any]]] = None
-    reasoning: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    temporal_info: dict[str, Any] | None = None
+    entities_detected: list[dict[str, Any]] | None = None
+    reasoning: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary format."""
         return {
             "search_modality": self.search_modality.value,
@@ -61,7 +61,7 @@ class RoutingDecision:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "RoutingDecision":
+    def from_dict(cls, data: dict[str, Any]) -> "RoutingDecision":
         """Create from dictionary format."""
         return cls(
             search_modality=SearchModality(data.get("search_modality", "both")),
@@ -85,10 +85,10 @@ class RoutingMetrics:
     decision: RoutingDecision
     execution_time: float
     success: bool
-    error: Optional[str] = None
+    error: str | None = None
     timestamp: datetime = field(default_factory=datetime.now)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary format."""
         return {
             "query": self.query,
@@ -106,7 +106,7 @@ class RoutingStrategy(ABC):
     Each strategy implements a different approach to query routing.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         """
         Initialize the routing strategy.
 
@@ -114,12 +114,12 @@ class RoutingStrategy(ABC):
             config: Strategy-specific configuration
         """
         self.config = config or {}
-        self.metrics_history: List[RoutingMetrics] = []
+        self.metrics_history: list[RoutingMetrics] = []
         self.name = self.__class__.__name__
 
     @abstractmethod
     async def route(
-        self, query: str, context: Optional[Dict[str, Any]] = None
+        self, query: str, context: dict[str, Any] | None = None
     ) -> RoutingDecision:
         """
         Route a query to determine search modality and generation type.
@@ -153,7 +153,7 @@ class RoutingStrategy(ABC):
         decision: RoutingDecision,
         execution_time: float,
         success: bool,
-        error: Optional[str] = None,
+        error: str | None = None,
     ):
         """
         Record routing metrics for performance tracking.
@@ -174,7 +174,7 @@ class RoutingStrategy(ABC):
         )
         self.metrics_history.append(metrics)
 
-    def get_performance_stats(self) -> Dict[str, Any]:
+    def get_performance_stats(self) -> dict[str, Any]:
         """
         Get performance statistics for this strategy.
 
@@ -223,7 +223,7 @@ class RoutingStrategy(ABC):
         Args:
             filepath: Path to load metrics from
         """
-        with open(filepath, "r") as f:
+        with open(filepath) as f:
             metrics_data = json.load(f)
 
         self.metrics_history = []
@@ -241,7 +241,7 @@ class TemporalExtractor:
     """
 
     @staticmethod
-    def extract_temporal_info(query: str) -> Optional[Dict[str, Any]]:
+    def extract_temporal_info(query: str) -> dict[str, Any] | None:
         """
         Extract temporal information from a query.
 

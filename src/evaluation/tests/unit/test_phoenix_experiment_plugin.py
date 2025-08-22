@@ -2,13 +2,14 @@
 Unit tests for Phoenix experiment plugin.
 """
 
-import pytest
 from unittest.mock import Mock, patch
+
+import pytest
 
 from src.evaluation.plugins.phoenix_experiment import (
     PhoenixExperimentPlugin,
-    register,
     get_phoenix_evaluators,
+    register,
 )
 
 

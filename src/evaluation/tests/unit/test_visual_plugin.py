@@ -2,8 +2,9 @@
 Unit tests for visual evaluator plugin.
 """
 
-import pytest
 from unittest.mock import Mock, patch
+
+import pytest
 
 from src.evaluation.plugins.visual_evaluator import (
     VisualEvaluatorPlugin,

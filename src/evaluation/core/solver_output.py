@@ -6,9 +6,9 @@ search results, metadata) through Inspect AI's solver->scorer pipeline.
 """
 
 import json
-from typing import Dict, Any, Optional
-from dataclasses import dataclass, asdict
 import logging
+from dataclasses import asdict, dataclass
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +22,9 @@ class EvaluationOutput:
     """
 
     query: str
-    search_configs: Dict[str, Dict[str, Any]]  # config_key -> results
-    phoenix_trace_id: Optional[str] = None
-    metadata: Dict[str, Any] = None
+    search_configs: dict[str, dict[str, Any]]  # config_key -> results
+    phoenix_trace_id: str | None = None
+    metadata: dict[str, Any] = None
 
     def to_json(self) -> str:
         """Serialize to JSON string for Inspect AI."""
@@ -53,9 +53,9 @@ class EvaluationOutput:
 
 def pack_solver_output(
     query: str,
-    search_results: Dict[str, Any],
-    phoenix_trace_id: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None,
+    search_results: dict[str, Any],
+    phoenix_trace_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> str:
     """
     Pack solver results into a JSON string for Inspect AI.

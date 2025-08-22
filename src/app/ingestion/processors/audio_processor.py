@@ -9,7 +9,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from ..processor_base import BaseProcessor
 
@@ -40,7 +40,7 @@ class AudioProcessor(BaseProcessor):
 
     @classmethod
     def from_config(
-        cls, config: Dict[str, Any], logger: logging.Logger
+        cls, config: dict[str, Any], logger: logging.Logger
     ) -> "AudioProcessor":
         """Create audio processor from configuration."""
         return cls(
@@ -74,7 +74,7 @@ class AudioProcessor(BaseProcessor):
 
     def transcribe_audio(
         self, video_path: Path, output_dir: Path = None, cache=None
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Transcribe audio from video."""
         self.logger.info(f"🎤 Transcribing audio from: {video_path.name}")
 

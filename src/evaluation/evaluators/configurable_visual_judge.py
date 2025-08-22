@@ -2,14 +2,14 @@
 Configurable Visual Judge that uses config to determine provider (Ollama, Modal, etc.)
 """
 
-import logging
-from typing import List, Dict, Optional, Tuple
-from pathlib import Path
 import base64
-import requests
+import logging
+from pathlib import Path
 
+import requests
 from phoenix.experiments.evaluators.base import Evaluator
 from phoenix.experiments.types import EvaluationResult
+
 from src.common.config import get_config
 
 logger = logging.getLogger(__name__)
@@ -84,7 +84,7 @@ class ConfigurableVisualJudge(Evaluator):
         sample_all = evaluator_config.get("sample_all_frames", False)
         max_total_frames = evaluator_config.get("max_total_frames", 60)
 
-        for i, result in enumerate(results[:max_videos], 1):  # Top N videos
+        for _i, result in enumerate(results[:max_videos], 1):  # Top N videos
             # First try to get video path
             video_path = self._get_video_path(result)
             if video_path:
@@ -158,7 +158,7 @@ class ConfigurableVisualJudge(Evaluator):
                 explanation=f"Visual evaluation failed: {str(e)}",
             )
 
-    def _get_video_path(self, result: Dict) -> Optional[str]:
+    def _get_video_path(self, result: dict) -> str | None:
         """Extract video path from result"""
         if isinstance(result, dict):
             video_id = result.get("video_id", result.get("source_id"))
@@ -189,7 +189,7 @@ class ConfigurableVisualJudge(Evaluator):
         num_frames: int = 30,
         timestamp: float = 0,
         sample_all: bool = False,
-    ) -> List[str]:
+    ) -> list[str]:
         """Extract multiple frames from video
 
         Args:
@@ -201,8 +201,9 @@ class ConfigurableVisualJudge(Evaluator):
         Returns:
             List of paths to extracted frame images
         """
-        import cv2
         import tempfile
+
+        import cv2
 
         frames = []
         try:
@@ -261,8 +262,8 @@ class ConfigurableVisualJudge(Evaluator):
             return base64.b64encode(img_file.read()).decode("utf-8")
 
     def _evaluate_with_ollama(
-        self, query: str, frame_paths: List[str]
-    ) -> Tuple[float, str]:
+        self, query: str, frame_paths: list[str]
+    ) -> tuple[float, str]:
         """
         Evaluate using Ollama (supports LLaVA, Qwen2-VL via Ollama)
         """
@@ -305,8 +306,8 @@ REASONING: [Your explanation of what you see and how well it matches]"""
         return self._parse_response(response_text)
 
     def _evaluate_with_modal(
-        self, query: str, frame_paths: List[str]
-    ) -> Tuple[float, str]:
+        self, query: str, frame_paths: list[str]
+    ) -> tuple[float, str]:
         """
         Evaluate using Modal deployment
         """
@@ -336,8 +337,8 @@ Format: SCORE: X/10, REASONING: explanation"""
         return self._parse_response(response_text)
 
     def _evaluate_with_openai(
-        self, query: str, frame_paths: List[str]
-    ) -> Tuple[float, str]:
+        self, query: str, frame_paths: list[str]
+    ) -> tuple[float, str]:
         """
         Evaluate using OpenAI API (GPT-4V)
         """
@@ -386,7 +387,7 @@ Format: SCORE: X/10, REASONING: explanation"""
         # Parse response
         return self._parse_response(response_text)
 
-    def _parse_response(self, response_text: str) -> Tuple[float, str]:
+    def _parse_response(self, response_text: str) -> tuple[float, str]:
         """Parse score and reasoning from response"""
         import re
 
@@ -418,7 +419,7 @@ Format: SCORE: X/10, REASONING: explanation"""
 
 def create_configurable_visual_evaluators(
     evaluator_name: str = "visual_judge",
-) -> List[Evaluator]:
+) -> list[Evaluator]:
     """
     Create visual evaluators using configured provider
 

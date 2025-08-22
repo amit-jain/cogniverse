@@ -2,14 +2,14 @@
 Custom evaluation metrics for video retrieval.
 """
 
-from typing import List, Dict
-import numpy as np
 import logging
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
 
-def calculate_mrr(results: List[str], expected: List[str]) -> float:
+def calculate_mrr(results: list[str], expected: list[str]) -> float:
     """
     Calculate Mean Reciprocal Rank.
 
@@ -30,7 +30,7 @@ def calculate_mrr(results: List[str], expected: List[str]) -> float:
     return 0.0
 
 
-def calculate_ndcg(results: List[str], expected: List[str], k: int = 10) -> float:
+def calculate_ndcg(results: list[str], expected: list[str], k: int = 10) -> float:
     """
     Calculate Normalized Discounted Cumulative Gain at K.
 
@@ -72,7 +72,7 @@ def calculate_ndcg(results: List[str], expected: List[str], k: int = 10) -> floa
 
 
 def calculate_precision_at_k(
-    results: List[str], expected: List[str], k: int = 5
+    results: list[str], expected: list[str], k: int = 5
 ) -> float:
     """
     Calculate Precision at K.
@@ -94,7 +94,7 @@ def calculate_precision_at_k(
     return relevant_retrieved / len(results_k)
 
 
-def calculate_recall_at_k(results: List[str], expected: List[str], k: int = 5) -> float:
+def calculate_recall_at_k(results: list[str], expected: list[str], k: int = 5) -> float:
     """
     Calculate Recall at K.
 
@@ -115,7 +115,7 @@ def calculate_recall_at_k(results: List[str], expected: List[str], k: int = 5) -
     return relevant_retrieved / len(expected)
 
 
-def calculate_f1_at_k(results: List[str], expected: List[str], k: int = 5) -> float:
+def calculate_f1_at_k(results: list[str], expected: list[str], k: int = 5) -> float:
     """
     Calculate F1 score at K.
 
@@ -137,7 +137,7 @@ def calculate_f1_at_k(results: List[str], expected: List[str], k: int = 5) -> fl
 
 
 def calculate_map(
-    results_list: List[List[str]], expected_list: List[List[str]]
+    results_list: list[list[str]], expected_list: list[list[str]]
 ) -> float:
     """
     Calculate Mean Average Precision across multiple queries.
@@ -157,7 +157,7 @@ def calculate_map(
 
     average_precisions = []
 
-    for results, expected in zip(results_list, expected_list):
+    for results, expected in zip(results_list, expected_list, strict=False):
         if not expected:
             continue
 
@@ -185,8 +185,8 @@ def calculate_map(
 
 
 def calculate_metrics_suite(
-    results: List[str], expected: List[str], k_values: List[int] = [1, 5, 10]
-) -> Dict[str, float]:
+    results: list[str], expected: list[str], k_values: list[int] = None
+) -> dict[str, float]:
     """
     Calculate a suite of metrics for a single query.
 
@@ -198,6 +198,8 @@ def calculate_metrics_suite(
     Returns:
         Dictionary of metric names to scores
     """
+    if k_values is None:
+        k_values = [1, 5, 10]
     metrics = {
         "mrr": calculate_mrr(results, expected),
         "ndcg": calculate_ndcg(results, expected),

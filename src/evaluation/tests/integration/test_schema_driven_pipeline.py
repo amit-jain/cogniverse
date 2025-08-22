@@ -5,25 +5,26 @@ These tests verify that the evaluation system actually works with
 different schema types without hardcoded assumptions.
 """
 
-import pytest
 from unittest.mock import Mock
 
+import pytest
+
+from src.evaluation.core.ground_truth import SchemaAwareGroundTruthStrategy
 from src.evaluation.core.schema_analyzer import (
+    DefaultSchemaAnalyzer,
     get_schema_analyzer,
     register_analyzer,
-    DefaultSchemaAnalyzer,
 )
-from src.evaluation.plugins.video_analyzer import VideoSchemaAnalyzer
+from src.evaluation.core.scorers import (
+    diversity_scorer,
+    precision_scorer,
+    recall_scorer,
+)
 from src.evaluation.plugins.document_analyzer import (
     DocumentSchemaAnalyzer,
     ImageSchemaAnalyzer,
 )
-from src.evaluation.core.scorers import (
-    precision_scorer,
-    recall_scorer,
-    diversity_scorer,
-)
-from src.evaluation.core.ground_truth import SchemaAwareGroundTruthStrategy
+from src.evaluation.plugins.video_analyzer import VideoSchemaAnalyzer
 
 
 class TestSchemaAnalyzerIntegration:

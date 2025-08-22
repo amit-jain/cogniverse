@@ -6,7 +6,7 @@ Container for processing strategies that works with any number and type of strat
 """
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from .processor_base import BaseStrategy
 
@@ -24,7 +24,7 @@ class ProcessingStrategySet:
             **strategies: Named strategies (e.g., segmentation=FrameStrategy(), transcription=AudioStrategy())
         """
         # Store strategies dynamically
-        self._strategies: Dict[str, BaseStrategy] = {}
+        self._strategies: dict[str, BaseStrategy] = {}
 
         for name, strategy in strategies.items():
             if isinstance(strategy, BaseStrategy):
@@ -32,7 +32,7 @@ class ProcessingStrategySet:
             else:
                 raise ValueError(f"Strategy '{name}' must extend BaseStrategy")
 
-    def get_all_strategies(self) -> List[BaseStrategy]:
+    def get_all_strategies(self) -> list[BaseStrategy]:
         """Get all strategies - simple and explicit."""
         return list(self._strategies.values())
 
@@ -44,11 +44,11 @@ class ProcessingStrategySet:
         """Check if strategy exists."""
         return name in self._strategies
 
-    def list_strategy_names(self) -> List[str]:
+    def list_strategy_names(self) -> list[str]:
         """List all strategy names."""
         return list(self._strategies.keys())
 
-    def get_all_required_processors(self) -> Dict[str, Dict[str, Any]]:
+    def get_all_required_processors(self) -> dict[str, dict[str, Any]]:
         """Get all required processors from all strategies."""
         all_requirements = {}
         for strategy in self._strategies.values():
@@ -79,7 +79,7 @@ class ProcessingStrategySet:
 
     async def process(
         self, video_path: Path, processor_manager, pipeline_context
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Process through all strategies dynamically.
 
@@ -142,8 +142,8 @@ class ProcessingStrategySet:
         video_path: Path,
         processor_manager,
         pipeline_context,
-        accumulated_results: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        accumulated_results: dict[str, Any],
+    ) -> dict[str, Any]:
         """Process a single strategy with proper method dispatch."""
 
         # For backward compatibility, handle known strategy types
@@ -182,7 +182,7 @@ class ProcessingStrategySet:
 
     async def _process_segmentation(
         self, strategy, video_path: Path, processor_manager, pipeline_context
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Process segmentation strategy."""
         # Get the required processor type from strategy requirements
         requirements = strategy.get_required_processors()
@@ -253,8 +253,8 @@ class ProcessingStrategySet:
         video_path: Path,
         processor_manager,
         pipeline_context,
-        accumulated_results: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        accumulated_results: dict[str, Any],
+    ) -> dict[str, Any]:
         """Process transcription strategy."""
         if not pipeline_context.config.transcribe_audio:
             return {}
@@ -279,8 +279,8 @@ class ProcessingStrategySet:
         video_path: Path,
         processor_manager,
         pipeline_context,
-        accumulated_results: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        accumulated_results: dict[str, Any],
+    ) -> dict[str, Any]:
         """Process description strategy."""
         if not pipeline_context.config.generate_descriptions:
             return {}
@@ -304,8 +304,8 @@ class ProcessingStrategySet:
         video_path: Path,
         processor_manager,
         pipeline_context,
-        accumulated_results: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        accumulated_results: dict[str, Any],
+    ) -> dict[str, Any]:
         """Process embedding strategy."""
         if not pipeline_context.config.generate_embeddings:
             return {}

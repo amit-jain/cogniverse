@@ -4,19 +4,21 @@ Auto-tuning optimization layer for the comprehensive routing system.
 Implements continuous learning and adaptation based on the COMPREHENSIVE_ROUTING.md architecture.
 """
 
-import logging
-import json
 import asyncio
-from typing import Dict, Any, Optional, List, Tuple, Callable
-from dataclasses import dataclass, asdict
+import json
+import logging
+from collections import defaultdict, deque
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
+
 import numpy as np
-from collections import deque, defaultdict
 
 from .base import (
-    RoutingStrategy,
     RoutingDecision,
+    RoutingStrategy,
     SearchModality,
 )
 
@@ -38,7 +40,7 @@ class OptimizationMetrics:
     error_rate: float
     sample_count: int
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         data = asdict(self)
         data["timestamp"] = self.timestamp.isoformat()
@@ -88,7 +90,7 @@ class RoutingOptimizer:
     Tracks performance and triggers optimization when needed.
     """
 
-    def __init__(self, config: Optional[OptimizationConfig] = None):
+    def __init__(self, config: OptimizationConfig | None = None):
         """
         Initialize the routing optimizer.
 
@@ -119,9 +121,9 @@ class RoutingOptimizer:
             self.config = config or OptimizationConfig()
 
         self.performance_history: deque = deque(maxlen=self.config.max_history_size)
-        self.optimization_history: List[OptimizationMetrics] = []
+        self.optimization_history: list[OptimizationMetrics] = []
         self.last_optimization_time = datetime.now()
-        self.baseline_metrics: Optional[OptimizationMetrics] = None
+        self.baseline_metrics: OptimizationMetrics | None = None
 
         # Create directories if needed
         self.config.checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -131,8 +133,8 @@ class RoutingOptimizer:
         self,
         query: str,
         predicted: RoutingDecision,
-        actual: Optional[RoutingDecision] = None,
-        user_feedback: Optional[Dict[str, Any]] = None,
+        actual: RoutingDecision | None = None,
+        user_feedback: dict[str, Any] | None = None,
     ):
         """
         Track routing performance for a single query.
@@ -330,7 +332,7 @@ class AutoTuningOptimizer(RoutingOptimizer):
     """
 
     def __init__(
-        self, strategy: RoutingStrategy, config: Optional[OptimizationConfig] = None
+        self, strategy: RoutingStrategy, config: OptimizationConfig | None = None
     ):
         """
         Initialize the auto-tuning optimizer.
@@ -342,7 +344,7 @@ class AutoTuningOptimizer(RoutingOptimizer):
         super().__init__(config)
         self.strategy = strategy
         self.optimization_attempts = 0
-        self.best_params: Optional[Dict[str, Any]] = None
+        self.best_params: dict[str, Any] | None = None
         self.best_performance = 0.0
         self.training_examples = []
         self.label_performance = {}
@@ -354,7 +356,7 @@ class AutoTuningOptimizer(RoutingOptimizer):
         query: str,
         decision: RoutingDecision,
         latency_ms: float,
-        actual_modality: Optional[SearchModality] = None,
+        actual_modality: SearchModality | None = None,
     ):
         """
         Record performance for a routing decision.
@@ -490,7 +492,7 @@ class AutoTuningOptimizer(RoutingOptimizer):
             import importlib.util
             if importlib.util.find_spec("dspy") is None:
                 raise ImportError("DSPy not available")
-                
+
             import dspy  # noqa: F401
             from dspy.teleprompt import BootstrapFewShotWithRandomSearch
 
@@ -661,7 +663,7 @@ class AutoTuningOptimizer(RoutingOptimizer):
 
         return accuracy
 
-    def _prepare_training_data(self) -> List[Tuple[str, Dict[str, Any]]]:
+    def _prepare_training_data(self) -> list[tuple[str, dict[str, Any]]]:
         """
         Prepare training data from performance history.
 
@@ -694,7 +696,7 @@ class AutoTuningOptimizer(RoutingOptimizer):
 
         return metric
 
-    def save_checkpoint(self, filepath: Optional[Path] = None):
+    def save_checkpoint(self, filepath: Path | None = None):
         """
         Save optimization checkpoint.
 
@@ -729,7 +731,7 @@ class AutoTuningOptimizer(RoutingOptimizer):
         Args:
             filepath: Path to checkpoint file
         """
-        with open(filepath, "r") as f:
+        with open(filepath) as f:
             checkpoint = json.load(f)
 
         # Restore configuration
@@ -740,7 +742,7 @@ class AutoTuningOptimizer(RoutingOptimizer):
 
         logger.info(f"Loaded checkpoint from {filepath}")
 
-    def get_performance_report(self) -> Dict[str, Any]:
+    def get_performance_report(self) -> dict[str, Any]:
         """
         Get a performance report for the optimizer.
 

@@ -6,14 +6,15 @@ only when dealing with video schemas.
 """
 
 import re
-from typing import Dict, Any, Optional
+from typing import Any
+
 from src.evaluation.core.schema_analyzer import SchemaAnalyzer
 
 
 class VideoSchemaAnalyzer(SchemaAnalyzer):
     """Analyzer specifically for video search schemas."""
 
-    def can_handle(self, schema_name: str, schema_fields: Dict[str, Any]) -> bool:
+    def can_handle(self, schema_name: str, schema_fields: dict[str, Any]) -> bool:
         """Check if this is a video schema."""
         # Check schema name
         if any(term in schema_name.lower() for term in ["video", "frame", "clip"]):
@@ -37,8 +38,8 @@ class VideoSchemaAnalyzer(SchemaAnalyzer):
         return any(indicator in all_fields for indicator in video_indicators)
 
     def analyze_query(
-        self, query: str, schema_fields: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, query: str, schema_fields: dict[str, Any]
+    ) -> dict[str, Any]:
         """Analyze video-specific queries."""
         query_lower = query.lower()
 
@@ -122,7 +123,7 @@ class VideoSchemaAnalyzer(SchemaAnalyzer):
 
         return constraints
 
-    def extract_item_id(self, document: Any) -> Optional[str]:
+    def extract_item_id(self, document: Any) -> str | None:
         """Extract video ID from document."""
         # Check if document is a dict
         if isinstance(document, dict):
@@ -190,7 +191,7 @@ class VideoSchemaAnalyzer(SchemaAnalyzer):
 class VideoTemporalAnalyzer(SchemaAnalyzer):
     """Specialized analyzer for video temporal queries."""
 
-    def can_handle(self, schema_name: str, schema_fields: Dict[str, Any]) -> bool:
+    def can_handle(self, schema_name: str, schema_fields: dict[str, Any]) -> bool:
         """Check if this is a video schema with rich temporal data."""
         # Must be a video schema
         if not any(term in schema_name.lower() for term in ["video", "frame", "clip"]):
@@ -203,8 +204,8 @@ class VideoTemporalAnalyzer(SchemaAnalyzer):
         return all(field in temporal_fields for field in required_temporal)
 
     def analyze_query(
-        self, query: str, schema_fields: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, query: str, schema_fields: dict[str, Any]
+    ) -> dict[str, Any]:
         """Analyze complex video temporal queries."""
         # Delegate to VideoSchemaAnalyzer and enhance
         base_analyzer = VideoSchemaAnalyzer()
@@ -229,7 +230,7 @@ class VideoTemporalAnalyzer(SchemaAnalyzer):
 
         return constraints
 
-    def extract_item_id(self, document: Any) -> Optional[str]:
+    def extract_item_id(self, document: Any) -> str | None:
         """Extract video ID from temporal document."""
         return VideoSchemaAnalyzer().extract_item_id(document)
 

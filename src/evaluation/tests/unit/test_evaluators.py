@@ -2,18 +2,19 @@
 Unit tests for evaluation evaluators modules.
 """
 
-import pytest
 from unittest.mock import AsyncMock
+
+import pytest
 from phoenix.experiments.types import EvaluationResult
 
 from src.evaluation.evaluators.base_evaluator import NoSpanEvaluator, no_span
 from src.evaluation.evaluators.reference_free import (
-    RetrievalContext,
+    CompositeEvaluator,
+    LLMRelevanceEvaluator,
     QueryResultRelevanceEvaluator,
     ResultDiversityEvaluator,
+    RetrievalContext,
     TemporalCoverageEvaluator,
-    LLMRelevanceEvaluator,
-    CompositeEvaluator,
     create_reference_free_evaluators,
 )
 

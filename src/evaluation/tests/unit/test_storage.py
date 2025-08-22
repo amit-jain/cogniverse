@@ -2,18 +2,19 @@
 Comprehensive unit tests for Phoenix storage.
 """
 
-import pytest
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
+
 import pandas as pd
+import pytest
+from opentelemetry.sdk.trace.export import SpanExportResult
 
 from src.evaluation.data.storage import (
-    PhoenixStorage,
     ConnectionConfig,
     ConnectionState,
     ExportMetrics,
     MonitoredSpanExporter,
+    PhoenixStorage,
 )
-from opentelemetry.sdk.trace.export import SpanExportResult
 
 
 class TestConnectionConfig:

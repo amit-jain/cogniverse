@@ -9,7 +9,7 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import Mock, patch
 
 import cv2
@@ -239,7 +239,7 @@ class MockProcessor:
         self._config = kwargs
         self.PROCESSOR_NAME = name
 
-    def get_config(self) -> Dict[str, Any]:
+    def get_config(self) -> dict[str, Any]:
         return self._config
 
 

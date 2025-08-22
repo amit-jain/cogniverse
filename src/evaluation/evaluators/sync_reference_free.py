@@ -5,7 +5,6 @@ These evaluators don't require golden datasets and can evaluate any retrieval re
 """
 
 import logging
-from typing import List
 
 import numpy as np
 from phoenix.experiments.evaluators.base import Evaluator
@@ -43,7 +42,7 @@ class SyncQueryResultRelevanceEvaluator(Evaluator):
 
         # Check if top results have high scores
         top_scores = []
-        for i, result in enumerate(results[:5]):  # Top 5
+        for _i, result in enumerate(results[:5]):  # Top 5
             if isinstance(result, dict):
                 score = result.get("score", 0)
             else:
@@ -263,7 +262,7 @@ class SyncTemporalCoverageEvaluator(Evaluator):
         )
 
 
-def create_sync_evaluators() -> List[Evaluator]:
+def create_sync_evaluators() -> list[Evaluator]:
     """
     Create synchronous evaluators for Phoenix experiments
 
@@ -273,7 +272,7 @@ def create_sync_evaluators() -> List[Evaluator]:
     return [SyncQueryResultRelevanceEvaluator(), SyncResultDiversityEvaluator()]
 
 
-def create_quality_evaluators() -> List[Evaluator]:
+def create_quality_evaluators() -> list[Evaluator]:
     """
     Create comprehensive quality evaluators
 

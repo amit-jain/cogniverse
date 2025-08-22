@@ -14,7 +14,7 @@ import tempfile
 import time
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import requests
 
@@ -121,8 +121,8 @@ class VLMDescriptor:
             print("  ℹ️ Modal VLM service was not started by this pipeline")
 
     def generate_descriptions(
-        self, keyframes_metadata: Dict[str, Any], output_dir: Path = None
-    ) -> Dict[str, Any]:
+        self, keyframes_metadata: dict[str, Any], output_dir: Path = None
+    ) -> dict[str, Any]:
         """Generate VLM descriptions for keyframes using Modal service"""
         # Check if keyframes_metadata is empty or doesn't have required data
         if not keyframes_metadata or "video_id" not in keyframes_metadata:
@@ -195,7 +195,7 @@ class VLMDescriptor:
             "created_at": time.time(),
         }
 
-    def _process_vlm_batch(self, keyframes: List[Dict]) -> Dict[str, str]:
+    def _process_vlm_batch(self, keyframes: list[dict]) -> dict[str, str]:
         """Process a batch of keyframes through Modal VLM service"""
 
         # Create frame mapping for batch processing

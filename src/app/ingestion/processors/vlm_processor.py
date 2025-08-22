@@ -6,7 +6,7 @@ Generates descriptions for video frames using VLM models.
 """
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from ..processor_base import BaseProcessor
 
@@ -36,7 +36,7 @@ class VLMProcessor(BaseProcessor):
 
     @classmethod
     def from_config(
-        cls, config: Dict[str, Any], logger: logging.Logger
+        cls, config: dict[str, Any], logger: logging.Logger
     ) -> "VLMProcessor":
         """Create VLM processor from configuration."""
         return cls(
@@ -45,7 +45,7 @@ class VLMProcessor(BaseProcessor):
             batch_size=config.get("batch_size", 10),
         )
 
-    def generate_descriptions(self, frames_data: Dict[str, Any]) -> Dict[str, Any]:
+    def generate_descriptions(self, frames_data: dict[str, Any]) -> dict[str, Any]:
         """Generate descriptions for frames (placeholder implementation)."""
         self.logger.info("🎨 VLM description generation not implemented yet")
 

@@ -5,12 +5,13 @@ Provides flexible configuration loading from multiple sources.
 """
 
 import json
-import os
-from pathlib import Path
-from typing import Dict, Any, Optional
-from dataclasses import dataclass, field, asdict
-import yaml
 import logging
+import os
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any
+
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ class RoutingConfig:
     routing_mode: str = "tiered"  # "tiered", "ensemble", "hybrid", "single"
 
     # Tier configuration (for tiered mode)
-    tier_config: Dict[str, Any] = field(
+    tier_config: dict[str, Any] = field(
         default_factory=lambda: {
             "enable_fast_path": True,
             "enable_slow_path": True,
@@ -38,7 +39,7 @@ class RoutingConfig:
     )
 
     # GLiNER configuration (Fast Path - Tier 1)
-    gliner_config: Dict[str, Any] = field(
+    gliner_config: dict[str, Any] = field(
         default_factory=lambda: {
             "model": "urchade/gliner_large-v2.1",
             "threshold": 0.3,
@@ -67,7 +68,7 @@ class RoutingConfig:
     )
 
     # LLM configuration (Slow Path - Tier 2)
-    llm_config: Dict[str, Any] = field(
+    llm_config: dict[str, Any] = field(
         default_factory=lambda: {
             "provider": "local",  # "local", "modal", "langextract"
             "model": "smollm3:3b",  # SmolLM3-3B as recommended
@@ -88,7 +89,7 @@ Use exact JSON format in your response.""",
     )
 
     # Keyword configuration (Fallback - Tier 3)
-    keyword_config: Dict[str, Any] = field(
+    keyword_config: dict[str, Any] = field(
         default_factory=lambda: {
             "video_keywords": [
                 "video",
@@ -156,7 +157,7 @@ Use exact JSON format in your response.""",
     )
 
     # Ensemble configuration (for ensemble mode)
-    ensemble_config: Dict[str, Any] = field(
+    ensemble_config: dict[str, Any] = field(
         default_factory=lambda: {
             "enabled_strategies": ["gliner", "llm", "keyword"],
             "voting_method": "weighted",  # "weighted", "majority"
@@ -165,7 +166,7 @@ Use exact JSON format in your response.""",
     )
 
     # Optimization configuration
-    optimization_config: Dict[str, Any] = field(
+    optimization_config: dict[str, Any] = field(
         default_factory=lambda: {
             "enable_auto_optimization": True,
             "optimization_interval_seconds": 3600,
@@ -186,7 +187,7 @@ Use exact JSON format in your response.""",
     )
 
     # Performance monitoring
-    monitoring_config: Dict[str, Any] = field(
+    monitoring_config: dict[str, Any] = field(
         default_factory=lambda: {
             "enable_metrics": True,
             "metrics_batch_size": 100,
@@ -198,7 +199,7 @@ Use exact JSON format in your response.""",
     )
 
     # Caching configuration
-    cache_config: Dict[str, Any] = field(
+    cache_config: dict[str, Any] = field(
         default_factory=lambda: {
             "enable_caching": True,
             "cache_ttl_seconds": 300,
@@ -208,7 +209,7 @@ Use exact JSON format in your response.""",
     )
 
     # LangExtract configuration (for development/data generation)
-    langextract_config: Dict[str, Any] = field(
+    langextract_config: dict[str, Any] = field(
         default_factory=lambda: {
             "enabled": False,
             "model_id": "gemini-2.5-flash",
@@ -218,12 +219,12 @@ Use exact JSON format in your response.""",
         }
     )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert configuration to dictionary."""
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "RoutingConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "RoutingConfig":
         """Create configuration from dictionary."""
         return cls(**data)
 
@@ -243,7 +244,7 @@ Use exact JSON format in your response.""",
         if not filepath.exists():
             raise FileNotFoundError(f"Configuration file not found: {filepath}")
 
-        with open(filepath, "r") as f:
+        with open(filepath) as f:
             if filepath.suffix == ".json":
                 data = json.load(f)
             elif filepath.suffix in [".yaml", ".yml"]:
@@ -329,7 +330,7 @@ def get_default_config() -> RoutingConfig:
     return RoutingConfig()
 
 
-def load_config(config_path: Optional[Path] = None) -> RoutingConfig:
+def load_config(config_path: Path | None = None) -> RoutingConfig:
     """
     Load routing configuration from file or use defaults.
 

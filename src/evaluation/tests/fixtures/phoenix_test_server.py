@@ -3,12 +3,13 @@ Phoenix test server fixture for integration tests.
 """
 
 import os
-import subprocess
-import time
-import tempfile
 import socket
-import pytest
+import subprocess
+import tempfile
+import time
+
 import phoenix as px
+import pytest
 
 
 def find_free_port():
@@ -60,7 +61,7 @@ class PhoenixTestServer:
                     self.stop()
                     raise RuntimeError(
                         f"Phoenix server failed to start on port {self.port}"
-                    )
+                    ) from None
                 time.sleep(1)
 
         return self

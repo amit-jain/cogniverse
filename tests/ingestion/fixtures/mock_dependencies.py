@@ -6,7 +6,7 @@ dependencies used by the ingestion pipeline.
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 from unittest.mock import Mock
 
 import numpy as np
@@ -76,8 +76,8 @@ class MockWhisperModel:
         self.model_name = model_name
 
     def transcribe(
-        self, audio_path: str, language: Optional[str] = None
-    ) -> Dict[str, Any]:
+        self, audio_path: str, language: str | None = None
+    ) -> dict[str, Any]:
         """Mock Whisper transcription."""
         # Generate mock transcription based on audio file name
         video_name = Path(audio_path).stem
@@ -101,7 +101,7 @@ class MockEmbeddingModel:
         self.model_name = model_name
         self.embedding_dim = embedding_dim
 
-    def encode(self, texts: List[str]) -> np.ndarray:
+    def encode(self, texts: list[str]) -> np.ndarray:
         """Mock text encoding."""
         # Generate deterministic embeddings based on text content
         embeddings = []
@@ -130,12 +130,12 @@ class MockVespaClient:
         self.documents = []
         self.schema = None
 
-    def feed_document(self, document: Dict[str, Any]) -> Dict[str, Any]:
+    def feed_document(self, document: dict[str, Any]) -> dict[str, Any]:
         """Mock document feeding."""
         self.documents.append(document)
         return {"status": "success", "id": document.get("id", "mock_id")}
 
-    def query(self, query: str, **kwargs) -> Dict[str, Any]:
+    def query(self, query: str, **kwargs) -> dict[str, Any]:
         """Mock query execution."""
         return {
             "hits": [
@@ -153,7 +153,7 @@ class MockVespaClient:
             "total": 2,
         }
 
-    def get_schema(self) -> Dict[str, Any]:
+    def get_schema(self) -> dict[str, Any]:
         """Mock schema retrieval."""
         return self.schema or {"name": "mock_schema", "fields": []}
 
@@ -166,7 +166,7 @@ class MockCacheManager:
         self.hits = 0
         self.misses = 0
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str) -> Any | None:
         """Mock cache get."""
         if key in self._cache:
             self.hits += 1
@@ -175,7 +175,7 @@ class MockCacheManager:
             self.misses += 1
             return None
 
-    def set(self, key: str, value: Any, ttl: Optional[int] = None):
+    def set(self, key: str, value: Any, ttl: int | None = None):
         """Mock cache set."""
         self._cache[key] = value
 
@@ -211,7 +211,7 @@ class MockFFmpeg:
     @staticmethod
     def extract_frames(
         video_path: Path, output_dir: Path, fps: float = 1.0
-    ) -> List[Path]:
+    ) -> list[Path]:
         """Mock frame extraction."""
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -225,7 +225,7 @@ class MockFFmpeg:
         return frames
 
     @staticmethod
-    def get_video_info(video_path: Path) -> Dict[str, Any]:
+    def get_video_info(video_path: Path) -> dict[str, Any]:
         """Mock video information extraction."""
         return {
             "duration": 5.0,

@@ -2,13 +2,14 @@
 Unit tests for evaluation solvers.
 """
 
-import pytest
 from unittest.mock import Mock, patch
 
+import pytest
+
 from src.evaluation.core.solvers import (
-    create_retrieval_solver,
     create_batch_solver,
     create_live_solver,
+    create_retrieval_solver,
 )
 
 

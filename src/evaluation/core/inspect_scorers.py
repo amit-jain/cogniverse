@@ -5,16 +5,17 @@ These scorers unpack the structured output from our solvers and evaluate
 the search results using the same logic as our original scorers.
 """
 
-from typing import Dict, Any, List
 import logging
-from inspect_ai.scorer import scorer, Score, mean, Target
+from typing import Any
+
+from inspect_ai.scorer import Score, Target, mean, scorer
 
 from .solver_output import unpack_solver_output
 
 logger = logging.getLogger(__name__)
 
 
-def get_configured_scorers(config: Dict[str, Any]) -> List:
+def get_configured_scorers(config: dict[str, Any]) -> list:
     """Get list of scorers based on configuration."""
     if config is None:
         config = {}
@@ -226,7 +227,7 @@ def result_count_scorer():
     return score
 
 
-def _calculate_keyword_relevance(query: str, contexts: List[str]) -> float:
+def _calculate_keyword_relevance(query: str, contexts: list[str]) -> float:
     """Calculate keyword-based relevance score."""
     if not query or not contexts:
         return 0.0

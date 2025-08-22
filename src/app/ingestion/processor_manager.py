@@ -9,7 +9,7 @@ import importlib
 import logging
 import pkgutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .processor_base import BaseProcessor, BaseStrategy
 
@@ -17,7 +17,7 @@ from .processor_base import BaseProcessor, BaseStrategy
 class ProcessorManager:
     """Plugin-based processor manager with auto-discovery."""
 
-    def __init__(self, logger: logging.Logger, plugin_dir: Optional[Path] = None):
+    def __init__(self, logger: logging.Logger, plugin_dir: Path | None = None):
         """
         Initialize processor manager with auto-discovery.
 
@@ -26,8 +26,8 @@ class ProcessorManager:
             plugin_dir: Directory to search for processor plugins (defaults to processors/)
         """
         self.logger = logger
-        self._processors: Dict[str, BaseProcessor] = {}
-        self._processor_classes: Dict[str, type] = {}
+        self._processors: dict[str, BaseProcessor] = {}
+        self._processor_classes: dict[str, type] = {}
 
         # Auto-discover processors
         if plugin_dir is None:
@@ -46,7 +46,7 @@ class ProcessorManager:
 
         package_name = "src.app.ingestion.processors"
 
-        for importer, modname, ispkg in pkgutil.iter_modules([str(plugin_dir)]):
+        for _importer, modname, ispkg in pkgutil.iter_modules([str(plugin_dir)]):
             if not ispkg:  # Skip packages, only load modules
                 full_module_name = f"{package_name}.{modname}"
                 try:
@@ -92,7 +92,7 @@ class ProcessorManager:
 
         self._init_from_requirements(all_requirements)
 
-    def _init_from_requirements(self, required_processors: Dict[str, Dict[str, Any]]):
+    def _init_from_requirements(self, required_processors: dict[str, dict[str, Any]]):
         """Dynamically create processors from requirements."""
         for processor_name, processor_config in required_processors.items():
             if processor_name in self._processor_classes:
@@ -115,7 +115,7 @@ class ProcessorManager:
                     f"Available processors: {available}"
                 )
 
-    def get_processor(self, name: str) -> Optional[BaseProcessor]:
+    def get_processor(self, name: str) -> BaseProcessor | None:
         """Get a processor by name."""
         return self._processors.get(name)
 
@@ -123,11 +123,11 @@ class ProcessorManager:
         """Check if a processor is available."""
         return name in self._processors
 
-    def list_processors(self) -> List[str]:
+    def list_processors(self) -> list[str]:
         """List all initialized processors."""
         return list(self._processors.keys())
 
-    def list_available_processor_types(self) -> List[str]:
+    def list_available_processor_types(self) -> list[str]:
         """List all discoverable processor types."""
         return list(self._processor_classes.keys())
 

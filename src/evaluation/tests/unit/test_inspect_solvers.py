@@ -2,8 +2,9 @@
 Unit tests for Inspect AI solvers.
 """
 
+from unittest.mock import AsyncMock, Mock, patch
+
 import pytest
-from unittest.mock import Mock, AsyncMock, patch
 
 from src.evaluation.inspect_tasks.solvers import CogniverseRetrievalSolver
 

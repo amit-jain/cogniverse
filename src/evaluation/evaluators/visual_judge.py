@@ -7,18 +7,18 @@ query and retrieved video frames.
 """
 
 import logging
-from typing import List, Dict, Optional
-import numpy as np
 from pathlib import Path
-from PIL import Image
-import torch
 
+import numpy as np
+import torch
 from phoenix.experiments.evaluators.base import Evaluator
 from phoenix.experiments.types import EvaluationResult
+from PIL import Image
+
+from src.app.agents.query_encoders import ColPaliQueryEncoder
 
 # Use existing model infrastructure
 from src.common.models import get_or_load_model
-from src.app.agents.query_encoders import ColPaliQueryEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -140,8 +140,8 @@ class VisualRelevanceEvaluator(Evaluator):
         )
 
     def _evaluate_frame(
-        self, result: Dict, query_embedding: np.ndarray
-    ) -> Optional[float]:
+        self, result: dict, query_embedding: np.ndarray
+    ) -> float | None:
         """
         Evaluate a single frame against the query
 
@@ -249,7 +249,7 @@ class VisualRelevanceEvaluator(Evaluator):
 
 def create_visual_evaluators(
     model_name: str = "vidore/colsmol-500m",
-) -> List[Evaluator]:
+) -> list[Evaluator]:
     """
     Create visual evaluators using ColPali models
 

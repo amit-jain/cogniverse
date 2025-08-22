@@ -3,22 +3,23 @@ Unit tests for individual routing strategies.
 Tests each strategy in isolation with mocked dependencies.
 """
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock
-from pathlib import Path
-import sys
 import json
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
+
+import pytest
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from src.app.routing.base import GenerationType, SearchModality
 from src.app.routing.strategies import (
     GLiNERRoutingStrategy,
-    LLMRoutingStrategy,
     KeywordRoutingStrategy,
     LangExtractRoutingStrategy,
+    LLMRoutingStrategy,
 )
-from src.app.routing.base import SearchModality, GenerationType
 
 
 class TestGLiNERRoutingStrategy:

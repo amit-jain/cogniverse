@@ -5,14 +5,15 @@ These scorers are designed to work with Inspect AI's actual interface
 where the scorer function receives the model output and target directly.
 """
 
-from typing import Dict, Any, List
 import logging
-from inspect_ai.scorer import scorer, Score, mean
+from typing import Any
+
+from inspect_ai.scorer import Score, mean, scorer
 
 logger = logging.getLogger(__name__)
 
 
-def get_configured_scorers(config: Dict[str, Any]) -> List:
+def get_configured_scorers(config: dict[str, Any]) -> list:
     """Get list of simplified scorers.
 
     For now, returns basic scorers that always work.

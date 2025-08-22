@@ -2,8 +2,9 @@
 Unit tests for evaluation task orchestrator.
 """
 
+from unittest.mock import MagicMock, Mock, patch
+
 import pytest
-from unittest.mock import Mock, patch, MagicMock
 
 from src.evaluation.core.task import evaluation_task
 

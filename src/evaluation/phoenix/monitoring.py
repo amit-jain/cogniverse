@@ -2,13 +2,13 @@
 Real-time monitoring and metrics collection with Arize Phoenix
 """
 
-import time
 import logging
-from typing import Dict, Any, List, Optional
+import threading
+import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
-from collections import deque
-import threading
+from typing import Any
 
 import phoenix as px
 
@@ -60,17 +60,17 @@ class MetricWindow:
 class RetrievalMonitor:
     """Real-time monitoring of retrieval performance"""
 
-    def __init__(self, alert_thresholds: Optional[AlertThresholds] = None):
+    def __init__(self, alert_thresholds: AlertThresholds | None = None):
         self.alert_thresholds = alert_thresholds or AlertThresholds()
         self.phoenix_session = None
 
         # Metric windows for different profiles
-        self.latency_windows: Dict[str, MetricWindow] = {}
-        self.error_windows: Dict[str, MetricWindow] = {}
-        self.mrr_windows: Dict[str, MetricWindow] = {}
+        self.latency_windows: dict[str, MetricWindow] = {}
+        self.error_windows: dict[str, MetricWindow] = {}
+        self.mrr_windows: dict[str, MetricWindow] = {}
 
         # Alert state
-        self.active_alerts: Dict[str, Dict[str, Any]] = {}
+        self.active_alerts: dict[str, dict[str, Any]] = {}
         self.alert_lock = threading.Lock()
 
         # Metrics buffer for batch logging
@@ -121,7 +121,7 @@ class RetrievalMonitor:
             except Exception as e:
                 logger.error(f"Error in monitoring loop: {e}")
 
-    def log_retrieval_event(self, event: Dict[str, Any]):
+    def log_retrieval_event(self, event: dict[str, Any]):
         """Log individual retrieval event"""
         profile = event.get("profile", "unknown")
         strategy = event.get("strategy", "unknown")
@@ -266,7 +266,7 @@ class RetrievalMonitor:
         for alert in alerts_to_trigger:
             self._trigger_alert(alert)
 
-    def _trigger_alert(self, alert: Dict[str, Any]):
+    def _trigger_alert(self, alert: dict[str, Any]):
         """Trigger an alert"""
         alert_key = f"{alert['type']}_{alert['profile']}"
 
@@ -291,12 +291,12 @@ class RetrievalMonitor:
                     f"Value: {alert['value']:.3f}, Threshold: {alert['threshold']:.3f}"
                 )
 
-    def get_active_alerts(self) -> List[Dict[str, Any]]:
+    def get_active_alerts(self) -> list[dict[str, Any]]:
         """Get currently active alerts"""
         with self.alert_lock:
             return list(self.active_alerts.values())
 
-    def get_metrics_summary(self) -> Dict[str, Any]:
+    def get_metrics_summary(self) -> dict[str, Any]:
         """Get current metrics summary"""
         summary = {}
 

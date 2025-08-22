@@ -9,7 +9,7 @@ all video processing profiles through a single generic method.
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 import torch
@@ -38,8 +38,8 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
 
     def __init__(
         self,
-        config: Dict[str, Any],
-        logger: Optional[logging.Logger] = None,
+        config: dict[str, Any],
+        logger: logging.Logger | None = None,
         backend_client: Any = None,
     ):
         super().__init__(config, logger)
@@ -87,7 +87,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
             raise
 
     def generate_embeddings(
-        self, video_data: Dict[str, Any], output_dir: Path
+        self, video_data: dict[str, Any], output_dir: Path
     ) -> EmbeddingResult:
         """
         Generate embeddings using a unified approach for all segment types.
@@ -136,7 +136,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
 
         return result
 
-    def _extract_segments(self, video_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _extract_segments(self, video_data: dict[str, Any]) -> list[dict[str, Any]]:
         """
         Extract segments from video_data, handling different key names.
 
@@ -171,7 +171,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         return []
 
     def _process_multi_documents(
-        self, video_data: Dict[str, Any], segments: List[Dict[str, Any]]
+        self, video_data: dict[str, Any], segments: list[dict[str, Any]]
     ) -> EmbeddingResult:
         """Process segments as individual documents."""
         video_id = video_data["video_id"]
@@ -240,7 +240,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         )
 
     def _process_single_document(
-        self, video_data: Dict[str, Any], segments: List[Dict[str, Any]]
+        self, video_data: dict[str, Any], segments: list[dict[str, Any]]
     ) -> EmbeddingResult:
         """Process all segments and create a single document."""
         video_id = video_data["video_id"]
@@ -304,8 +304,8 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         )
 
     def _generate_segment_embeddings(
-        self, segment: Dict[str, Any], video_path: Path, video_data: Dict[str, Any]
-    ) -> Optional[np.ndarray]:
+        self, segment: dict[str, Any], video_path: Path, video_data: dict[str, Any]
+    ) -> np.ndarray | None:
         """
         Generate embeddings for a single segment.
 
@@ -342,7 +342,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
             self.logger.warning(f"Unknown segment type: {segment.keys()}")
             return None
 
-    def _generate_frame_embeddings(self, frame_path: Path) -> Optional[np.ndarray]:
+    def _generate_frame_embeddings(self, frame_path: Path) -> np.ndarray | None:
         """Generate embeddings for a single frame."""
         if not self.model:
             self._load_model()
@@ -373,7 +373,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
             self.logger.error(f"Error generating frame embeddings: {e}")
             return None
 
-    def _generate_chunk_embeddings(self, chunk_path: Path) -> Optional[np.ndarray]:
+    def _generate_chunk_embeddings(self, chunk_path: Path) -> np.ndarray | None:
         """Generate embeddings for a video chunk."""
         try:
             if "colqwen" in self.model_name.lower():
@@ -469,7 +469,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
 
     def _generate_time_segment_embeddings(
         self, video_path: Path, start_time: float, end_time: float
-    ) -> Optional[np.ndarray]:
+    ) -> np.ndarray | None:
         """Generate embeddings for a time segment."""
         try:
             if self.videoprism_loader:
@@ -534,7 +534,7 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
     def _create_segment_document(
         self,
         video_id: str,
-        segment: Dict[str, Any],
+        segment: dict[str, Any],
         segment_idx: int,
         total_segments: int,
         embeddings: np.ndarray,
@@ -584,8 +584,8 @@ class EmbeddingGeneratorImpl(EmbeddingGenerator):
         self,
         video_id: str,
         embeddings: np.ndarray,
-        segments: List[Dict[str, Any]],
-        video_data: Dict[str, Any],
+        segments: list[dict[str, Any]],
+        video_data: dict[str, Any],
     ) -> Document:
         """Create a single Document containing all segments."""
         # Extract timing info from segments (all are dicts now)

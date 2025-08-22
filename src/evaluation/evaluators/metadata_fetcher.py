@@ -2,9 +2,8 @@
 Metadata fetcher for retrieving video information from Vespa or cache
 """
 
-import logging
 import json
-from typing import Dict, Optional, List
+import logging
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -15,7 +14,7 @@ class VideoMetadataFetcher:
     Fetches video metadata from Vespa or cache for evaluation
     """
 
-    def __init__(self, config: Dict = None):
+    def __init__(self, config: dict = None):
         """
         Initialize metadata fetcher
 
@@ -31,13 +30,13 @@ class VideoMetadataFetcher:
         cache_path = Path("outputs/cache/video_metadata.json")
         if cache_path.exists():
             try:
-                with open(cache_path, "r") as f:
+                with open(cache_path) as f:
                     self._cache = json.load(f)
                 logger.info(f"Loaded {len(self._cache)} cached video metadata entries")
             except Exception as e:
                 logger.warning(f"Could not load metadata cache: {e}")
 
-    async def fetch_metadata(self, video_id: str) -> Dict:
+    async def fetch_metadata(self, video_id: str) -> dict:
         """
         Fetch metadata for a video
 
@@ -61,7 +60,7 @@ class VideoMetadataFetcher:
 
         return metadata or self._get_default_metadata(video_id)
 
-    async def _fetch_from_vespa(self, video_id: str) -> Optional[Dict]:
+    async def _fetch_from_vespa(self, video_id: str) -> dict | None:
         """
         Fetch metadata from Vespa
 
@@ -112,7 +111,7 @@ class VideoMetadataFetcher:
 
         return None
 
-    def _get_default_metadata(self, video_id: str) -> Dict:
+    def _get_default_metadata(self, video_id: str) -> dict:
         """
         Get default metadata when not found
 
@@ -154,7 +153,7 @@ class VideoMetadataFetcher:
         except Exception as e:
             logger.warning(f"Could not save metadata cache: {e}")
 
-    async def fetch_batch(self, video_ids: List[str]) -> Dict[str, Dict]:
+    async def fetch_batch(self, video_ids: list[str]) -> dict[str, dict]:
         """
         Fetch metadata for multiple videos
 

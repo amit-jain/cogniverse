@@ -5,19 +5,19 @@ This module evaluates existing spans using both reference-free and golden datase
 """
 
 import logging
-from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
+from typing import Any
+
 import pandas as pd
-
 import phoenix as px
-from phoenix.trace import SpanEvaluations
 from httpx import Client as HTTPClient
+from phoenix.trace import SpanEvaluations
 
-from .evaluators.reference_free import create_reference_free_evaluators
 from .evaluators.golden_dataset import (
     GoldenDatasetEvaluator,
     create_low_scoring_golden_dataset,
 )
+from .evaluators.reference_free import create_reference_free_evaluators
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class SpanEvaluator:
     def get_recent_spans(
         self,
         hours: int = 6,
-        operation_name: Optional[str] = "search_service.search",
+        operation_name: str | None = "search_service.search",
         limit: int = 1000,
     ) -> pd.DataFrame:
         """
@@ -197,8 +197,8 @@ class SpanEvaluator:
         return pd.DataFrame(mock_spans)
 
     async def evaluate_spans(
-        self, spans_df: pd.DataFrame, evaluator_names: Optional[List[str]] = None
-    ) -> Dict[str, pd.DataFrame]:
+        self, spans_df: pd.DataFrame, evaluator_names: list[str] | None = None
+    ) -> dict[str, pd.DataFrame]:
         """
         Evaluate spans using specified evaluators
 
@@ -270,7 +270,7 @@ class SpanEvaluator:
 
         return evaluation_results
 
-    def upload_evaluations_to_phoenix(self, evaluations: Dict[str, pd.DataFrame]):
+    def upload_evaluations_to_phoenix(self, evaluations: dict[str, pd.DataFrame]):
         """
         Upload evaluation results to Phoenix as SpanEvaluations
 
@@ -296,10 +296,10 @@ class SpanEvaluator:
     async def run_evaluation_pipeline(
         self,
         hours: int = 6,
-        operation_name: Optional[str] = "search_service.search",
-        evaluator_names: Optional[List[str]] = None,
+        operation_name: str | None = "search_service.search",
+        evaluator_names: list[str] | None = None,
         upload_to_phoenix: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Run complete evaluation pipeline on recent spans
 

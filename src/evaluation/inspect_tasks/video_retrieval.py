@@ -3,19 +3,20 @@ Inspect AI tasks for video retrieval evaluation
 """
 
 import logging
-from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
+from typing import Any
 
 from inspect_ai import Task, task
-from inspect_ai.dataset import Sample, Dataset
+from inspect_ai.dataset import Dataset, Sample
 
 from src.common.config import get_config
+
+from .scorers import VideoRetrievalScorer
 from .solvers import (
     CogniverseRetrievalSolver,
-    ResultRankingAnalyzer,
     RelevanceJudgmentCollector,
+    ResultRankingAnalyzer,
 )
-from .scorers import VideoRetrievalScorer
 
 logger = logging.getLogger(__name__)
 
@@ -26,13 +27,13 @@ class VideoQuery:
 
     query: str
     category: str
-    expected_videos: List[str]
-    metadata: Dict[str, Any] = None
+    expected_videos: list[str]
+    metadata: dict[str, Any] = None
 
 
 @task
 def video_retrieval_accuracy(
-    profiles: List[str] = None, strategies: List[str] = None, dataset_path: str = None
+    profiles: list[str] = None, strategies: list[str] = None, dataset_path: str = None
 ) -> Task:
     """
     Evaluate video retrieval accuracy across different query types
@@ -85,7 +86,7 @@ def video_retrieval_accuracy(
 
 @task
 def temporal_understanding(
-    profiles: List[str] = None, dataset_path: str = None
+    profiles: list[str] = None, dataset_path: str = None
 ) -> Task:
     """
     Evaluate temporal query understanding
@@ -97,8 +98,8 @@ def temporal_understanding(
     Returns:
         Inspect AI Task for temporal understanding evaluation
     """
-    from .solvers import TemporalQueryProcessor, TimeRangeExtractor
     from .scorers import TemporalAccuracyScorer
+    from .solvers import TemporalQueryProcessor, TimeRangeExtractor
 
     # Default profiles if not specified
     if profiles is None:
@@ -129,7 +130,7 @@ def temporal_understanding(
 
 
 @task
-def multimodal_alignment(profiles: List[str] = None, dataset_path: str = None) -> Task:
+def multimodal_alignment(profiles: list[str] = None, dataset_path: str = None) -> Task:
     """
     Evaluate cross-modal understanding and alignment
 
@@ -140,12 +141,12 @@ def multimodal_alignment(profiles: List[str] = None, dataset_path: str = None) -
     Returns:
         Inspect AI Task for multimodal alignment evaluation
     """
-    from .solvers import (
-        VisualQueryEncoder,
-        TextQueryEncoder,
-        CrossModalAlignmentChecker,
-    )
     from .scorers import AlignmentScorer
+    from .solvers import (
+        CrossModalAlignmentChecker,
+        TextQueryEncoder,
+        VisualQueryEncoder,
+    )
 
     # Default profiles if not specified
     if profiles is None:
@@ -174,7 +175,7 @@ def multimodal_alignment(profiles: List[str] = None, dataset_path: str = None) -
 
 @task
 def failure_analysis(
-    profiles: List[str] = None, strategies: List[str] = None, dataset_path: str = None
+    profiles: list[str] = None, strategies: list[str] = None, dataset_path: str = None
 ) -> Task:
     """
     Analyze failure cases and patterns
@@ -187,8 +188,8 @@ def failure_analysis(
     Returns:
         Inspect AI Task for failure analysis
     """
-    from .solvers import FailureAnalyzer, ErrorPatternDetector
     from .scorers import FailureAnalysisScorer
+    from .solvers import ErrorPatternDetector, FailureAnalyzer
 
     # Default profiles and strategies if not specified
     if profiles is None:
@@ -225,7 +226,7 @@ def failure_analysis(
     )
 
 
-def load_video_retrieval_dataset(dataset_path: Optional[str] = None) -> Dataset:
+def load_video_retrieval_dataset(dataset_path: str | None = None) -> Dataset:
     """Load video retrieval evaluation dataset"""
     if dataset_path is None:
         # Use default test queries
@@ -250,7 +251,7 @@ def load_video_retrieval_dataset(dataset_path: Optional[str] = None) -> Dataset:
         from pathlib import Path
 
         path = Path(dataset_path)
-        with open(path, "r") as f:
+        with open(path) as f:
             data = json.load(f)
 
         samples = []
@@ -268,7 +269,7 @@ def load_video_retrieval_dataset(dataset_path: Optional[str] = None) -> Dataset:
         return Dataset(name="video_retrieval", samples=samples)
 
 
-def load_temporal_dataset(dataset_path: Optional[str] = None) -> Dataset:
+def load_temporal_dataset(dataset_path: str | None = None) -> Dataset:
     """Load temporal understanding evaluation dataset"""
     if dataset_path is None:
         # Create default temporal queries
@@ -309,7 +310,7 @@ def load_temporal_dataset(dataset_path: Optional[str] = None) -> Dataset:
         from pathlib import Path
 
         path = Path(dataset_path)
-        with open(path, "r") as f:
+        with open(path) as f:
             data = json.load(f)
 
         samples = []
@@ -327,7 +328,7 @@ def load_temporal_dataset(dataset_path: Optional[str] = None) -> Dataset:
         return Dataset(name="video_retrieval", samples=samples)
 
 
-def load_multimodal_dataset(dataset_path: Optional[str] = None) -> Dataset:
+def load_multimodal_dataset(dataset_path: str | None = None) -> Dataset:
     """Load multimodal alignment evaluation dataset"""
     if dataset_path is None:
         # Create default multimodal queries
@@ -373,7 +374,7 @@ def load_multimodal_dataset(dataset_path: Optional[str] = None) -> Dataset:
         from pathlib import Path
 
         path = Path(dataset_path)
-        with open(path, "r") as f:
+        with open(path) as f:
             data = json.load(f)
 
         samples = []
