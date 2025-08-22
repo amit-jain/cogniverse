@@ -428,7 +428,8 @@ class KeywordRoutingStrategy(RoutingStrategy):
         self.text_keywords = config.get("text_keywords", [
             "document", "report", "text", "article", "information", "data",
             "details", "analysis", "research", "study", "paper", "blog",
-            "documentation", "guide", "manual", "transcript", "transcription"
+            "documentation", "guide", "manual", "transcript", "transcription",
+            "caption", "subtitle", "written", "read"
         ])
         self.summary_keywords = config.get("summary_keywords", [
             "summary", "summarize", "brief", "overview", "main points",
@@ -448,7 +449,14 @@ class KeywordRoutingStrategy(RoutingStrategy):
         has_video = any(kw in query_lower for kw in self.video_keywords)
         has_text = any(kw in query_lower for kw in self.text_keywords)
         
-        if has_video and has_text:
+        # Check for comparison keywords that imply both modalities
+        comparison_keywords = ["compare", "versus", "vs", "difference between", "both"]
+        has_comparison = any(kw in query_lower for kw in comparison_keywords)
+        
+        # If comparison detected with at least one modality, assume both
+        if has_comparison and (has_video or has_text):
+            search_modality = SearchModality.BOTH
+        elif has_video and has_text:
             search_modality = SearchModality.BOTH
         elif has_video:
             search_modality = SearchModality.VIDEO
