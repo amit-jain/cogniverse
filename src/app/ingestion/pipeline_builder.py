@@ -16,7 +16,6 @@ from .pipeline import PipelineConfig, VideoIngestionPipeline
 # Logging imported where needed
 
 
-
 class VideoIngestionPipelineBuilder:
     """Builder for VideoIngestionPipeline with fluent interface."""
 

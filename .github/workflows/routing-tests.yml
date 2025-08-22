@@ -68,15 +68,7 @@ jobs:
     
     - name: Run routing unit tests
       run: |
-        export PYTHONPATH="${PYTHONPATH}:$(pwd)"
-        pytest tests/routing/unit -v \
-          -m "unit and not requires_ollama and not local_only" \
-          --cov=src/app/routing \
-          --cov-report= \
-          --cov-report=xml \
-          --cov-report=term-missing
-      env:
-        PYTHONPATH: ${{ github.workspace }}
+        make test-routing
     
     - name: Check coverage files
       run: |
@@ -134,15 +126,8 @@ jobs:
         # Run integration tests that don't require real LLM services
         # GLiNER tests can run since the model is small and fast
         # Exclude local_only tests which need full environment
-        export PYTHONPATH="${PYTHONPATH}:$(pwd)"
-        pytest tests/routing/integration -v \
-          -m "integration and not requires_ollama and not local_only" \
-          --cov=src/app/routing \
-          --cov-report= \
-          --cov-report=xml \
-          --cov-report=term-missing
+        make test-routing-integration
       env:
-        PYTHONPATH: ${{ github.workspace }}
         MOCK_LLM_RESPONSES: "true"
     
     - name: Check coverage files
@@ -186,20 +171,8 @@ jobs:
         uv sync --all-extras
         uv sync --extra dev
     
-    - name: Run ruff
-      run: uv run ruff check src/app/routing
-      continue-on-error: true
-    
-    - name: Check formatting with black
-      run: uv run black --check src/app/routing
-      continue-on-error: true
-    
-    - name: Check import sorting
-      run: uv run isort --check-only src/app/routing
-      continue-on-error: true
-    
-    - name: Run mypy
-      run: uv run mypy src/app/routing --ignore-missing-imports
+    - name: Run linting and formatting checks
+      run: make lint-routing
       continue-on-error: true
 
   test-routing-cli:
