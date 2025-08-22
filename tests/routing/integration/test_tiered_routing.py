@@ -38,7 +38,7 @@ def test_config():
             "enable_slow_path": False,  # Disable slow path in CI
             "enable_langextract": False,  # Disable langextract in CI
             "enable_fallback": True,
-            "fast_path_confidence_threshold": 0.5,  # Lower threshold so GLiNER is used
+            "fast_path_confidence_threshold": 0.5,
             "slow_path_confidence_threshold": 0.6,
             "langextract_confidence_threshold": 0.5,
         },
