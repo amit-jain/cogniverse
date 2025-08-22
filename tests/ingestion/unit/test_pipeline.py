@@ -10,11 +10,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from src.app.ingestion.pipeline import (
-    PipelineConfig,
-    PipelineStep,
-    VideoIngestionPipeline,
-)
+from src.app.ingestion.pipeline import (PipelineConfig, PipelineStep,
+                                        VideoIngestionPipeline)
 
 
 @pytest.mark.unit

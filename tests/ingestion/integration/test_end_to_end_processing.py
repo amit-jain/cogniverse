@@ -12,10 +12,8 @@ import pytest
 
 from src.app.ingestion.processing_strategy_set import ProcessingStrategySet
 from src.app.ingestion.processor_manager import ProcessorManager
-from src.app.ingestion.strategies import (
-    ChunkSegmentationStrategy,
-    FrameSegmentationStrategy,
-)
+from src.app.ingestion.strategies import (ChunkSegmentationStrategy,
+                                          FrameSegmentationStrategy)
 
 
 @pytest.mark.integration

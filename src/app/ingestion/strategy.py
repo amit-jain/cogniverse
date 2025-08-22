@@ -81,9 +81,7 @@ class StrategyConfig:
         else:
             # Generate if missing
             from src.backends.vespa.ranking_strategy_extractor import (
-                extract_all_ranking_strategies,
-                save_ranking_strategies,
-            )
+                extract_all_ranking_strategies, save_ranking_strategies)
 
             schemas_dir = self.config_dir / "schemas"
             strategies = extract_all_ranking_strategies(schemas_dir)
