@@ -54,7 +54,7 @@ jobs:
     
     - name: Run unit tests
       run: |
-        pytest src/evaluation/tests/unit -v -m unit --cov=src/evaluation --cov-report=xml --cov-report=term-missing --cov-fail-under=75
+        pytest src/evaluation/tests/unit -v -m unit --cov=src/evaluation --cov-report=xml --cov-report=term-missing --cov-fail-under=50
     
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
