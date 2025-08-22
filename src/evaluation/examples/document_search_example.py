@@ -107,7 +107,6 @@ async def run_document_search_evaluation():
     from src.evaluation.core.schema_analyzer import get_schema_analyzer
 
     # Document analyzer will be automatically selected based on schema
-
     # Create mock backend
     backend = MockDocumentBackend()
 

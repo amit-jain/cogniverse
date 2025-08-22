@@ -15,7 +15,6 @@ import dspy
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "src"))
 
 
-
 def create_query_example(query, needs_video, needs_text, temporal_pattern=None):
     """Create a properly formatted DSPy example."""
     example = dspy.Example(

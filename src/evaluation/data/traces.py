@@ -2,11 +2,12 @@
 Trace management for batch evaluation.
 """
 
-from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
 import logging
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
+
 from .storage import PhoenixStorage
 
 logger = logging.getLogger(__name__)

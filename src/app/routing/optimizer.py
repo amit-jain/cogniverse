@@ -490,6 +490,7 @@ class AutoTuningOptimizer(RoutingOptimizer):
 
         try:
             import importlib.util
+
             if importlib.util.find_spec("dspy") is None:
                 raise ImportError("DSPy not available")
 
