@@ -305,4 +305,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: routing-coverage-report
-        path: htmlcov/
+        path: combined-coverage/htmlcov-combined/
