@@ -249,7 +249,7 @@ async def run_image_search_evaluation():
 
     # Test with image backend
     backend = MockImageBackend()
-    schema_info = await backend.get_schema_info("image_search")
+    _ = await backend.get_schema_info("image_search")  # noqa: F841
 
     # Use default analyzer for images
     analyzer = DefaultSchemaAnalyzer()

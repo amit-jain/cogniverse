@@ -681,7 +681,7 @@ def main(args=None):
     )
 
     # Get configurations (same as original)
-    configurations = tracker.get_experiment_configurations(
+    _ = tracker.get_experiment_configurations(
         profiles=args.profiles if args else None,
         strategies=args.strategies if args else None,
         all_strategies=args.all_strategies if args else False,

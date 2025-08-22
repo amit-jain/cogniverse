@@ -230,7 +230,7 @@ class SchemaAwareGroundTruthStrategy(GroundTruthStrategy):
         self, schema_name: str, backend: Any
     ) -> Dict[str, List[str]]:
         """Discover available fields in schema using multiple methods."""
-        fields = {
+        fields = {  # noqa: F841
             "id_fields": [],
             "content_fields": [],
             "metadata_fields": [],
@@ -417,7 +417,7 @@ class SchemaAwareGroundTruthStrategy(GroundTruthStrategy):
                 continue
 
             field_lower = field_name.lower()
-            value_type = type(value).__name__
+            _ = type(value).__name__  # noqa: F841
 
             # Categorize based on name and type
             if "id" in field_lower or field_name == "_id":

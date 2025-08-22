@@ -586,7 +586,7 @@ class TemporalRerankingStrategy(RerankingStrategy):
                     try:
                         # Simple numeric parsing
                         return float(value)
-                    except:
+                    except Exception:
                         # Could add date parsing here
                         pass
 
