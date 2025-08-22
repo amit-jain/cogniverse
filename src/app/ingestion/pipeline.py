@@ -22,6 +22,7 @@ import asyncio
 import json
 import logging
 import os
+
 # Add project root to path
 import sys
 import time
@@ -34,11 +35,13 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from src.app.ingestion.exceptions import PipelineException, wrap_content_error
 from src.app.ingestion.processor_manager import ProcessorManager
+
 # Processors are imported dynamically by processor_manager
-from src.app.ingestion.processors.embedding_generator import \
-    create_embedding_generator
+from src.app.ingestion.processors.embedding_generator import create_embedding_generator
+
 # StrategyConfig imported locally where needed
 from src.app.ingestion.strategy_factory import StrategyFactory
+
 # Cache imports removed - using pipeline_cache directly
 from src.common.cache.pipeline_cache import PipelineArtifactCache
 from src.common.config import get_config
@@ -780,7 +783,9 @@ class VideoIngestionPipeline:
         """Process video segmentation based on strategy"""
         # Special handling for different segmentation types
         from src.app.ingestion.strategies import (
-            FrameSegmentationStrategy, SingleVectorSegmentationStrategy)
+            FrameSegmentationStrategy,
+            SingleVectorSegmentationStrategy,
+        )
 
         if isinstance(self.strategy_set.segmentation, SingleVectorSegmentationStrategy):
             # Single-vector needs transcript first

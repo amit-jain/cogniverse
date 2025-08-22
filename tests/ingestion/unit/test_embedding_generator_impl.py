@@ -10,10 +10,12 @@ from unittest.mock import Mock, patch
 import numpy as np
 import pytest
 
-from src.app.ingestion.processors.embedding_generator.embedding_generator import \
-    EmbeddingResult
-from src.app.ingestion.processors.embedding_generator.embedding_generator_impl import \
-    EmbeddingGeneratorImpl
+from src.app.ingestion.processors.embedding_generator.embedding_generator import (
+    EmbeddingResult,
+)
+from src.app.ingestion.processors.embedding_generator.embedding_generator_impl import (
+    EmbeddingGeneratorImpl,
+)
 
 
 @pytest.mark.unit
