@@ -62,6 +62,7 @@ jobs:
     - name: Install dependencies
       run: |
         uv sync --all-extras
+        uv pip install pytest-cov
     
     - name: Run routing unit tests
       run: |
@@ -119,6 +120,7 @@ jobs:
     - name: Install dependencies
       run: |
         uv sync --all-extras
+        uv pip install pytest-cov
     
     - name: Run mocked integration tests
       run: |
@@ -171,7 +173,6 @@ jobs:
     - name: Install dependencies with dev tools
       run: |
         uv sync --all-extras
-        uv sync --all-extras
     
     - name: Run linting and formatting checks
       run: make lint-routing
@@ -196,17 +197,16 @@ jobs:
     
     - name: Install package
       run: |
-        uv pip install --system -e .
-        uv pip install --system gliner
+        uv sync --all-extras
     
     - name: Test demo script
       run: |
         # Test that the demo script can at least be imported and show help
-        python scripts/demo_routing_unified.py --help || echo "Demo script needs CLI args"
+        uv run python scripts/demo_routing_unified.py --help || echo "Demo script needs CLI args"
     
     - name: Test routing module imports
       run: |
-        python -c "from src.app.routing import TieredRouter, ComprehensiveRouter; print('Routing imports successful')"
+        uv run python -c "from src.app.routing import TieredRouter, ComprehensiveRouter; print('Routing imports successful')"
 
   coverage-report:
     runs-on: ubuntu-latest

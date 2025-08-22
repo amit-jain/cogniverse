@@ -50,6 +50,7 @@ jobs:
     - name: Install dependencies
       run: |
         uv sync --all-extras
+        uv pip install pytest-cov
     
     - name: Run unit tests
       run: |
@@ -86,6 +87,7 @@ jobs:
     - name: Install dependencies
       run: |
         uv sync --all-extras
+        uv pip install pytest-cov
     
     - name: Start Phoenix
       run: |
@@ -138,7 +140,6 @@ jobs:
     - name: Install dependencies with dev tools
       run: |
         uv sync --all-extras
-        uv sync --all-extras
     
     - name: Run comprehensive linting
       run: make lint-evaluation
@@ -163,18 +164,18 @@ jobs:
     
     - name: Install package
       run: |
-        uv pip install --system -e .
+        uv sync --all-extras
     
     - name: Test CLI help
       run: |
-        python -m src.evaluation.cli --help
+        uv run python -m src.evaluation.cli --help
     
     - name: Test CLI commands
       run: |
-        python -m src.evaluation.cli evaluate --help
-        python -m src.evaluation.cli create-dataset --help
-        python -m src.evaluation.cli list-traces --help
-        python -m src.evaluation.cli test --help
+        uv run python -m src.evaluation.cli evaluate --help
+        uv run python -m src.evaluation.cli create-dataset --help
+        uv run python -m src.evaluation.cli list-traces --help
+        uv run python -m src.evaluation.cli test --help
 
   coverage-report:
     runs-on: ubuntu-latest
