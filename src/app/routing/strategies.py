@@ -1012,7 +1012,9 @@ Do not include any explanation or text outside the JSON object."""
                     if json_match:
                         result = json.loads(json_match.group())
                     else:
-                        raise ValueError("Could not parse LangExtract response") from None
+                        raise ValueError(
+                            "Could not parse LangExtract response"
+                        ) from None
 
             # Determine search modality
             needs_video = result.get("needs_video", False)

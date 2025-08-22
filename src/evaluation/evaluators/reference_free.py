@@ -236,9 +236,7 @@ class CompositeEvaluator(Evaluator):
     Combines multiple evaluators into a single evaluation
     """
 
-    def __init__(
-        self, evaluators: list[Evaluator], weights: list[float] | None = None
-    ):
+    def __init__(self, evaluators: list[Evaluator], weights: list[float] | None = None):
         self.evaluators = evaluators
         self.weights = weights or [1.0] * len(evaluators)
 
@@ -268,7 +266,8 @@ class CompositeEvaluator(Evaluator):
 
         # Combine scores
         weighted_score = sum(
-            result.score * weight for result, weight in zip(results, self.weights, strict=False)
+            result.score * weight
+            for result, weight in zip(results, self.weights, strict=False)
         )
 
         # Collect all labels

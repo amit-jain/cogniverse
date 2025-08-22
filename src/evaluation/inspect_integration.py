@@ -304,7 +304,9 @@ class InspectEvaluationOrchestrator:
         }
 
         # Run example evaluation to show it working
-        _ = evaluate_span_quality(evaluator_names=["relevance", "diversity"])  # noqa: F841
+        _ = evaluate_span_quality(
+            evaluator_names=["relevance", "diversity"]
+        )  # noqa: F841
 
         # This would run the evaluation
         # eval_log = await eval_async(task, model="cogniverse")

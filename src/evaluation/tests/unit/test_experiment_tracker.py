@@ -89,9 +89,7 @@ class TestExperimentTracker:
     @pytest.mark.unit
     def test_register_evaluator_plugins_llm(self, mock_dependencies):
         """Test registering LLM evaluator plugins."""
-        with patch(
-            "src.evaluation.plugins.visual_evaluator.VisualEvaluatorPlugin"
-        ):
+        with patch("src.evaluation.plugins.visual_evaluator.VisualEvaluatorPlugin"):
             ExperimentTracker(enable_llm_evaluators=True)
 
             mock_dependencies["register_plugin"].assert_called()
@@ -214,9 +212,7 @@ class TestExperimentTracker:
         mock_result.scores = {"mrr": Mock(value=0.85), "recall": Mock(value=0.75)}
 
         with (
-            patch(
-                "src.evaluation.core.experiment_tracker.evaluation_task"
-            ),
+            patch("src.evaluation.core.experiment_tracker.evaluation_task"),
             patch("inspect_ai.eval", new_callable=AsyncMock) as mock_eval,
         ):
 
@@ -243,9 +239,7 @@ class TestExperimentTracker:
     async def test_run_experiment_async_failure(self, tracker):
         """Test experiment execution failure."""
         with (
-            patch(
-                "src.evaluation.core.experiment_tracker.evaluation_task"
-            ),
+            patch("src.evaluation.core.experiment_tracker.evaluation_task"),
             patch("inspect_ai.eval", side_effect=Exception("Evaluation failed")),
         ):
 
