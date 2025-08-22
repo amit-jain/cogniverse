@@ -6,8 +6,8 @@ on:
     paths:
       - 'src/app/routing/**'
       - 'src/common/**'
-      - 'tests/unit/test_routing_strategies.py'
-      - 'tests/integration/test_tiered_routing.py'
+      - 'tests/routing/unit/**'
+      - 'tests/routing/integration/**'
       - 'configs/config.json'
       - 'pytest.ini'
       - 'pyproject.toml'
@@ -17,8 +17,8 @@ on:
     paths:
       - 'src/app/routing/**'
       - 'src/common/**'
-      - 'tests/unit/test_routing_strategies.py'
-      - 'tests/integration/test_tiered_routing.py'
+      - 'tests/routing/unit/**'
+      - 'tests/routing/integration/**'
       - 'configs/config.json'
       - 'pytest.ini'
       - 'pyproject.toml'
@@ -68,7 +68,7 @@ jobs:
     
     - name: Run routing unit tests
       run: |
-        pytest tests/unit/test_routing_strategies.py tests/unit/test_router_unit.py -v \
+        pytest tests/routing/unit -v \
           -m "unit and not requires_ollama and not local_only" \
           --cov=src/app/routing \
           --cov-report= \
@@ -131,7 +131,7 @@ jobs:
         # Run integration tests that don't require real LLM services
         # GLiNER tests can run since the model is small and fast
         # Exclude local_only tests which need full environment
-        pytest tests/integration/test_tiered_routing.py tests/integration/test_router_comprehensive.py -v \
+        pytest tests/routing/integration -v \
           -m "integration and not requires_ollama and not local_only" \
           --cov=src/app/routing \
           --cov-report= \
