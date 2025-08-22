@@ -11,11 +11,11 @@ from pathlib import Path
 
 class PipelineException(Exception):
     """Base exception for all pipeline-related errors."""
-    
+
     def __init__(self, message: str, context: Optional[Dict[str, Any]] = None):
         super().__init__(message)
         self.context = context or {}
-        
+
     def __str__(self):
         if self.context:
             context_str = ", ".join(f"{k}={v}" for k, v in self.context.items())
@@ -25,66 +25,88 @@ class PipelineException(Exception):
 
 class ContentProcessingError(PipelineException):
     """Raised when content processing fails."""
-    
-    def __init__(self, message: str, content_path: Optional[Path] = None, 
-                 stage: Optional[str] = None, profile: Optional[str] = None, **context):
-        context.update({
-            'content_path': str(content_path) if content_path else None,
-            'stage': stage,
-            'profile': profile
-        })
+
+    def __init__(
+        self,
+        message: str,
+        content_path: Optional[Path] = None,
+        stage: Optional[str] = None,
+        profile: Optional[str] = None,
+        **context,
+    ):
+        context.update(
+            {
+                "content_path": str(content_path) if content_path else None,
+                "stage": stage,
+                "profile": profile,
+            }
+        )
         super().__init__(message, context)
 
 
 class EmbeddingGenerationError(PipelineException):
     """Raised when embedding generation fails."""
-    
-    def __init__(self, message: str, model_name: Optional[str] = None,
-                 segment_count: Optional[int] = None, embedding_type: Optional[str] = None, **context):
-        context.update({
-            'model_name': model_name,
-            'segment_count': segment_count,
-            'embedding_type': embedding_type
-        })
+
+    def __init__(
+        self,
+        message: str,
+        model_name: Optional[str] = None,
+        segment_count: Optional[int] = None,
+        embedding_type: Optional[str] = None,
+        **context,
+    ):
+        context.update(
+            {
+                "model_name": model_name,
+                "segment_count": segment_count,
+                "embedding_type": embedding_type,
+            }
+        )
         super().__init__(message, context)
 
 
 class BackendError(PipelineException):
     """Raised when backend operations fail."""
-    
-    def __init__(self, message: str, backend_type: Optional[str] = None,
-                 operation: Optional[str] = None, schema: Optional[str] = None, **context):
-        context.update({
-            'backend_type': backend_type,
-            'operation': operation,
-            'schema': schema
-        })
+
+    def __init__(
+        self,
+        message: str,
+        backend_type: Optional[str] = None,
+        operation: Optional[str] = None,
+        schema: Optional[str] = None,
+        **context,
+    ):
+        context.update(
+            {"backend_type": backend_type, "operation": operation, "schema": schema}
+        )
         super().__init__(message, context)
 
 
 class ProcessorError(PipelineException):
     """Raised when a processor fails."""
-    
+
     def __init__(self, message: str, processor_type: Optional[str] = None, **context):
-        context['processor_type'] = processor_type
+        context["processor_type"] = processor_type
         super().__init__(message, context)
 
 
 # Helper functions for common error patterns
-def wrap_processor_error(processor_type: str, operation: str, 
-                        original_exception: Exception) -> ProcessorError:
+def wrap_processor_error(
+    processor_type: str, operation: str, original_exception: Exception
+) -> ProcessorError:
     """Wrap an exception as a ProcessorError with context."""
     return ProcessorError(
         f"Processor {processor_type} failed during {operation}: {original_exception}",
         processor_type=processor_type,
         operation=operation,
         original_error=str(original_exception),
-        original_type=type(original_exception).__name__
+        original_type=type(original_exception).__name__,
     )
 
 
-def wrap_content_error(content_path: Path, stage: str, profile: str,
-                      original_exception: Exception) -> ContentProcessingError:
+def wrap_content_error(
+    content_path: Path, stage: str, profile: str, original_exception: Exception
+) -> ContentProcessingError:
     """Wrap an exception as a ContentProcessingError with context."""
     return ContentProcessingError(
         f"Failed to process {content_path.name} at stage {stage}: {original_exception}",
@@ -92,22 +114,25 @@ def wrap_content_error(content_path: Path, stage: str, profile: str,
         stage=stage,
         profile=profile,
         original_error=str(original_exception),
-        original_type=type(original_exception).__name__
+        original_type=type(original_exception).__name__,
     )
 
 
-def wrap_embedding_error(model_name: str, original_exception: Exception) -> EmbeddingGenerationError:
+def wrap_embedding_error(
+    model_name: str, original_exception: Exception
+) -> EmbeddingGenerationError:
     """Wrap an exception as an EmbeddingGenerationError with context."""
     return EmbeddingGenerationError(
         f"Embedding generation failed for model {model_name}: {original_exception}",
         model_name=model_name,
         original_error=str(original_exception),
-        original_type=type(original_exception).__name__
+        original_type=type(original_exception).__name__,
     )
 
 
-def wrap_backend_error(backend_type: str, operation: str, schema: str,
-                      original_exception: Exception) -> BackendError:
+def wrap_backend_error(
+    backend_type: str, operation: str, schema: str, original_exception: Exception
+) -> BackendError:
     """Wrap an exception as a BackendError with context."""
     return BackendError(
         f"Backend {backend_type} failed during {operation}: {original_exception}",
@@ -115,5 +140,5 @@ def wrap_backend_error(backend_type: str, operation: str, schema: str,
         operation=operation,
         schema=schema,
         original_error=str(original_exception),
-        original_type=type(original_exception).__name__
+        original_type=type(original_exception).__name__,
     )
