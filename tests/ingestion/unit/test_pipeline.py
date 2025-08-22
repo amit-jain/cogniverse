@@ -170,6 +170,12 @@ class TestVideoIngestionPipelineUtilityMethods:
         with patch.multiple(
             VideoIngestionPipeline,
             __init__=Mock(return_value=None),  # Skip actual initialization
+            process_video_async=Mock(return_value={"video_id": "test", "status": "completed"}),
+            generate_embeddings=Mock(return_value={"embeddings": "mock"}),
+            _check_cache_async=Mock(return_value={}),
+            _save_to_cache_async=Mock(return_value=None),
+            _get_cached_data=Mock(return_value={}),
+            _process_segmentation=Mock(return_value={}),
         ):
             pipeline = VideoIngestionPipeline.__new__(VideoIngestionPipeline)
             pipeline.config = pipeline_config
