@@ -47,7 +47,10 @@ jobs:
     
     - name: Run unit tests
       run: |
-        make test-ingestion
+        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/ingestion/unit -m unit \
+          --cov=src/app/ingestion \
+          --cov-report=term-missing \
+          --cov-report=xml:coverage_ingestion.xml
     
     - name: Upload unit test coverage data
       uses: actions/upload-artifact@v4

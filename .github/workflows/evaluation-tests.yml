@@ -54,7 +54,11 @@ jobs:
     
     - name: Run unit tests
       run: |
-        make test-evaluation
+        uv run python -m pytest src/evaluation/tests -m unit \
+          --cov=src/evaluation \
+          --cov-report=term-missing \
+          --cov-report=xml:coverage_evaluation.xml \
+          --cov-fail-under=50
     
     - name: Upload unit test coverage data
       uses: actions/upload-artifact@v4
