@@ -71,6 +71,7 @@ jobs:
         pytest tests/unit/test_routing_strategies.py tests/unit/test_router_unit.py -v \
           -m "unit and not requires_ollama and not local_only" \
           --cov=src/app/routing \
+          --cov-report= \
           --cov-report=xml \
           --cov-report=term-missing
     
@@ -88,6 +89,7 @@ jobs:
         name: coverage-unit
         path: .coverage
         retention-days: 1
+        if-no-files-found: error
 
   integration-tests-mocked:
     runs-on: ubuntu-latest
@@ -128,6 +130,7 @@ jobs:
         pytest tests/integration/test_tiered_routing.py tests/integration/test_router_comprehensive.py -v \
           -m "integration and not requires_ollama and not local_only" \
           --cov=src/app/routing \
+          --cov-report= \
           --cov-report=xml \
           --cov-report=term-missing
       env:
@@ -147,6 +150,7 @@ jobs:
         name: coverage-integration
         path: .coverage
         retention-days: 1
+        if-no-files-found: error
 
   lint:
     runs-on: ubuntu-latest
