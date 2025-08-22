@@ -63,11 +63,26 @@ test-ingestion:
 
 test-routing:
 	@echo "🧪 Running routing tests..."
-	uv run python -m pytest tests/routing/unit -m unit
+	uv run python -m pytest tests/routing/unit -m unit \
+		--cov=src/app/routing \
+		--cov-report=term-missing \
+		--cov-report=xml:coverage_routing.xml \
+		--cov-fail-under=43
+
+test-routing-integration:
+	@echo "🔗 Running routing integration tests..."
+	uv run python -m pytest tests/routing/integration -m integration \
+		--cov=src/app/routing \
+		--cov-report=term-missing \
+		--cov-report=xml:coverage_routing_integration.xml
 
 test-evaluation:
 	@echo "🧪 Running evaluation tests..."
-	uv run python -m pytest src/evaluation/tests -m unit
+	uv run python -m pytest src/evaluation/tests -m unit \
+		--cov=src/evaluation \
+		--cov-report=term-missing \
+		--cov-report=xml:coverage_evaluation.xml \
+		--cov-fail-under=50
 
 # Run all modules separately (recommended approach)
 test-all-modules: test-ingestion test-routing test-evaluation

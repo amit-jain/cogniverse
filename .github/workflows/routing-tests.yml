@@ -169,7 +169,7 @@ jobs:
     - name: Install dependencies with dev tools
       run: |
         uv sync --all-extras
-        uv sync --extra dev
+        uv sync --all-extras
     
     - name: Run linting and formatting checks
       run: make lint-routing
