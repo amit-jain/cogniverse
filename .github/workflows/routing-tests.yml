@@ -65,6 +65,8 @@ jobs:
         uv pip install pytest-cov
     
     - name: Run routing unit tests
+      env:
+        COVERAGE_FILE: .coverage
       run: |
         uv run python -m pytest tests/routing/unit -m "unit and not requires_ollama" \
           --cov=src/app/routing \
@@ -119,6 +121,7 @@ jobs:
     - name: Run routing integration tests
       env:
         MOCK_LLM_RESPONSES: "true"
+        COVERAGE_FILE: .coverage
       run: |
         # Run routing integration tests from proper directory structure
         uv run python -m pytest tests/routing/integration -m "integration and not local_only" \
