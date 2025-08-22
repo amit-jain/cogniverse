@@ -64,8 +64,11 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: coverage-unit
-        path: .coverage
+        path: |
+          .coverage
+          coverage_evaluation.xml
         retention-days: 1
+        if-no-files-found: warn
 
   integration-tests:
     runs-on: ubuntu-latest
@@ -106,14 +109,17 @@ jobs:
     
     - name: Run integration tests
       run: |
-        pytest src/evaluation/tests/integration -v -m integration --cov=src/evaluation --cov-report=term-missing
+        uv run python -m pytest src/evaluation/tests/integration -v -m integration --cov=src/evaluation --cov-report=term-missing
     
     - name: Upload integration test coverage data
       uses: actions/upload-artifact@v4
       with:
         name: coverage-integration
-        path: .coverage
+        path: |
+          .coverage
+          coverage.xml
         retention-days: 1
+        if-no-files-found: warn
     
     - name: Stop Phoenix
       run: |
