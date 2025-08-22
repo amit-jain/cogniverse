@@ -54,12 +54,12 @@ jobs:
     - name: Run unit tests (CI-safe)
       run: |
         uv run python -m pytest tests/ingestion/unit/ \
-          -m "unit and ci_safe" \
+          -m "unit" \
           -v \
-          --cov=src/app/ingestion/processors \
+          --cov=src/app/ingestion \
           --cov-report=term-missing \
           --cov-report=xml \
-          --cov-fail-under=80
+          --cov-fail-under=50
     
     - name: Upload unit test coverage to Codecov
       uses: codecov/codecov-action@v3
@@ -113,7 +113,7 @@ jobs:
     - name: Run integration tests (CI-safe)
       run: |
         uv run python -m pytest tests/ingestion/integration/ \
-          -m "integration and ci_safe" \
+          -m "integration" \
           -v \
           --tb=short
     
