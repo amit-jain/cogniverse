@@ -199,10 +199,10 @@ jobs:
       env:
         COVERAGE_FILE: .coverage
       run: |
-        # Run integration tests with coverage, skipping Vespa tests if needed
+        # Run integration tests with coverage reporting only (no failure threshold)
         if [ "$SKIP_VESPA_TESTS" = "true" ]; then
           echo "🚫 Skipping Vespa-dependent tests"
-          uv run python -m pytest tests/ingestion/integration/ \
+          JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/ingestion/integration/ \
             -m "integration and not requires_vespa" \
             -v \
             --tb=short \
@@ -211,7 +211,7 @@ jobs:
             --cov-report=xml:coverage_ingestion_integration.xml
         else
           echo "✅ Running all integration tests including Vespa"
-          uv run python -m pytest tests/ingestion/integration/ \
+          JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/ingestion/integration/ \
             -m "integration" \
             -v \
             --tb=short \
