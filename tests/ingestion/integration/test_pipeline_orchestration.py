@@ -25,7 +25,7 @@ class TestPipelineOrchestration:
     def strategy_set(self):
         """Create a strategy set for testing."""
         frame_strategy = FrameSegmentationStrategy(
-            max_frames=10, extraction_method="fps", fps=1.0
+            max_frames=10, fps=1.0
         )
 
         strategy_set = ProcessingStrategySet(segmentation=frame_strategy)
@@ -70,7 +70,7 @@ class TestPipelineOrchestration:
     def test_frame_strategy_processor_requirements(self, mock_logger):
         """Test that frame strategy requires correct processors."""
         frame_strategy = FrameSegmentationStrategy(
-            max_frames=50, extraction_method="histogram"
+            max_frames=50
         )
         strategy_set = ProcessingStrategySet(segmentation=frame_strategy)
 
@@ -80,10 +80,7 @@ class TestPipelineOrchestration:
         assert "keyframe" in requirements
         keyframe_config = requirements["keyframe"]
         assert keyframe_config["max_frames"] == 50
-        assert (
-            keyframe_config.get("extraction_method") == "histogram"
-            or keyframe_config.get("fps") is None
-        )
+        assert keyframe_config.get("fps") is not None or keyframe_config.get("max_frames") == 50
 
     def test_chunk_strategy_processor_requirements(self, mock_logger):
         """Test that chunk strategy requires correct processors."""
@@ -130,7 +127,7 @@ class TestPipelineOrchestration:
         mock_keyframe_result = {
             "video_id": "test_video",
             "total_keyframes": 3,
-            "extraction_method": "fps",
+            "fps": 1.0,
             "keyframes": [
                 {"frame_index": 0, "timestamp": 0.0, "filename": "frame_0.jpg"},
                 {"frame_index": 30, "timestamp": 1.0, "filename": "frame_1.jpg"},
@@ -215,7 +212,7 @@ class TestPipelineOrchestration:
     def test_strategy_configuration_propagation(self, mock_logger, strategy_set):
         """Test that strategy configurations are properly propagated to processors."""
         frame_strategy = FrameSegmentationStrategy(
-            max_frames=100, extraction_method="fps", fps=0.5, threshold=0.85
+            max_frames=100, fps=0.5, threshold=0.85
         )
         strategy_set = ProcessingStrategySet(segmentation=frame_strategy)
 

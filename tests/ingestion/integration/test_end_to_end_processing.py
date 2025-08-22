@@ -38,7 +38,7 @@ class TestEndToEndVideoProcessing:
     def frame_based_strategy_set(self):
         """Create frame-based processing strategy set."""
         frame_strategy = FrameSegmentationStrategy(
-            max_frames=5, extraction_method="fps", fps=1.0, threshold=0.8
+            max_frames=5, fps=1.0, threshold=0.8
         )
         return ProcessingStrategySet(segmentation=frame_strategy)
 
@@ -71,7 +71,7 @@ class TestEndToEndVideoProcessing:
         mock_keyframe_result = {
             "video_id": "test_video",
             "total_keyframes": 3,
-            "extraction_method": "fps",
+            "fps": 1.0,
             "keyframes": [
                 {"frame_index": 0, "timestamp": 0.0, "filename": "frame_0.jpg"},
                 {"frame_index": 30, "timestamp": 1.0, "filename": "frame_1.jpg"},
@@ -384,7 +384,7 @@ class TestEndToEndVideoProcessing:
 
         # Create strategy with specific configuration
         frame_strategy = FrameSegmentationStrategy(
-            max_frames=15, extraction_method="fps", fps=2.0, threshold=0.95
+            max_frames=15, fps=2.0, threshold=0.95
         )
         strategy_set = ProcessingStrategySet(segmentation=frame_strategy)
 

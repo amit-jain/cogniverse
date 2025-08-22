@@ -147,7 +147,7 @@ class TestVespaBackendIngestion:
 
         try:
             response = requests.get(
-                "http://localhost:8080/ApplicationStatus", timeout=5
+                "http://localhost:8080/state/v1/health", timeout=5
             )
             assert response.status_code == 200
         except requests.RequestException:
@@ -160,7 +160,7 @@ class TestVespaBackendIngestion:
             pytest.skip("No test videos available")
 
         # Test with basic frame extraction only
-        from src.processing.unified_video_pipeline import (
+        from src.app.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
         )
@@ -188,7 +188,7 @@ class TestVespaBackendIngestion:
         if not vespa_test_videos:
             pytest.skip("No test videos available")
 
-        from src.processing.unified_video_pipeline import (
+        from src.app.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
         )
@@ -214,7 +214,7 @@ class TestVespaBackendIngestion:
         if not vespa_test_videos:
             pytest.skip("No test videos available")
 
-        from src.processing.unified_video_pipeline import (
+        from src.app.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
         )
@@ -239,7 +239,7 @@ class TestVespaBackendIngestion:
         if not vespa_test_videos:
             pytest.skip("No test videos available")
 
-        from src.processing.unified_video_pipeline import (
+        from src.app.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
         )
@@ -285,7 +285,7 @@ class TestComprehensiveIngestion:
             "video_colqwen_omni_mv_chunk_30s",
         ]
 
-        from src.processing.unified_video_pipeline import (
+        from src.app.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
         )
@@ -318,7 +318,7 @@ class TestComprehensiveIngestion:
 
         import time
 
-        from src.processing.unified_video_pipeline import (
+        from src.app.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
         )
