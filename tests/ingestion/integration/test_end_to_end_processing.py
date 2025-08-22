@@ -287,6 +287,33 @@ class TestEndToEndVideoProcessing:
             def extract_keyframes(self, *args, **kwargs):
                 raise ValueError("Keyframe extraction failed")
 
+        # Add working processors for audio and embedding (test focuses on keyframe failure)
+        class WorkingAudioProcessor:
+            PROCESSOR_NAME = "audio"
+
+            def __init__(self, logger, **kwargs):
+                self.logger = logger
+
+            @classmethod
+            def from_config(cls, config, logger):
+                return cls(logger, **config)
+
+            def transcribe_audio(self, *args, **kwargs):
+                return {"text": "test audio", "language": "en"}
+
+        class WorkingEmbeddingProcessor:
+            PROCESSOR_NAME = "embedding"
+
+            def __init__(self, logger, **kwargs):
+                self.logger = logger
+
+            @classmethod
+            def from_config(cls, config, logger):
+                return cls(logger, **config)
+
+            def generate_embeddings(self, *args, **kwargs):
+                return {"embeddings": {"frame_embeddings": []}}
+
         with patch(
             "src.app.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
@@ -294,6 +321,8 @@ class TestEndToEndVideoProcessing:
 
             manager = ProcessorManager(mock_logger)
             manager._processor_classes["keyframe"] = FailingKeyframeProcessor
+            manager._processor_classes["audio"] = WorkingAudioProcessor
+            manager._processor_classes["embedding"] = WorkingEmbeddingProcessor
             manager.initialize_from_strategies(frame_based_strategy_set)
 
             keyframe_processor = manager.get_processor("keyframe")
@@ -339,6 +368,20 @@ class TestEndToEndVideoProcessing:
             def transcribe_audio(self, *args, **kwargs):
                 raise Exception("Audio processing failed")
 
+        # Mock working embedding processor (test focuses on audio failure)
+        class WorkingEmbeddingProcessor:
+            PROCESSOR_NAME = "embedding"
+
+            def __init__(self, logger, **kwargs):
+                self.logger = logger
+
+            @classmethod
+            def from_config(cls, config, logger):
+                return cls(logger, **config)
+
+            def generate_embeddings(self, *args, **kwargs):
+                return {"embeddings": {"frame_embeddings": []}}
+
         with patch(
             "src.app.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
@@ -347,6 +390,7 @@ class TestEndToEndVideoProcessing:
             manager = ProcessorManager(mock_logger)
             manager._processor_classes["keyframe"] = SuccessfulKeyframeProcessor
             manager._processor_classes["audio"] = FailingAudioProcessor
+            manager._processor_classes["embedding"] = WorkingEmbeddingProcessor
 
             manager.initialize_from_strategies(frame_based_strategy_set)
 
@@ -364,8 +408,10 @@ class TestEndToEndVideoProcessing:
 
     @patch("src.app.ingestion.processors.keyframe_processor.KeyframeProcessor")
     @patch("src.app.ingestion.processors.audio_processor.AudioProcessor")
+    @patch("src.app.ingestion.processors.embedding_processor.EmbeddingProcessor")
     def test_pipeline_data_flow_validation(
         self,
+        mock_embedding_class,
         mock_audio_class,
         mock_keyframe_class,
         mock_logger,
@@ -399,6 +445,19 @@ class TestEndToEndVideoProcessing:
         mock_audio_class.return_value = mock_audio
         mock_audio_class.from_config = Mock(return_value=mock_audio)
 
+        # Mock embedding processor
+        mock_embedding = Mock()
+        mock_embedding_result = {
+            "video_id": "test_video",
+            "embeddings": {"frame_embeddings": [
+                {"frame_index": 0, "embedding": [0.1, 0.2, 0.3]},
+                {"frame_index": 1, "embedding": [0.4, 0.5, 0.6]},
+            ]},
+        }
+        mock_embedding.generate_embeddings.return_value = mock_embedding_result
+        mock_embedding_class.return_value = mock_embedding
+        mock_embedding_class.from_config = Mock(return_value=mock_embedding)
+
         with patch(
             "src.app.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
@@ -407,12 +466,14 @@ class TestEndToEndVideoProcessing:
             manager = ProcessorManager(mock_logger)
             manager._processor_classes["keyframe"] = mock_keyframe_class
             manager._processor_classes["audio"] = mock_audio_class
+            manager._processor_classes["embedding"] = mock_embedding_class
 
             manager.initialize_from_strategies(frame_based_strategy_set)
 
             # Execute pipeline and verify data flow
             keyframe_processor = manager.get_processor("keyframe")
             audio_processor = manager.get_processor("audio")
+            embedding_processor = manager.get_processor("embedding")
 
             # Step 1: Extract keyframes
             keyframes = keyframe_processor.extract_keyframes(
@@ -422,8 +483,14 @@ class TestEndToEndVideoProcessing:
             # Step 2: Process audio
             transcript = audio_processor.transcribe_audio(sample_video_path)
 
+            # Step 3: Generate embeddings
+            embeddings = embedding_processor.generate_embeddings({
+                "keyframes": keyframes,
+                "transcript": transcript
+            })
+
             # Verify data consistency
-            assert keyframes["video_id"] == transcript["video_id"]
+            assert keyframes["video_id"] == transcript["video_id"] == embeddings["video_id"]
             assert keyframes["video_id"] == "test_video"
 
             # Verify data format compliance
@@ -505,6 +572,34 @@ class TestEndToEndVideoProcessing:
                         "total_keyframes": 1,
                     }
 
+        # Mock working audio processor
+        class WorkingAudioProcessor:
+            PROCESSOR_NAME = "audio"
+
+            def __init__(self, logger, **kwargs):
+                self.logger = logger
+
+            @classmethod
+            def from_config(cls, config, logger):
+                return cls(logger, **config)
+
+            def transcribe_audio(self, *args, **kwargs):
+                return {"text": "test audio", "language": "en"}
+
+        # Mock working embedding processor  
+        class WorkingEmbeddingProcessor:
+            PROCESSOR_NAME = "embedding"
+
+            def __init__(self, logger, **kwargs):
+                self.logger = logger
+
+            @classmethod
+            def from_config(cls, config, logger):
+                return cls(logger, **config)
+
+            def generate_embeddings(self, *args, **kwargs):
+                return {"embeddings": {"frame_embeddings": []}}
+
         with patch(
             "src.app.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
@@ -512,6 +607,8 @@ class TestEndToEndVideoProcessing:
 
             manager = ProcessorManager(mock_logger)
             manager._processor_classes["keyframe"] = ThreadSafeProcessor
+            manager._processor_classes["audio"] = WorkingAudioProcessor
+            manager._processor_classes["embedding"] = WorkingEmbeddingProcessor
             manager.initialize_from_strategies(frame_based_strategy_set)
 
             processor = manager.get_processor("keyframe")

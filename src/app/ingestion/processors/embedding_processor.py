@@ -45,6 +45,13 @@ class EmbeddingProcessor(BaseProcessor):
             model_name=config.get("model_name", "vidore/colpali-v1.2"),
         )
 
+    def process(self, *args, **kwargs) -> Any:
+        """Process input data (implements BaseProcessor abstract method)."""
+        # Delegate to generate_embeddings for backwards compatibility
+        if args and isinstance(args[0], dict):
+            return self.generate_embeddings(args[0])
+        return self.generate_embeddings(kwargs)
+
     def generate_embeddings(self, data: dict[str, Any]) -> dict[str, Any]:
         """Generate embeddings (placeholder - delegates to existing system)."""
         self.logger.info("🧬 Embedding generation delegated to existing system")
