@@ -61,14 +61,29 @@ jobs:
           --cov-report=term-missing \
           --cov-report=xml:coverage_evaluation.xml \
           --cov-fail-under=50
+        # Rename the coverage file to avoid conflicts and make it uploadable
+        if [ -f .coverage ]; then
+          echo "✅ Coverage file found, renaming to coverage_unit.dat"
+          mv .coverage coverage_unit.dat
+        else
+          echo "⚠️ No .coverage file found - this will affect coverage combining"
+        fi
     
-    - name: Upload unit test coverage data
+    - name: Upload coverage data
+      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: coverage-unit
-        path: |
-          .coverage
-          coverage_evaluation.xml
+        path: coverage_unit.dat
+        retention-days: 1
+        if-no-files-found: warn
+    
+    - name: Upload coverage XML
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-unit-xml
+        path: coverage_evaluation.xml
         retention-days: 1
         if-no-files-found: warn
 
@@ -117,14 +132,29 @@ jobs:
           --cov=src/evaluation \
           --cov-report=term-missing \
           --cov-report=xml:coverage_evaluation_integration.xml
+        # Rename the coverage file to avoid conflicts and make it uploadable
+        if [ -f .coverage ]; then
+          echo "✅ Integration coverage file found, renaming to coverage_integration.dat"
+          mv .coverage coverage_integration.dat
+        else
+          echo "⚠️ No .coverage file found - this will affect coverage combining"
+        fi
     
-    - name: Upload integration test coverage data
+    - name: Upload coverage data
+      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: coverage-integration
-        path: |
-          .coverage
-          coverage_evaluation_integration.xml
+        path: coverage_integration.dat
+        retention-days: 1
+        if-no-files-found: warn
+    
+    - name: Upload coverage XML
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-integration-xml
+        path: coverage_evaluation_integration.xml
         retention-days: 1
         if-no-files-found: warn
     
@@ -219,6 +249,13 @@ jobs:
         path: ./coverage-unit/
       continue-on-error: true
     
+    - name: Download unit test coverage XML
+      uses: actions/download-artifact@v4
+      with:
+        name: coverage-unit-xml
+        path: ./coverage-unit-xml/
+      continue-on-error: true
+    
     - name: Download integration test coverage
       uses: actions/download-artifact@v4
       with:
@@ -226,32 +263,35 @@ jobs:
         path: ./coverage-integration/
       continue-on-error: true
     
+    - name: Download integration test coverage XML
+      uses: actions/download-artifact@v4
+      with:
+        name: coverage-integration-xml
+        path: ./coverage-integration-xml/
+      continue-on-error: true
+    
     - name: Combine coverage reports
       run: |
-        # Debug: List what artifacts were downloaded
-        echo "Contents of coverage-unit:"
-        ls -la ./coverage-unit/ || echo "coverage-unit directory not found"
-        echo "Contents of coverage-integration:"
-        ls -la ./coverage-integration/ || echo "coverage-integration directory not found"
-        
         # Copy coverage files with unique names
         mkdir -p combined-coverage
         has_coverage=false
         
-        if [ -f ./coverage-unit/.coverage ]; then
-          cp ./coverage-unit/.coverage combined-coverage/.coverage.unit
+        # Look for unit coverage file (uploaded as coverage_unit.dat)
+        if [ -f ./coverage-unit/coverage_unit.dat ]; then
+          cp ./coverage-unit/coverage_unit.dat combined-coverage/.coverage.unit
           echo "✅ Copied unit coverage"
           has_coverage=true
         else
-          echo "❌ No unit .coverage file found"
+          echo "❌ No unit coverage file found"
         fi
         
-        if [ -f ./coverage-integration/.coverage ]; then
-          cp ./coverage-integration/.coverage combined-coverage/.coverage.integration
+        # Look for integration coverage file (uploaded as coverage_integration.dat)
+        if [ -f ./coverage-integration/coverage_integration.dat ]; then
+          cp ./coverage-integration/coverage_integration.dat combined-coverage/.coverage.integration
           echo "✅ Copied integration coverage"
           has_coverage=true
         else
-          echo "❌ No integration .coverage file found"
+          echo "❌ No integration coverage file found"
         fi
         
         # Only combine if we have coverage files
