@@ -2,7 +2,7 @@
 Tools for Inspect AI solvers to interact with external services.
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 import logging
 
 from inspect_ai.tool import tool
@@ -15,87 +15,87 @@ def video_search_tool():
     """
     Tool that wraps our search service for use in Inspect AI.
     """
+
     async def run(
-        query: str,
-        profile: str,
-        strategy: str,
-        top_k: int = 10
+        query: str, profile: str, strategy: str, top_k: int = 10
     ) -> List[Dict[str, Any]]:
         """
         Execute a search using the Cogniverse search service.
-        
+
         Args:
             query: Search query
             profile: Video processing profile
             strategy: Ranking strategy
             top_k: Number of results to return
-            
+
         Returns:
             List of search results
         """
         try:
             # Import here to avoid circular dependencies
             from src.app.search.service import SearchService
-            
+
             # Try to get config from common module first, fallback to src.tools
             try:
                 from cogniverse_common import get_config
             except ImportError:
                 from src.common.config import get_config
-            
+
             config = get_config()
-            
+
             # Create search service with specified profile
             search_service = SearchService(config, profile)
-            
-            logger.info(f"Executing search: query='{query[:50]}...', profile={profile}, strategy={strategy}")
-            
+
+            logger.info(
+                f"Executing search: query='{query[:50]}...', profile={profile}, strategy={strategy}"
+            )
+
             # Run the search
             search_results_raw = search_service.search(
-                query=query,
-                top_k=top_k,
-                ranking_strategy=strategy
+                query=query, top_k=top_k, ranking_strategy=strategy
             )
-            
+
             # Convert results to standardized format
             search_results = []
             for i, result in enumerate(search_results_raw):
                 result_dict = result.to_dict()
-                
+
                 # Extract video_id
-                video_id = result_dict.get('source_id', '')
-                if not video_id and 'document_id' in result_dict:
+                video_id = result_dict.get("source_id", "")
+                if not video_id and "document_id" in result_dict:
                     # Extract from document_id (e.g., "video_frame_0" -> "video")
-                    doc_id = result_dict['document_id']
-                    if '_frame_' in doc_id:
-                        video_id = doc_id.split('_frame_')[0]
+                    doc_id = result_dict["document_id"]
+                    if "_frame_" in doc_id:
+                        video_id = doc_id.split("_frame_")[0]
                     else:
                         video_id = doc_id
-                
+
                 # Get score (ensure it's not 0)
-                score = result_dict.get('score', 0.0)
+                score = result_dict.get("score", 0.0)
                 if score == 0.0:
                     # Use rank-based score if no score available
                     score = 1.0 / (i + 1)
-                
-                search_results.append({
-                    "video_id": video_id,
-                    "score": float(score),
-                    "rank": i + 1,
-                    "document_id": result_dict.get('document_id', ''),
-                    "content": result_dict.get('content', ''),
-                    "temporal_info": result_dict.get('temporal_info', {}),
-                    "metadata": result_dict.get('metadata', {})
-                })
-            
+
+                search_results.append(
+                    {
+                        "video_id": video_id,
+                        "score": float(score),
+                        "rank": i + 1,
+                        "document_id": result_dict.get("document_id", ""),
+                        "content": result_dict.get("content", ""),
+                        "temporal_info": result_dict.get("temporal_info", {}),
+                        "metadata": result_dict.get("metadata", {}),
+                    }
+                )
+
             logger.info(f"Search returned {len(search_results)} results")
             return search_results
-            
+
         except Exception as e:
             logger.error(f"Search failed: {e}")
             # Raise the error to properly signal failure
             raise RuntimeError(f"Search tool failed: {e}") from e
-    
+
     return run
 
 
@@ -104,24 +104,22 @@ def phoenix_query_tool():
     """
     Tool for querying Phoenix for traces and datasets.
     """
-    async def run(
-        query_type: str,
-        **kwargs
-    ) -> Any:
+
+    async def run(query_type: str, **kwargs) -> Any:
         """
         Query Phoenix for various data types.
-        
+
         Args:
             query_type: Type of query ("traces", "datasets", "experiments")
             **kwargs: Additional query parameters
-            
+
         Returns:
             Query results
         """
         import phoenix as px
-        
+
         client = px.Client()
-        
+
         try:
             if query_type == "traces":
                 # Query for traces
@@ -129,10 +127,10 @@ def phoenix_query_tool():
                     filter_condition=kwargs.get("filter"),
                     start_time=kwargs.get("start_time"),
                     end_time=kwargs.get("end_time"),
-                    limit=kwargs.get("limit", 100)
+                    limit=kwargs.get("limit", 100),
                 )
-                return df.to_dict(orient='records')
-                
+                return df.to_dict(orient="records")
+
             elif query_type == "datasets":
                 # Get dataset information
                 dataset_name = kwargs.get("name")
@@ -141,50 +139,55 @@ def phoenix_query_tool():
                     return {
                         "name": dataset.name,
                         "num_examples": len(dataset.examples),
-                        "examples": [ex.to_dict() for ex in dataset.examples[:10]]
+                        "examples": [ex.to_dict() for ex in dataset.examples[:10]],
                     }
                 else:
                     raise ValueError("Dataset name is required for dataset queries")
-                
+
             elif query_type == "experiments":
                 # Query experiments through spans with experiment metadata
                 experiment_name = kwargs.get("name")
                 if not experiment_name:
                     # List all experiments by finding unique experiment names in spans
                     df = client.get_spans_dataframe(limit=1000)
-                    if not df.empty and 'attributes.metadata.experiment_name' in df.columns:
-                        experiments = df['attributes.metadata.experiment_name'].dropna().unique().tolist()
-                        return {
-                            "experiments": experiments,
-                            "count": len(experiments)
-                        }
+                    if (
+                        not df.empty
+                        and "attributes.metadata.experiment_name" in df.columns
+                    ):
+                        experiments = (
+                            df["attributes.metadata.experiment_name"]
+                            .dropna()
+                            .unique()
+                            .tolist()
+                        )
+                        return {"experiments": experiments, "count": len(experiments)}
                     else:
                         return {"experiments": [], "count": 0}
                 else:
                     # Get specific experiment data
                     df = client.get_spans_dataframe(
                         filter_condition=f"attributes.metadata.experiment_name == '{experiment_name}'",
-                        limit=kwargs.get("limit", 1000)
+                        limit=kwargs.get("limit", 1000),
                     )
                     if not df.empty:
                         return {
                             "experiment_name": experiment_name,
-                            "traces": df.to_dict(orient='records'),
-                            "count": len(df)
+                            "traces": df.to_dict(orient="records"),
+                            "count": len(df),
                         }
                     else:
                         return {
                             "experiment_name": experiment_name,
                             "traces": [],
-                            "count": 0
+                            "count": 0,
                         }
-                
+
             else:
                 raise ValueError(f"Unknown query type: {query_type}")
-                
+
         except Exception as e:
             logger.error(f"Phoenix query failed: {e}")
             # Re-raise with context
             raise RuntimeError(f"Phoenix query tool failed: {e}") from e
-    
+
     return run
