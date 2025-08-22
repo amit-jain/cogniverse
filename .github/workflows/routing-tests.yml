@@ -226,14 +226,9 @@ jobs:
       with:
         python-version: '3.12'
     
-    - name: Install uv
-      run: |
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-    
     - name: Install coverage tools
       run: |
-        uv sync --all-extras
+        pip install coverage[toml]
     
     - name: Download unit test coverage
       uses: actions/download-artifact@v4
@@ -288,7 +283,7 @@ jobs:
         if [ "$has_coverage" = true ]; then
           cd combined-coverage
           ls -la .coverage.*
-          uv run coverage combine .coverage.*
+          coverage combine .coverage.*
         else
           echo "⚠️ No coverage files to combine, skipping"
           mkdir -p combined-coverage
@@ -300,13 +295,13 @@ jobs:
         # Generate reports only if we have coverage data
         if [ "$has_coverage" = true ]; then
           echo "📊 Generating coverage reports..."
-          uv run coverage report --show-missing
-          uv run coverage xml -o coverage-combined.xml
-          uv run coverage html -d htmlcov-combined
+          coverage report --show-missing
+          coverage xml -o coverage-combined.xml
+          coverage html -d htmlcov-combined
           
           echo "## Routing Module Coverage Summary" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          uv run coverage report >> $GITHUB_STEP_SUMMARY
+          coverage report >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
         else
           echo "⚠️ No coverage data to report" >> $GITHUB_STEP_SUMMARY
