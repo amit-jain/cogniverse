@@ -56,7 +56,7 @@ class TestBaseEvaluator:
         result = test_function("test", y="value")
         assert result == "result: test, value"
         assert hasattr(test_function, "_skip_instrumentation")
-        assert test_function._skip_instrumentation is True
+        assert test_function._skip_instrumentation == True
 
 
 class TestRetrievalContext:

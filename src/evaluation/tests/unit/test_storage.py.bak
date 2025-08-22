@@ -26,7 +26,7 @@ class TestConnectionConfig:
         assert config.phoenix_url == "http://localhost:6006"
         assert config.max_retries == 3
         assert config.retry_delay_seconds == 1.0
-        assert config.enable_health_checks is True
+        assert config.enable_health_checks == True
 
     @pytest.mark.unit
     def test_custom_config(self):
@@ -36,7 +36,7 @@ class TestConnectionConfig:
         )
         assert config.phoenix_url == "http://custom:8080"
         assert config.max_retries == 5
-        assert config.enable_health_checks is False
+        assert config.enable_health_checks == False
 
 
 class TestExportMetrics:
@@ -543,7 +543,7 @@ class TestPhoenixStorage:
                 )
 
                 with pytest.raises(ValueError):
-                    with storage._create_span("test_span"):
+                    with storage._create_span("test_span") as span:
                         raise ValueError("Test error")
 
                 mock_span.record_exception.assert_called()

@@ -284,7 +284,7 @@ class TestVideoSchemaAnalyzer:
 
         # Test "at" pattern
         result = analyzer.analyze_query("car at 0:30", schema_fields)
-        result.get("temporal_constraints", {})
+        temporal = result.get("temporal_constraints", {})
         # The analyzer might extract this
 
         # Test "between" pattern

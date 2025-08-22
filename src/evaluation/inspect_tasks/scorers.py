@@ -74,7 +74,7 @@ class VideoRetrievalScorer:
             # Try to parse from target
             try:
                 expected = eval(target) if isinstance(target, str) else target
-            except:
+            except Exception:
                 logger.warning(f"Could not parse expected videos from target: {target}")
 
         if not expected:

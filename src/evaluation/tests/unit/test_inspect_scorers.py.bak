@@ -166,21 +166,21 @@ class TestVideoRetrievalScorer:
     @pytest.mark.asyncio
     async def test_phoenix_logging(self, scorer):
         """Test Phoenix logging integration."""
-        # No need to patch px since it's not imported in scorers module
-        state = Mock()
-        state.metadata = {
-            "retrieval_results": [{"video_id": "video1"}],
-            "expected_videos": ["video1"],
-            "query": "test query",
-        }
-        state.input = Mock()
-        state.input.metadata = {}
-        target = []
+        with patch("src.evaluation.inspect_tasks.scorers.px") as mock_px:
+            state = Mock()
+            state.metadata = {
+                "retrieval_results": [{"video_id": "video1"}],
+                "expected_videos": ["video1"],
+                "query": "test query",
+            }
+            state.input = Mock()
+            state.input.metadata = {}
+            target = []
 
-        score = await scorer(state, target)
+            score = await scorer(state, target)
 
-        # Should have perfect score
-        assert score.value == 1.0
+            # Should have perfect score
+            assert score.value == 1.0
 
 
 class TestTemporalAccuracyScorer:

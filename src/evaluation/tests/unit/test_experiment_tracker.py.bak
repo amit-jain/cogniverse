@@ -19,12 +19,15 @@ class TestExperimentTracker:
         with (
             patch("src.evaluation.core.experiment_tracker.DatasetManager") as mock_dm,
             patch("src.evaluation.core.experiment_tracker.RetrievalMonitor") as mock_pm,
+            patch("src.evaluation.core.experiment_tracker.get_config") as mock_config,
             patch("src.evaluation.core.experiment_tracker.register_plugin") as mock_reg,
         ):
 
+            mock_config.return_value = {"vespa_url": "http://localhost"}
             yield {
                 "dataset_manager": mock_dm,
                 "phoenix_monitor": mock_pm,
+                "config": mock_config,
                 "register_plugin": mock_reg,
             }
 
@@ -43,8 +46,8 @@ class TestExperimentTracker:
         tracker = ExperimentTracker()
 
         assert tracker.experiment_project_name == "experiments"
-        assert tracker.enable_quality_evaluators is True
-        assert tracker.enable_llm_evaluators is False
+        assert tracker.enable_quality_evaluators == True
+        assert tracker.enable_llm_evaluators == False
         assert tracker.evaluator_name == "visual_judge"
         assert tracker.llm_model == "deepseek-r1:7b"
         assert tracker.experiments == []
@@ -67,8 +70,8 @@ class TestExperimentTracker:
 
         assert tracker.experiment_project_name == "custom_project"
         assert tracker.output_dir == output_dir
-        assert tracker.enable_quality_evaluators is False
-        assert tracker.enable_llm_evaluators is True
+        assert tracker.enable_quality_evaluators == False
+        assert tracker.enable_llm_evaluators == True
         assert tracker.evaluator_name == "custom_evaluator"
         assert tracker.llm_model == "gpt-4"
         assert tracker.llm_base_url == "http://custom.api"
@@ -81,7 +84,7 @@ class TestExperimentTracker:
             mock_plugin = Mock()
             mock_module.VideoAnalyzerPlugin = Mock(return_value=mock_plugin)
 
-            ExperimentTracker(enable_quality_evaluators=True)
+            tracker = ExperimentTracker(enable_quality_evaluators=True)
 
             # Should not raise exception even if plugin doesn't exist
 
@@ -90,8 +93,8 @@ class TestExperimentTracker:
         """Test registering LLM evaluator plugins."""
         with patch(
             "src.evaluation.plugins.visual_evaluator.VisualEvaluatorPlugin"
-        ):
-            ExperimentTracker(enable_llm_evaluators=True)
+        ) as mock_plugin:
+            tracker = ExperimentTracker(enable_llm_evaluators=True)
 
             mock_dependencies["register_plugin"].assert_called()
 
@@ -215,7 +218,7 @@ class TestExperimentTracker:
         with (
             patch(
                 "src.evaluation.core.experiment_tracker.evaluation_task"
-            ),
+            ) as mock_task,
             patch("inspect_ai.eval", new_callable=AsyncMock) as mock_eval,
         ):
 
@@ -244,7 +247,7 @@ class TestExperimentTracker:
         with (
             patch(
                 "src.evaluation.core.experiment_tracker.evaluation_task"
-            ),
+            ) as mock_task,
             patch("inspect_ai.eval", side_effect=Exception("Evaluation failed")),
         ):
 
@@ -459,7 +462,7 @@ class TestExperimentTracker:
         tracker.dataset_url = "http://test.com"
 
         with (
-            patch("builtins.open", mock_open()),
+            patch("builtins.open", mock_open()) as mock_file,
             patch("pandas.DataFrame.to_csv") as mock_to_csv,
             patch("json.dump") as mock_json_dump,
         ):

@@ -117,7 +117,7 @@ class SpanEvaluator:
                         import json
 
                         results = json.loads(output_value)
-                    except Exception:
+                    except:
                         # Try to evaluate as Python literal (for string representations of lists)
                         try:
                             import ast
@@ -125,7 +125,7 @@ class SpanEvaluator:
                             results = ast.literal_eval(output_value)
                             if not isinstance(results, list):
                                 continue
-                        except Exception:
+                        except:
                             # If not parseable, skip this span
                             continue
 
