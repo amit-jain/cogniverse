@@ -68,12 +68,15 @@ jobs:
     
     - name: Run routing unit tests
       run: |
+        export PYTHONPATH="${PYTHONPATH}:$(pwd)"
         pytest tests/routing/unit -v \
           -m "unit and not requires_ollama and not local_only" \
           --cov=src/app/routing \
           --cov-report= \
           --cov-report=xml \
           --cov-report=term-missing
+      env:
+        PYTHONPATH: ${{ github.workspace }}
     
     - name: Check coverage files
       run: |
@@ -131,6 +134,7 @@ jobs:
         # Run integration tests that don't require real LLM services
         # GLiNER tests can run since the model is small and fast
         # Exclude local_only tests which need full environment
+        export PYTHONPATH="${PYTHONPATH}:$(pwd)"
         pytest tests/routing/integration -v \
           -m "integration and not requires_ollama and not local_only" \
           --cov=src/app/routing \
@@ -138,6 +142,7 @@ jobs:
           --cov-report=xml \
           --cov-report=term-missing
       env:
+        PYTHONPATH: ${{ github.workspace }}
         MOCK_LLM_RESPONSES: "true"
     
     - name: Check coverage files
