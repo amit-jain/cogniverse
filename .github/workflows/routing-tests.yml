@@ -73,10 +73,6 @@ jobs:
           --cov-report=term-missing \
           --cov-report=xml:coverage_routing.xml \
           --cov-fail-under=43
-        # Debug: Check what files were created
-        echo "📁 Files after test run:"
-        ls -la .coverage* 2>/dev/null || echo "No .coverage files found"
-        ls -la coverage* 2>/dev/null || echo "No coverage XML files found"
         # Rename the coverage file to avoid conflicts and make it uploadable
         if [ -f .coverage ]; then
           echo "✅ Coverage file found, renaming to coverage_unit.dat"
@@ -85,24 +81,6 @@ jobs:
           echo "⚠️ No .coverage file found - this will affect coverage combining"
         fi
     
-    - name: Check coverage files
-      run: |
-        echo "Checking for coverage files..."
-        ls -la .coverage* || true
-        ls -la coverage* || true
-        echo "Expected file: coverage_unit.dat"
-        [ -f coverage_unit.dat ] && echo "✅ Found coverage_unit.dat" || echo "❌ Missing coverage_unit.dat"
-    
-    - name: Final check before upload
-      run: |
-        echo "🔍 Final file check before artifact upload:"
-        echo "Current working directory: $(pwd)"
-        echo "GitHub workspace: ${{ github.workspace }}"
-        ls -la .coverage* 2>/dev/null || echo "No .coverage* files found"
-        ls -la coverage* 2>/dev/null || echo "No coverage* files found"
-        echo "Specifically checking for required files:"
-        [ -f coverage_unit.dat ] && echo "✅ coverage_unit.dat exists ($(stat -c%s coverage_unit.dat) bytes)" || echo "❌ coverage_unit.dat missing"
-        [ -f coverage_routing.xml ] && echo "✅ coverage_routing.xml exists ($(stat -c%s coverage_routing.xml) bytes)" || echo "❌ coverage_routing.xml missing"
     
     - name: Upload coverage data
       if: always()
@@ -155,10 +133,6 @@ jobs:
           --cov=src/app/routing \
           --cov-report=term-missing \
           --cov-report=xml:coverage_routing_integration.xml
-        # Debug: Check what files were created
-        echo "📁 Files after integration test run:"
-        ls -la .coverage* 2>/dev/null || echo "No .coverage files found"
-        ls -la coverage* 2>/dev/null || echo "No coverage XML files found"
         # Rename the coverage file to avoid conflicts and make it uploadable
         if [ -f .coverage ]; then
           echo "✅ Integration coverage file found, renaming to coverage_integration.dat"
@@ -167,16 +141,6 @@ jobs:
           echo "⚠️ No .coverage file found - this will affect coverage combining"
         fi
     
-    - name: Final check before upload
-      run: |
-        echo "🔍 Final file check before artifact upload:"
-        echo "Current working directory: $(pwd)"
-        echo "GitHub workspace: ${{ github.workspace }}"
-        ls -la .coverage* 2>/dev/null || echo "No .coverage* files found"
-        ls -la coverage* 2>/dev/null || echo "No coverage* files found"
-        echo "Specifically checking for required files:"
-        [ -f coverage_integration.dat ] && echo "✅ coverage_integration.dat exists ($(stat -c%s coverage_integration.dat) bytes)" || echo "❌ coverage_integration.dat missing"
-        [ -f coverage_routing_integration.xml ] && echo "✅ coverage_routing_integration.xml exists ($(stat -c%s coverage_routing_integration.xml) bytes)" || echo "❌ coverage_routing_integration.xml missing"
     
     - name: Upload coverage data
       if: always()
@@ -292,15 +256,6 @@ jobs:
     
     - name: Combine coverage data
       run: |
-        # Debug: List what artifacts were downloaded
-        echo "Contents of coverage-unit:"
-        ls -la ./coverage-unit/ || echo "coverage-unit directory not found"
-        echo "Contents of coverage-unit-xml:"
-        ls -la ./coverage-unit-xml/ || echo "coverage-unit-xml directory not found"
-        echo "Contents of coverage-integration:"
-        ls -la ./coverage-integration/ || echo "coverage-integration directory not found"
-        echo "Contents of coverage-integration-xml:"
-        ls -la ./coverage-integration-xml/ || echo "coverage-integration-xml directory not found"
         
         # Copy coverage files with unique names
         mkdir -p combined-coverage
@@ -313,8 +268,6 @@ jobs:
           has_coverage=true
         else
           echo "❌ No unit coverage file found"
-          echo "Available files in coverage-unit:"
-          find ./coverage-unit/ -type f 2>/dev/null || echo "No files found"
         fi
         
         # Look for integration coverage file (uploaded as coverage_integration.dat)
@@ -324,15 +277,13 @@ jobs:
           has_coverage=true
         else
           echo "❌ No integration coverage file found"
-          echo "Available files in coverage-integration:"
-          find ./coverage-integration/ -type f 2>/dev/null || echo "No files found"
         fi
         
         # Only combine if we have coverage files
         if [ "$has_coverage" = true ]; then
           cd combined-coverage
           ls -la .coverage.*
-          coverage combine .coverage.*
+          uv run coverage combine .coverage.*
         else
           echo "⚠️ No coverage files to combine, skipping"
           mkdir -p combined-coverage
@@ -344,13 +295,13 @@ jobs:
         # Generate reports only if we have coverage data
         if [ "$has_coverage" = true ]; then
           echo "📊 Generating coverage reports..."
-          coverage report --show-missing
-          coverage xml -o coverage-combined.xml
-          coverage html -d htmlcov-combined
+          uv run coverage report --show-missing
+          uv run coverage xml -o coverage-combined.xml
+          uv run coverage html -d htmlcov-combined
           
           echo "## Routing Module Coverage Summary" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          coverage report >> $GITHUB_STEP_SUMMARY
+          uv run coverage report >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
         else
           echo "⚠️ No coverage data to report" >> $GITHUB_STEP_SUMMARY
