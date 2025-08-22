@@ -49,8 +49,7 @@ jobs:
     
     - name: Install dependencies
       run: |
-        uv pip install --system -e .
-        uv pip install --system pytest pytest-cov pytest-mock tabulate
+        uv sync --all-extras
     
     - name: Run unit tests
       run: |
@@ -86,8 +85,7 @@ jobs:
     
     - name: Install dependencies
       run: |
-        uv pip install --system -e .
-        uv pip install --system pytest pytest-cov pytest-mock tabulate
+        uv sync --all-extras
     
     - name: Start Phoenix
       run: |

@@ -61,10 +61,7 @@ jobs:
     
     - name: Install dependencies
       run: |
-        uv pip install --system -e .
-        uv pip install --system pytest pytest-cov pytest-mock pytest-asyncio tabulate
-        # Install GLiNER - lightweight NER model that can run in CI/CD
-        uv pip install --system gliner
+        uv sync --all-extras
     
     - name: Run routing unit tests
       run: |
@@ -121,9 +118,7 @@ jobs:
     
     - name: Install dependencies
       run: |
-        uv pip install --system -e .
-        uv pip install --system pytest pytest-cov pytest-mock pytest-asyncio tabulate
-        uv pip install --system gliner
+        uv sync --all-extras
     
     - name: Run mocked integration tests
       run: |
