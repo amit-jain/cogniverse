@@ -96,18 +96,23 @@ jobs:
     - name: Final check before upload
       run: |
         echo "🔍 Final file check before artifact upload:"
+        echo "Current working directory: $(pwd)"
+        echo "GitHub workspace: ${{ github.workspace }}"
         ls -la .coverage* 2>/dev/null || echo "No .coverage* files found"
         ls -la coverage* 2>/dev/null || echo "No coverage* files found"
         echo "Specifically checking for required files:"
         [ -f .coverage.unit ] && echo "✅ .coverage.unit exists ($(stat -c%s .coverage.unit) bytes)" || echo "❌ .coverage.unit missing"
         [ -f coverage_routing.xml ] && echo "✅ coverage_routing.xml exists ($(stat -c%s coverage_routing.xml) bytes)" || echo "❌ coverage_routing.xml missing"
+        echo "Full paths:"
+        [ -f ${{ github.workspace }}/.coverage.unit ] && echo "✅ Full path .coverage.unit exists" || echo "❌ Full path .coverage.unit missing"
+        [ -f ${{ github.workspace }}/coverage_routing.xml ] && echo "✅ Full path coverage_routing.xml exists" || echo "❌ Full path coverage_routing.xml missing"
     
     - name: Upload coverage data
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: coverage-unit
-        path: .coverage.unit
+        path: ${{ github.workspace }}/.coverage.unit
         retention-days: 1
         if-no-files-found: warn
     
@@ -116,7 +121,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: coverage-unit-xml
-        path: coverage_routing.xml
+        path: ${{ github.workspace }}/coverage_routing.xml
         retention-days: 1
         if-no-files-found: warn
 
@@ -168,18 +173,23 @@ jobs:
     - name: Final check before upload
       run: |
         echo "🔍 Final file check before artifact upload:"
+        echo "Current working directory: $(pwd)"
+        echo "GitHub workspace: ${{ github.workspace }}"
         ls -la .coverage* 2>/dev/null || echo "No .coverage* files found"
         ls -la coverage* 2>/dev/null || echo "No coverage* files found"
         echo "Specifically checking for required files:"
         [ -f .coverage.integration ] && echo "✅ .coverage.integration exists ($(stat -c%s .coverage.integration) bytes)" || echo "❌ .coverage.integration missing"
         [ -f coverage_routing_integration.xml ] && echo "✅ coverage_routing_integration.xml exists ($(stat -c%s coverage_routing_integration.xml) bytes)" || echo "❌ coverage_routing_integration.xml missing"
+        echo "Full paths:"
+        [ -f ${{ github.workspace }}/.coverage.integration ] && echo "✅ Full path .coverage.integration exists" || echo "❌ Full path .coverage.integration missing"
+        [ -f ${{ github.workspace }}/coverage_routing_integration.xml ] && echo "✅ Full path coverage_routing_integration.xml exists" || echo "❌ Full path coverage_routing_integration.xml missing"
     
     - name: Upload coverage data
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: coverage-integration
-        path: .coverage.integration
+        path: ${{ github.workspace }}/.coverage.integration
         retention-days: 1
         if-no-files-found: warn
     
@@ -188,7 +198,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: coverage-integration-xml
-        path: coverage_routing_integration.xml
+        path: ${{ github.workspace }}/coverage_routing_integration.xml
         retention-days: 1
         if-no-files-found: warn
 
