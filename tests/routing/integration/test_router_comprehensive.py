@@ -119,11 +119,16 @@ class TestTieredRouterCaching:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    @pytest.mark.requires_ollama
     async def test_cache_expiry(self):
         """Test cache expiry after TTL."""
         config = {
-            "tier_config": {"enable_fallback": True},
+            "tier_config": {
+                "enable_fast_path": True,
+                "enable_slow_path": False,  # Disable slow path to avoid Ollama dependency
+                "enable_langextract": False,  # Disable langextract to avoid Ollama dependency
+                "enable_fallback": True,
+                "fast_path_confidence_threshold": 0.8,  # High threshold to force fallback
+            },
             "keyword_config": {},
             "cache_config": {
                 "enable_caching": True,
@@ -133,53 +138,86 @@ class TestTieredRouterCaching:
 
         router = TieredRouter(config)
 
-        # First call
-        await router.route("test query")
+        # Mock GLiNER to return low confidence decision
+        low_confidence_decision = RoutingDecision(
+            search_modality=SearchModality.VIDEO,
+            generation_type=GenerationType.RAW_RESULTS,
+            confidence_score=0.3,  # Below threshold, will fall back
+            routing_method="gliner",
+        )
+
+        # First call - mock GLiNER with low confidence, should fall back and cache fallback result
+        with patch.object(
+            router.strategies[RoutingTier.FAST_PATH], "route", return_value=low_confidence_decision
+        ):
+            first_decision = await router.route("test query")
 
         # Wait for cache to expire
         await asyncio.sleep(0.2)
 
-        # Second call - cache should be expired
+        # Second call - cache should be expired, GLiNER should be called again then fallback
         with patch.object(
-            router.strategies[RoutingTier.FALLBACK], "route"
-        ) as mock_route:
-            mock_route.return_value = RoutingDecision(
-                search_modality=SearchModality.TEXT,
-                generation_type=GenerationType.RAW_RESULTS,
-                confidence_score=0.5,
-                routing_method="keyword",
-            )
-            await router.route("test query")
-            mock_route.assert_called_once()  # Strategy should be called
+            router.strategies[RoutingTier.FAST_PATH], "route", return_value=low_confidence_decision
+        ):
+            with patch.object(
+                router.strategies[RoutingTier.FALLBACK], "route"
+            ) as mock_fallback:
+                mock_fallback.return_value = RoutingDecision(
+                    search_modality=SearchModality.TEXT,
+                    generation_type=GenerationType.RAW_RESULTS,
+                    confidence_score=0.9,
+                    routing_method="keyword",
+                )
+                await router.route("test query")
+                mock_fallback.assert_called_once()  # Fallback should be called after cache expiry
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    @pytest.mark.requires_ollama
     async def test_cache_disabled(self):
         """Test caching when disabled."""
         config = {
-            "tier_config": {"enable_fallback": True},
+            "tier_config": {
+                "enable_fast_path": True,
+                "enable_slow_path": False,  # Disable slow path to avoid Ollama dependency
+                "enable_langextract": False,  # Disable langextract to avoid Ollama dependency
+                "enable_fallback": True,
+                "fast_path_confidence_threshold": 0.8,  # High threshold to force fallback
+            },
             "keyword_config": {},
             "cache_config": {"enable_caching": False},
         }
 
         router = TieredRouter(config)
 
-        # First call
-        await router.route("test query")
+        # Mock GLiNER to return low confidence decision
+        low_confidence_decision = RoutingDecision(
+            search_modality=SearchModality.VIDEO,
+            generation_type=GenerationType.RAW_RESULTS,
+            confidence_score=0.3,  # Below threshold, will fall back
+            routing_method="gliner",
+        )
 
-        # Second call - should not use cache
+        # First call - mock GLiNER with low confidence, should fall back
         with patch.object(
-            router.strategies[RoutingTier.FALLBACK], "route"
-        ) as mock_route:
-            mock_route.return_value = RoutingDecision(
-                search_modality=SearchModality.TEXT,
-                generation_type=GenerationType.RAW_RESULTS,
-                confidence_score=0.5,
-                routing_method="keyword",
-            )
-            await router.route("test query")
-            mock_route.assert_called_once()  # Strategy should be called
+            router.strategies[RoutingTier.FAST_PATH], "route", return_value=low_confidence_decision
+        ):
+            first_decision = await router.route("test query")
+
+        # Second call - should not use cache, GLiNER should be called again then fallback
+        with patch.object(
+            router.strategies[RoutingTier.FAST_PATH], "route", return_value=low_confidence_decision
+        ):
+            with patch.object(
+                router.strategies[RoutingTier.FALLBACK], "route"
+            ) as mock_fallback:
+                mock_fallback.return_value = RoutingDecision(
+                    search_modality=SearchModality.TEXT,
+                    generation_type=GenerationType.RAW_RESULTS,
+                    confidence_score=0.9,
+                    routing_method="keyword",
+                )
+                await router.route("test query")
+                mock_fallback.assert_called_once()  # Fallback should be called since cache is disabled
 
 
 class TestTieredRouterEscalation:
@@ -367,13 +405,13 @@ class TestTieredRouterErrorHandling:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    @pytest.mark.requires_ollama
     async def test_all_strategies_fail(self):
         """Test when all strategies fail."""
         config = {
             "tier_config": {
                 "enable_fast_path": True,
                 "enable_slow_path": True,
+                "enable_langextract": True,  # Enable it so we can mock it to fail
                 "enable_fallback": False,  # No fallback
             }
         }
@@ -391,7 +429,12 @@ class TestTieredRouterErrorHandling:
                 "route",
                 side_effect=Exception("Error 2"),
             ):
-                decision = await router.route("test query")
+                with patch.object(
+                    router.strategies[RoutingTier.LANGEXTRACT],
+                    "route",
+                    side_effect=Exception("Error 3"),
+                ):
+                    decision = await router.route("test query")
 
         # Should return default decision
         assert decision.confidence_score < 0.5
