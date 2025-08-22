@@ -77,10 +77,10 @@ jobs:
         echo "📁 Files after test run:"
         ls -la .coverage* 2>/dev/null || echo "No .coverage files found"
         ls -la coverage* 2>/dev/null || echo "No coverage XML files found"
-        # Rename the coverage file to avoid conflicts
+        # Rename the coverage file to avoid conflicts and make it uploadable
         if [ -f .coverage ]; then
-          echo "✅ Coverage file found, renaming to .coverage.unit"
-          mv .coverage .coverage.unit
+          echo "✅ Coverage file found, renaming to coverage_unit.dat"
+          mv .coverage coverage_unit.dat
         else
           echo "⚠️ No .coverage file found - this will affect coverage combining"
         fi
@@ -90,8 +90,8 @@ jobs:
         echo "Checking for coverage files..."
         ls -la .coverage* || true
         ls -la coverage* || true
-        echo "Expected file: .coverage.unit"
-        [ -f .coverage.unit ] && echo "✅ Found .coverage.unit" || echo "❌ Missing .coverage.unit"
+        echo "Expected file: coverage_unit.dat"
+        [ -f coverage_unit.dat ] && echo "✅ Found coverage_unit.dat" || echo "❌ Missing coverage_unit.dat"
     
     - name: Final check before upload
       run: |
@@ -101,18 +101,15 @@ jobs:
         ls -la .coverage* 2>/dev/null || echo "No .coverage* files found"
         ls -la coverage* 2>/dev/null || echo "No coverage* files found"
         echo "Specifically checking for required files:"
-        [ -f .coverage.unit ] && echo "✅ .coverage.unit exists ($(stat -c%s .coverage.unit) bytes)" || echo "❌ .coverage.unit missing"
+        [ -f coverage_unit.dat ] && echo "✅ coverage_unit.dat exists ($(stat -c%s coverage_unit.dat) bytes)" || echo "❌ coverage_unit.dat missing"
         [ -f coverage_routing.xml ] && echo "✅ coverage_routing.xml exists ($(stat -c%s coverage_routing.xml) bytes)" || echo "❌ coverage_routing.xml missing"
-        echo "Full paths:"
-        [ -f ${{ github.workspace }}/.coverage.unit ] && echo "✅ Full path .coverage.unit exists" || echo "❌ Full path .coverage.unit missing"
-        [ -f ${{ github.workspace }}/coverage_routing.xml ] && echo "✅ Full path coverage_routing.xml exists" || echo "❌ Full path coverage_routing.xml missing"
     
     - name: Upload coverage data
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: coverage-unit
-        path: ${{ github.workspace }}/.coverage.unit
+        path: coverage_unit.dat
         retention-days: 1
         if-no-files-found: warn
     
@@ -121,7 +118,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: coverage-unit-xml
-        path: ${{ github.workspace }}/coverage_routing.xml
+        path: coverage_routing.xml
         retention-days: 1
         if-no-files-found: warn
 
@@ -162,10 +159,10 @@ jobs:
         echo "📁 Files after integration test run:"
         ls -la .coverage* 2>/dev/null || echo "No .coverage files found"
         ls -la coverage* 2>/dev/null || echo "No coverage XML files found"
-        # Rename the coverage file to avoid conflicts
+        # Rename the coverage file to avoid conflicts and make it uploadable
         if [ -f .coverage ]; then
-          echo "✅ Integration coverage file found, renaming to .coverage.integration"
-          mv .coverage .coverage.integration
+          echo "✅ Integration coverage file found, renaming to coverage_integration.dat"
+          mv .coverage coverage_integration.dat
         else
           echo "⚠️ No .coverage file found - this will affect coverage combining"
         fi
@@ -178,18 +175,15 @@ jobs:
         ls -la .coverage* 2>/dev/null || echo "No .coverage* files found"
         ls -la coverage* 2>/dev/null || echo "No coverage* files found"
         echo "Specifically checking for required files:"
-        [ -f .coverage.integration ] && echo "✅ .coverage.integration exists ($(stat -c%s .coverage.integration) bytes)" || echo "❌ .coverage.integration missing"
+        [ -f coverage_integration.dat ] && echo "✅ coverage_integration.dat exists ($(stat -c%s coverage_integration.dat) bytes)" || echo "❌ coverage_integration.dat missing"
         [ -f coverage_routing_integration.xml ] && echo "✅ coverage_routing_integration.xml exists ($(stat -c%s coverage_routing_integration.xml) bytes)" || echo "❌ coverage_routing_integration.xml missing"
-        echo "Full paths:"
-        [ -f ${{ github.workspace }}/.coverage.integration ] && echo "✅ Full path .coverage.integration exists" || echo "❌ Full path .coverage.integration missing"
-        [ -f ${{ github.workspace }}/coverage_routing_integration.xml ] && echo "✅ Full path coverage_routing_integration.xml exists" || echo "❌ Full path coverage_routing_integration.xml missing"
     
     - name: Upload coverage data
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: coverage-integration
-        path: ${{ github.workspace }}/.coverage.integration
+        path: coverage_integration.dat
         retention-days: 1
         if-no-files-found: warn
     
@@ -198,7 +192,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: coverage-integration-xml
-        path: ${{ github.workspace }}/coverage_routing_integration.xml
+        path: coverage_routing_integration.xml
         retention-days: 1
         if-no-files-found: warn
 
@@ -312,32 +306,24 @@ jobs:
         mkdir -p combined-coverage
         has_coverage=false
         
-        # Look for unit coverage file (uploaded as single file, so should be directly accessible)
-        if [ -f ./coverage-unit/.coverage.unit ]; then
-          cp ./coverage-unit/.coverage.unit combined-coverage/.coverage.unit
+        # Look for unit coverage file (uploaded as coverage_unit.dat)
+        if [ -f ./coverage-unit/coverage_unit.dat ]; then
+          cp ./coverage-unit/coverage_unit.dat combined-coverage/.coverage.unit
           echo "✅ Copied unit coverage"
           has_coverage=true
-        elif [ -f ./coverage-unit/.coverage ]; then
-          cp ./coverage-unit/.coverage combined-coverage/.coverage.unit
-          echo "✅ Copied unit coverage (found as .coverage)"
-          has_coverage=true
         else
-          echo "❌ No unit .coverage file found"
+          echo "❌ No unit coverage file found"
           echo "Available files in coverage-unit:"
           find ./coverage-unit/ -type f 2>/dev/null || echo "No files found"
         fi
         
-        # Look for integration coverage file
-        if [ -f ./coverage-integration/.coverage.integration ]; then
-          cp ./coverage-integration/.coverage.integration combined-coverage/.coverage.integration
+        # Look for integration coverage file (uploaded as coverage_integration.dat)
+        if [ -f ./coverage-integration/coverage_integration.dat ]; then
+          cp ./coverage-integration/coverage_integration.dat combined-coverage/.coverage.integration
           echo "✅ Copied integration coverage"
           has_coverage=true
-        elif [ -f ./coverage-integration/.coverage ]; then
-          cp ./coverage-integration/.coverage combined-coverage/.coverage.integration
-          echo "✅ Copied integration coverage (found as .coverage)"
-          has_coverage=true
         else
-          echo "❌ No integration .coverage file found"
+          echo "❌ No integration coverage file found"
           echo "Available files in coverage-integration:"
           find ./coverage-integration/ -type f 2>/dev/null || echo "No files found"
         fi
