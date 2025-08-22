@@ -104,16 +104,22 @@ lint-ingestion:
 	@echo "🔍 Linting ingestion module..."
 	uv run ruff check src/app/ingestion tests/ingestion
 	uv run black --check src/app/ingestion tests/ingestion
+	uv run isort --check-only src/app/ingestion tests/ingestion
+	uv run mypy src/app/ingestion --ignore-missing-imports
 
 lint-routing:
 	@echo "🔍 Linting routing module..."
 	uv run ruff check src/app/routing tests/routing
 	uv run black --check src/app/routing tests/routing
+	uv run isort --check-only src/app/routing tests/routing
+	uv run mypy src/app/routing --ignore-missing-imports
 
 lint-evaluation:
 	@echo "🔍 Linting evaluation module..."
 	uv run ruff check src/evaluation
 	uv run black --check src/evaluation
+	uv run isort --check-only src/evaluation
+	uv run mypy src/evaluation --ignore-missing-imports
 
 lint-all: lint-ingestion lint-routing lint-evaluation
 	@echo "✅ All modules linted successfully"

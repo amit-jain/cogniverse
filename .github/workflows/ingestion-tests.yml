@@ -53,13 +53,7 @@ jobs:
     
     - name: Run unit tests (CI-safe)
       run: |
-        uv run python -m pytest tests/ingestion/unit/ \
-          -m "unit" \
-          -v \
-          --cov=src/app/ingestion \
-          --cov-report=term-missing \
-          --cov-report=xml \
-          --cov-fail-under=50
+        make test-ingestion
     
     - name: Upload unit test coverage to Codecov
       uses: codecov/codecov-action@v3
@@ -189,21 +183,9 @@ jobs:
         uv sync --all-extras
         uv sync --extra dev
     
-    - name: Run ruff
+    - name: Run comprehensive linting
       run: |
-        uv run ruff check src/app/ingestion tests/ingestion
-    
-    - name: Run black
-      run: |
-        uv run black --check src/app/ingestion tests/ingestion
-    
-    - name: Run isort
-      run: |
-        uv run isort --check-only src/app/ingestion tests/ingestion
-    
-    - name: Run mypy
-      run: |
-        uv run mypy src/app/ingestion --ignore-missing-imports
+        make lint-ingestion
 
   test-processor-discovery:
     runs-on: ubuntu-latest
