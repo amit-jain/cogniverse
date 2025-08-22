@@ -56,13 +56,12 @@ jobs:
       run: |
         make test-evaluation
     
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
+    - name: Upload unit test coverage data
+      uses: actions/upload-artifact@v4
       with:
-        file: ./coverage.xml
-        flags: unittests
-        name: codecov-umbrella
-        fail_ci_if_error: false
+        name: coverage-unit
+        path: .coverage
+        retention-days: 1
 
   integration-tests:
     runs-on: ubuntu-latest
@@ -105,19 +104,18 @@ jobs:
       run: |
         pytest src/evaluation/tests/integration -v -m integration --cov=src/evaluation --cov-report=term-missing
     
+    - name: Upload integration test coverage data
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-integration
+        path: .coverage
+        retention-days: 1
+    
     - name: Stop Phoenix
       run: |
         docker stop phoenix-ci || true
         docker rm phoenix-ci || true
       if: always()  # Always cleanup, even if tests fail
-    
-    - name: Upload coverage
-      uses: codecov/codecov-action@v3
-      with:
-        file: ./coverage.xml
-        flags: integration
-        name: codecov-umbrella
-        fail_ci_if_error: false
 
   lint:
     runs-on: ubuntu-latest
@@ -176,36 +174,72 @@ jobs:
         python -m src.evaluation.cli list-traces --help
         python -m src.evaluation.cli test --help
 
-  coverage-check:
+  coverage-report:
     runs-on: ubuntu-latest
     needs: [unit-tests, integration-tests]
+    if: always() && (needs.unit-tests.result == 'success' || needs.integration-tests.result == 'success')
     
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     
-    - name: Set up Python
+    - name: Set up Python 3.12
       uses: actions/setup-python@v4
       with:
         python-version: '3.12'
     
     - name: Install uv
-      run: |
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
     
-    - name: Install dependencies
+    - name: Install coverage tools
       run: |
-        uv pip install --system -e .
-        uv pip install --system pytest pytest-cov tabulate
+        uv sync --extra dev
     
-    - name: Generate coverage report for unit tests
-      run: |
-        echo "Unit test coverage report:"
-        pytest src/evaluation/tests/unit -v -m unit --cov=src/evaluation --cov-report=html --cov-report=term-missing
+    - name: Download unit test coverage
+      uses: actions/download-artifact@v4
+      with:
+        name: coverage-unit
+        path: ./coverage-unit/
       continue-on-error: true
     
-    - name: Upload coverage HTML report
+    - name: Download integration test coverage
+      uses: actions/download-artifact@v4
+      with:
+        name: coverage-integration
+        path: ./coverage-integration/
+      continue-on-error: true
+    
+    - name: Combine coverage reports
+      run: |
+        # Copy coverage files with unique names
+        mkdir -p combined-coverage
+        if [ -f ./coverage-unit/.coverage ]; then
+          cp ./coverage-unit/.coverage combined-coverage/.coverage.unit
+        fi
+        if [ -f ./coverage-integration/.coverage ]; then
+          cp ./coverage-integration/.coverage combined-coverage/.coverage.integration
+        fi
+        
+        # Combine coverage data
+        cd combined-coverage
+        uv run coverage combine .coverage.*
+        
+        # Generate reports
+        uv run coverage report --show-missing
+        uv run coverage xml -o coverage-combined.xml
+        uv run coverage html -d htmlcov-combined
+        
+        echo "## Evaluation Module Coverage Summary" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        uv run coverage report >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+    
+    - name: Upload combined coverage report
       uses: actions/upload-artifact@v4
       with:
-        name: coverage-report
-        path: htmlcov/
+        name: evaluation-coverage-combined
+        path: |
+          combined-coverage/coverage-combined.xml
+          combined-coverage/htmlcov-combined/
+        retention-days: 7
