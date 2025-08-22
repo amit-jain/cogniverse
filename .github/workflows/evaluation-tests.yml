@@ -136,7 +136,7 @@ jobs:
     - name: Install dependencies with dev tools
       run: |
         uv sync --all-extras
-        uv sync --extra dev
+        uv sync --all-extras
     
     - name: Run comprehensive linting
       run: make lint-evaluation
@@ -194,7 +194,7 @@ jobs:
     
     - name: Install coverage tools
       run: |
-        uv sync --extra dev
+        uv sync --all-extras
     
     - name: Download unit test coverage
       uses: actions/download-artifact@v4
