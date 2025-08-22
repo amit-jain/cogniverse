@@ -636,7 +636,7 @@ async def main():
     results = await optimizer.run_comprehensive_optimization()
 
     # Print summary
-    best_result = optimizer.print_optimization_summary(results)
+    optimizer.print_optimization_summary(results)
 
     # Save results
     try:
