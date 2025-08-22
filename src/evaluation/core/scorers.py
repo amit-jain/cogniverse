@@ -5,16 +5,17 @@ These scorers use the schema analyzer to understand the data structure
 and extract relevant fields without hardcoded assumptions.
 """
 
-from typing import Dict, Any, List
 import logging
-from inspect_ai.scorer import scorer, Score, mean
+from typing import Any
+
+from inspect_ai.scorer import Score, mean, scorer
 
 from src.evaluation.core.schema_analyzer import get_schema_analyzer
 
 logger = logging.getLogger(__name__)
 
 
-def get_configured_scorers(config: Dict[str, Any]) -> List:
+def get_configured_scorers(config: dict[str, Any]) -> list:
     """Get list of scorers based on configuration.
 
     Args:
@@ -485,7 +486,7 @@ def schema_aware_temporal_scorer():
     return score
 
 
-def _calculate_keyword_relevance(query: str, contexts: List[str]) -> float:
+def _calculate_keyword_relevance(query: str, contexts: list[str]) -> float:
     """Calculate keyword-based relevance score.
 
     Args:

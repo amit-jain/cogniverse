@@ -7,20 +7,21 @@ automatic prompt engineering and optimization capabilities.
 """
 
 import asyncio
-import sys
-import os
-import dspy
-import random
-from typing import List, Dict, Any
 import json
+import os
+import random
+import sys
 import time
+from typing import Any
+
+import dspy
 
 # Add src directory to path
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 sys.path.insert(0, os.path.join(project_root, "src"))
 
-from src.tools.query_analyzer import QueryAnalyzer
-from src.common.config import get_config
+from src.common.config import get_config  # noqa: E402
+from src.tools.query_analyzer import QueryAnalyzer  # noqa: E402
 
 
 class QueryRoutingSignature(dspy.Signature):
@@ -226,7 +227,7 @@ class DSPyGLiNEROptimizer:
             "information_need",
         ]
 
-    def load_training_examples(self) -> List[dspy.Example]:
+    def load_training_examples(self) -> list[dspy.Example]:
         """Load training examples in DSPy format."""
         examples = []
 
@@ -234,7 +235,7 @@ class DSPyGLiNEROptimizer:
         test_file = os.path.join(os.path.dirname(__file__), "test_queries.txt")
 
         try:
-            with open(test_file, "r") as f:
+            with open(test_file) as f:
                 for line in f:
                     line = line.strip()
                     if not line or line.startswith("#"):
@@ -302,8 +303,8 @@ class DSPyGLiNEROptimizer:
         return examples
 
     async def optimize_with_hyperparameter_search(
-        self, train_examples: List[dspy.Example], dev_examples: List[dspy.Example]
-    ) -> Dict[str, Any]:
+        self, train_examples: list[dspy.Example], dev_examples: list[dspy.Example]
+    ) -> dict[str, Any]:
         """
         Use DSPy-inspired hyperparameter optimization for GLiNER.
 
@@ -418,8 +419,8 @@ class DSPyGLiNEROptimizer:
         return best_results
 
     async def optimize_with_mipro(
-        self, train_examples: List[dspy.Example], dev_examples: List[dspy.Example]
-    ) -> Dict[str, Any]:
+        self, train_examples: list[dspy.Example], dev_examples: list[dspy.Example]
+    ) -> dict[str, Any]:
         """
         Use DSPy's MIPROv2 optimizer for automatic prompt optimization.
 
@@ -551,7 +552,7 @@ class DSPyGLiNEROptimizer:
 
         return best_results
 
-    async def run_comprehensive_optimization(self) -> Dict[str, Any]:
+    async def run_comprehensive_optimization(self) -> dict[str, Any]:
         """Run ACTUAL DSPy optimization with MIPRO."""
         print("🚀 DSPy GLiNER Optimization with MIPRO")
         print("=" * 60)
@@ -577,7 +578,7 @@ class DSPyGLiNEROptimizer:
 
         return results
 
-    def print_optimization_summary(self, results: Dict[str, Any]):
+    def print_optimization_summary(self, results: dict[str, Any]):
         """Print DSPy optimization results."""
         print("\n" + "=" * 60)
         print("🏆 DSPY GLINER OPTIMIZATION RESULTS")

@@ -6,7 +6,7 @@ and BaseStrategy classes.
 """
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
@@ -36,7 +36,7 @@ class MockTestStrategy(BaseStrategy):
     def __init__(self):
         self.strategy_name = "test_strategy"
 
-    def get_required_processors(self) -> Dict[str, Dict[str, Any]]:
+    def get_required_processors(self) -> dict[str, dict[str, Any]]:
         return {"test": {"param1": "test_value", "param2": 20}}
 
 

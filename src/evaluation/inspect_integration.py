@@ -5,16 +5,16 @@ This module shows how Inspect AI helps in the evaluation framework
 """
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Any
 
 from inspect_ai import Task, task
-from inspect_ai.dataset import Sample, Dataset
-from inspect_ai.solver import Solver, solver, TaskState
-from inspect_ai.scorer import Scorer, scorer, Score
+from inspect_ai.dataset import Dataset, Sample
+from inspect_ai.scorer import Score, Scorer, scorer
+from inspect_ai.solver import Solver, TaskState, solver
 
-from .span_evaluator import SpanEvaluator
-from .phoenix_experiments import VideoRetrievalExperiment
 from .evaluators.reference_free import create_reference_free_evaluators
+from .phoenix_experiments import VideoRetrievalExperiment
+from .span_evaluator import SpanEvaluator
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ class RetrievalQualitySolver(Solver):
     Inspect AI solver that evaluates retrieval quality using reference-free metrics
     """
 
-    def __init__(self, evaluators: Optional[Dict[str, Any]] = None):
+    def __init__(self, evaluators: dict[str, Any] | None = None):
         self.evaluators = evaluators or create_reference_free_evaluators()
 
     async def solve(self, state: TaskState) -> TaskState:
@@ -135,7 +135,7 @@ class CompositeRetrievalScorer(Scorer):
 
 @task
 def evaluate_span_quality(
-    span_data_path: Optional[str] = None, evaluator_names: Optional[List[str]] = None
+    span_data_path: str | None = None, evaluator_names: list[str] | None = None
 ) -> Task:
     """
     Inspect AI task for evaluating span quality
@@ -198,7 +198,7 @@ def evaluate_span_quality(
 
 
 @task
-def experiment_comparison_task(profiles: List[str], strategies: List[str]) -> Task:
+def experiment_comparison_task(profiles: list[str], strategies: list[str]) -> Task:
     """
     Inspect AI task for comparing different configurations
 
@@ -263,7 +263,7 @@ class InspectEvaluationOrchestrator:
         self.span_evaluator = SpanEvaluator()
         self.experiment_manager = VideoRetrievalExperiment()
 
-    async def demonstrate_inspect_benefits(self) -> Dict[str, Any]:
+    async def demonstrate_inspect_benefits(self) -> dict[str, Any]:
         """
         Demonstrate how Inspect AI helps in the evaluation framework
 

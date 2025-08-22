@@ -227,7 +227,7 @@ class TestKeyframeProcessor:
             mock_cap.isOpened.return_value = False
             mock_cv2.return_value = mock_cap
 
-            with pytest.raises(Exception):
+            with pytest.raises(ValueError, match="Invalid video"):
                 processor.extract_keyframes(invalid_path, temp_dir)
 
     @patch("cv2.VideoCapture")

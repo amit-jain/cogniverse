@@ -4,13 +4,13 @@ Golden dataset evaluator for spans marked with dataset identifiers
 This evaluator can evaluate spans that have been marked as belonging to a test dataset
 """
 
-import logging
-from typing import List, Dict, Any, Optional
 import json
+import logging
+from typing import Any
 
+import numpy as np
 from phoenix.experiments.evaluators.base import Evaluator
 from phoenix.experiments.types import EvaluationResult
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ class GoldenDatasetEvaluator(Evaluator):
     Evaluates spans against a golden dataset when they have matching identifiers
     """
 
-    def __init__(self, golden_dataset: Dict[str, Dict[str, Any]]):
+    def __init__(self, golden_dataset: dict[str, dict[str, Any]]):
         """
         Initialize with golden dataset
 
@@ -33,8 +33,8 @@ class GoldenDatasetEvaluator(Evaluator):
     async def evaluate(
         self,
         input: str,
-        output: List[Dict[str, Any]],
-        metadata: Optional[Dict[str, Any]] = None,
+        output: list[dict[str, Any]],
+        metadata: dict[str, Any] | None = None,
         **kwargs,
     ) -> EvaluationResult:
         """
@@ -118,10 +118,10 @@ class GoldenDatasetEvaluator(Evaluator):
 
     def _calculate_metrics(
         self,
-        retrieved: List[str],
-        expected: List[str],
-        relevance_scores: Optional[Dict[str, float]] = None,
-    ) -> Dict[str, float]:
+        retrieved: list[str],
+        expected: list[str],
+        relevance_scores: dict[str, float] | None = None,
+    ) -> dict[str, float]:
         """Calculate retrieval metrics"""
         metrics = {}
 
@@ -176,7 +176,7 @@ class GoldenDatasetEvaluator(Evaluator):
         return metrics
 
 
-def load_golden_dataset_from_file(file_path: str = None) -> Dict[str, Dict[str, Any]]:
+def load_golden_dataset_from_file(file_path: str = None) -> dict[str, dict[str, Any]]:
     """
     Load golden dataset from a JSON file
 
@@ -189,7 +189,7 @@ def load_golden_dataset_from_file(file_path: str = None) -> Dict[str, Dict[str, 
     from pathlib import Path
 
     if file_path and Path(file_path).exists():
-        with open(file_path, "r") as f:
+        with open(file_path) as f:
             return json.load(f)
 
     # Try to find the latest auto-generated dataset
@@ -200,14 +200,14 @@ def load_golden_dataset_from_file(file_path: str = None) -> Dict[str, Dict[str, 
             # Use the most recent one
             latest = max(json_files, key=lambda x: x.stat().st_mtime)
             logger.info(f"Loading golden dataset from {latest}")
-            with open(latest, "r") as f:
+            with open(latest) as f:
                 return json.load(f)
 
     # Fall back to hardcoded dataset
     return create_low_scoring_golden_dataset()
 
 
-def create_low_scoring_golden_dataset() -> Dict[str, Dict[str, Any]]:
+def create_low_scoring_golden_dataset() -> dict[str, dict[str, Any]]:
     """
     Create a golden dataset with queries known to have low scores
     This helps test the evaluation system with challenging queries
@@ -266,7 +266,7 @@ def create_low_scoring_golden_dataset() -> Dict[str, Dict[str, Any]]:
 
 
 def mark_span_as_test_query(
-    span_attributes: Dict[str, Any], dataset_id: str = "golden_test_v1"
+    span_attributes: dict[str, Any], dataset_id: str = "golden_test_v1"
 ):
     """
     Helper function to mark a span as belonging to a test dataset

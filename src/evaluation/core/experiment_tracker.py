@@ -5,14 +5,14 @@ This module provides functionality similar to run_experiments_with_visualization
 but uses the new Inspect AI-based evaluation framework with proper Phoenix integration.
 """
 
+import asyncio
+import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+
 import pandas as pd
 from tabulate import tabulate
-import json
-import asyncio
 
 from src.evaluation.core.task import evaluation_task
 from src.evaluation.data.datasets import DatasetManager
@@ -36,12 +36,12 @@ class ExperimentTracker:
     def __init__(
         self,
         experiment_project_name: str = "experiments",
-        output_dir: Optional[Path] = None,
+        output_dir: Path | None = None,
         enable_quality_evaluators: bool = True,
         enable_llm_evaluators: bool = False,
         evaluator_name: str = "visual_judge",
-        llm_model: Optional[str] = None,
-        llm_base_url: Optional[str] = None,
+        llm_model: str | None = None,
+        llm_base_url: str | None = None,
     ):
         """
         Initialize the experiment tracker with new evaluation framework.
@@ -70,9 +70,9 @@ class ExperimentTracker:
         self.phoenix_monitor = RetrievalMonitor()
 
         # Track experiments
-        self.experiments: List[Dict] = []
-        self.configurations: List[Dict] = []
-        self.dataset_url: Optional[str] = None
+        self.experiments: list[dict] = []
+        self.configurations: list[dict] = []
+        self.dataset_url: str | None = None
 
         # Register plugins if needed
         self._register_evaluator_plugins()
@@ -106,10 +106,10 @@ class ExperimentTracker:
 
     def get_experiment_configurations(
         self,
-        profiles: Optional[List[str]] = None,
-        strategies: Optional[List[str]] = None,
+        profiles: list[str] | None = None,
+        strategies: list[str] | None = None,
         all_strategies: bool = False,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """
         Get experiment configurations from strategy registry.
 
@@ -185,7 +185,7 @@ class ExperimentTracker:
 
     async def run_experiment_async(
         self, profile: str, strategy: str, dataset_name: str, description: str
-    ) -> Dict:
+    ) -> dict:
         """
         Run a single experiment using the new Inspect AI framework.
 
@@ -275,7 +275,7 @@ class ExperimentTracker:
 
     def run_experiment(
         self, profile: str, strategy: str, dataset_name: str, description: str
-    ) -> Dict:
+    ) -> dict:
         """
         Synchronous wrapper for run_experiment_async.
 
@@ -288,8 +288,8 @@ class ExperimentTracker:
 
     def create_or_get_dataset(
         self,
-        dataset_name: Optional[str] = None,
-        csv_path: Optional[str] = None,
+        dataset_name: str | None = None,
+        csv_path: str | None = None,
         force_new: bool = False,
     ) -> str:
         """
@@ -322,7 +322,7 @@ class ExperimentTracker:
         logger.info(f"Created new dataset: {dataset_id}")
         return dataset_id
 
-    def run_all_experiments(self, dataset_name: str) -> List[Dict]:
+    def run_all_experiments(self, dataset_name: str) -> list[dict]:
         """
         Run all configured experiments using the new evaluation framework.
 
@@ -403,9 +403,9 @@ class ExperimentTracker:
 
     def create_visualization_tables(
         self,
-        experiments: Optional[List[Dict]] = None,
+        experiments: list[dict] | None = None,
         include_quality_metrics: bool = True,
-    ) -> Dict[str, pd.DataFrame]:
+    ) -> dict[str, pd.DataFrame]:
         """
         Create visualization tables - exact same format as run_experiments_with_visualization.py
         """
@@ -502,8 +502,8 @@ class ExperimentTracker:
 
     def print_visualization(
         self,
-        tables: Optional[Dict[str, pd.DataFrame]] = None,
-        dataset_url: Optional[str] = None,
+        tables: dict[str, pd.DataFrame] | None = None,
+        dataset_url: str | None = None,
     ):
         """
         Print visualization - exact same format as run_experiments_with_visualization.py
@@ -590,9 +590,9 @@ class ExperimentTracker:
 
     def save_results(
         self,
-        tables: Optional[Dict[str, pd.DataFrame]] = None,
-        experiments: Optional[List[Dict]] = None,
-    ) -> Tuple[Path, Path]:
+        tables: dict[str, pd.DataFrame] | None = None,
+        experiments: list[dict] | None = None,
+    ) -> tuple[Path, Path]:
         """
         Save experiment results - same format as original.
         """
@@ -642,7 +642,7 @@ class ExperimentTracker:
 
         return csv_path, json_path
 
-    def generate_html_report(self) -> Optional[Path]:
+    def generate_html_report(self) -> Path | None:
         """
         Generate integrated HTML report - same as original.
         """

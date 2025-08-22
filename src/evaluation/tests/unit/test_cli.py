@@ -2,15 +2,16 @@
 Unit tests for CLI commands.
 """
 
-import pytest
-from unittest.mock import Mock, patch
-from click.testing import CliRunner
 import json
+from unittest.mock import Mock, patch
+
 import pandas as pd
+import pytest
+from click.testing import CliRunner
 
 # Import CLI functions directly to avoid import issues
 try:
-    from src.evaluation.cli import cli, evaluate, create_dataset, list_traces, test
+    from src.evaluation.cli import cli, create_dataset, evaluate, list_traces, test
 except ImportError:
     # Mock imports if they fail
     cli = None
@@ -191,8 +192,9 @@ class TestCLI:
     @pytest.mark.unit
     def test_evaluate_with_config_yaml(self, runner, mock_task, mock_inspect_eval):
         """Test evaluate command with YAML config file."""
-        import yaml
         import tempfile
+
+        import yaml
 
         config_data = {
             "top_k": 20,
@@ -299,7 +301,7 @@ class TestCLI:
             assert "Results saved to results.json" in result.output
 
             # Verify output file was created
-            with open("results.json", "r") as f:
+            with open("results.json") as f:
                 output_data = json.load(f)
                 assert output_data["mode"] == "live"
                 assert output_data["dataset"] == "test_dataset"

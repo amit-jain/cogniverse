@@ -6,8 +6,8 @@ any type of search backend, not just video search.
 """
 
 import asyncio
-from typing import Dict, Any, List
 import logging
+from typing import Any
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -62,7 +62,7 @@ class MockDocumentBackend:
             },
         ]
 
-    async def get_schema_info(self, schema_name: str) -> Dict[str, Any]:
+    async def get_schema_info(self, schema_name: str) -> dict[str, Any]:
         """Return schema information for document search."""
         return {
             "name": "document_search",
@@ -78,7 +78,7 @@ class MockDocumentBackend:
 
     async def search(
         self, query_text: str, top_k: int = 10, **kwargs
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Simple keyword search in documents."""
         results = []
         query_lower = query_text.lower()
@@ -216,7 +216,7 @@ async def run_image_search_evaluation():
                 },
             ]
 
-        async def get_schema_info(self, schema_name: str) -> Dict[str, Any]:
+        async def get_schema_info(self, schema_name: str) -> dict[str, Any]:
             return {
                 "name": "image_search",
                 "fields": {

@@ -5,10 +5,10 @@ This module provides ground truth extraction that adapts to any schema
 without hardcoded assumptions about the domain.
 """
 
-from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional
-import logging
 import asyncio
+import logging
+from abc import ABC, abstractmethod
+from typing import Any
 
 from src.evaluation.core.schema_analyzer import get_schema_analyzer
 
@@ -33,7 +33,7 @@ class BackendError(GroundTruthError):
     pass
 
 
-def get_ground_truth_strategy(config: Dict[str, Any]) -> "GroundTruthStrategy":
+def get_ground_truth_strategy(config: dict[str, Any]) -> "GroundTruthStrategy":
     """Get appropriate ground truth strategy based on config.
 
     Args:
@@ -62,8 +62,8 @@ class GroundTruthStrategy(ABC):
 
     @abstractmethod
     async def extract_ground_truth(
-        self, trace_data: Dict[str, Any], backend: Optional[Any] = None
-    ) -> Dict[str, Any]:
+        self, trace_data: dict[str, Any], backend: Any | None = None
+    ) -> dict[str, Any]:
         """
         Extract ground truth for a trace.
 
@@ -89,8 +89,8 @@ class SchemaAwareGroundTruthStrategy(GroundTruthStrategy):
         self.schema_cache = {}
 
     async def extract_ground_truth(
-        self, trace_data: Dict[str, Any], backend: Optional[Any] = None
-    ) -> Dict[str, Any]:
+        self, trace_data: dict[str, Any], backend: Any | None = None
+    ) -> dict[str, Any]:
         """Extract ground truth using schema-aware analysis."""
         if not backend:
             return {
@@ -192,8 +192,8 @@ class SchemaAwareGroundTruthStrategy(GroundTruthStrategy):
             }
 
     async def _get_schema_info(
-        self, trace_data: Dict[str, Any], backend: Any
-    ) -> Dict[str, Any]:
+        self, trace_data: dict[str, Any], backend: Any
+    ) -> dict[str, Any]:
         """Get schema information from trace or backend."""
         # Check if schema info is in trace metadata
         metadata = trace_data.get("metadata", {})
@@ -228,7 +228,7 @@ class SchemaAwareGroundTruthStrategy(GroundTruthStrategy):
 
     async def _discover_schema_fields(
         self, schema_name: str, backend: Any
-    ) -> Dict[str, List[str]]:
+    ) -> dict[str, list[str]]:
         """Discover available fields in schema using multiple methods."""
         fields = {  # noqa: F841
             "id_fields": [],
@@ -293,7 +293,7 @@ class SchemaAwareGroundTruthStrategy(GroundTruthStrategy):
             f"Could not discover schema fields for '{schema_name}' using any available method"
         )
 
-    def _parse_schema_info(self, schema_info: Dict[str, Any]) -> Dict[str, List[str]]:
+    def _parse_schema_info(self, schema_info: dict[str, Any]) -> dict[str, list[str]]:
         """Parse schema info from backend."""
         fields = {
             "id_fields": [],
@@ -329,7 +329,7 @@ class SchemaAwareGroundTruthStrategy(GroundTruthStrategy):
 
         return fields
 
-    def _parse_field_mappings(self, mappings: Dict[str, Any]) -> Dict[str, List[str]]:
+    def _parse_field_mappings(self, mappings: dict[str, Any]) -> dict[str, list[str]]:
         """Parse field mappings into categorized fields."""
         # If mappings already in our format, return as is
         if all(k in mappings for k in ["id_fields", "content_fields"]):
@@ -338,7 +338,7 @@ class SchemaAwareGroundTruthStrategy(GroundTruthStrategy):
         # Otherwise, categorize the fields
         return self._categorize_fields(list(mappings.keys()))
 
-    def _categorize_fields(self, field_list: List[str]) -> Dict[str, List[str]]:
+    def _categorize_fields(self, field_list: list[str]) -> dict[str, list[str]]:
         """Categorize a flat list of fields by their likely purpose."""
         fields = {
             "id_fields": [],
@@ -385,7 +385,7 @@ class SchemaAwareGroundTruthStrategy(GroundTruthStrategy):
 
         return fields
 
-    def _infer_fields_from_results(self, result: Any) -> Dict[str, List[str]]:
+    def _infer_fields_from_results(self, result: Any) -> dict[str, list[str]]:
         """Infer field categories from a sample result."""
         fields = {
             "id_fields": [],
@@ -422,7 +422,7 @@ class SchemaAwareGroundTruthStrategy(GroundTruthStrategy):
             # Categorize based on name and type
             if "id" in field_lower or field_name == "_id":
                 fields["id_fields"].append(field_name)
-            elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            elif isinstance(value, int | float) and not isinstance(value, bool):
                 fields["numeric_fields"].append(field_name)
             elif "time" in field_lower or "date" in field_lower:
                 fields["temporal_fields"].append(field_name)
@@ -440,9 +440,9 @@ class SchemaAwareGroundTruthStrategy(GroundTruthStrategy):
         self,
         backend: Any,
         query: str,
-        constraints: Dict[str, Any],
-        schema_fields: Dict[str, List[str]],
-    ) -> List[Any]:
+        constraints: dict[str, Any],
+        schema_fields: dict[str, list[str]],
+    ) -> list[Any]:
         """Search backend using constraints."""
         if not hasattr(backend, "search"):
             raise BackendError("Backend does not support search operation")
@@ -473,11 +473,11 @@ class SchemaAwareGroundTruthStrategy(GroundTruthStrategy):
             return results or []
 
         except Exception as e:
-            raise BackendError(f"Search failed: {e}")
+            raise BackendError(f"Search failed: {e}") from e
 
     def _calculate_confidence(
         self,
-        constraints: Dict[str, Any],
+        constraints: dict[str, Any],
         num_items: int,
         num_errors: int,
         total_results: int,
@@ -549,8 +549,8 @@ class DatasetGroundTruthStrategy(GroundTruthStrategy):
     """Extract ground truth from pre-defined datasets."""
 
     async def extract_ground_truth(
-        self, trace_data: Dict[str, Any], backend: Optional[Any] = None
-    ) -> Dict[str, Any]:
+        self, trace_data: dict[str, Any], backend: Any | None = None
+    ) -> dict[str, Any]:
         """Extract ground truth from dataset annotations."""
         # This would connect to a dataset with labeled ground truth
         query = trace_data.get("query", "")
@@ -615,7 +615,7 @@ class DatasetGroundTruthStrategy(GroundTruthStrategy):
 
                 dataset_path = f"data/datasets/{dataset_name}.json"
                 if os.path.exists(dataset_path):
-                    with open(dataset_path, "r") as f:
+                    with open(dataset_path) as f:
                         dataset_data = json.load(f)
 
                     # Search for query in dataset
@@ -656,8 +656,8 @@ class BackendGroundTruthStrategy(GroundTruthStrategy):
     """Extract ground truth by re-querying backend with high precision."""
 
     async def extract_ground_truth(
-        self, trace_data: Dict[str, Any], backend: Optional[Any] = None
-    ) -> Dict[str, Any]:
+        self, trace_data: dict[str, Any], backend: Any | None = None
+    ) -> dict[str, Any]:
         """Extract ground truth using high-precision backend query."""
         if not backend:
             return {
@@ -682,8 +682,8 @@ class HybridGroundTruthStrategy(GroundTruthStrategy):
     """Combine multiple strategies for best ground truth extraction."""
 
     async def extract_ground_truth(
-        self, trace_data: Dict[str, Any], backend: Optional[Any] = None
-    ) -> Dict[str, Any]:
+        self, trace_data: dict[str, Any], backend: Any | None = None
+    ) -> dict[str, Any]:
         """Extract ground truth using multiple strategies and combine results."""
         strategies = [SchemaAwareGroundTruthStrategy(), BackendGroundTruthStrategy()]
 

@@ -22,23 +22,26 @@ import asyncio
 import json
 import logging
 import os
+
 # Add project root to path
 import sys
 import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from src.app.ingestion.exceptions import PipelineException, wrap_content_error
 from src.app.ingestion.processor_manager import ProcessorManager
+
 # Processors are imported dynamically by processor_manager
-from src.app.ingestion.processors.embedding_generator import \
-    create_embedding_generator
+from src.app.ingestion.processors.embedding_generator import create_embedding_generator
+
 # StrategyConfig imported locally where needed
 from src.app.ingestion.strategy_factory import StrategyFactory
+
 # Cache imports removed - using pipeline_cache directly
 from src.common.cache.pipeline_cache import PipelineArtifactCache
 from src.common.config import get_config
@@ -144,9 +147,9 @@ class VideoIngestionPipeline:
 
     def __init__(
         self,
-        config: Optional[PipelineConfig] = None,
-        app_config: Optional[Dict[str, Any]] = None,
-        schema_name: Optional[str] = None,
+        config: PipelineConfig | None = None,
+        app_config: dict[str, Any] | None = None,
+        schema_name: str | None = None,
         debug_mode: bool = False,
     ):
         """Initialize the video ingestion pipeline with async support"""
@@ -425,7 +428,7 @@ class VideoIngestionPipeline:
             self.logger.warning(f"Failed to get video duration: {e}")
             return 0
 
-    async def _check_cache_async(self, video_path: Path) -> Dict[str, Any]:
+    async def _check_cache_async(self, video_path: Path) -> dict[str, Any]:
         """
         Check all cache entries concurrently
         Returns dict with cached results or None for each step
@@ -495,7 +498,7 @@ class VideoIngestionPipeline:
 
             # Build results dict
             results = {}
-            for key, result in zip(cache_keys, cache_results):
+            for key, result in zip(cache_keys, cache_results, strict=False):
                 if isinstance(result, Exception):
                     self.logger.warning(f"Cache check failed for {key}: {result}")
                     results[key] = None
@@ -548,7 +551,7 @@ class VideoIngestionPipeline:
         except Exception as e:
             self.logger.warning(f"Failed to cache {step}: {e}")
 
-    def _extract_base_video_data(self, results: Dict[str, Any]) -> Dict[str, Any]:
+    def _extract_base_video_data(self, results: dict[str, Any]) -> dict[str, Any]:
         """Extract base video metadata from results"""
         return {
             "video_id": results.get("video_id"),
@@ -557,7 +560,7 @@ class VideoIngestionPipeline:
             "output_dir": str(self.profile_output_dir),
         }
 
-    def _add_strategy_metadata(self, video_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _add_strategy_metadata(self, video_data: dict[str, Any]) -> dict[str, Any]:
         """Add strategy-related metadata to video data"""
         if self.strategy:
             video_data["processing_type"] = self.strategy.processing_type
@@ -566,8 +569,8 @@ class VideoIngestionPipeline:
         return video_data
 
     def _process_chunk_data(
-        self, video_data: Dict[str, Any], results: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, video_data: dict[str, Any], results: dict[str, Any]
+    ) -> dict[str, Any]:
         """Process chunk-based video data"""
         # Handle both 'chunks' and 'video_chunks' keys for backward compatibility
         if "chunks" in results["results"]:
@@ -586,8 +589,8 @@ class VideoIngestionPipeline:
         return video_data
 
     def _process_single_vector_data(
-        self, video_data: Dict[str, Any], results: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, video_data: dict[str, Any], results: dict[str, Any]
+    ) -> dict[str, Any]:
         """Process single vector video data"""
         processing_data = results["results"]["single_vector_processing"]
         # Use dictionary segments (VideoSegment objects already converted to dicts)
@@ -601,8 +604,8 @@ class VideoIngestionPipeline:
         return video_data
 
     def _process_frame_data(
-        self, video_data: Dict[str, Any], results: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, video_data: dict[str, Any], results: dict[str, Any]
+    ) -> dict[str, Any]:
         """Process frame-based video data"""
         keyframes_data = results["results"]["keyframes"]
 
@@ -619,7 +622,7 @@ class VideoIngestionPipeline:
 
         return video_data
 
-    def _prepare_video_data(self, results: Dict[str, Any]) -> Dict[str, Any]:
+    def _prepare_video_data(self, results: dict[str, Any]) -> dict[str, Any]:
         """Prepare video data for embedding generation based on processing type"""
         video_data = self._extract_base_video_data(results)
         video_data = self._add_strategy_metadata(video_data)
@@ -640,7 +643,7 @@ class VideoIngestionPipeline:
 
         return video_data
 
-    def _convert_embedding_result(self, result: Any) -> Dict[str, Any]:
+    def _convert_embedding_result(self, result: Any) -> dict[str, Any]:
         """Convert EmbeddingResult to dict format expected by pipeline"""
         return {
             "video_id": result.video_id,
@@ -653,7 +656,7 @@ class VideoIngestionPipeline:
             "backend": self.config.search_backend,
         }
 
-    async def generate_embeddings(self, results: Dict[str, Any]) -> Dict[str, Any]:
+    async def generate_embeddings(self, results: dict[str, Any]) -> dict[str, Any]:
         """Generate embeddings for search backend using EmbeddingGenerator v2"""
         if not self.embedding_generator:
             self.logger.error("Embedding generator not initialized")
@@ -678,7 +681,7 @@ class VideoIngestionPipeline:
 
     async def process_video_async_with_strategies(
         self, video_path: Path
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Process video using the strategy pattern - strategies orchestrate everything
         """
@@ -744,7 +747,7 @@ class VideoIngestionPipeline:
             results["error_context"] = wrapped_error.context
             return results
 
-    def _prepare_base_results(self, video_path: Path) -> Dict[str, Any]:
+    def _prepare_base_results(self, video_path: Path) -> dict[str, Any]:
         """Prepare base results structure"""
         config_dict = self.config.__dict__.copy()
         config_dict["video_dir"] = str(config_dict["video_dir"])
@@ -761,8 +764,8 @@ class VideoIngestionPipeline:
         }
 
     async def _get_cached_data(
-        self, video_path: Path, results: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, video_path: Path, results: dict[str, Any]
+    ) -> dict[str, Any]:
         """Get cached data with timing"""
         if not self.cache:
             return {}
@@ -775,12 +778,14 @@ class VideoIngestionPipeline:
         return cached_data
 
     async def _process_segmentation(
-        self, video_path: Path, cached_data: Dict[str, Any], results: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, video_path: Path, cached_data: dict[str, Any], results: dict[str, Any]
+    ) -> dict[str, Any]:
         """Process video segmentation based on strategy"""
         # Special handling for different segmentation types
         from src.app.ingestion.strategies import (
-            FrameSegmentationStrategy, SingleVectorSegmentationStrategy)
+            FrameSegmentationStrategy,
+            SingleVectorSegmentationStrategy,
+        )
 
         if isinstance(self.strategy_set.segmentation, SingleVectorSegmentationStrategy):
             # Single-vector needs transcript first
@@ -839,13 +844,13 @@ class VideoIngestionPipeline:
 
         return results
 
-    async def process_video_async(self, video_path: Path) -> Dict[str, Any]:
+    async def process_video_async(self, video_path: Path) -> dict[str, Any]:
         """
         Process video using the strategy pattern
         """
         return await self.process_video_async_with_strategies(video_path)
 
-    def process_video(self, video_path: Path) -> Dict[str, Any]:
+    def process_video(self, video_path: Path) -> dict[str, Any]:
         """
         DEPRECATED: Sync wrapper for backward compatibility
         Use process_video_async directly in new code
@@ -854,8 +859,8 @@ class VideoIngestionPipeline:
         return asyncio.run(self.process_video_async(video_path))
 
     async def process_videos_concurrent(
-        self, video_files: List[Path], max_concurrent: int = 3
-    ) -> List[Dict[str, Any]]:
+        self, video_files: list[Path], max_concurrent: int = 3
+    ) -> list[dict[str, Any]]:
         """
         Process multiple videos concurrently with resource control
 
@@ -955,7 +960,7 @@ class VideoIngestionPipeline:
 
         return results
 
-    def get_video_files(self, video_dir: Path) -> List[Path]:
+    def get_video_files(self, video_dir: Path) -> list[Path]:
         """Get list of video files from directory"""
         video_extensions = [".mp4", ".avi", ".mov", ".mkv", ".webm"]
         video_files = []
@@ -964,8 +969,8 @@ class VideoIngestionPipeline:
         return sorted(video_files)
 
     def process_directory(
-        self, video_dir: Optional[Path] = None, max_concurrent: int = 3
-    ) -> Dict[str, Any]:
+        self, video_dir: Path | None = None, max_concurrent: int = 3
+    ) -> dict[str, Any]:
         """
         Process all videos in a directory with concurrent processing
 

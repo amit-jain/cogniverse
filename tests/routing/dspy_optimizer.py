@@ -6,16 +6,16 @@ Optimizes both LLM prompts and GLiNER configurations systematically.
 """
 
 import asyncio
-import sys
 import os
+import sys
+
 import dspy
-from typing import List
 
 # Add src directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "src"))
 
-from tools.query_analyzer import QueryAnalyzer
 from tools.config import get_config
+from tools.query_analyzer import QueryAnalyzer
 
 
 class QueryExample(dspy.Example):
@@ -200,7 +200,7 @@ class GLiNEROptimizer:
             "content_type": ["content", "materials", "files", "items"],
         }
 
-    def generate_label_combinations(self) -> List[List[str]]:
+    def generate_label_combinations(self) -> list[list[str]]:
         """Generate different combinations of labels to test."""
         combinations = []
 
@@ -251,12 +251,12 @@ class GLiNEROptimizer:
 
         return combinations
 
-    def generate_threshold_values(self) -> List[float]:
+    def generate_threshold_values(self) -> list[float]:
         """Generate threshold values to test."""
         return [0.1, 0.2, 0.3, 0.4, 0.5]
 
     async def evaluate_configuration(
-        self, labels: List[str], threshold: float, test_queries: List[QueryExample]
+        self, labels: list[str], threshold: float, test_queries: list[QueryExample]
     ) -> float:
         """Evaluate a specific GLiNER configuration."""
         # Update configuration temporarily
@@ -304,12 +304,12 @@ class GLiNEROptimizer:
         return correct / total if total > 0 else 0.0
 
 
-def load_training_examples() -> List[QueryExample]:
+def load_training_examples() -> list[QueryExample]:
     """Load training examples from test queries."""
     queries = []
     test_file = os.path.join(os.path.dirname(__file__), "test_queries.txt")
 
-    with open(test_file, "r") as f:
+    with open(test_file) as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith("#"):

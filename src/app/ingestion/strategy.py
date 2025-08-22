@@ -17,7 +17,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Literal
+from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -35,17 +35,17 @@ class Strategy:
     schema_name: str
 
     # Ranking strategies available for this schema
-    ranking_strategies: Dict[str, Dict[str, Any]]
+    ranking_strategies: dict[str, dict[str, Any]]
     default_ranking: str
 
     # Model configuration
     model_name: str
-    model_config: Dict[str, Any]
+    model_config: dict[str, Any]
 
     # Embedding requirements (derived from ranking strategies)
     needs_float_embeddings: bool
     needs_binary_embeddings: bool
-    embedding_fields: Dict[str, str]  # float_field, binary_field names
+    embedding_fields: dict[str, str]  # float_field, binary_field names
 
     def __repr__(self):
         return (
@@ -68,7 +68,7 @@ class StrategyConfig:
     def _load_all_configs(self):
         """Load all configuration files"""
         # Main config
-        with open(self.config_dir / "config.json", "r") as f:
+        with open(self.config_dir / "config.json") as f:
             self.config = json.load(f)
 
         # Ranking strategies
@@ -76,12 +76,14 @@ class StrategyConfig:
             self.config_dir / "schemas" / "ranking_strategies.json"
         )
         if ranking_strategies_path.exists():
-            with open(ranking_strategies_path, "r") as f:
+            with open(ranking_strategies_path) as f:
                 self.ranking_strategies = json.load(f)
         else:
             # Generate if missing
             from src.backends.vespa.ranking_strategy_extractor import (
-                extract_all_ranking_strategies, save_ranking_strategies)
+                extract_all_ranking_strategies,
+                save_ranking_strategies,
+            )
 
             schemas_dir = self.config_dir / "schemas"
             strategies = extract_all_ranking_strategies(schemas_dir)
@@ -89,7 +91,7 @@ class StrategyConfig:
             logger.info("Generated ranking strategies file")
 
             # Now load from the saved JSON file
-            with open(ranking_strategies_path, "r") as f:
+            with open(ranking_strategies_path) as f:
                 self.ranking_strategies = json.load(f)
 
     def get_strategy(self, profile_name: str) -> Strategy:
@@ -146,7 +148,7 @@ class StrategyConfig:
         return strategy
 
     def _resolve_processing_strategy(
-        self, profile_name: str, profile: Dict[str, Any]
+        self, profile_name: str, profile: dict[str, Any]
     ) -> tuple[str, str]:
         """Resolve processing type and segmentation strategy"""
 
@@ -211,7 +213,7 @@ class StrategyConfig:
         # Default
         return "frame_based", "frames"
 
-    def _infer_segmentation(self, profile_name: str, profile: Dict[str, Any]) -> str:
+    def _infer_segmentation(self, profile_name: str, profile: dict[str, Any]) -> str:
         """Infer segmentation strategy"""
         # From name
         name_lower = profile_name.lower()
@@ -234,7 +236,7 @@ class StrategyConfig:
         return "frames"
 
     def _resolve_storage_mode(
-        self, profile: Dict[str, Any], processing_type: str
+        self, profile: dict[str, Any], processing_type: str
     ) -> str:
         """Resolve storage mode"""
         # For multi-vector models (patches > 1), always use multi_doc
@@ -264,8 +266,8 @@ class StrategyConfig:
         return "multi_doc"
 
     def _analyze_embedding_requirements(
-        self, schema_rankings: Dict[str, Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        self, schema_rankings: dict[str, dict[str, Any]]
+    ) -> dict[str, Any]:
         """Analyze what embeddings are needed based on ranking strategies"""
         needs_float = False
         needs_binary = False
@@ -294,7 +296,7 @@ class StrategyConfig:
             },
         }
 
-    def _get_default_ranking(self, schema_rankings: Dict[str, Dict[str, Any]]) -> str:
+    def _get_default_ranking(self, schema_rankings: dict[str, dict[str, Any]]) -> str:
         """Get default ranking strategy"""
         if "default" in schema_rankings:
             return "default"
@@ -304,7 +306,7 @@ class StrategyConfig:
             return next(iter(schema_rankings.keys()))
         return "default"
 
-    def get_processing_config(self, profile_name: str) -> Dict[str, Any]:
+    def get_processing_config(self, profile_name: str) -> dict[str, Any]:
         """Get processing configuration for pipeline"""
         strategy = self.get_strategy(profile_name)
 
@@ -319,12 +321,12 @@ class StrategyConfig:
             },
         }
 
-    def get_ranking_strategies(self, profile_name: str) -> Dict[str, Dict[str, Any]]:
+    def get_ranking_strategies(self, profile_name: str) -> dict[str, dict[str, Any]]:
         """Get available ranking strategies for a profile"""
         strategy = self.get_strategy(profile_name)
         return strategy.ranking_strategies
 
-    def get_embedding_fields(self, profile_name: str) -> Dict[str, str]:
+    def get_embedding_fields(self, profile_name: str) -> dict[str, str]:
         """Get embedding field names for a profile"""
         strategy = self.get_strategy(profile_name)
         return strategy.embedding_fields

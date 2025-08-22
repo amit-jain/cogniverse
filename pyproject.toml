@@ -60,3 +60,68 @@ dev = [
     "bandit>=1.7.5",
     "safety>=3.0.0",
 ]
+
+[tool.black]
+line-length = 88
+target-version = ['py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+  | __pycache__
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 88
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+skip_gitignore = true
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+]
+ignore = [
+    "E501",  # line too long, handled by black
+    "E402",  # module level import not at top of file (handled manually with noqa)
+    # Relaxed rules - focus on functionality over style
+    "B007",  # unused loop variables (common in iteration)
+    "B017",  # pytest.raises(Exception) is fine for general error testing
+    "B024",  # abstract classes don't always need abstract methods
+    "B904",  # raise statements don't always need 'from' chains
+    "UP006", # dict/Dict and list/List are both fine
+    "UP035", # typing.Dict vs dict is stylistic
+    "UP038", # isinstance((int, float)) vs int | float is stylistic 
+    "UP045", # Optional[T] vs T | None is stylistic
+    "C401",  # set comprehensions vs generator is minor optimization
+    "C408",  # dict() vs {} is stylistic
+    "W291",  # trailing whitespace (handled by editors)
+    "W293",  # blank line with whitespace (handled by editors)
+]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true

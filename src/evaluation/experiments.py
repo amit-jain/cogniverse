@@ -3,23 +3,25 @@ Phoenix Experiments Final Version - with proper project separation and scoring
 """
 
 import logging
-from typing import List, Dict, Any, Optional, Callable
-from datetime import datetime
-import pandas as pd
 import os
+from collections.abc import Callable
+from datetime import datetime
+from typing import Any
 
-import phoenix as px
-from phoenix.experiments import run_experiment
 import opentelemetry.trace as trace
-from opentelemetry.trace import set_tracer_provider
+import pandas as pd
+import phoenix as px
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.trace import set_tracer_provider
+from phoenix.experiments import run_experiment
 
-from tests.comprehensive_video_query_test_v2 import VISUAL_TEST_QUERIES
 from src.common.config import get_config
-from .evaluators.sync_reference_free import create_sync_evaluators
+from tests.comprehensive_video_query_test_v2 import VISUAL_TEST_QUERIES
+
 from .evaluators.golden_dataset import create_low_scoring_golden_dataset
+from .evaluators.sync_reference_free import create_sync_evaluators
 
 logger = logging.getLogger(__name__)
 
@@ -92,9 +94,9 @@ class PhoenixExperimentRunner:
 
     def create_experiment_dataset(
         self,
-        dataset_name: Optional[str] = None,
-        csv_path: Optional[str] = None,
-        queries: Optional[List[Dict]] = None,
+        dataset_name: str | None = None,
+        csv_path: str | None = None,
+        queries: list[dict] | None = None,
         force_new: bool = False,
     ) -> Any:
         """
@@ -366,7 +368,7 @@ class PhoenixExperimentRunner:
 
     def run_experiment(
         self, profile: str, strategy: str, dataset: Any, description: str = ""
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Run a single experiment for a profile+strategy combination
 
@@ -483,7 +485,7 @@ class PhoenixExperimentRunner:
                 "description": description,
             }
 
-    def generate_experiment_report(self, experiments: List[Dict]) -> pd.DataFrame:
+    def generate_experiment_report(self, experiments: list[dict]) -> pd.DataFrame:
         """
         Generate a report similar to comprehensive test visualization
 

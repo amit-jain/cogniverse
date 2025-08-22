@@ -5,7 +5,7 @@ Embedding Processors - Handles the actual embedding generation and format conver
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import numpy as np
 import torch
@@ -15,12 +15,12 @@ from PIL import Image
 class EmbeddingProcessor:
     """Handles embedding generation and format conversion"""
 
-    def __init__(self, logger: Optional[logging.Logger] = None):
+    def __init__(self, logger: logging.Logger | None = None):
         self.logger = logger or logging.getLogger(self.__class__.__name__)
 
     def generate_embeddings_from_image(
         self, image_path: Path, model: Any, processor: Any
-    ) -> Optional[np.ndarray]:
+    ) -> np.ndarray | None:
         """Generate embeddings from an image file"""
         try:
             # Load image
@@ -49,7 +49,7 @@ class EmbeddingProcessor:
         end_time: float,
         model: Any,
         processor: Any,
-    ) -> Optional[np.ndarray]:
+    ) -> np.ndarray | None:
         """Generate embeddings from a video segment"""
         try:
             import os
@@ -140,7 +140,7 @@ class EmbeddingProcessor:
         start_time: float,
         end_time: float,
         videoprism_loader: Any,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Process video segment with VideoPrism"""
         try:
             result = videoprism_loader.process_video_segment(

@@ -6,12 +6,13 @@ for failures and performance issues in traces.
 """
 
 import logging
-from typing import Dict, List, Any
-from datetime import datetime, timedelta
-from dataclasses import dataclass, field
-from collections import defaultdict, Counter
-import numpy as np
 import re
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from typing import Any
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ class FailurePattern:
     failure_rate: float
     occurrence_count: int
     confidence: float
-    examples: List[str] = field(default_factory=list)
+    examples: list[str] = field(default_factory=list)
     correlation_strength: float = 0.0
 
 
@@ -35,11 +36,11 @@ class RootCauseHypothesis:
 
     hypothesis: str
     confidence: float
-    evidence: List[str]
-    affected_traces: List[str]
+    evidence: list[str]
+    affected_traces: list[str]
     suggested_action: str
     category: str  # 'configuration', 'resource', 'timeout', 'data', 'model'
-    patterns: List[FailurePattern] = field(default_factory=list)
+    patterns: list[FailurePattern] = field(default_factory=list)
 
 
 class RootCauseAnalyzer:
@@ -50,7 +51,7 @@ class RootCauseAnalyzer:
         self.performance_baselines = {}
         self.known_issues = self._load_known_issues()
 
-    def _load_known_issues(self) -> Dict[str, Dict]:
+    def _load_known_issues(self) -> dict[str, dict]:
         """Load known issue patterns and their solutions"""
         return {
             "timeout": {
@@ -87,10 +88,10 @@ class RootCauseAnalyzer:
 
     def analyze_failures(
         self,
-        traces: List[Any],
+        traces: list[Any],
         include_performance: bool = True,
         performance_threshold_percentile: int = 95,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Perform comprehensive root cause analysis on traces
 
@@ -192,8 +193,8 @@ class RootCauseAnalyzer:
         return analysis
 
     def _analyze_failure_patterns(
-        self, failed_traces: List[Any], all_traces: List[Any]
-    ) -> Dict[str, Any]:
+        self, failed_traces: list[Any], all_traces: list[Any]
+    ) -> dict[str, Any]:
         """Analyze patterns in failed traces"""
         patterns = {
             "error_types": Counter(),
@@ -232,8 +233,8 @@ class RootCauseAnalyzer:
         return patterns
 
     def _analyze_performance_patterns(
-        self, slow_traces: List[Any], normal_traces: List[Any]
-    ) -> Dict[str, Any]:
+        self, slow_traces: list[Any], normal_traces: list[Any]
+    ) -> dict[str, Any]:
         """Analyze patterns in performance-degraded traces"""
         patterns = {
             "slow_operations": {},  # Changed from Counter to dict for detailed stats
@@ -308,8 +309,8 @@ class RootCauseAnalyzer:
             return "unknown"
 
     def _analyze_temporal_patterns(
-        self, failed_traces: List[Any], all_traces: List[Any]
-    ) -> List[Dict[str, Any]]:
+        self, failed_traces: list[Any], all_traces: list[Any]
+    ) -> list[dict[str, Any]]:
         """Analyze temporal patterns in failures"""
         patterns = []
 
@@ -347,8 +348,8 @@ class RootCauseAnalyzer:
         return patterns
 
     def _detect_failure_bursts(
-        self, sorted_failures: List[Any], burst_window_minutes: int = 5
-    ) -> List[Dict[str, Any]]:
+        self, sorted_failures: list[Any], burst_window_minutes: int = 5
+    ) -> list[dict[str, Any]]:
         """Detect bursts of failures within time windows"""
         bursts = []
 
@@ -395,8 +396,8 @@ class RootCauseAnalyzer:
         return bursts
 
     def _find_correlated_attributes(
-        self, failed_traces: List[Any], all_traces: List[Any]
-    ) -> List[FailurePattern]:
+        self, failed_traces: list[Any], all_traces: list[Any]
+    ) -> list[FailurePattern]:
         """Find attributes that correlate with failures"""
         correlations = []
 
@@ -424,8 +425,8 @@ class RootCauseAnalyzer:
         return correlations
 
     def _calculate_attribute_correlation(
-        self, failed_traces: List[Any], all_traces: List[Any], attribute: str
-    ) -> List[FailurePattern]:
+        self, failed_traces: list[Any], all_traces: list[Any], attribute: str
+    ) -> list[FailurePattern]:
         """Calculate correlation between attribute values and failures"""
         patterns = []
 
@@ -479,8 +480,8 @@ class RootCauseAnalyzer:
         return patterns
 
     def _generate_failure_hypotheses(
-        self, failed_traces: List[Any], failure_analysis: Dict[str, Any]
-    ) -> List[RootCauseHypothesis]:
+        self, failed_traces: list[Any], failure_analysis: dict[str, Any]
+    ) -> list[RootCauseHypothesis]:
         """Generate hypotheses for failure root causes"""
         hypotheses = []
 
@@ -545,8 +546,8 @@ class RootCauseAnalyzer:
         return hypotheses
 
     def _generate_performance_hypotheses(
-        self, slow_traces: List[Any], performance_analysis: Dict[str, Any]
-    ) -> List[RootCauseHypothesis]:
+        self, slow_traces: list[Any], performance_analysis: dict[str, Any]
+    ) -> list[RootCauseHypothesis]:
         """Generate hypotheses for performance degradation"""
         hypotheses = []
 
@@ -609,10 +610,10 @@ class RootCauseAnalyzer:
 
     def _perform_statistical_analysis(
         self,
-        failed_traces: List[Any],
-        successful_traces: List[Any],
-        all_traces: List[Any],
-    ) -> Dict[str, Any]:
+        failed_traces: list[Any],
+        successful_traces: list[Any],
+        all_traces: list[Any],
+    ) -> dict[str, Any]:
         """Perform statistical analysis on traces"""
         analysis = {}
 
@@ -648,7 +649,7 @@ class RootCauseAnalyzer:
 
         return analysis
 
-    def _calculate_hourly_distribution(self, traces: List[Any]) -> Dict[int, int]:
+    def _calculate_hourly_distribution(self, traces: list[Any]) -> dict[int, int]:
         """Calculate hourly distribution of traces"""
         hourly_counts = defaultdict(int)
         for trace in traces:
@@ -656,8 +657,8 @@ class RootCauseAnalyzer:
         return dict(hourly_counts)
 
     def _compare_by_attribute(
-        self, all_traces: List[Any], failed_traces: List[Any], attribute: str
-    ) -> Dict[str, Dict[str, Any]]:
+        self, all_traces: list[Any], failed_traces: list[Any], attribute: str
+    ) -> dict[str, dict[str, Any]]:
         """Compare failure rates by attribute"""
         comparison = {}
 
@@ -688,8 +689,8 @@ class RootCauseAnalyzer:
         return comparison
 
     def _generate_recommendations(
-        self, root_causes: List[RootCauseHypothesis]
-    ) -> List[Dict[str, Any]]:
+        self, root_causes: list[RootCauseHypothesis]
+    ) -> list[dict[str, Any]]:
         """Generate actionable recommendations based on root causes"""
         recommendations = []
 
@@ -712,7 +713,7 @@ class RootCauseAnalyzer:
                             "Add retry logic with exponential backoff",
                         ],
                         "affected_components": list(
-                            set(h.suggested_action for h in hypotheses)
+                            {h.suggested_action for h in hypotheses}
                         ),
                     }
                 )
@@ -729,7 +730,7 @@ class RootCauseAnalyzer:
                             "Consider horizontal scaling",
                         ],
                         "affected_components": list(
-                            set(h.suggested_action for h in hypotheses)
+                            {h.suggested_action for h in hypotheses}
                         ),
                     }
                 )
@@ -767,7 +768,7 @@ class RootCauseAnalyzer:
         return recommendations
 
     def generate_rca_report(
-        self, analysis: Dict[str, Any], format: str = "markdown"
+        self, analysis: dict[str, Any], format: str = "markdown"
     ) -> str:
         """Generate a formatted RCA report"""
         if format == "markdown":
@@ -777,7 +778,7 @@ class RootCauseAnalyzer:
         else:
             return str(analysis)
 
-    def _generate_markdown_report(self, analysis: Dict[str, Any]) -> str:
+    def _generate_markdown_report(self, analysis: dict[str, Any]) -> str:
         """Generate markdown formatted RCA report"""
         report = []
 
@@ -839,7 +840,7 @@ class RootCauseAnalyzer:
 
         return "\n".join(report)
 
-    def _generate_html_report(self, analysis: Dict[str, Any]) -> str:
+    def _generate_html_report(self, analysis: dict[str, Any]) -> str:
         """Generate HTML formatted RCA report"""
         html = f"""
         <html>
@@ -850,7 +851,7 @@ class RootCauseAnalyzer:
                 h1 {{ color: #d32f2f; }}
                 h2 {{ color: #f57c00; }}
                 h3 {{ color: #388e3c; }}
-                .confidence {{ 
+                .confidence {{
                     display: inline-block;
                     padding: 2px 8px;
                     border-radius: 4px;
@@ -871,7 +872,7 @@ class RootCauseAnalyzer:
         <body>
             <h1>Root Cause Analysis Report</h1>
             <p><em>Generated: {analysis['summary']['analysis_time']}</em></p>
-            
+
             <h2>Summary</h2>
             <ul>
                 <li>Total Traces: {analysis['summary']['total_traces']}</li>

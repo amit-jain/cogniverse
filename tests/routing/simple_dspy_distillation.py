@@ -6,19 +6,20 @@ This version avoids structured output issues by using simple string outputs
 and manual parsing. Once this works, we can optimize the output format.
 """
 
-import dspy
-import json
 import asyncio
-import time
-from typing import List, Dict, Any
+import json
 import os
 import sys
+import time
+from typing import Any
+
+import dspy
 
 # Add project root to path
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 sys.path.insert(0, os.path.join(project_root, "src"))
 
-from src.common.config import get_config
+from src.common.config import get_config  # noqa: E402
 
 
 class SimpleRoutingSignature(dspy.Signature):
@@ -106,7 +107,7 @@ class SimpleDistillation:
         dspy.settings.configure(lm=lm)
         print(f"   ✅ Configured with {model_name}")
 
-    def parse_routing_decision(self, decision_text: str) -> Dict[str, Any]:
+    def parse_routing_decision(self, decision_text: str) -> dict[str, Any]:
         """Parse routing decision from text output."""
         result = {
             "needs_video_search": False,
@@ -156,7 +157,7 @@ class SimpleDistillation:
 
         return result
 
-    async def generate_training_data(self) -> List[dspy.Example]:
+    async def generate_training_data(self) -> list[dspy.Example]:
         """Generate training data using teacher model."""
 
         queries = [
@@ -223,7 +224,7 @@ class SimpleDistillation:
 
         return training_examples
 
-    async def distill_knowledge(self, training_examples: List[dspy.Example]):
+    async def distill_knowledge(self, training_examples: list[dspy.Example]):
         """Distill teacher's knowledge into student model using BootstrapFewShot."""
 
         print(f"\n🔄 Distilling knowledge to {self.student_model}...")

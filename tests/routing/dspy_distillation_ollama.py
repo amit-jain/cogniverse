@@ -7,19 +7,19 @@ Teacher: Larger model (e.g., DeepSeek R1 7B, Qwen 7B)
 Student: Smaller model (e.g., DeepSeek R1 1.5B, Gemma 2B)
 """
 
-import dspy
-import json
 import asyncio
-import time
-from typing import List
+import json
 import os
 import sys
+import time
+
+import dspy
 
 # Add project root to path
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 sys.path.insert(0, os.path.join(project_root, "src"))
 
-from src.common.config import get_config
+from src.common.config import get_config  # noqa: E402
 
 
 class StructuredRoutingSignature(dspy.Signature):
@@ -165,7 +165,7 @@ class OllamaDistillation:
         dspy.settings.configure(lm=lm)
         print("   ✅ Student configured with LiteLLM wrapper")
 
-    async def generate_training_data(self) -> List[dspy.Example]:
+    async def generate_training_data(self) -> list[dspy.Example]:
         """Generate high-quality labeled data using teacher model."""
 
         queries = [
@@ -232,7 +232,7 @@ class OllamaDistillation:
 
         return training_examples
 
-    async def distill_knowledge(self, training_examples: List[dspy.Example]):
+    async def distill_knowledge(self, training_examples: list[dspy.Example]):
         """Distill teacher's knowledge into student model using MIPROv2."""
 
         print(f"\n🔄 Distilling knowledge to {self.student_model} with MIPROv2...")

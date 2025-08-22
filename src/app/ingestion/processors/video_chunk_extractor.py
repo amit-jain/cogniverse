@@ -12,7 +12,7 @@ import logging
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import cv2
 import numpy as np
@@ -34,7 +34,7 @@ class VideoChunkExtractor:
         self,
         chunk_duration: float = 30.0,
         chunk_overlap: float = 0.0,
-        max_chunks: Optional[int] = None,
+        max_chunks: int | None = None,
         cache_chunks: bool = True,
     ):
         """
@@ -52,7 +52,7 @@ class VideoChunkExtractor:
         self.cache_chunks = cache_chunks
         self.logger = logging.getLogger(self.__class__.__name__)
 
-    def extract_chunks(self, video_path: Path, output_dir: Path) -> Dict[str, Any]:
+    def extract_chunks(self, video_path: Path, output_dir: Path) -> dict[str, Any]:
         """
         Extract video chunks and save them to disk.
 
@@ -233,7 +233,7 @@ class VideoChunkExtractor:
 
     def load_cached_chunks(
         self, video_path: Path, output_dir: Path
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         Load cached chunks metadata if available.
 
@@ -249,7 +249,7 @@ class VideoChunkExtractor:
 
         if metadata_path.exists():
             try:
-                with open(metadata_path, "r") as f:
+                with open(metadata_path) as f:
                     metadata = json.load(f)
 
                 # Verify all chunk files exist

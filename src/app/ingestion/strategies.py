@@ -6,7 +6,7 @@ These strategies work with the pluggable ProcessorManager.
 """
 
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .processor_base import BaseStrategy
 
@@ -21,7 +21,7 @@ class FrameSegmentationStrategy(BaseStrategy):
         self.threshold = threshold
         self.max_frames = max_frames
 
-    def get_required_processors(self) -> Dict[str, Dict[str, Any]]:
+    def get_required_processors(self) -> dict[str, dict[str, Any]]:
         """Frame segmentation requires keyframe processor."""
         return {
             "keyframe": {
@@ -45,7 +45,7 @@ class ChunkSegmentationStrategy(BaseStrategy):
         self.chunk_overlap = chunk_overlap
         self.cache_chunks = cache_chunks
 
-    def get_required_processors(self) -> Dict[str, Dict[str, Any]]:
+    def get_required_processors(self) -> dict[str, dict[str, Any]]:
         """Chunk segmentation requires chunk processor."""
         return {
             "chunk": {
@@ -75,7 +75,7 @@ class SingleVectorSegmentationStrategy(BaseStrategy):
         self.max_frames_per_segment = max_frames_per_segment
         self.store_as_single_doc = store_as_single_doc
 
-    def get_required_processors(self) -> Dict[str, Dict[str, Any]]:
+    def get_required_processors(self) -> dict[str, dict[str, Any]]:
         """Single-vector segmentation requires single-vector processor."""
         return {
             "single_vector": {
@@ -92,8 +92,8 @@ class SingleVectorSegmentationStrategy(BaseStrategy):
         self,
         video_path: Path,
         pipeline_context: Any,
-        transcript_data: Optional[Dict] = None,
-    ) -> Dict[str, Any]:
+        transcript_data: dict | None = None,
+    ) -> dict[str, Any]:
         """Process video with single-vector processor."""
         # In the new pluggable architecture, we need to check for the processor differently
         if hasattr(pipeline_context, "processor_manager"):
@@ -138,7 +138,7 @@ class AudioTranscriptionStrategy(BaseStrategy):
         self.model = model
         self.language = language
 
-    def get_required_processors(self) -> Dict[str, Dict[str, Any]]:
+    def get_required_processors(self) -> dict[str, dict[str, Any]]:
         """Audio transcription requires audio processor."""
         return {"audio": {"model": self.model, "language": self.language}}
 
@@ -150,17 +150,17 @@ class VLMDescriptionStrategy(BaseStrategy):
         self.model_name = model_name
         self.batch_size = batch_size
 
-    def get_required_processors(self) -> Dict[str, Dict[str, Any]]:
+    def get_required_processors(self) -> dict[str, dict[str, Any]]:
         """VLM description requires VLM processor."""
         return {"vlm": {"model_name": self.model_name, "batch_size": self.batch_size}}
 
     async def generate_descriptions(
         self,
-        keyframes_data: Dict[str, Any],
+        keyframes_data: dict[str, Any],
         video_path: Path,
         pipeline_context: Any,
-        cached_data: Dict[str, Any],
-    ) -> Optional[Dict[str, Any]]:
+        cached_data: dict[str, Any],
+    ) -> dict[str, Any] | None:
         """Generate descriptions (for backward compatibility)."""
         # Implementation would use VLM processor through pipeline_context
         # For now, return None to maintain compatibility
@@ -170,17 +170,17 @@ class VLMDescriptionStrategy(BaseStrategy):
 class NoDescriptionStrategy(BaseStrategy):
     """No descriptions needed."""
 
-    def get_required_processors(self) -> Dict[str, Dict[str, Any]]:
+    def get_required_processors(self) -> dict[str, dict[str, Any]]:
         """No processors required."""
         return {}
 
     async def generate_descriptions(
         self,
-        keyframes_data: Dict[str, Any],
+        keyframes_data: dict[str, Any],
         video_path: Path,
         pipeline_context: Any,
-        cached_data: Dict[str, Any],
-    ) -> Optional[Dict[str, Any]]:
+        cached_data: dict[str, Any],
+    ) -> dict[str, Any] | None:
         """No descriptions generated."""
         return None
 
@@ -191,13 +191,13 @@ class MultiVectorEmbeddingStrategy(BaseStrategy):
     def __init__(self, model_name: str = "vidore/colpali-v1.2"):
         self.model_name = model_name
 
-    def get_required_processors(self) -> Dict[str, Dict[str, Any]]:
+    def get_required_processors(self) -> dict[str, dict[str, Any]]:
         """Multi-vector embedding uses the generic embedding generator."""
         return {"embedding": {"type": "multi_vector", "model_name": self.model_name}}
 
     async def generate_embeddings_with_processor(
-        self, results: Dict[str, Any], pipeline_context: Any, processor_manager: Any
-    ) -> Dict[str, Any]:
+        self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
+    ) -> dict[str, Any]:
         """Generate embeddings (for backward compatibility)."""
         # Prepare data for embedding generation
         wrapped_results = {
@@ -223,13 +223,13 @@ class SingleVectorEmbeddingStrategy(BaseStrategy):
     def __init__(self, model_name: str = "google/videoprism-base"):
         self.model_name = model_name
 
-    def get_required_processors(self) -> Dict[str, Dict[str, Any]]:
+    def get_required_processors(self) -> dict[str, dict[str, Any]]:
         """Single-vector embedding uses the generic embedding generator."""
         return {"embedding": {"type": "single_vector", "model_name": self.model_name}}
 
     async def generate_embeddings_with_processor(
-        self, results: Dict[str, Any], pipeline_context: Any, processor_manager: Any
-    ) -> Dict[str, Any]:
+        self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
+    ) -> dict[str, Any]:
         """Generate embeddings (for backward compatibility)."""
         # Prepare data for embedding generation
         wrapped_results = {

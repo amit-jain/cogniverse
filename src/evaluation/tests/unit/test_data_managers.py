@@ -2,10 +2,11 @@
 Unit tests for dataset and trace managers.
 """
 
-import pytest
-from unittest.mock import Mock, patch, mock_open
 from datetime import datetime, timedelta
+from unittest.mock import Mock, mock_open, patch
+
 import pandas as pd
+import pytest
 
 from src.evaluation.data.datasets import DatasetManager
 from src.evaluation.data.traces import TraceManager

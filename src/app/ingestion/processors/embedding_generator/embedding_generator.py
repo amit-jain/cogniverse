@@ -8,7 +8,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 
@@ -25,8 +25,8 @@ class EmbeddingResult:
     documents_processed: int
     documents_fed: int
     processing_time: float
-    errors: List[str]
-    metadata: Dict[str, Any]
+    errors: list[str]
+    metadata: dict[str, Any]
 
 
 @dataclass
@@ -37,13 +37,13 @@ class ProcessingConfig:
 
 
 class BaseEmbeddingGenerator(ABC):
-    def __init__(self, config: Dict[str, Any], logger=None):
+    def __init__(self, config: dict[str, Any], logger=None):
         self.config = config
         self.logger = logger or logging.getLogger(__name__)
 
     @abstractmethod
     def generate_embeddings(
-        self, video_data: Dict[str, Any], output_dir: Path
+        self, video_data: dict[str, Any], output_dir: Path
     ) -> EmbeddingResult:
         pass
 
@@ -53,9 +53,9 @@ class EmbeddingGenerator(BaseEmbeddingGenerator):
 
     def __init__(
         self,
-        config: Dict[str, Any],
-        logger: Optional[logging.Logger] = None,
-        profile_config: Dict[str, Any] = None,
+        config: dict[str, Any],
+        logger: logging.Logger | None = None,
+        profile_config: dict[str, Any] = None,
         backend_client: Any = None,
     ):
         super().__init__(config, logger)
@@ -109,7 +109,7 @@ class EmbeddingGenerator(BaseEmbeddingGenerator):
             raise
 
     def generate_embeddings(
-        self, video_data: Dict[str, Any], output_dir: Path
+        self, video_data: dict[str, Any], output_dir: Path
     ) -> EmbeddingResult:
         """Generate embeddings for a video"""
         start_time = time.time()
@@ -176,7 +176,7 @@ class EmbeddingGenerator(BaseEmbeddingGenerator):
         start_time: float,
         end_time: float,
         num_segments: int,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Process a video segment - returns raw embeddings"""
         self.logger.info(
             f"Processing segment {segment_idx + 1}/{num_segments}: "
@@ -232,7 +232,7 @@ class EmbeddingGenerator(BaseEmbeddingGenerator):
         )
 
     def _generate_direct_video_embeddings(
-        self, video_data: Dict[str, Any], output_dir: Path
+        self, video_data: dict[str, Any], output_dir: Path
     ) -> EmbeddingResult:
         """Generate embeddings for direct video processing"""
         video_id = video_data.get("video_id", "unknown")
@@ -315,7 +315,7 @@ class EmbeddingGenerator(BaseEmbeddingGenerator):
         )
 
     def _generate_single_vector_embeddings(
-        self, video_data: Dict[str, Any], output_dir: Path
+        self, video_data: dict[str, Any], output_dir: Path
     ) -> EmbeddingResult:
         """Generate embeddings for single vector processing (pre-segmented data)"""
         video_id = video_data.get("video_id", "unknown")
@@ -446,7 +446,7 @@ class EmbeddingGenerator(BaseEmbeddingGenerator):
             )
 
     def _generate_video_chunks_embeddings(
-        self, video_data: Dict[str, Any], output_dir: Path
+        self, video_data: dict[str, Any], output_dir: Path
     ) -> EmbeddingResult:
         """Generate embeddings for video chunks - all segments in one document"""
         video_id = video_data.get("video_id", "unknown")
@@ -524,7 +524,7 @@ class EmbeddingGenerator(BaseEmbeddingGenerator):
         # Build individual documents for each segment (all schemas now use per-document structure)
         documents = []
         for segment_idx, (segment, embeddings) in enumerate(
-            zip(segments, embeddings_list)
+            zip(segments, embeddings_list, strict=False)
         ):
             if embeddings is None:
                 continue
@@ -589,33 +589,33 @@ class EmbeddingGenerator(BaseEmbeddingGenerator):
         )
 
     def _generate_frame_based_embeddings(
-        self, video_data: Dict[str, Any], output_dir: Path
+        self, video_data: dict[str, Any], output_dir: Path
     ) -> EmbeddingResult:
         """Generate embeddings for frame-based processing"""
         # Similar implementation but for frames
         # Not shown for brevity - would follow same pattern
         pass
 
-    def process_segment(self, segment_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def process_segment(self, segment_data: dict[str, Any]) -> dict[str, Any] | None:
         """Process a single segment - implements abstract method"""
         # Handled by specific methods above
         pass
 
     def create_document(
-        self, segment_data: Dict[str, Any], embeddings: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, segment_data: dict[str, Any], embeddings: dict[str, Any]
+    ) -> dict[str, Any]:
         """Create document - implements abstract method"""
         # Handled by document builder
         pass
 
-    def _feed_single_document(self, document: Dict[str, Any]) -> bool:
+    def _feed_single_document(self, document: dict[str, Any]) -> bool:
         """Feed single document - implements abstract method"""
         if self.backend_client:
             return self.backend_client.feed_document(document)
         return False
 
     # Helper methods (same as before)
-    def _get_video_path(self, video_data: Dict[str, Any]) -> Optional[Path]:
+    def _get_video_path(self, video_data: dict[str, Any]) -> Path | None:
         """Get video file path"""
         video_id = video_data.get("video_id", "")
         video_path = Path(video_data.get("video_path", ""))
@@ -632,7 +632,7 @@ class EmbeddingGenerator(BaseEmbeddingGenerator):
 
         return None
 
-    def _get_video_info(self, video_path: Path) -> Dict[str, Any]:
+    def _get_video_info(self, video_path: Path) -> dict[str, Any]:
         """Get video information"""
         import cv2
 

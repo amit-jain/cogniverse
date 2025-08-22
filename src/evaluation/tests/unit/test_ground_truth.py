@@ -2,16 +2,17 @@
 Unit tests for ground truth extraction.
 """
 
-import pytest
-from unittest.mock import Mock, MagicMock, patch, AsyncMock, mock_open
 import json
+from unittest.mock import AsyncMock, MagicMock, Mock, mock_open, patch
+
+import pytest
 
 from src.evaluation.core.ground_truth import (
-    get_ground_truth_strategy,
-    SchemaAwareGroundTruthStrategy,
-    DatasetGroundTruthStrategy,
     BackendGroundTruthStrategy,
+    DatasetGroundTruthStrategy,
     HybridGroundTruthStrategy,
+    SchemaAwareGroundTruthStrategy,
+    get_ground_truth_strategy,
 )
 
 

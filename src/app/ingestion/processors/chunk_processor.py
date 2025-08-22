@@ -9,7 +9,7 @@ import json
 import logging
 import subprocess
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from ..processor_base import BaseProcessor
 
@@ -42,7 +42,7 @@ class ChunkProcessor(BaseProcessor):
 
     @classmethod
     def from_config(
-        cls, config: Dict[str, Any], logger: logging.Logger
+        cls, config: dict[str, Any], logger: logging.Logger
     ) -> "ChunkProcessor":
         """Create chunk processor from configuration."""
         return cls(
@@ -54,7 +54,7 @@ class ChunkProcessor(BaseProcessor):
 
     def extract_chunks(
         self, video_path: Path, output_dir: Path = None
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Extract video chunks."""
         self.logger.info(
             f"🎬 Extracting chunks from: {video_path.name} ({self.chunk_duration}s chunks)"

@@ -6,8 +6,10 @@ Phoenix handles storage/tracking while Inspect AI handles evaluation execution.
 """
 
 import logging
-from typing import Dict, Any, List, Callable
+from collections.abc import Callable
 from datetime import datetime
+from typing import Any
+
 import phoenix as px
 from phoenix.experiments import run_experiment
 
@@ -20,9 +22,9 @@ class PhoenixExperimentPlugin:
     @staticmethod
     def wrap_inspect_task_for_phoenix(
         inspect_solver,
-        profiles: List[str],
-        strategies: List[str],
-        config: Dict[str, Any],
+        profiles: list[str],
+        strategies: list[str],
+        config: dict[str, Any],
     ) -> Callable:
         """
         Wrap an Inspect AI solver to work with Phoenix experiments.
@@ -120,11 +122,11 @@ class PhoenixExperimentPlugin:
     @staticmethod
     def run_inspect_with_phoenix_tracking(
         dataset_name: str,
-        profiles: List[str],
-        strategies: List[str],
-        evaluators: List[Any],
-        config: Dict[str, Any] = None,
-    ) -> Dict[str, Any]:
+        profiles: list[str],
+        strategies: list[str],
+        evaluators: list[Any],
+        config: dict[str, Any] = None,
+    ) -> dict[str, Any]:
         """
         Run Inspect AI evaluation with Phoenix experiment tracking.
 
@@ -194,7 +196,7 @@ def register():
     return True
 
 
-def get_phoenix_evaluators(config: Dict[str, Any]) -> List[Any]:
+def get_phoenix_evaluators(config: dict[str, Any]) -> list[Any]:
     """
     Get Phoenix-compatible evaluators based on configuration.
 

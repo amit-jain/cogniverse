@@ -8,7 +8,7 @@ Extracts keyframes at fixed frame-per-second intervals from videos.
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import cv2
 
@@ -29,7 +29,7 @@ class FPSKeyframeExtractor:
 
     def extract_keyframes(
         self, video_path: Path, output_dir: Path = None
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Extract keyframes from video at fixed FPS intervals"""
         print(
             f"📸 Extracting keyframes at {self.target_fps} FPS from: {video_path.name}"

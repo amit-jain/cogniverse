@@ -3,16 +3,17 @@ True unit tests for router module with proper mocking.
 These tests should run fast and not require external dependencies.
 """
 
-import pytest
-from unittest.mock import Mock, patch, AsyncMock
-from pathlib import Path
 import sys
+from pathlib import Path
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.app.routing.router import TieredRouter, ComprehensiveRouter, RoutingTier
-from src.app.routing.base import RoutingDecision, SearchModality, GenerationType
+from src.app.routing.base import GenerationType, RoutingDecision, SearchModality
+from src.app.routing.router import ComprehensiveRouter, RoutingTier, TieredRouter
 
 
 class TestTieredRouterUnit:

@@ -2,21 +2,22 @@
 Pytest configuration and fixtures for evaluation framework tests.
 """
 
-import pytest
-from unittest.mock import Mock, MagicMock, patch
-from datetime import datetime
-import pandas as pd
 import json
-from pathlib import Path
 
 # Add project root to path
 import sys
+from datetime import datetime
+from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
+
+import pandas as pd
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 # Import Phoenix test server fixtures for integration tests
 try:
-    from .fixtures.phoenix_test_server import phoenix_test_server, phoenix_client
+    from .fixtures.phoenix_test_server import phoenix_client, phoenix_test_server
 except ImportError:
     # If Phoenix is not available, provide skip fixtures
     @pytest.fixture(scope="session")

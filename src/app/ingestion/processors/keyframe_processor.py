@@ -9,7 +9,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import cv2
 
@@ -26,7 +26,7 @@ class KeyframeProcessor(BaseProcessor):
         logger: logging.Logger,
         threshold: float = 0.999,
         max_frames: int = 3000,
-        fps: Optional[float] = None,
+        fps: float | None = None,
     ):
         """
         Initialize keyframe processor.
@@ -45,7 +45,7 @@ class KeyframeProcessor(BaseProcessor):
 
     @classmethod
     def from_config(
-        cls, config: Dict[str, Any], logger: logging.Logger
+        cls, config: dict[str, Any], logger: logging.Logger
     ) -> "KeyframeProcessor":
         """Create keyframe processor from configuration."""
         return cls(
@@ -57,7 +57,7 @@ class KeyframeProcessor(BaseProcessor):
 
     def extract_keyframes(
         self, video_path: Path, output_dir: Path = None
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Extract keyframes from video using specified method."""
         self.logger.info(
             f"📸 Extracting keyframes from: {video_path.name} (mode: {self.extraction_mode})"
@@ -93,7 +93,7 @@ class KeyframeProcessor(BaseProcessor):
 
     def _extract_keyframes_fps(
         self, video_path: Path, keyframes_dir: Path, metadata_file: Path, video_id: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Extract keyframes at regular FPS intervals."""
         cap = cv2.VideoCapture(str(video_path))
         video_fps = cap.get(cv2.CAP_PROP_FPS)
@@ -164,7 +164,7 @@ class KeyframeProcessor(BaseProcessor):
 
     def _extract_keyframes_histogram(
         self, video_path: Path, keyframes_dir: Path, metadata_file: Path, video_id: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Extract keyframes using histogram comparison method."""
         cap = cv2.VideoCapture(str(video_path))
         fps = cap.get(cv2.CAP_PROP_FPS)

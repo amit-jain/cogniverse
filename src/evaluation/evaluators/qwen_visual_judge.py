@@ -6,14 +6,13 @@ by understanding the visual content, not just computing embeddings.
 """
 
 import logging
-from typing import List, Dict, Optional, Tuple
 from pathlib import Path
-from PIL import Image
-import torch
-from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 
+import torch
 from phoenix.experiments.evaluators.base import Evaluator
 from phoenix.experiments.types import EvaluationResult
+from PIL import Image
+from transformers import AutoProcessor, Qwen2VLForConditionalGeneration
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +99,7 @@ class Qwen2VLVisualJudge(Evaluator):
 
         # Get frame paths for top results
         frame_paths = []
-        for i, result in enumerate(results[:3], 1):  # Top 3 for evaluation
+        for _i, result in enumerate(results[:3], 1):  # Top 3 for evaluation
             frame_path = self._get_frame_path(result)
             if frame_path and Path(frame_path).exists():
                 frame_paths.append(frame_path)
@@ -144,7 +143,7 @@ class Qwen2VLVisualJudge(Evaluator):
                 explanation=f"Visual evaluation failed: {str(e)}",
             )
 
-    def _get_frame_path(self, result: Dict) -> Optional[str]:
+    def _get_frame_path(self, result: dict) -> str | None:
         """Extract frame path from result"""
         if isinstance(result, dict):
             video_id = result.get("video_id", result.get("source_id"))
@@ -170,8 +169,8 @@ class Qwen2VLVisualJudge(Evaluator):
         return None
 
     def _evaluate_with_qwen(
-        self, query: str, frame_paths: List[str]
-    ) -> Tuple[float, str]:
+        self, query: str, frame_paths: list[str]
+    ) -> tuple[float, str]:
         """
         Use Qwen2-VL to evaluate if frames match the query
 
@@ -195,7 +194,7 @@ class Qwen2VLVisualJudge(Evaluator):
             return 0.0, "Could not load any images"
 
         # Construct prompt for Qwen2-VL
-        prompt = f"""You are evaluating video search results. 
+        prompt = f"""You are evaluating video search results.
 The user searched for: "{query}"
 
 I'm showing you {len(images)} frames from the top search results.
@@ -236,7 +235,7 @@ REASONING: [Your explanation of what you see and how well it matches]
         # Decode response
         generated_ids_trimmed = [
             out_ids[len(in_ids) :]
-            for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+            for in_ids, out_ids in zip(inputs.input_ids, generated_ids, strict=False)
         ]
         response = self.processor.batch_decode(
             generated_ids_trimmed,
@@ -271,7 +270,7 @@ REASONING: [Your explanation of what you see and how well it matches]
         return score, reasoning
 
 
-def create_qwen_visual_evaluators() -> List[Evaluator]:
+def create_qwen_visual_evaluators() -> list[Evaluator]:
     """
     Create Qwen2-VL visual evaluators
 

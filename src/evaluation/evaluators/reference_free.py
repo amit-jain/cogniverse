@@ -4,10 +4,10 @@ Reference-free evaluators for video retrieval using LLMs and heuristics
 These evaluators don't require golden datasets and can evaluate any retrieval result
 """
 
-import logging
-from typing import List, Dict, Any, Optional
-from dataclasses import dataclass
 import asyncio
+import logging
+from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 from phoenix.experiments.evaluators.base import Evaluator
@@ -21,8 +21,8 @@ class RetrievalContext:
     """Context for retrieval evaluation"""
 
     query: str
-    results: List[Dict[str, Any]]
-    metadata: Optional[Dict[str, Any]] = None
+    results: list[dict[str, Any]]
+    metadata: dict[str, Any] | None = None
 
 
 class QueryResultRelevanceEvaluator(Evaluator):
@@ -34,7 +34,7 @@ class QueryResultRelevanceEvaluator(Evaluator):
         self.min_score_threshold = min_score_threshold
 
     async def evaluate(
-        self, input: str, output: List[Dict[str, Any]], **kwargs
+        self, input: str, output: list[dict[str, Any]], **kwargs
     ) -> EvaluationResult:
         """
         Evaluate query-result relevance without golden dataset
@@ -55,7 +55,7 @@ class QueryResultRelevanceEvaluator(Evaluator):
 
         # Heuristic: Check if top results have high scores
         top_scores = []
-        for i, result in enumerate(output[:5]):  # Top 5
+        for _i, result in enumerate(output[:5]):  # Top 5
             score = result.get("relevance_score", result.get("score", 0))
             top_scores.append(score)
 
@@ -83,7 +83,7 @@ class ResultDiversityEvaluator(Evaluator):
     """
 
     async def evaluate(
-        self, input: str, output: List[Dict[str, Any]], **kwargs
+        self, input: str, output: list[dict[str, Any]], **kwargs
     ) -> EvaluationResult:
         """
         Evaluate result diversity
@@ -134,7 +134,7 @@ class TemporalCoverageEvaluator(Evaluator):
     """
 
     async def evaluate(
-        self, input: str, output: List[Dict[str, Any]], **kwargs
+        self, input: str, output: list[dict[str, Any]], **kwargs
     ) -> EvaluationResult:
         """
         Evaluate temporal coverage of results
@@ -204,7 +204,7 @@ class LLMRelevanceEvaluator(Evaluator):
         self.model_name = model_name
 
     async def evaluate(
-        self, input: str, output: List[Dict[str, Any]], **kwargs
+        self, input: str, output: list[dict[str, Any]], **kwargs
     ) -> EvaluationResult:
         """
         Use LLM to evaluate relevance
@@ -237,7 +237,7 @@ class CompositeEvaluator(Evaluator):
     """
 
     def __init__(
-        self, evaluators: List[Evaluator], weights: Optional[List[float]] = None
+        self, evaluators: list[Evaluator], weights: list[float] | None = None
     ):
         self.evaluators = evaluators
         self.weights = weights or [1.0] * len(evaluators)
@@ -247,7 +247,7 @@ class CompositeEvaluator(Evaluator):
         self.weights = [w / total_weight for w in self.weights]
 
     async def evaluate(
-        self, input: str, output: List[Dict[str, Any]], **kwargs
+        self, input: str, output: list[dict[str, Any]], **kwargs
     ) -> EvaluationResult:
         """
         Run all evaluators and combine results
@@ -268,15 +268,15 @@ class CompositeEvaluator(Evaluator):
 
         # Combine scores
         weighted_score = sum(
-            result.score * weight for result, weight in zip(results, self.weights)
+            result.score * weight for result, weight in zip(results, self.weights, strict=False)
         )
 
-        # Collect all labels  
+        # Collect all labels
         _ = [result.label for result in results]  # noqa: F841
 
         # Create detailed explanation
         explanations = []
-        for evaluator, result in zip(self.evaluators, results):
+        for evaluator, result in zip(self.evaluators, results, strict=False):
             evaluator_name = evaluator.__class__.__name__
             explanations.append(
                 f"{evaluator_name}: {result.score:.3f} ({result.label})"
@@ -289,17 +289,17 @@ class CompositeEvaluator(Evaluator):
             metadata={
                 "component_scores": {
                     evaluator.__class__.__name__: result.score
-                    for evaluator, result in zip(self.evaluators, results)
+                    for evaluator, result in zip(self.evaluators, results, strict=False)
                 },
                 "component_labels": {
                     evaluator.__class__.__name__: result.label
-                    for evaluator, result in zip(self.evaluators, results)
+                    for evaluator, result in zip(self.evaluators, results, strict=False)
                 },
             },
         )
 
 
-def create_reference_free_evaluators() -> Dict[str, Evaluator]:
+def create_reference_free_evaluators() -> dict[str, Evaluator]:
     """
     Create a set of reference-free evaluators
 

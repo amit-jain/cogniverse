@@ -5,11 +5,11 @@ This module provides reranking strategies that adapt to any schema type
 and can properly calculate similarity between results.
 """
 
-from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional
 import logging
-from collections import Counter
 import math
+from abc import ABC, abstractmethod
+from collections import Counter
+from typing import Any
 
 from src.evaluation.core.schema_analyzer import get_schema_analyzer
 
@@ -29,9 +29,9 @@ class RerankingStrategy(ABC):
     async def rerank(
         self,
         query: str,
-        results: List[Dict[str, Any]],
-        config: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
+        results: list[dict[str, Any]],
+        config: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Rerank search results.
 
@@ -52,9 +52,9 @@ class DiversityRerankingStrategy(RerankingStrategy):
     async def rerank(
         self,
         query: str,
-        results: List[Dict[str, Any]],
-        config: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
+        results: list[dict[str, Any]],
+        config: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Rerank for diversity using MMR (Maximal Marginal Relevance)."""
         if not results:
             return results
@@ -122,7 +122,7 @@ class DiversityRerankingStrategy(RerankingStrategy):
         return reranked
 
     def _calculate_similarity(
-        self, result1: Dict, result2: Dict, analyzer: Any
+        self, result1: dict, result2: dict, analyzer: Any
     ) -> float:
         """Calculate similarity between two results."""
         # First check if they're the same item
@@ -145,7 +145,7 @@ class DiversityRerankingStrategy(RerankingStrategy):
         # If we can't calculate similarity, assume they're different
         return 0.0
 
-    def _extract_content(self, result: Dict) -> str:
+    def _extract_content(self, result: dict) -> str:
         """Extract text content from result."""
         content_fields = [
             "content",
@@ -194,15 +194,15 @@ class DiversityRerankingStrategy(RerankingStrategy):
         # Calculate cosine similarity
         return self._cosine_similarity(tfidf1, tfidf2)
 
-    def _calculate_tf(self, words: List[str], vocab: List[str]) -> List[float]:
+    def _calculate_tf(self, words: list[str], vocab: list[str]) -> list[float]:
         """Calculate term frequency vector."""
         word_count = Counter(words)
         total = len(words)
         return [word_count.get(term, 0) / total for term in vocab]
 
     def _calculate_idf(
-        self, documents: List[List[str]], vocab: List[str]
-    ) -> List[float]:
+        self, documents: list[list[str]], vocab: list[str]
+    ) -> list[float]:
         """Calculate inverse document frequency."""
         n_docs = len(documents)
         idf_scores = []
@@ -217,9 +217,9 @@ class DiversityRerankingStrategy(RerankingStrategy):
 
         return idf_scores
 
-    def _cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
+    def _cosine_similarity(self, vec1: list[float], vec2: list[float]) -> float:
         """Calculate cosine similarity between two vectors."""
-        dot_product = sum(a * b for a, b in zip(vec1, vec2))
+        dot_product = sum(a * b for a, b in zip(vec1, vec2, strict=False))
         magnitude1 = math.sqrt(sum(a * a for a in vec1))
         magnitude2 = math.sqrt(sum(b * b for b in vec2))
 
@@ -235,9 +235,9 @@ class ContentSimilarityRerankingStrategy(RerankingStrategy):
     async def rerank(
         self,
         query: str,
-        results: List[Dict[str, Any]],
-        config: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
+        results: list[dict[str, Any]],
+        config: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Rerank by content similarity using TF-IDF and semantic matching."""
         if not results:
             return results
@@ -302,7 +302,7 @@ class ContentSimilarityRerankingStrategy(RerankingStrategy):
         logger.info(f"Reranked {len(results)} results by content similarity")
         return reranked
 
-    def _extract_content(self, result: Dict, fields: List[str]) -> str:
+    def _extract_content(self, result: dict, fields: list[str]) -> str:
         """Extract content from result using available fields."""
         contents = []
 
@@ -377,7 +377,7 @@ class ContentSimilarityRerankingStrategy(RerankingStrategy):
             content_vec.append(c_tf * idf)
 
         # Cosine similarity
-        dot_product = sum(a * b for a, b in zip(query_vec, content_vec))
+        dot_product = sum(a * b for a, b in zip(query_vec, content_vec, strict=False))
         q_magnitude = math.sqrt(sum(a * a for a in query_vec))
         c_magnitude = math.sqrt(sum(b * b for b in content_vec))
 
@@ -387,7 +387,7 @@ class ContentSimilarityRerankingStrategy(RerankingStrategy):
         return dot_product / (q_magnitude * c_magnitude)
 
     def _calculate_semantic_similarity(
-        self, query: str, content: str, result: Dict
+        self, query: str, content: str, result: dict
     ) -> float:
         """Calculate semantic similarity using embeddings if available."""
         # Check if result has embeddings
@@ -421,8 +421,8 @@ class ContentSimilarityRerankingStrategy(RerankingStrategy):
                     return 0.8
 
         # Word stem matching (simple version)
-        query_stems = set(self._simple_stem(word) for word in query_words)
-        content_stems = set(self._simple_stem(word) for word in content_lower.split())
+        query_stems = {self._simple_stem(word) for word in query_words}
+        content_stems = {self._simple_stem(word) for word in content_lower.split()}
 
         if query_stems and content_stems:
             overlap = len(query_stems & content_stems)
@@ -445,9 +445,9 @@ class TemporalRerankingStrategy(RerankingStrategy):
     async def rerank(
         self,
         query: str,
-        results: List[Dict[str, Any]],
-        config: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
+        results: list[dict[str, Any]],
+        config: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Rerank by temporal relevance."""
         if not results:
             return results
@@ -512,7 +512,7 @@ class TemporalRerankingStrategy(RerankingStrategy):
         logger.info(f"Reranked {len(results)} results by temporal relevance")
         return reranked
 
-    def _detect_temporal_intent(self, query: str) -> Optional[Dict[str, Any]]:
+    def _detect_temporal_intent(self, query: str) -> dict[str, Any] | None:
         """Detect temporal intent in query."""
         query_lower = query.lower()
 
@@ -565,8 +565,8 @@ class TemporalRerankingStrategy(RerankingStrategy):
         return None
 
     def _extract_temporal_value(
-        self, result: Dict, temporal_fields: List[str]
-    ) -> Optional[float]:
+        self, result: dict, temporal_fields: list[str]
+    ) -> float | None:
         """Extract temporal value from result."""
         for field in temporal_fields:
             value = None
@@ -579,7 +579,7 @@ class TemporalRerankingStrategy(RerankingStrategy):
 
             if value is not None:
                 # Convert to numeric timestamp if possible
-                if isinstance(value, (int, float)):
+                if isinstance(value, int | float):
                     return float(value)
                 elif isinstance(value, str):
                     # Try to parse as timestamp
@@ -595,8 +595,8 @@ class TemporalRerankingStrategy(RerankingStrategy):
     def _score_temporal_relevance(
         self,
         temporal_value: float,
-        temporal_intent: Dict[str, Any],
-        config: Dict[str, Any],
+        temporal_intent: dict[str, Any],
+        config: dict[str, Any],
     ) -> float:
         """Score temporal relevance based on intent."""
         intent_type = temporal_intent["type"]
@@ -694,7 +694,7 @@ class TemporalRerankingStrategy(RerankingStrategy):
 class HybridRerankingStrategy(RerankingStrategy):
     """Combine multiple reranking strategies."""
 
-    def __init__(self, strategies: Optional[List[RerankingStrategy]] = None):
+    def __init__(self, strategies: list[RerankingStrategy] | None = None):
         """Initialize with list of strategies to combine."""
         self.strategies = strategies or [
             ContentSimilarityRerankingStrategy(),
@@ -705,9 +705,9 @@ class HybridRerankingStrategy(RerankingStrategy):
     async def rerank(
         self,
         query: str,
-        results: List[Dict[str, Any]],
-        config: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
+        results: list[dict[str, Any]],
+        config: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Apply multiple reranking strategies and combine scores."""
         if not results:
             return results
@@ -734,7 +734,7 @@ class HybridRerankingStrategy(RerankingStrategy):
 
         # Combine scores from different strategies
         combined_results = []
-        for i, original_result in enumerate(results):
+        for _i, original_result in enumerate(results):
             combined = original_result.copy()
             combined_score = 0.0
             score_components = {}
@@ -765,7 +765,7 @@ class HybridRerankingStrategy(RerankingStrategy):
         )
         return reranked
 
-    def _results_match(self, result1: Dict, result2: Dict) -> bool:
+    def _results_match(self, result1: dict, result2: dict) -> bool:
         """Check if two results are the same."""
         # Try to match by ID fields
         id_fields = ["id", "doc_id", "document_id", "item_id", "_id"]

@@ -3,18 +3,18 @@
 Implementation of various routing strategies for the comprehensive routing system.
 """
 
-import logging
-import time
-import json
-import re
-from typing import Dict, Any, Optional, List, Tuple
 import asyncio
+import json
+import logging
+import re
+import time
+from typing import Any
 
 from .base import (
-    RoutingStrategy,
-    RoutingDecision,
-    SearchModality,
     GenerationType,
+    RoutingDecision,
+    RoutingStrategy,
+    SearchModality,
     TemporalExtractor,
 )
 
@@ -27,7 +27,7 @@ class GLiNERRoutingStrategy(RoutingStrategy):
     Fast and efficient for entity-based routing.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         super().__init__(config)
         self.model = None
         self.labels = config.get(
@@ -71,7 +71,7 @@ class GLiNERRoutingStrategy(RoutingStrategy):
             self.model = None
 
     async def route(
-        self, query: str, context: Optional[Dict[str, Any]] = None
+        self, query: str, context: dict[str, Any] | None = None
     ) -> RoutingDecision:
         """Route using GLiNER entity extraction."""
         start_time = time.time()
@@ -127,7 +127,7 @@ class GLiNERRoutingStrategy(RoutingStrategy):
             self.record_metrics(query, fallback_decision, execution_time, False, str(e))
             return fallback_decision
 
-    def _analyze_entities(self, query: str, entities: List[Dict]) -> RoutingDecision:
+    def _analyze_entities(self, query: str, entities: list[dict]) -> RoutingDecision:
         """Analyze extracted entities to make routing decision."""
         video_score = 0
         text_score = 0
@@ -278,7 +278,7 @@ class LLMRoutingStrategy(RoutingStrategy):
     More sophisticated but slower than other methods.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         super().__init__(config)
         self.provider = config.get("provider", "local")
         self.model = config.get("model", "gemma2:2b")
@@ -310,7 +310,7 @@ Respond ONLY with a JSON object in this format:
 }"""
 
     async def route(
-        self, query: str, context: Optional[Dict[str, Any]] = None
+        self, query: str, context: dict[str, Any] | None = None
     ) -> RoutingDecision:
         """Route using LLM inference."""
         start_time = time.time()
@@ -350,7 +350,7 @@ Respond ONLY with a JSON object in this format:
             self.record_metrics(query, fallback_decision, execution_time, False, str(e))
             return fallback_decision
 
-    def _build_prompt(self, query: str, context: Optional[Dict[str, Any]]) -> str:
+    def _build_prompt(self, query: str, context: dict[str, Any] | None) -> str:
         """Build the prompt for the LLM."""
         conversation_history = ""
         if context and "conversation_history" in context:
@@ -488,7 +488,7 @@ class KeywordRoutingStrategy(RoutingStrategy):
     Fast and deterministic but less sophisticated.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         super().__init__(config)
         self.video_keywords = config.get(
             "video_keywords",
@@ -565,7 +565,7 @@ class KeywordRoutingStrategy(RoutingStrategy):
         )
 
     async def route(
-        self, query: str, context: Optional[Dict[str, Any]] = None
+        self, query: str, context: dict[str, Any] | None = None
     ) -> RoutingDecision:
         """Route based on keyword matching."""
         start_time = time.time()
@@ -644,7 +644,7 @@ class HybridRoutingStrategy(RoutingStrategy):
     Uses GLiNER first, falls back to LLM for low confidence, and uses keywords as final fallback.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         super().__init__(config)
         self.gliner_strategy = GLiNERRoutingStrategy(config)
         self.llm_strategy = LLMRoutingStrategy(config)
@@ -653,7 +653,7 @@ class HybridRoutingStrategy(RoutingStrategy):
         self.use_llm_fallback = config.get("use_llm_fallback", True)
 
     async def route(
-        self, query: str, context: Optional[Dict[str, Any]] = None
+        self, query: str, context: dict[str, Any] | None = None
     ) -> RoutingDecision:
         """Route using hybrid approach."""
         start_time = time.time()
@@ -700,7 +700,7 @@ class EnsembleRoutingStrategy(RoutingStrategy):
     Uses voting or weighted averaging to make final decision.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         super().__init__(config)
         self.strategies = []
         self.weights = config.get("weights", {})
@@ -709,7 +709,7 @@ class EnsembleRoutingStrategy(RoutingStrategy):
         )  # "weighted" or "majority"
         self._initialize_strategies(config)
 
-    def _initialize_strategies(self, config: Dict[str, Any]):
+    def _initialize_strategies(self, config: dict[str, Any]):
         """Initialize the ensemble strategies."""
         enabled_strategies = config.get("enabled_strategies", ["gliner", "keyword"])
 
@@ -726,7 +726,7 @@ class EnsembleRoutingStrategy(RoutingStrategy):
                 self.weights[name] = 1.0
 
     async def route(
-        self, query: str, context: Optional[Dict[str, Any]] = None
+        self, query: str, context: dict[str, Any] | None = None
     ) -> RoutingDecision:
         """Route using ensemble of strategies."""
         start_time = time.time()
@@ -735,12 +735,12 @@ class EnsembleRoutingStrategy(RoutingStrategy):
         decisions = []
         tasks = []
 
-        for name, strategy in self.strategies:
+        for _name, strategy in self.strategies:
             tasks.append(strategy.route(query, context))
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for (name, strategy), result in zip(self.strategies, results):
+        for (name, _strategy), result in zip(self.strategies, results, strict=False):
             if isinstance(result, Exception):
                 logger.warning(f"Strategy {name} failed: {result}")
                 continue
@@ -777,7 +777,7 @@ class EnsembleRoutingStrategy(RoutingStrategy):
         return final_decision
 
     def _combine_decisions(
-        self, decisions: List[Tuple[str, RoutingDecision]]
+        self, decisions: list[tuple[str, RoutingDecision]]
     ) -> RoutingDecision:
         """Combine multiple decisions into a final decision."""
         if self.voting_method == "majority":
@@ -786,7 +786,7 @@ class EnsembleRoutingStrategy(RoutingStrategy):
             return self._weighted_voting(decisions)
 
     def _majority_voting(
-        self, decisions: List[Tuple[str, RoutingDecision]]
+        self, decisions: list[tuple[str, RoutingDecision]]
     ) -> RoutingDecision:
         """Use majority voting to combine decisions."""
         from collections import Counter
@@ -794,7 +794,7 @@ class EnsembleRoutingStrategy(RoutingStrategy):
         modality_votes = Counter()
         generation_votes = Counter()
 
-        for name, decision in decisions:
+        for _name, decision in decisions:
             modality_votes[decision.search_modality] += 1
             generation_votes[decision.generation_type] += 1
 
@@ -818,7 +818,7 @@ class EnsembleRoutingStrategy(RoutingStrategy):
         )
 
     def _weighted_voting(
-        self, decisions: List[Tuple[str, RoutingDecision]]
+        self, decisions: list[tuple[str, RoutingDecision]]
     ) -> RoutingDecision:
         """Use weighted voting to combine decisions."""
         from collections import defaultdict
@@ -869,7 +869,7 @@ class LangExtractRoutingStrategy(RoutingStrategy):
     Provides more structured extraction than basic LLM but uses local models.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         super().__init__(config)
         # Use local Ollama model instead of Gemini
         self.model_name = config.get("langextract_model", "smollm2:1.7b")
@@ -877,26 +877,26 @@ class LangExtractRoutingStrategy(RoutingStrategy):
         self.extractor = None
         self.schema_prompt = """
         Classify query generation type by looking for EXACT keywords:
-        
+
         If query contains these words → use "raw":
         - extract, get, list, parse
         - timestamps, IDs, JSON, fields
         - specific, exact, all
-        
-        If query contains these words → use "summary":  
+
+        If query contains these words → use "summary":
         - summarize, summary
         - brief, overview, gist
         - key, main, points, takeaways
         - quick, recap
-        
+
         If query contains these words → use "detailed":
         - detailed, comprehensive
         - full, complete, thorough
         - in-depth, analysis, breakdown
         - report, investigation
-        
+
         DEFAULT: If no keywords match → use "raw"
-        
+
         Video/Text detection:
         - needs_video: true if mentions video/visual/watch/show
         - needs_text: true if mentions text/document/article/report
@@ -941,7 +941,7 @@ class LangExtractRoutingStrategy(RoutingStrategy):
             self.extractor = None
 
     async def route(
-        self, query: str, context: Optional[Dict[str, Any]] = None
+        self, query: str, context: dict[str, Any] | None = None
     ) -> RoutingDecision:
         """Route using structured extraction with local LLM."""
         start_time = time.time()
@@ -1012,7 +1012,7 @@ Do not include any explanation or text outside the JSON object."""
                     if json_match:
                         result = json.loads(json_match.group())
                     else:
-                        raise ValueError("Could not parse LangExtract response")
+                        raise ValueError("Could not parse LangExtract response") from None
 
             # Determine search modality
             needs_video = result.get("needs_video", False)

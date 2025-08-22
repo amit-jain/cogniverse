@@ -3,17 +3,18 @@ Production-level integration tests for Phoenix storage.
 These tests verify actual Phoenix integration, not mocks.
 """
 
-import pytest
-import phoenix as px
-import pandas as pd
-from datetime import datetime, timedelta
-import time
 import threading
+import time
+from datetime import datetime, timedelta
+
+import pandas as pd
+import phoenix as px
+import pytest
 
 from src.evaluation.data.storage import (
-    PhoenixStorage,
     ConnectionConfig,
     ConnectionState,
+    PhoenixStorage,
 )
 
 

@@ -4,17 +4,16 @@ Scoring mechanisms for Cogniverse evaluation with Inspect AI
 
 import json
 import logging
-import numpy as np
-from typing import List, Dict
 
-from inspect_ai.scorer import Scorer, scorer, Score
+import numpy as np
+from inspect_ai.scorer import Score, Scorer, scorer
 
 logger = logging.getLogger(__name__)
 
 
 # Factory functions for Inspect AI registration
 @scorer(metrics=[], name="video_retrieval_scorer")
-def video_retrieval_scorer(metrics: List[str] = None) -> Scorer:
+def video_retrieval_scorer(metrics: list[str] = None) -> Scorer:
     """Create a video retrieval scorer for Inspect AI."""
     scorer_instance = VideoRetrievalScorer(metrics)
     return scorer_instance
@@ -44,7 +43,7 @@ def failure_analysis_scorer() -> Scorer:
 class VideoRetrievalScorer:
     """Comprehensive scorer for video retrieval tasks"""
 
-    def __init__(self, metrics: List[str] = None):
+    def __init__(self, metrics: list[str] = None):
         self.metrics = metrics or ["mrr", "ndcg", "precision", "recall"]
         self.metric_calculators = {
             "mrr": self._calculate_mrr,
@@ -104,7 +103,7 @@ class VideoRetrievalScorer:
             scores["default"] = config_scores
         else:
             # Unknown format
-            scores["default"] = {metric: 0.0 for metric in self.metrics}
+            scores["default"] = dict.fromkeys(self.metrics, 0.0)
 
         # Log to Phoenix using OpenTelemetry
         from opentelemetry import trace
@@ -133,7 +132,7 @@ class VideoRetrievalScorer:
             },
         )
 
-    def _calculate_mrr(self, results: List, expected: List[str]) -> float:
+    def _calculate_mrr(self, results: list, expected: list[str]) -> float:
         """Calculate Mean Reciprocal Rank"""
         if not results:
             return 0.0
@@ -152,7 +151,7 @@ class VideoRetrievalScorer:
 
         return 0.0
 
-    def _calculate_ndcg(self, results: List, expected: List[str], k: int = 10) -> float:
+    def _calculate_ndcg(self, results: list, expected: list[str], k: int = 10) -> float:
         """Calculate Normalized Discounted Cumulative Gain"""
         if not results:
             return 0.0
@@ -183,7 +182,7 @@ class VideoRetrievalScorer:
         return dcg / idcg if idcg > 0 else 0.0
 
     def _calculate_precision(
-        self, results: List, expected: List[str], k: int = 10
+        self, results: list, expected: list[str], k: int = 10
     ) -> float:
         """Calculate Precision@k"""
         if not results:
@@ -203,7 +202,7 @@ class VideoRetrievalScorer:
         return relevant_found / len(top_k_results)
 
     def _calculate_recall(
-        self, results: List, expected: List[str], k: int = 10
+        self, results: list, expected: list[str], k: int = 10
     ) -> float:
         """Calculate Recall@k"""
         if not results or not expected:
@@ -222,7 +221,7 @@ class VideoRetrievalScorer:
 
         return relevant_found / len(expected)
 
-    def _calculate_map(self, results: List, expected: List[str]) -> float:
+    def _calculate_map(self, results: list, expected: list[str]) -> float:
         """Calculate Mean Average Precision"""
         if not results or not expected:
             return 0.0
@@ -244,7 +243,7 @@ class VideoRetrievalScorer:
 
         return sum_precision / len(expected) if expected else 0.0
 
-    def _generate_explanation(self, scores: Dict[str, Dict[str, float]]) -> str:
+    def _generate_explanation(self, scores: dict[str, dict[str, float]]) -> str:
         """Generate human-readable explanation of scores"""
         if not scores:
             return "No scores calculated"
@@ -327,7 +326,7 @@ class TemporalAccuracyScorer(Scorer):
         )
 
     def _calculate_range_overlap(
-        self, range1: List[float], range2: List[float]
+        self, range1: list[float], range2: list[float]
     ) -> float:
         """Calculate overlap between two time ranges"""
         if len(range1) != 2 or len(range2) != 2:

@@ -20,7 +20,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Literal
 
 import cv2
 import numpy as np
@@ -37,13 +37,13 @@ class VideoSegment:
     segment_id: int
     start_time: float
     end_time: float
-    frames: List[np.ndarray]
-    frame_timestamps: List[float]
-    transcript_segments: List[Dict[str, Any]]
+    frames: list[np.ndarray]
+    frame_timestamps: list[float]
+    transcript_segments: list[dict[str, Any]]
     transcript_text: str = ""
-    metadata: Dict[str, Any] = None
+    metadata: dict[str, Any] = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary (without frame data)"""
         return {
             "segment_id": self.segment_id,
@@ -73,7 +73,7 @@ class SingleVectorVideoProcessor(BaseProcessor):
         max_frames_per_segment: int = 12,
         min_segment_duration: float = 2.0,
         store_as_single_doc: bool = True,
-        cache: Optional[Any] = None,
+        cache: Any | None = None,
         **kwargs,
     ):
         """
@@ -112,9 +112,9 @@ class SingleVectorVideoProcessor(BaseProcessor):
     def process_video(
         self,
         video_path: Path,
-        transcript_data: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        transcript_data: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """
         Process video according to configured strategy.
 
@@ -180,7 +180,7 @@ class SingleVectorVideoProcessor(BaseProcessor):
 
         return result
 
-    def _get_video_info(self, video_path: Path) -> Dict[str, Any]:
+    def _get_video_info(self, video_path: Path) -> dict[str, Any]:
         """Get video metadata"""
         cap = cv2.VideoCapture(str(video_path))
         info = {
@@ -195,7 +195,7 @@ class SingleVectorVideoProcessor(BaseProcessor):
 
     def _calculate_segment_boundaries(
         self, duration: float
-    ) -> List[Tuple[float, float]]:
+    ) -> list[tuple[float, float]]:
         """Calculate segment boundaries based on strategy"""
         if self.strategy == "global":
             return [(0.0, duration)]
@@ -228,8 +228,8 @@ class SingleVectorVideoProcessor(BaseProcessor):
         segment_id: int,
         start_time: float,
         end_time: float,
-        video_info: Dict[str, Any],
-        transcript_data: Optional[Dict[str, Any]] = None,
+        video_info: dict[str, Any],
+        transcript_data: dict[str, Any] | None = None,
     ) -> VideoSegment:
         """Process a single video segment"""
         # Extract frames
@@ -272,7 +272,7 @@ class SingleVectorVideoProcessor(BaseProcessor):
         end_time: float,
         video_fps: float,
         segment_id: int,
-    ) -> Tuple[List[np.ndarray], List[float]]:
+    ) -> tuple[list[np.ndarray], list[float]]:
         """Extract frames from video segment with caching"""
         # Check cache first if available
         if self.cache:
@@ -396,8 +396,8 @@ class SingleVectorVideoProcessor(BaseProcessor):
         return frames, timestamps
 
     def _align_transcript_segments(
-        self, segments: List[Dict[str, Any]], start_time: float, end_time: float
-    ) -> List[Dict[str, Any]]:
+        self, segments: list[dict[str, Any]], start_time: float, end_time: float
+    ) -> list[dict[str, Any]]:
         """Align transcript segments with video segment"""
         aligned = []
 
@@ -417,7 +417,7 @@ class SingleVectorVideoProcessor(BaseProcessor):
 
         return aligned
 
-    def _combine_transcripts(self, segments: List[VideoSegment]) -> str:
+    def _combine_transcripts(self, segments: list[VideoSegment]) -> str:
         """Combine all segment transcripts avoiding duplicates"""
         if self.strategy == "global":
             # Global strategy - just return the transcript
@@ -438,7 +438,7 @@ class SingleVectorVideoProcessor(BaseProcessor):
         transcript_parts.sort(key=lambda x: x[0])
         return " ".join([text for _, text in transcript_parts if text])
 
-    def _get_document_structure(self) -> Dict[str, Any]:
+    def _get_document_structure(self) -> dict[str, Any]:
         """Define how documents should be structured for this strategy"""
         if self.store_as_single_doc:
             return {
@@ -452,8 +452,8 @@ class SingleVectorVideoProcessor(BaseProcessor):
             }
 
     def prepare_for_embedding_generation(
-        self, segments: List[VideoSegment], model_type: str = "videoprism"
-    ) -> List[Dict[str, Any]]:
+        self, segments: list[VideoSegment], model_type: str = "videoprism"
+    ) -> list[dict[str, Any]]:
         """
         Prepare segments for embedding generation.
         Model-agnostic preparation.

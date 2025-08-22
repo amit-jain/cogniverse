@@ -2,15 +2,16 @@
 Unit tests for reranking strategies.
 """
 
-import pytest
 from unittest.mock import Mock, patch
 
+import pytest
+
 from src.evaluation.core.reranking import (
-    RerankingError,
-    DiversityRerankingStrategy,
     ContentSimilarityRerankingStrategy,
-    TemporalRerankingStrategy,
+    DiversityRerankingStrategy,
     HybridRerankingStrategy,
+    RerankingError,
+    TemporalRerankingStrategy,
 )
 
 
@@ -344,7 +345,7 @@ class TestTemporalRerankingStrategy:
         # Should return results, possibly unchanged order but with temporal metadata
         assert len(reranked) == len(sample_results)
         # Results might have additional fields but should preserve original data
-        for i, result in enumerate(reranked):
+        for _i, result in enumerate(reranked):
             assert result["id"] in [r["id"] for r in sample_results]
 
     @pytest.mark.unit

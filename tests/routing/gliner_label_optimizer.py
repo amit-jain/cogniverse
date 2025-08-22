@@ -6,8 +6,8 @@ This optimizes the labels that GLiNER uses for entity extraction,
 which is what really matters for routing accuracy.
 """
 
-from typing import List, Dict, Any
 from collections import defaultdict
+from typing import Any
 
 
 class GLiNERLabelOptimizer:
@@ -140,7 +140,7 @@ class GLiNERLabelOptimizer:
             ),
         ]
 
-    async def find_optimal_labels(self, gliner_model) -> Dict[str, Any]:
+    async def find_optimal_labels(self, gliner_model) -> dict[str, Any]:
         """
         Find the optimal set of labels for GLiNER that maximize routing accuracy.
 
@@ -163,7 +163,7 @@ class GLiNERLabelOptimizer:
 
         return optimal_config
 
-    async def _test_individual_labels(self, gliner_model) -> Dict[str, float]:
+    async def _test_individual_labels(self, gliner_model) -> dict[str, float]:
         """Test how well GLiNER recognizes each individual label."""
         print("\n📊 Testing individual labels...")
 
@@ -208,8 +208,8 @@ class GLiNERLabelOptimizer:
         }
 
     async def _find_best_combination(
-        self, gliner_model, label_scores: Dict[str, float]
-    ) -> List[str]:
+        self, gliner_model, label_scores: dict[str, float]
+    ) -> list[str]:
         """Find the best combination of labels for routing."""
         print("\n🎯 Finding optimal label combination...")
 
@@ -277,7 +277,7 @@ class GLiNERLabelOptimizer:
         return best_labels
 
     async def _test_label_combination(
-        self, gliner_model, labels: List[str], threshold: float = 0.3
+        self, gliner_model, labels: list[str], threshold: float = 0.3
     ) -> float:
         """Test how well a label combination performs on routing."""
         correct = 0
@@ -314,8 +314,8 @@ class GLiNERLabelOptimizer:
         return correct / total if total > 0 else 0
 
     async def _optimize_threshold(
-        self, gliner_model, labels: List[str]
-    ) -> Dict[str, Any]:
+        self, gliner_model, labels: list[str]
+    ) -> dict[str, Any]:
         """Find optimal threshold for the best label combination."""
         print("\n🎚️ Optimizing threshold...")
 

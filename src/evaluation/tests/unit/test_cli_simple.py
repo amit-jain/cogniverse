@@ -2,9 +2,10 @@
 Simple unit tests for CLI without complex imports.
 """
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock, mock_open
 import json
+from unittest.mock import MagicMock, Mock, mock_open, patch
+
+import pytest
 
 
 class TestCLISimple:

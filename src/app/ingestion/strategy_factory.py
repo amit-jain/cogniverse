@@ -6,7 +6,7 @@ Uses actual class names in config - no string mappings or if/elif logic.
 """
 
 import importlib
-from typing import Any, Dict
+from typing import Any
 
 from .processing_strategy_set import ProcessingStrategySet
 from .processor_base import BaseStrategy
@@ -17,7 +17,7 @@ class StrategyFactory:
 
     @classmethod
     def create_from_profile_config(
-        cls, profile_config: Dict[str, Any]
+        cls, profile_config: dict[str, Any]
     ) -> ProcessingStrategySet:
         """
         Create strategy set from profile configuration.
@@ -58,7 +58,7 @@ class StrategyFactory:
 
     @classmethod
     def _create_strategy_instance(
-        cls, class_name: str, params: Dict[str, Any]
+        cls, class_name: str, params: dict[str, Any]
     ) -> BaseStrategy:
         """
         Create strategy instance from class name and parameters.

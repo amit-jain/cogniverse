@@ -6,8 +6,9 @@ to improve the smaller student model performance.
 """
 
 import asyncio
-import sys
 import os
+import sys
+
 import dspy
 
 # Add src directory to path
@@ -204,7 +205,7 @@ def load_training_examples():
     queries = []
     test_file = os.path.join(os.path.dirname(__file__), "test_queries.txt")
 
-    with open(test_file, "r") as f:
+    with open(test_file) as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith("#"):

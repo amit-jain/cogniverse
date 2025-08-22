@@ -6,20 +6,21 @@ Tries multiple optimization strategies to improve GLiNER performance beyond base
 """
 
 import asyncio
-import sys
-import os
-import dspy
-from typing import List, Dict, Any
 import json
-from dataclasses import dataclass
+import os
+import sys
 import time
+from dataclasses import dataclass
+from typing import Any
+
+import dspy
 
 # Add src directory to path
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 sys.path.insert(0, os.path.join(project_root, "src"))
 
-from src.tools.query_analyzer import QueryAnalyzer
-from src.common.config import get_config
+from src.common.config import get_config  # noqa: E402
+from src.tools.query_analyzer import QueryAnalyzer  # noqa: E402
 
 
 @dataclass
@@ -28,9 +29,9 @@ class OptimizationResult:
 
     strategy: str
     accuracy: float
-    config: Dict[str, Any]
+    config: dict[str, Any]
     runtime: float
-    details: Dict[str, Any]
+    details: dict[str, Any]
 
 
 class QueryExample(dspy.Example):
@@ -265,13 +266,13 @@ class AdvancedGLiNEROptimizer:
             "urchade/gliner_multi-v2.1",
         ]
 
-    def load_training_examples(self) -> List[QueryExample]:
+    def load_training_examples(self) -> list[QueryExample]:
         """Load training examples from test queries."""
         queries = []
         test_file = os.path.join(os.path.dirname(__file__), "test_queries.txt")
 
         try:
-            with open(test_file, "r") as f:
+            with open(test_file) as f:
                 for line in f:
                     line = line.strip()
                     if not line or line.startswith("#"):
@@ -326,10 +327,10 @@ class AdvancedGLiNEROptimizer:
 
     async def evaluate_configuration(
         self,
-        labels: List[str],
+        labels: list[str],
         threshold: float,
         model_name: str,
-        test_examples: List[QueryExample],
+        test_examples: list[QueryExample],
     ) -> float:
         """Evaluate a specific GLiNER configuration."""
         # Store original configuration
@@ -379,7 +380,7 @@ class AdvancedGLiNEROptimizer:
             self.analyzer.gliner_threshold = original_threshold
 
     async def grid_search_optimization(
-        self, test_examples: List[QueryExample]
+        self, test_examples: list[QueryExample]
     ) -> OptimizationResult:
         """Comprehensive grid search across all configurations."""
         print("🔍 Running Grid Search Optimization")
@@ -434,7 +435,7 @@ class AdvancedGLiNEROptimizer:
         )
 
     async def focused_optimization(
-        self, test_examples: List[QueryExample]
+        self, test_examples: list[QueryExample]
     ) -> OptimizationResult:
         """Focused optimization on promising configurations."""
         print("🎯 Running Focused Optimization")
@@ -506,7 +507,7 @@ class AdvancedGLiNEROptimizer:
         )
 
     async def adaptive_optimization(
-        self, test_examples: List[QueryExample]
+        self, test_examples: list[QueryExample]
     ) -> OptimizationResult:
         """Adaptive optimization that learns from results."""
         print("🧠 Running Adaptive Optimization")
@@ -610,7 +611,7 @@ class AdvancedGLiNEROptimizer:
             details={"iterations": iterations},
         )
 
-    async def run_comprehensive_optimization(self) -> List[OptimizationResult]:
+    async def run_comprehensive_optimization(self) -> list[OptimizationResult]:
         """Run all optimization strategies and compare results."""
         print("🚀 Comprehensive GLiNER Optimization")
         print("=" * 80)

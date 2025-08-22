@@ -4,7 +4,7 @@ Factory for creating embedding generators based on backend type
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .backend_factory import BackendFactory
 from .embedding_generator_impl import EmbeddingGeneratorImpl
@@ -16,9 +16,9 @@ class EmbeddingGeneratorFactory:
     @staticmethod
     def create(
         backend: str,
-        config: Dict[str, Any],
-        logger: Optional[logging.Logger] = None,
-        profile_config: Dict[str, Any] = None,
+        config: dict[str, Any],
+        logger: logging.Logger | None = None,
+        profile_config: dict[str, Any] = None,
     ):
         """
         Create an embedding generator for the specified backend
@@ -46,7 +46,7 @@ class EmbeddingGeneratorFactory:
 
 
 def create_embedding_generator(
-    config: Dict[str, Any], schema_name: str, logger: Optional[logging.Logger] = None
+    config: dict[str, Any], schema_name: str, logger: logging.Logger | None = None
 ):
     """
     Creates an embedding generator for a specific schema.

@@ -8,7 +8,7 @@ Extracts representative keyframes from videos using histogram comparison.
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import cv2
 
@@ -22,7 +22,7 @@ class KeyframeExtractor:
 
     def extract_keyframes(
         self, video_path: Path, output_dir: Path = None
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Extract keyframes from video using histogram comparison"""
         print(f"📸 Extracting keyframes from: {video_path.name}")
 

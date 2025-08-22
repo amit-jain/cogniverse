@@ -4,7 +4,7 @@ Custom solvers for Cogniverse evaluation with Inspect AI
 
 import logging
 import time
-from typing import List, Dict, Any
+from typing import Any
 
 from inspect_ai.solver import Solver, solver
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Factory functions for Inspect AI registration
 @solver(name="cogniverse_retrieval_solver")
-def cogniverse_retrieval_solver(profiles: List[str], strategies: List[str]) -> Solver:
+def cogniverse_retrieval_solver(profiles: list[str], strategies: list[str]) -> Solver:
     """Create a Cogniverse retrieval solver for Inspect AI."""
     return CogniverseRetrievalSolver(profiles, strategies)
 
@@ -24,7 +24,7 @@ def cogniverse_retrieval_solver(profiles: List[str], strategies: List[str]) -> S
 class CogniverseRetrievalSolver(Solver):
     """Custom solver for Cogniverse retrieval evaluation"""
 
-    def __init__(self, profiles: List[str], strategies: List[str]):
+    def __init__(self, profiles: list[str], strategies: list[str]):
         self.profiles = profiles
         self.strategies = strategies
         self.config = get_config()
@@ -138,8 +138,8 @@ class ResultRankingAnalyzer(Solver):
         return state
 
     def _analyze_ranking(
-        self, search_results: List[Dict], expected: List[str]
-    ) -> Dict[str, Any]:
+        self, search_results: list[dict], expected: list[str]
+    ) -> dict[str, Any]:
         """Analyze ranking quality"""
         if not search_results:
             return {
@@ -236,7 +236,7 @@ class TemporalQueryProcessor(Solver):
 
         return state
 
-    def _extract_temporal_info(self, query: str) -> Dict[str, Any]:
+    def _extract_temporal_info(self, query: str) -> dict[str, Any]:
         """Extract temporal information from query"""
         query_lower = query.lower()
 

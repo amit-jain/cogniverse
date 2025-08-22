@@ -7,13 +7,18 @@ Provides foundation for pluggable processor architecture with auto-discovery.
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any
 
 
 class BaseProcessor(ABC):
     """Base class that all processors must extend."""
 
     PROCESSOR_NAME: str = ""  # Must be overridden by subclasses
+
+    @abstractmethod
+    def process(self, *args, **kwargs) -> Any:
+        """Process input data. Must be implemented by subclasses."""
+        pass
 
     def __init__(self, logger: logging.Logger, **kwargs):
         """
@@ -31,7 +36,7 @@ class BaseProcessor(ABC):
 
     @classmethod
     def from_config(
-        cls, config: Dict[str, Any], logger: logging.Logger
+        cls, config: dict[str, Any], logger: logging.Logger
     ) -> "BaseProcessor":
         """
         Factory method to create processor from configuration using introspection.
@@ -69,7 +74,7 @@ class BaseProcessor(ABC):
         """Get the name of this processor."""
         return self.PROCESSOR_NAME
 
-    def get_config(self) -> Dict[str, Any]:
+    def get_config(self) -> dict[str, Any]:
         """Get the configuration used to create this processor."""
         return self._config.copy()
 
@@ -78,7 +83,7 @@ class BaseStrategy(ABC):
     """Base class that all strategies must extend."""
 
     @abstractmethod
-    def get_required_processors(self) -> Dict[str, Dict[str, Any]]:
+    def get_required_processors(self) -> dict[str, dict[str, Any]]:
         """
         Return required processors and their configurations.
 

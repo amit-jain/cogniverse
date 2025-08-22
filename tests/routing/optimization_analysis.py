@@ -25,19 +25,19 @@ class OptimizationAnalysis:
         # Load simple optimizer results
         simple_file = "simple_gliner_optimization_results.json"
         if os.path.exists(simple_file):
-            with open(simple_file, "r") as f:
+            with open(simple_file) as f:
                 self.results["simple"] = json.load(f)
 
         # Load manual optimizer results (if available)
         manual_file = "gliner_optimization_results.json"
         if os.path.exists(manual_file):
-            with open(manual_file, "r") as f:
+            with open(manual_file) as f:
                 self.results["manual"] = json.load(f)
 
         # Load DSPy optimizer results (if available)
         dspy_file = "dspy_gliner_optimization_results.json"
         if os.path.exists(dspy_file):
-            with open(dspy_file, "r") as f:
+            with open(dspy_file) as f:
                 self.results["dspy"] = json.load(f)
 
     def analyze_performance(self):
@@ -96,9 +96,9 @@ class OptimizationAnalysis:
                 all_times = []
                 total_configs = 0
 
-                for optimizer_type, optimizer_results in approach_results.items():
+                for _optimizer_type, optimizer_results in approach_results.items():
                     if isinstance(optimizer_results, dict):
-                        for model_name, model_results in optimizer_results.items():
+                        for _model_name, model_results in optimizer_results.items():
                             if (
                                 isinstance(model_results, dict)
                                 and "accuracy" in model_results

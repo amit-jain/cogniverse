@@ -2,22 +2,22 @@
 Solvers for evaluation modes.
 """
 
-from typing import List, Optional, Dict, Any
-from datetime import datetime, timedelta
-import logging
 import asyncio
-import numpy as np
+import logging
+from datetime import datetime, timedelta
+from typing import Any
 
-from inspect_ai.solver import Solver, solver
-from inspect_ai.model import ModelOutput
+import numpy as np
 import phoenix as px
+from inspect_ai.model import ModelOutput
+from inspect_ai.solver import Solver, solver
 
 logger = logging.getLogger(__name__)
 
 
 @solver
 def create_retrieval_solver(
-    profiles: List[str], strategies: List[str], config: Optional[Dict[str, Any]] = None
+    profiles: list[str], strategies: list[str], config: dict[str, Any] | None = None
 ) -> Solver:
     """
     Solver that runs new searches via SearchService.
@@ -151,7 +151,7 @@ def create_retrieval_solver(
 
 @solver
 def create_batch_solver(
-    trace_ids: Optional[List[str]] = None, config: Optional[Dict[str, Any]] = None
+    trace_ids: list[str] | None = None, config: dict[str, Any] | None = None
 ) -> Solver:
     """
     Solver that loads existing traces from Phoenix and extracts ground truth.
@@ -273,7 +273,7 @@ def create_batch_solver(
 
 
 @solver
-def create_live_solver(config: Optional[Dict[str, Any]] = None) -> Solver:
+def create_live_solver(config: dict[str, Any] | None = None) -> Solver:
     """
     Solver for live/continuous evaluation.
 

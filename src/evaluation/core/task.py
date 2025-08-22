@@ -2,14 +2,14 @@
 Evaluation task implementation using Inspect AI.
 """
 
-from typing import List, Optional, Dict, Any
-from datetime import datetime
 import logging
+from datetime import datetime
+from typing import Any
 
+import phoenix as px
 from inspect_ai import Task, eval
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.model import GenerateConfig
-import phoenix as px
 
 logger = logging.getLogger(__name__)
 
@@ -17,10 +17,10 @@ logger = logging.getLogger(__name__)
 def evaluation_task(
     mode: str,
     dataset_name: str,
-    profiles: Optional[List[str]] = None,
-    strategies: Optional[List[str]] = None,
-    trace_ids: Optional[List[str]] = None,
-    config: Optional[Dict[str, Any]] = None,
+    profiles: list[str] | None = None,
+    strategies: list[str] | None = None,
+    trace_ids: list[str] | None = None,
+    config: dict[str, Any] | None = None,
 ) -> Task:
     """
     Unified evaluation task for all modes.
@@ -83,9 +83,9 @@ def evaluation_task(
 
     # Import solvers
     from .solvers import (
-        create_retrieval_solver,
         create_batch_solver,
         create_live_solver,
+        create_retrieval_solver,
     )
 
     # Choose solver based on mode
@@ -141,12 +141,12 @@ def evaluation_task(
 def run_evaluation(
     mode: str,
     dataset_name: str,
-    profiles: Optional[List[str]] = None,
-    strategies: Optional[List[str]] = None,
-    trace_ids: Optional[List[str]] = None,
-    config: Optional[Dict[str, Any]] = None,
+    profiles: list[str] | None = None,
+    strategies: list[str] | None = None,
+    trace_ids: list[str] | None = None,
+    config: dict[str, Any] | None = None,
     use_phoenix_experiments: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Helper function to create and run evaluation task.
 

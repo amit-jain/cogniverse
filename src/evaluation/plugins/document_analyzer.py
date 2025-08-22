@@ -5,14 +5,15 @@ Example plugin showing how non-video domains work with the evaluation system.
 """
 
 import re
-from typing import Dict, Any, Optional
+from typing import Any
+
 from src.evaluation.core.schema_analyzer import SchemaAnalyzer
 
 
 class DocumentSchemaAnalyzer(SchemaAnalyzer):
     """Analyzer for document/text search schemas."""
 
-    def can_handle(self, schema_name: str, schema_fields: Dict[str, Any]) -> bool:
+    def can_handle(self, schema_name: str, schema_fields: dict[str, Any]) -> bool:
         """Check if this is a document schema."""
         # Check schema name
         if any(
@@ -41,8 +42,8 @@ class DocumentSchemaAnalyzer(SchemaAnalyzer):
         return any(indicator in all_fields for indicator in doc_indicators)
 
     def analyze_query(
-        self, query: str, schema_fields: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, query: str, schema_fields: dict[str, Any]
+    ) -> dict[str, Any]:
         """Analyze document-specific queries."""
         query_lower = query.lower()
 
@@ -93,7 +94,7 @@ class DocumentSchemaAnalyzer(SchemaAnalyzer):
 
         return constraints
 
-    def extract_item_id(self, document: Any) -> Optional[str]:
+    def extract_item_id(self, document: Any) -> str | None:
         """Extract document ID from dict or object."""
         # Handle dict format (most common in our pipeline)
         if isinstance(document, dict):
@@ -129,7 +130,7 @@ class DocumentSchemaAnalyzer(SchemaAnalyzer):
 class ImageSchemaAnalyzer(SchemaAnalyzer):
     """Analyzer for image search schemas."""
 
-    def can_handle(self, schema_name: str, schema_fields: Dict[str, Any]) -> bool:
+    def can_handle(self, schema_name: str, schema_fields: dict[str, Any]) -> bool:
         """Check if this is an image schema."""
         # Check schema name
         if any(
@@ -158,8 +159,8 @@ class ImageSchemaAnalyzer(SchemaAnalyzer):
         return any(indicator in all_fields for indicator in image_indicators)
 
     def analyze_query(
-        self, query: str, schema_fields: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, query: str, schema_fields: dict[str, Any]
+    ) -> dict[str, Any]:
         """Analyze image-specific queries."""
         query_lower = query.lower()
 
@@ -215,7 +216,7 @@ class ImageSchemaAnalyzer(SchemaAnalyzer):
 
         return constraints
 
-    def extract_item_id(self, document: Any) -> Optional[str]:
+    def extract_item_id(self, document: Any) -> str | None:
         """Extract image ID from dict or object."""
         # Handle dict format (most common in our pipeline)
         if isinstance(document, dict):

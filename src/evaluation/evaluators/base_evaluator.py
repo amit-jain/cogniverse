@@ -2,8 +2,9 @@
 Base evaluator class that doesn't create spans
 """
 
-from phoenix.experiments.evaluators.base import Evaluator as PhoenixEvaluator
 import functools
+
+from phoenix.experiments.evaluators.base import Evaluator as PhoenixEvaluator
 
 
 class NoSpanEvaluator(PhoenixEvaluator):

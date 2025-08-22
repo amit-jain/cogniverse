@@ -2,9 +2,9 @@
 Reference-free evaluation metrics that don't require ground truth.
 """
 
-from typing import List, Dict, Any
 import logging
 from collections import Counter
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ class DiversityEvaluator:
     Evaluate result diversity without ground truth.
     """
 
-    def evaluate(self, query: str, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def evaluate(self, query: str, results: list[dict[str, Any]]) -> dict[str, Any]:
         """
         Evaluate diversity of search results.
 
@@ -68,7 +68,7 @@ class TemporalCoherenceEvaluator:
     Evaluate temporal coherence for time-based queries.
     """
 
-    def evaluate(self, query: str, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def evaluate(self, query: str, results: list[dict[str, Any]]) -> dict[str, Any]:
         """
         Evaluate if temporal queries return temporally coherent results.
 
@@ -165,7 +165,7 @@ class ResultDistributionEvaluator:
     Evaluate the distribution of results across different dimensions.
     """
 
-    def evaluate(self, query: str, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def evaluate(self, query: str, results: list[dict[str, Any]]) -> dict[str, Any]:
         """
         Evaluate how results are distributed.
 
@@ -232,7 +232,7 @@ class SemanticCoherenceEvaluator:
     Note: This would typically use embeddings or an LLM.
     """
 
-    def evaluate(self, query: str, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def evaluate(self, query: str, results: list[dict[str, Any]]) -> dict[str, Any]:
         """
         Evaluate semantic coherence between query and results.
 

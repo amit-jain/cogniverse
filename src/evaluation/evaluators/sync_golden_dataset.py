@@ -3,9 +3,9 @@ Synchronous golden dataset evaluator for Phoenix experiments
 """
 
 import logging
-from typing import List, Dict, Any, Optional
-import numpy as np
+from typing import Any
 
+import numpy as np
 from phoenix.experiments.evaluators.base import Evaluator
 from phoenix.experiments.types import EvaluationResult
 
@@ -17,7 +17,7 @@ class SyncGoldenDatasetEvaluator(Evaluator):
     Synchronous evaluator that compares results against golden dataset
     """
 
-    def __init__(self, golden_dataset: Dict[str, Dict[str, Any]]):
+    def __init__(self, golden_dataset: dict[str, dict[str, Any]]):
         """
         Initialize with golden dataset
 
@@ -110,8 +110,8 @@ class SyncGoldenDatasetEvaluator(Evaluator):
         )
 
     def _calculate_metrics(
-        self, retrieved: List[str], expected: List[str]
-    ) -> Dict[str, float]:
+        self, retrieved: list[str], expected: list[str]
+    ) -> dict[str, float]:
         """Calculate retrieval metrics"""
         metrics = {}
 
@@ -174,8 +174,8 @@ class SyncGoldenDatasetEvaluator(Evaluator):
 
 
 def create_sync_evaluators_with_golden(
-    golden_dataset: Optional[Dict] = None,
-) -> List[Evaluator]:
+    golden_dataset: dict | None = None,
+) -> list[Evaluator]:
     """
     Create synchronous evaluators including golden dataset evaluator
 

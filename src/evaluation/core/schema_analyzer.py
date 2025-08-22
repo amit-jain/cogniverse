@@ -6,10 +6,10 @@ and extracting ground truth based on the actual schema being used,
 without any hardcoded assumptions about the domain (video, documents, etc).
 """
 
-from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional
 import logging
 import re
+from abc import ABC, abstractmethod
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ class SchemaAnalyzer(ABC):
     """Base class for schema analyzers."""
 
     @abstractmethod
-    def can_handle(self, schema_name: str, schema_fields: Dict[str, Any]) -> bool:
+    def can_handle(self, schema_name: str, schema_fields: dict[str, Any]) -> bool:
         """
         Check if this analyzer can handle the given schema.
 
@@ -33,8 +33,8 @@ class SchemaAnalyzer(ABC):
 
     @abstractmethod
     def analyze_query(
-        self, query: str, schema_fields: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, query: str, schema_fields: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Analyze query based on schema fields.
 
@@ -48,7 +48,7 @@ class SchemaAnalyzer(ABC):
         pass
 
     @abstractmethod
-    def extract_item_id(self, document: Any) -> Optional[str]:
+    def extract_item_id(self, document: Any) -> str | None:
         """
         Extract the item ID from a document.
 
@@ -74,13 +74,13 @@ class SchemaAnalyzer(ABC):
 class DefaultSchemaAnalyzer(SchemaAnalyzer):
     """Default analyzer that works with any schema."""
 
-    def can_handle(self, schema_name: str, schema_fields: Dict[str, Any]) -> bool:
+    def can_handle(self, schema_name: str, schema_fields: dict[str, Any]) -> bool:
         """Generic analyzer can handle any schema as fallback."""
         return True
 
     def analyze_query(
-        self, query: str, schema_fields: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, query: str, schema_fields: dict[str, Any]
+    ) -> dict[str, Any]:
         """Generic query analysis based on available fields."""
         query_lower = query.lower()
 
@@ -104,7 +104,7 @@ class DefaultSchemaAnalyzer(SchemaAnalyzer):
 
         return constraints
 
-    def extract_item_id(self, document: Any) -> Optional[str]:
+    def extract_item_id(self, document: Any) -> str | None:
         """Extract ID from document using common patterns."""
         # Try dict first (most common case)
         if isinstance(document, dict):
@@ -151,7 +151,7 @@ class DefaultSchemaAnalyzer(SchemaAnalyzer):
         """Default expected field name."""
         return "expected_items"
 
-    def _field_exists(self, field: str, schema_fields: Dict[str, Any]) -> bool:
+    def _field_exists(self, field: str, schema_fields: dict[str, Any]) -> bool:
         """Check if field exists in any field category."""
         for category in schema_fields.values():
             if isinstance(category, list) and field in category:
@@ -162,14 +162,14 @@ class DefaultSchemaAnalyzer(SchemaAnalyzer):
 class TemporalSchemaAnalyzer(SchemaAnalyzer):
     """Analyzer for schemas with temporal data."""
 
-    def can_handle(self, schema_name: str, schema_fields: Dict[str, Any]) -> bool:
+    def can_handle(self, schema_name: str, schema_fields: dict[str, Any]) -> bool:
         """Check if schema has temporal fields."""
         temporal_fields = schema_fields.get("temporal_fields", [])
         return bool(temporal_fields)
 
     def analyze_query(
-        self, query: str, schema_fields: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, query: str, schema_fields: dict[str, Any]
+    ) -> dict[str, Any]:
         """Analyze temporal queries."""
         query_lower = query.lower()
 
@@ -221,7 +221,7 @@ class TemporalSchemaAnalyzer(SchemaAnalyzer):
 
         return constraints
 
-    def extract_item_id(self, document: Any) -> Optional[str]:
+    def extract_item_id(self, document: Any) -> str | None:
         """Extract ID from temporal document."""
         # Delegate to default analyzer
         return DefaultSchemaAnalyzer().extract_item_id(document)
@@ -235,7 +235,7 @@ class SchemaAnalyzerRegistry:
     """Registry for schema analyzers with plugin support."""
 
     def __init__(self):
-        self._analyzers: List[SchemaAnalyzer] = []
+        self._analyzers: list[SchemaAnalyzer] = []
         self._register_default_analyzers()
 
     def _register_default_analyzers(self):
@@ -260,7 +260,7 @@ class SchemaAnalyzerRegistry:
         logger.info(f"Registered analyzer: {analyzer.__class__.__name__}")
 
     def get_analyzer(
-        self, schema_name: str, schema_fields: Dict[str, Any]
+        self, schema_name: str, schema_fields: dict[str, Any]
     ) -> SchemaAnalyzer:
         """
         Get the appropriate analyzer for a schema.
@@ -313,7 +313,7 @@ _registry = SchemaAnalyzerRegistry()
 
 
 def get_schema_analyzer(
-    schema_name: str, schema_fields: Dict[str, Any]
+    schema_name: str, schema_fields: dict[str, Any]
 ) -> SchemaAnalyzer:
     """Get the appropriate analyzer for a schema."""
     return _registry.get_analyzer(schema_name, schema_fields)

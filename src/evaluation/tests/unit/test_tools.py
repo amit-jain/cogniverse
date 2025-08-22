@@ -2,11 +2,12 @@
 Unit tests for Inspect AI tools.
 """
 
-import pytest
-from unittest.mock import Mock, MagicMock, patch
-import pandas as pd
+from unittest.mock import MagicMock, Mock, patch
 
-from src.evaluation.core.tools import video_search_tool, phoenix_query_tool
+import pandas as pd
+import pytest
+
+from src.evaluation.core.tools import phoenix_query_tool, video_search_tool
 
 
 class TestVideoSearchTool:
