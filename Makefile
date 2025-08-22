@@ -71,7 +71,7 @@ test-routing-integration:
 
 test-evaluation:
 	@echo "🧪 Running evaluation tests..."
-	uv run python -m pytest src/evaluation/tests -m unit
+	uv run python -m pytest tests/evaluation/unit -m unit
 
 # Run all modules separately (recommended approach)
 test-all-modules: test-ingestion test-routing test-evaluation
