@@ -10,7 +10,8 @@ from unittest.mock import Mock, mock_open, patch
 import numpy as np
 import pytest
 
-from src.app.ingestion.processors.video_chunk_extractor import VideoChunkExtractor
+from src.app.ingestion.processors.video_chunk_extractor import \
+    VideoChunkExtractor
 
 
 @pytest.mark.unit

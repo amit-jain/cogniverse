@@ -11,11 +11,8 @@ import numpy as np
 import pytest
 
 from src.app.ingestion.processors.embedding_generator.embedding_generator import (
-    BaseEmbeddingGenerator,
-    EmbeddingGenerator,
-    EmbeddingResult,
-    ProcessingConfig,
-)
+    BaseEmbeddingGenerator, EmbeddingGenerator, EmbeddingResult,
+    ProcessingConfig)
 
 
 @pytest.mark.unit
