@@ -162,6 +162,12 @@ class KeyframeProcessor(BaseProcessor):
             "video_id": video_id,
         }
 
+    def process(
+        self, video_path: Path, output_dir: Path = None, **kwargs
+    ) -> dict[str, Any]:
+        """Process video by extracting keyframes."""
+        return self.extract_keyframes(video_path, output_dir)
+
     def _extract_keyframes_histogram(
         self, video_path: Path, keyframes_dir: Path, metadata_file: Path, video_id: str
     ) -> dict[str, Any]:
