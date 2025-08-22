@@ -66,7 +66,7 @@ jobs:
     
     - name: Run routing unit tests
       run: |
-        uv run python -m pytest tests/routing/unit -m unit \
+        uv run python -m pytest tests/routing/unit -m "unit and not requires_ollama" \
           --cov=src/app/routing \
           --cov-report=term-missing \
           --cov-report=xml:coverage_routing.xml \
@@ -87,8 +87,7 @@ jobs:
         name: coverage-unit
         path: |
           .coverage
-          .coverage.*
-          coverage.xml
+          coverage_routing.xml
         retention-days: 1
         if-no-files-found: warn
 
@@ -127,7 +126,7 @@ jobs:
         # Run mocked integration tests that don't require real LLM services
         # GLiNER tests can run since the model is small and fast
         # Exclude local_only tests which need full environment
-        uv run python -m pytest tests/routing/integration -m integration \
+        uv run python -m pytest tests/routing/integration -m "integration and not local_only" \
           --cov=src/app/routing \
           --cov-report=term-missing \
           --cov-report=xml:coverage_routing_integration.xml
@@ -149,8 +148,7 @@ jobs:
         name: coverage-integration
         path: |
           .coverage
-          .coverage.*
-          coverage.xml
+          coverage_routing_integration.xml
         retention-days: 1
         if-no-files-found: warn
 

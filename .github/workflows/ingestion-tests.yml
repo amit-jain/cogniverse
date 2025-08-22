@@ -57,8 +57,11 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: coverage-unit
-        path: .coverage
+        path: |
+          .coverage
+          coverage_ingestion.xml
         retention-days: 1
+        if-no-files-found: warn
     
 
   lint:
