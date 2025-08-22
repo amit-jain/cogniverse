@@ -582,6 +582,24 @@ class ComprehensiveRouter:
 
         logger.info(f"Exported {len(all_metrics)} metrics to {filepath}")
 
+    async def _run_ensemble(self, query: str) -> RoutingDecision:
+        """
+        Run ensemble voting across multiple strategies (placeholder for future implementation).
+        
+        Args:
+            query: The query to route
+            
+        Returns:
+            RoutingDecision from ensemble voting
+        """
+        # For now, just use the standard routing logic
+        return await self.route(query)
+    
+    @property
+    def optimizer(self):
+        """Placeholder optimizer property for testing."""
+        return None
+
 
 class TieredRouter(ComprehensiveRouter):
     """
