@@ -91,6 +91,7 @@ jobs:
         retention-days: 1
         if-no-files-found: warn
 
+
   integration-tests:
     runs-on: ubuntu-latest
     needs: unit-tests
@@ -103,14 +104,6 @@ jobs:
       with:
         python-version: '3.12'
     
-    - name: Cache GLiNER models
-      uses: actions/cache@v3
-      with:
-        path: ~/.cache/huggingface
-        key: ${{ runner.os }}-gliner-models-v1
-        restore-keys: |
-          ${{ runner.os }}-gliner-models-
-    
     - name: Install uv
       run: |
         curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -121,25 +114,15 @@ jobs:
         uv sync --all-extras
         uv pip install pytest-cov
     
-    - name: Run mocked integration tests
+    - name: Run routing integration tests
       run: |
-        # Run mocked integration tests that don't require real LLM services
-        # GLiNER tests can run since the model is small and fast
-        # Exclude local_only tests which need full environment
+        # Run routing integration tests from proper directory structure
         uv run python -m pytest tests/routing/integration -m "integration and not local_only" \
           --cov=src/app/routing \
           --cov-report=term-missing \
           --cov-report=xml:coverage_routing_integration.xml
       env:
         MOCK_LLM_RESPONSES: "true"
-    
-    - name: Check coverage files
-      run: |
-        echo "Checking for coverage files..."
-        ls -la .coverage* || true
-        ls -la coverage.* || true
-        echo "All files in current directory:"
-        ls -la
     
     - name: Upload coverage data
       if: always()

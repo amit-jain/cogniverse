@@ -54,7 +54,7 @@ jobs:
     
     - name: Run unit tests
       run: |
-        uv run python -m pytest src/evaluation/tests -m unit \
+        uv run python -m pytest tests/evaluation/unit -m unit \
           --cov=src/evaluation \
           --cov-report=term-missing \
           --cov-report=xml:coverage_evaluation.xml \
@@ -109,7 +109,7 @@ jobs:
     
     - name: Run integration tests
       run: |
-        uv run python -m pytest src/evaluation/tests/integration -v -m integration --cov=src/evaluation --cov-report=term-missing
+        uv run python -m pytest tests/evaluation/integration -v -m integration --cov=src/evaluation --cov-report=term-missing
     
     - name: Upload integration test coverage data
       uses: actions/upload-artifact@v4
@@ -221,28 +221,62 @@ jobs:
     
     - name: Combine coverage reports
       run: |
+        # Debug: List what artifacts were downloaded
+        echo "Contents of coverage-unit:"
+        ls -la ./coverage-unit/ || echo "coverage-unit directory not found"
+        echo "Contents of coverage-integration:"
+        ls -la ./coverage-integration/ || echo "coverage-integration directory not found"
+        
         # Copy coverage files with unique names
         mkdir -p combined-coverage
+        has_coverage=false
+        
         if [ -f ./coverage-unit/.coverage ]; then
           cp ./coverage-unit/.coverage combined-coverage/.coverage.unit
+          echo "✅ Copied unit coverage"
+          has_coverage=true
+        else
+          echo "❌ No unit .coverage file found"
         fi
+        
         if [ -f ./coverage-integration/.coverage ]; then
           cp ./coverage-integration/.coverage combined-coverage/.coverage.integration
+          echo "✅ Copied integration coverage"
+          has_coverage=true
+        else
+          echo "❌ No integration .coverage file found"
         fi
         
-        # Combine coverage data
-        cd combined-coverage
-        uv run coverage combine .coverage.*
+        # Only combine if we have coverage files
+        if [ "$has_coverage" = true ]; then
+          cd combined-coverage
+          ls -la .coverage.*
+          uv run coverage combine .coverage.*
+        else
+          echo "⚠️ No coverage files to combine, skipping"
+          mkdir -p combined-coverage
+          cd combined-coverage
+          # Create empty coverage file so later steps don't fail
+          echo "No coverage data available" > coverage-combined.xml
+        fi
         
-        # Generate reports
-        uv run coverage report --show-missing
-        uv run coverage xml -o coverage-combined.xml
-        uv run coverage html -d htmlcov-combined
-        
-        echo "## Evaluation Module Coverage Summary" >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
-        uv run coverage report >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
+        # Generate reports only if we have coverage data
+        if [ "$has_coverage" = true ]; then
+          echo "📊 Generating coverage reports..."
+          uv run coverage report --show-missing
+          uv run coverage xml -o coverage-combined.xml
+          uv run coverage html -d htmlcov-combined
+          
+          echo "## Evaluation Module Coverage Summary" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          uv run coverage report >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        else
+          echo "⚠️ No coverage data to report" >> $GITHUB_STEP_SUMMARY
+          # Create dummy files so upload doesn't fail
+          mkdir -p htmlcov-combined
+          echo "<html><body>No coverage data available</body></html>" > htmlcov-combined/index.html
+        fi
     
     - name: Upload combined coverage report
       uses: actions/upload-artifact@v4
