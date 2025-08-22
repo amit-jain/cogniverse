@@ -65,22 +65,22 @@ jobs:
         uv pip install pytest-cov
     
     - name: Run routing unit tests
-      env:
-        COVERAGE_FILE: .coverage
       run: |
         uv run python -m pytest tests/routing/unit -m "unit and not requires_ollama" \
           --cov=src/app/routing \
           --cov-report=term-missing \
           --cov-report=xml:coverage_routing.xml \
           --cov-fail-under=43
+        # Rename the coverage file to avoid conflicts
+        mv .coverage .coverage.unit
     
     - name: Check coverage files
       run: |
         echo "Checking for coverage files..."
         ls -la .coverage* || true
-        ls -la coverage.* || true
-        echo "All files in current directory:"
-        ls -la
+        ls -la coverage* || true
+        echo "Expected file: .coverage.unit"
+        [ -f .coverage.unit ] && echo "✅ Found .coverage.unit" || echo "❌ Missing .coverage.unit"
     
     - name: Upload coverage data
       if: always()
@@ -88,7 +88,7 @@ jobs:
       with:
         name: coverage-unit
         path: |
-          .coverage
+          .coverage.unit
           coverage_routing.xml
         retention-days: 1
         if-no-files-found: warn
@@ -118,7 +118,6 @@ jobs:
     
     - name: Run routing integration tests
       env:
-        COVERAGE_FILE: .coverage
         MOCK_LLM_RESPONSES: "true"
       run: |
         # Run routing integration tests from proper directory structure
@@ -126,6 +125,8 @@ jobs:
           --cov=src/app/routing \
           --cov-report=term-missing \
           --cov-report=xml:coverage_routing_integration.xml
+        # Rename the coverage file to avoid conflicts
+        mv .coverage .coverage.integration
     
     - name: Upload coverage data
       if: always()
@@ -133,7 +134,7 @@ jobs:
       with:
         name: coverage-integration
         path: |
-          .coverage
+          .coverage.integration
           coverage_routing_integration.xml
         retention-days: 1
         if-no-files-found: warn
@@ -232,16 +233,16 @@ jobs:
         mkdir -p combined-coverage
         has_coverage=false
         
-        if [ -f ./coverage-unit/.coverage ]; then
-          cp ./coverage-unit/.coverage combined-coverage/.coverage.unit
+        if [ -f ./coverage-unit/.coverage.unit ]; then
+          cp ./coverage-unit/.coverage.unit combined-coverage/.coverage.unit
           echo "✅ Copied unit coverage"
           has_coverage=true
         else
           echo "❌ No unit .coverage file found"
         fi
         
-        if [ -f ./coverage-integration/.coverage ]; then
-          cp ./coverage-integration/.coverage combined-coverage/.coverage.integration
+        if [ -f ./coverage-integration/.coverage.integration ]; then
+          cp ./coverage-integration/.coverage.integration combined-coverage/.coverage.integration
           echo "✅ Copied integration coverage"
           has_coverage=true
         else
