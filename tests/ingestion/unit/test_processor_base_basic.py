@@ -10,8 +10,8 @@ from unittest.mock import Mock
 from src.app.ingestion.processor_base import BaseProcessor, BaseStrategy
 
 
-class TestProcessor(BaseProcessor):
-    """Test processor implementation for testing BaseProcessor."""
+class MockProcessor(BaseProcessor):
+    """Mock processor implementation for testing BaseProcessor."""
 
     PROCESSOR_NAME = "test"
 
@@ -21,8 +21,8 @@ class TestProcessor(BaseProcessor):
         self.param2 = param2
 
 
-class TestProcessorNoName(BaseProcessor):
-    """Test processor without PROCESSOR_NAME for testing validation."""
+class MockProcessorNoName(BaseProcessor):
+    """Mock processor without PROCESSOR_NAME for testing validation."""
 
     pass
 
@@ -36,7 +36,7 @@ class TestBaseProcessor:
 
     def test_processor_initialization_success(self, mock_logger):
         """Test successful processor initialization."""
-        processor = TestProcessor(mock_logger, param1="test1", param2="test2")
+        processor = MockProcessor(mock_logger, param1="test1", param2="test2")
 
         assert processor.PROCESSOR_NAME == "test"
         assert processor.logger == mock_logger
@@ -46,13 +46,13 @@ class TestBaseProcessor:
     def test_processor_initialization_missing_name(self, mock_logger):
         """Test processor initialization fails without PROCESSOR_NAME."""
         with pytest.raises(ValueError, match="must define PROCESSOR_NAME"):
-            TestProcessorNoName(mock_logger)
+            MockProcessorNoName(mock_logger)
 
     def test_from_config_with_all_params(self, mock_logger):
         """Test from_config with all parameters provided."""
         config = {"param1": "config1", "param2": "config2"}
 
-        processor = TestProcessor.from_config(config, mock_logger)
+        processor = MockProcessor.from_config(config, mock_logger)
 
         assert processor.param1 == "config1"
         assert processor.param2 == "config2"
@@ -62,7 +62,7 @@ class TestBaseProcessor:
         """Test from_config with partial parameters uses defaults."""
         config = {"param1": "config1"}
 
-        processor = TestProcessor.from_config(config, mock_logger)
+        processor = MockProcessor.from_config(config, mock_logger)
 
         assert processor.param1 == "config1"
         assert processor.param2 == "default2"  # default value
@@ -71,7 +71,7 @@ class TestBaseProcessor:
         """Test from_config ignores extra config parameters."""
         config = {"param1": "config1", "param2": "config2", "extra_param": "ignored"}
 
-        processor = TestProcessor.from_config(config, mock_logger)
+        processor = MockProcessor.from_config(config, mock_logger)
 
         assert processor.param1 == "config1"
         assert processor.param2 == "config2"
@@ -80,13 +80,13 @@ class TestBaseProcessor:
 
     def test_get_processor_name(self, mock_logger):
         """Test get_processor_name method."""
-        processor = TestProcessor(mock_logger)
+        processor = MockProcessor(mock_logger)
         assert processor.get_processor_name() == "test"
 
     def test_get_config(self, mock_logger):
         """Test get_config method returns kwargs."""
         extra_kwargs = {"extra1": "value1", "extra2": "value2"}
-        processor = TestProcessor(mock_logger, **extra_kwargs)
+        processor = MockProcessor(mock_logger, **extra_kwargs)
 
         config = processor.get_config()
 
