@@ -11,8 +11,8 @@ from .embedding_generator import create_embedding_generator, EmbeddingGenerator
 
 __all__ = [
     "KeyframeExtractor",
-    "AudioTranscriber", 
+    "AudioTranscriber",
     "VLMDescriptor",
     "EmbeddingGenerator",
-    "create_embedding_generator"
+    "create_embedding_generator",
 ]
