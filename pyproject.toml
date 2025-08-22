@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.12"
 dependencies = [
-    "litellm>=1.74.0.post1",
+    "litellm==1.73.0",
     "modal>=1.0.5",
     # Machine Learning Dependencies
     "jax>=0.7.0",
