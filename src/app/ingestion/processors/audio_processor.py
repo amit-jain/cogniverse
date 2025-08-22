@@ -6,10 +6,10 @@ Transcribes audio from videos using Whisper.
 """
 
 import json
+import logging
 import time
 from pathlib import Path
-from typing import Dict, Any
-import logging
+from typing import Any, Dict
 
 from ..processor_base import BaseProcessor
 

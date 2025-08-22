@@ -6,11 +6,12 @@ Container for processing strategies that works with any number and type of strat
 """
 
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Any, Dict, List
+
+from .processor_base import BaseStrategy
 
 # Logging imported where needed
 
-from .processor_base import BaseStrategy
 
 
 class ProcessingStrategySet:

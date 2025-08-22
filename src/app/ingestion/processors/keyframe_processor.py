@@ -6,11 +6,12 @@ Extracts representative keyframes from videos using histogram comparison.
 """
 
 import json
-import time
-import cv2
-from pathlib import Path
-from typing import Dict, Any, Optional
 import logging
+import time
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+import cv2
 
 from ..processor_base import BaseProcessor
 

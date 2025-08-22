@@ -5,8 +5,8 @@ Embedding Processor - Pluggable embedding generation.
 Generates embeddings using the existing embedding generator system.
 """
 
-from typing import Dict, Any
 import logging
+from typing import Any, Dict
 
 from ..processor_base import BaseProcessor
 

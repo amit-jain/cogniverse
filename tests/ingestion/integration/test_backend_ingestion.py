@@ -4,18 +4,15 @@ Integration tests for video ingestion with different backends and models.
 Tests actual document ingestion with various video processing profiles.
 """
 
-import pytest
-import tempfile
 import shutil
+import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from tests.utils.markers import (
-    skip_if_no_vespa,
-    skip_if_ci,
-    skip_heavy_models_in_ci,
-    skip_if_low_memory,
-)
+import pytest
+
+from tests.utils.markers import (skip_heavy_models_in_ci, skip_if_ci,
+                                 skip_if_low_memory, skip_if_no_vespa)
 
 # Import components for integration testing
 try:
@@ -74,8 +71,10 @@ class TestMockBackendIngestion:
     @pytest.mark.requires_cv2
     def test_keyframe_extraction_integration(self, temp_video_dir):
         """Test keyframe extraction in isolation."""
-        from src.app.ingestion.processors.keyframe_processor import KeyframeProcessor
         import logging
+
+        from src.app.ingestion.processors.keyframe_processor import \
+            KeyframeProcessor
 
         logger = logging.getLogger("test")
         processor = KeyframeProcessor(logger, max_frames=5)
@@ -102,8 +101,9 @@ class TestMockBackendIngestion:
     @pytest.mark.requires_ffmpeg
     def test_chunk_extraction_integration(self, temp_video_dir):
         """Test chunk extraction in isolation."""
-        from src.app.ingestion.processors.chunk_processor import ChunkProcessor
         import logging
+
+        from src.app.ingestion.processors.chunk_processor import ChunkProcessor
 
         logger = logging.getLogger("test")
         processor = ChunkProcessor(logger, chunk_duration=30.0)
@@ -158,9 +158,7 @@ class TestVespaBackendIngestion:
 
         # Test with basic frame extraction only
         from src.processing.unified_video_pipeline import (
-            VideoIngestionPipeline,
-            PipelineConfig,
-        )
+            PipelineConfig, VideoIngestionPipeline)
 
         config = PipelineConfig.from_config()
         config.video_dir = vespa_test_videos[0].parent
@@ -186,9 +184,7 @@ class TestVespaBackendIngestion:
             pytest.skip("No test videos available")
 
         from src.processing.unified_video_pipeline import (
-            VideoIngestionPipeline,
-            PipelineConfig,
-        )
+            PipelineConfig, VideoIngestionPipeline)
 
         config = PipelineConfig.from_config()
         config.video_dir = vespa_test_videos[0].parent
@@ -212,9 +208,7 @@ class TestVespaBackendIngestion:
             pytest.skip("No test videos available")
 
         from src.processing.unified_video_pipeline import (
-            VideoIngestionPipeline,
-            PipelineConfig,
-        )
+            PipelineConfig, VideoIngestionPipeline)
 
         config = PipelineConfig.from_config()
         config.video_dir = vespa_test_videos[0].parent
@@ -237,9 +231,7 @@ class TestVespaBackendIngestion:
             pytest.skip("No test videos available")
 
         from src.processing.unified_video_pipeline import (
-            VideoIngestionPipeline,
-            PipelineConfig,
-        )
+            PipelineConfig, VideoIngestionPipeline)
 
         config = PipelineConfig.from_config()
         config.video_dir = vespa_test_videos[0].parent
@@ -283,9 +275,7 @@ class TestComprehensiveIngestion:
         ]
 
         from src.processing.unified_video_pipeline import (
-            VideoIngestionPipeline,
-            PipelineConfig,
-        )
+            PipelineConfig, VideoIngestionPipeline)
 
         results = {}
         for profile in profiles_to_test:
@@ -314,10 +304,9 @@ class TestComprehensiveIngestion:
             pytest.skip("No test videos available")
 
         import time
+
         from src.processing.unified_video_pipeline import (
-            VideoIngestionPipeline,
-            PipelineConfig,
-        )
+            PipelineConfig, VideoIngestionPipeline)
 
         config = PipelineConfig.from_config()
         config.video_dir = all_test_videos[0].parent

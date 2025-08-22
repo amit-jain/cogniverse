@@ -7,14 +7,15 @@ Instead of extracting individual frames, it splits the video into temporal chunk
 that can be processed directly by multi-vector models.
 """
 
-import subprocess
+import json
 import logging
+import subprocess
+import time
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
 import cv2
 import numpy as np
-import json
-import time
 
 
 class VideoChunkExtractor:

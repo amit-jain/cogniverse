@@ -13,11 +13,11 @@ Provides a coherent interface for:
 3. Storage strategies (how to store embeddings)
 """
 
-from typing import Dict, Any, Literal
-from pathlib import Path
 import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +81,7 @@ class StrategyConfig:
         else:
             # Generate if missing
             from src.backends.vespa.ranking_strategy_extractor import (
-                extract_all_ranking_strategies,
-                save_ranking_strategies,
-            )
+                extract_all_ranking_strategies, save_ranking_strategies)
 
             schemas_dir = self.config_dir / "schemas"
             strategies = extract_all_ranking_strategies(schemas_dir)

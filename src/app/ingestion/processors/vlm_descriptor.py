@@ -5,17 +5,18 @@ VLM Description Generation Step
 Generates visual descriptions for keyframes using Modal VLM service.
 """
 
-import os
-import json
-import time
 import base64
-import zipfile
-import tempfile
-import requests
-import subprocess
+import json
 import logging
+import os
+import subprocess
+import tempfile
+import time
+import zipfile
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Any, Dict, List
+
+import requests
 
 
 class VLMDescriptor:

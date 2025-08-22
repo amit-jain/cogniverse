@@ -5,8 +5,8 @@ Custom Exception Classes for Generic Ingestion Pipeline.
 Simplified exception hierarchy for any type of content ingestion.
 """
 
-from typing import Optional, Dict, Any
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 
 class PipelineException(Exception):

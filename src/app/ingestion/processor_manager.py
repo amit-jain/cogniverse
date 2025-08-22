@@ -6,10 +6,10 @@ No backward compatibility bullshit. Clean, simple, pluggable.
 """
 
 import importlib
+import logging
 import pkgutil
 from pathlib import Path
-from typing import Dict, Any, Optional, List
-import logging
+from typing import Any, Dict, List, Optional
 
 from .processor_base import BaseProcessor, BaseStrategy
 

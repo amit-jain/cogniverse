@@ -3,10 +3,11 @@
 Factory for creating embedding generators based on backend type
 """
 
-from typing import Dict, Any, Optional
 import logging
-from .embedding_generator_impl import EmbeddingGeneratorImpl
+from typing import Any, Dict, Optional
+
 from .backend_factory import BackendFactory
+from .embedding_generator_impl import EmbeddingGeneratorImpl
 
 
 class EmbeddingGeneratorFactory:

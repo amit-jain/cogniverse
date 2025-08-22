@@ -7,9 +7,10 @@ Extracts keyframes at fixed frame-per-second intervals from videos.
 
 import json
 import time
-import cv2
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict
+
+import cv2
 
 
 class FPSKeyframeExtractor:

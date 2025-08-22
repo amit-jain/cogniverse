@@ -5,8 +5,8 @@ VLM Processor - Pluggable VLM description generation.
 Generates descriptions for video frames using VLM models.
 """
 
-from typing import Dict, Any
 import logging
+from typing import Any, Dict
 
 from ..processor_base import BaseProcessor
 

@@ -5,10 +5,11 @@ Provides mock versions of OpenCV, Whisper, PyTorch, and other
 dependencies used by the ingestion pipeline.
 """
 
-import numpy as np
-from unittest.mock import Mock
-from typing import Dict, Any, List, Optional
 from pathlib import Path
+from typing import Any, Dict, List, Optional
+from unittest.mock import Mock
+
+import numpy as np
 
 
 class MockVideoCapture:

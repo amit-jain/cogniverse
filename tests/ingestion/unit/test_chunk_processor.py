@@ -4,8 +4,9 @@ Unit tests for ChunkProcessor.
 Tests video chunking functionality for time-based segmentation.
 """
 
-import pytest
 from unittest.mock import Mock, patch
+
+import pytest
 
 from src.app.ingestion.processors.chunk_processor import ChunkProcessor
 

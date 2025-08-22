@@ -18,33 +18,30 @@ Features:
 Based on the configurable pipeline design from CLAUDE.md.
 """
 
-import json
-import time
-import logging
 import asyncio
+import json
+import logging
 import os
-from pathlib import Path
-from typing import Dict, List, Any, Optional
-from dataclasses import dataclass
-from enum import Enum
-
 # Add project root to path
 import sys
+import time
+from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from src.common.config import get_config
-
+from src.app.ingestion.exceptions import PipelineException, wrap_content_error
+from src.app.ingestion.processor_manager import ProcessorManager
 # Processors are imported dynamically by processor_manager
-from src.app.ingestion.processors.embedding_generator import create_embedding_generator
-
-# Cache imports removed - using pipeline_cache directly
-from src.common.cache.pipeline_cache import PipelineArtifactCache
-
+from src.app.ingestion.processors.embedding_generator import \
+    create_embedding_generator
 # StrategyConfig imported locally where needed
 from src.app.ingestion.strategy_factory import StrategyFactory
-from src.app.ingestion.processor_manager import ProcessorManager
-from src.app.ingestion.exceptions import PipelineException, wrap_content_error
+# Cache imports removed - using pipeline_cache directly
+from src.common.cache.pipeline_cache import PipelineArtifactCache
+from src.common.config import get_config
 
 
 class PipelineStep(Enum):
@@ -275,7 +272,7 @@ class VideoIngestionPipeline:
 
         try:
             # Create cache configuration
-            from src.common.cache import CacheManager, CacheConfig
+            from src.common.cache import CacheConfig, CacheManager
 
             cache_config = CacheConfig(
                 backends=cache_config_dict.get("backends", []),
@@ -783,9 +780,7 @@ class VideoIngestionPipeline:
         """Process video segmentation based on strategy"""
         # Special handling for different segmentation types
         from src.app.ingestion.strategies import (
-            SingleVectorSegmentationStrategy,
-            FrameSegmentationStrategy,
-        )
+            FrameSegmentationStrategy, SingleVectorSegmentationStrategy)
 
         if isinstance(self.strategy_set.segmentation, SingleVectorSegmentationStrategy):
             # Single-vector needs transcript first

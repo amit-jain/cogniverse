@@ -4,8 +4,9 @@ Basic unit tests for BaseProcessor to improve coverage.
 Tests the base processor functionality and configuration system.
 """
 
-import pytest
 from unittest.mock import Mock
+
+import pytest
 
 from src.app.ingestion.processor_base import BaseProcessor, BaseStrategy
 

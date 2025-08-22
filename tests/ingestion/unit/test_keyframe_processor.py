@@ -5,11 +5,12 @@ Tests keyframe extraction functionality including histogram-based
 and FPS-based extraction methods.
 """
 
-import pytest
-from unittest.mock import Mock, patch
-import numpy as np
-import cv2
 from pathlib import Path
+from unittest.mock import Mock, patch
+
+import cv2
+import numpy as np
+import pytest
 
 from src.app.ingestion.processors.keyframe_processor import KeyframeProcessor
 

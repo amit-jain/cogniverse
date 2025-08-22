@@ -5,9 +5,10 @@ Tests the core processor infrastructure including BaseProcessor
 and BaseStrategy classes.
 """
 
-import pytest
 import logging
-from typing import Dict, Any
+from typing import Any, Dict
+
+import pytest
 
 from src.app.ingestion.processor_base import BaseProcessor, BaseStrategy
 

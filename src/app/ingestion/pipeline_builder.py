@@ -6,13 +6,15 @@ Provides a fluent interface for configuring the VideoIngestionPipeline
 without complex constructor parameters.
 """
 
-from typing import Optional, Dict, Any
 from pathlib import Path
+from typing import Any, Dict, Optional
+
+from src.common.config import get_config
+
+from .pipeline import PipelineConfig, VideoIngestionPipeline
 
 # Logging imported where needed
 
-from .pipeline import VideoIngestionPipeline, PipelineConfig
-from src.common.config import get_config
 
 
 class VideoIngestionPipelineBuilder:
