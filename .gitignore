@@ -80,3 +80,4 @@ configs/schemas/ranking_strategies.json
 # Ideas folder (future implementations)
 ideas/
 docs/internal/
+coverage_*.xml

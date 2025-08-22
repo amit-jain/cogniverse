@@ -5,7 +5,6 @@ Tests critical paths, edge cases, and error conditions.
 
 import asyncio
 import sys
-import time
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -148,16 +147,20 @@ class TestTieredRouterCaching:
 
         # First call - mock GLiNER with low confidence, should fall back and cache fallback result
         with patch.object(
-            router.strategies[RoutingTier.FAST_PATH], "route", return_value=low_confidence_decision
+            router.strategies[RoutingTier.FAST_PATH],
+            "route",
+            return_value=low_confidence_decision,
         ):
-            first_decision = await router.route("test query")
+            await router.route("test query")
 
         # Wait for cache to expire
         await asyncio.sleep(0.2)
 
         # Second call - cache should be expired, GLiNER should be called again then fallback
         with patch.object(
-            router.strategies[RoutingTier.FAST_PATH], "route", return_value=low_confidence_decision
+            router.strategies[RoutingTier.FAST_PATH],
+            "route",
+            return_value=low_confidence_decision,
         ):
             with patch.object(
                 router.strategies[RoutingTier.FALLBACK], "route"
@@ -199,13 +202,17 @@ class TestTieredRouterCaching:
 
         # First call - mock GLiNER with low confidence, should fall back
         with patch.object(
-            router.strategies[RoutingTier.FAST_PATH], "route", return_value=low_confidence_decision
+            router.strategies[RoutingTier.FAST_PATH],
+            "route",
+            return_value=low_confidence_decision,
         ):
-            first_decision = await router.route("test query")
+            await router.route("test query")
 
         # Second call - should not use cache, GLiNER should be called again then fallback
         with patch.object(
-            router.strategies[RoutingTier.FAST_PATH], "route", return_value=low_confidence_decision
+            router.strategies[RoutingTier.FAST_PATH],
+            "route",
+            return_value=low_confidence_decision,
         ):
             with patch.object(
                 router.strategies[RoutingTier.FALLBACK], "route"
@@ -443,7 +450,6 @@ class TestTieredRouterErrorHandling:
             or "unavailable" in decision.routing_method.lower()
         )
 
-
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_empty_query_handling(self):
@@ -532,7 +538,6 @@ class TestComprehensiveRouter:
         # In CI, may fall back to keyword strategy which returns BOTH
         # In local dev, should favor strategy1 (VIDEO) due to higher weight
         assert decision.search_modality in [SearchModality.VIDEO, SearchModality.BOTH]
-
 
 
 class TestPerformanceTracking:

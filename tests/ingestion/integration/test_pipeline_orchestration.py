@@ -24,9 +24,7 @@ class TestPipelineOrchestration:
     @pytest.fixture
     def strategy_set(self):
         """Create a strategy set for testing."""
-        frame_strategy = FrameSegmentationStrategy(
-            max_frames=10, fps=1.0
-        )
+        frame_strategy = FrameSegmentationStrategy(max_frames=10, fps=1.0)
 
         strategy_set = ProcessingStrategySet(segmentation=frame_strategy)
         return strategy_set
@@ -69,9 +67,7 @@ class TestPipelineOrchestration:
 
     def test_frame_strategy_processor_requirements(self, mock_logger):
         """Test that frame strategy requires correct processors."""
-        frame_strategy = FrameSegmentationStrategy(
-            max_frames=50
-        )
+        frame_strategy = FrameSegmentationStrategy(max_frames=50)
         strategy_set = ProcessingStrategySet(segmentation=frame_strategy)
 
         requirements = strategy_set.get_all_required_processors()
@@ -80,7 +76,10 @@ class TestPipelineOrchestration:
         assert "keyframe" in requirements
         keyframe_config = requirements["keyframe"]
         assert keyframe_config["max_frames"] == 50
-        assert keyframe_config.get("fps") is not None or keyframe_config.get("max_frames") == 50
+        assert (
+            keyframe_config.get("fps") is not None
+            or keyframe_config.get("max_frames") == 50
+        )
 
     def test_chunk_strategy_processor_requirements(self, mock_logger):
         """Test that chunk strategy requires correct processors."""
