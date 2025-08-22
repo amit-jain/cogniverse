@@ -1,10 +1,6 @@
 """Embedding generation pipeline for video processing."""
 
-from .embedding_generator import (
-    EmbeddingResult,
-    ProcessingConfig,
-    EmbeddingGenerator
-)
+from .embedding_generator import EmbeddingResult, ProcessingConfig, EmbeddingGenerator
 
 # Import new generic Document only
 from src.common.document import Document, ContentType, ProcessingStatus
@@ -15,7 +11,7 @@ from src.common.models import (
     ModelLoader,
     ColPaliModelLoader,
     ColQwenModelLoader,
-    VideoPrismModelLoader
+    VideoPrismModelLoader,
 )
 
 # Document builders no longer needed - backend handles this internally
@@ -30,34 +26,31 @@ from .embedding_generator_impl import EmbeddingGeneratorImpl
 
 from .embedding_generator_factory import (
     EmbeddingGeneratorFactory,
-    create_embedding_generator
+    create_embedding_generator,
 )
 
 __all__ = [
     # Main classes
-    'EmbeddingGenerator',
-    'EmbeddingGeneratorImpl',
-    'EmbeddingGeneratorFactory',
-    'EmbeddingResult',
-    'ProcessingConfig',
-    'Document',
-    'ContentType', 
-    'ProcessingStatus',
-    
+    "EmbeddingGenerator",
+    "EmbeddingGeneratorImpl",
+    "EmbeddingGeneratorFactory",
+    "EmbeddingResult",
+    "ProcessingConfig",
+    "Document",
+    "ContentType",
+    "ProcessingStatus",
     # Model loaders
-    'get_or_load_model',
-    'ModelLoaderFactory',
-    'ModelLoader',
-    'ColPaliModelLoader',
-    'ColQwenModelLoader',
-    'VideoPrismModelLoader',
-    
+    "get_or_load_model",
+    "ModelLoaderFactory",
+    "ModelLoader",
+    "ColPaliModelLoader",
+    "ColQwenModelLoader",
+    "VideoPrismModelLoader",
     # Processors and factories
-    'EmbeddingProcessor',
-    'BackendFactory',
-    
+    "EmbeddingProcessor",
+    "BackendFactory",
     # Factory function
-    'create_embedding_generator'
+    "create_embedding_generator",
 ]
 
-__version__ = '1.0.0'
+__version__ = "1.0.0"
