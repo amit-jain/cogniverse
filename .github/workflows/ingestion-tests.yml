@@ -132,7 +132,7 @@ jobs:
         import logging
         logger = logging.getLogger('test')
         manager = ProcessorManager(logger)
-        processors = manager.list_available_processors()
+        processors = manager.list_available_processor_types()
         print(f'Available processors: {processors}')
         assert 'keyframe' in processors, 'keyframe processor not found'
         assert 'audio' in processors, 'audio processor not found'
@@ -169,13 +169,21 @@ jobs:
     
     - name: Start Vespa
       run: |
+        echo "🚀 Starting Vespa container..."
         docker run -d \
           --name vespa-test \
           -p 8080:8080 \
+          -p 19071:19071 \
           vespaengine/vespa:latest
         
-        # Wait for Vespa to be ready (with timeout)
-        timeout 180 bash -c 'until curl -f http://localhost:8080/ApplicationStatus; do echo "Waiting for Vespa..."; sleep 5; done'
+        echo "⏳ Waiting for Vespa to start (max 3 minutes)..."
+        timeout 180 bash -c '
+          while ! curl -s http://localhost:8080/state/v1/health >/dev/null 2>&1; do 
+            echo "Waiting for Vespa..."; 
+            sleep 3; 
+          done
+        '
+        echo "✅ Vespa is ready!"
     
     - name: Run integration tests
       env:
