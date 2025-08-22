@@ -52,7 +52,7 @@ class PhoenixTestServer:
         for i in range(max_retries):
             try:
                 # Try to connect to Phoenix
-                _ = px.Client  # noqa: F841(endpoint=self.base_url)
+                client = px.Client(endpoint=self.base_url)
                 # If successful, server is ready
                 break
             except Exception:

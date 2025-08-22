@@ -46,7 +46,7 @@ def video_retrieval_accuracy(
         Inspect AI Task for video retrieval evaluation
     """
     # Load configuration
-    config = get_config()
+    _ = get_config()  # noqa: F841
 
     # Default profiles and strategies if not specified
     if profiles is None:

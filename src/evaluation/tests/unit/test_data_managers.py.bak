@@ -417,7 +417,7 @@ class TestTraceManager:
         ]
 
         with patch("builtins.open", mock_open()) as mock_file:
-            with patch.object(manager, "get_recent_traces"):
+            with patch.object(manager, "get_recent_traces") as mock_get:
                 with patch.object(manager, "extract_trace_data", return_value=traces):
                     success = manager.export_traces(
                         output_path="traces.json", hours_back=1

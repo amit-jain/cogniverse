@@ -119,7 +119,7 @@ class PhoenixAnalytics:
                         import json
 
                         attributes = json.loads(attributes)
-                    except Exception:
+                    except:
                         attributes = {}
 
                 # Get status

@@ -318,7 +318,7 @@ class TestPhoenixQueryTool:
             start_time = datetime.now()
             end_time = datetime.now()
 
-            await tool_func(
+            results = await tool_func(
                 query_type="traces",
                 filter="status == 'success'",
                 start_time=start_time,

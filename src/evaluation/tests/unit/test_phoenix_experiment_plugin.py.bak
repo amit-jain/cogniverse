@@ -65,7 +65,7 @@ class TestPhoenixExperimentPlugin:
             assert result["query"] == "test query"
             assert "results" in result
             assert "profile1_strategy1" in result["results"]
-            assert result["results"]["profile1_strategy1"]["success"] is True
+            assert result["results"]["profile1_strategy1"]["success"] == True
             assert len(result["results"]["profile1_strategy1"]["results"]) == 1
             assert (
                 result["results"]["profile1_strategy1"]["results"][0]["video_id"]
@@ -150,7 +150,7 @@ class TestPhoenixExperimentPlugin:
 
             result = task_func(mock_example)
 
-            assert result["results"]["profile1_strategy1"]["success"] is False
+            assert result["results"]["profile1_strategy1"]["success"] == False
             assert result["results"]["profile1_strategy1"]["error"] == "Search failed"
             assert result["results"]["profile1_strategy1"]["results"] == []
 
@@ -327,7 +327,7 @@ class TestPhoenixExperimentPluginUtilities:
     def test_register_function(self):
         """Test plugin registration function."""
         result = register()
-        assert result is True
+        assert result == True
 
     @pytest.mark.unit
     def test_get_phoenix_evaluators_no_evaluators(self):
@@ -431,7 +431,7 @@ class TestPhoenixExperimentPluginUtilities:
         ) as mock_judge:
             mock_judge.return_value = Mock()
 
-            get_phoenix_evaluators(config)
+            evaluators = get_phoenix_evaluators(config)
 
             # Should use defaults
             mock_judge.assert_called_once_with(
@@ -454,7 +454,7 @@ class TestPhoenixExperimentPluginUtilities:
         ) as mock_judge:
             mock_judge.return_value = Mock()
 
-            get_phoenix_evaluators(config)
+            evaluators = get_phoenix_evaluators(config)
 
             mock_judge.assert_called_once_with(
                 provider="openai", model="gpt-4", base_url=None, api_key=None
