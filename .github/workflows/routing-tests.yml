@@ -107,9 +107,16 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: coverage-unit
-        path: |
-          ./.coverage.unit
-          ./coverage_routing.xml
+        path: .coverage.unit
+        retention-days: 1
+        if-no-files-found: warn
+    
+    - name: Upload coverage XML
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-unit-xml
+        path: coverage_routing.xml
         retention-days: 1
         if-no-files-found: warn
 
@@ -172,9 +179,16 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: coverage-integration
-        path: |
-          ./.coverage.integration
-          ./coverage_routing_integration.xml
+        path: .coverage.integration
+        retention-days: 1
+        if-no-files-found: warn
+    
+    - name: Upload coverage XML
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-integration-xml
+        path: coverage_routing_integration.xml
         retention-days: 1
         if-no-files-found: warn
 
@@ -254,38 +268,68 @@ jobs:
         name: coverage-unit
         path: ./coverage-unit/
     
+    - name: Download unit test coverage XML
+      uses: actions/download-artifact@v4
+      with:
+        name: coverage-unit-xml
+        path: ./coverage-unit-xml/
+    
     - name: Download integration test coverage
       uses: actions/download-artifact@v4
       with:
         name: coverage-integration
         path: ./coverage-integration/
     
+    - name: Download integration test coverage XML
+      uses: actions/download-artifact@v4
+      with:
+        name: coverage-integration-xml
+        path: ./coverage-integration-xml/
+    
     - name: Combine coverage data
       run: |
         # Debug: List what artifacts were downloaded
         echo "Contents of coverage-unit:"
         ls -la ./coverage-unit/ || echo "coverage-unit directory not found"
+        echo "Contents of coverage-unit-xml:"
+        ls -la ./coverage-unit-xml/ || echo "coverage-unit-xml directory not found"
         echo "Contents of coverage-integration:"
         ls -la ./coverage-integration/ || echo "coverage-integration directory not found"
+        echo "Contents of coverage-integration-xml:"
+        ls -la ./coverage-integration-xml/ || echo "coverage-integration-xml directory not found"
         
         # Copy coverage files with unique names
         mkdir -p combined-coverage
         has_coverage=false
         
+        # Look for unit coverage file (uploaded as single file, so should be directly accessible)
         if [ -f ./coverage-unit/.coverage.unit ]; then
           cp ./coverage-unit/.coverage.unit combined-coverage/.coverage.unit
           echo "✅ Copied unit coverage"
           has_coverage=true
+        elif [ -f ./coverage-unit/.coverage ]; then
+          cp ./coverage-unit/.coverage combined-coverage/.coverage.unit
+          echo "✅ Copied unit coverage (found as .coverage)"
+          has_coverage=true
         else
           echo "❌ No unit .coverage file found"
+          echo "Available files in coverage-unit:"
+          find ./coverage-unit/ -type f 2>/dev/null || echo "No files found"
         fi
         
+        # Look for integration coverage file
         if [ -f ./coverage-integration/.coverage.integration ]; then
           cp ./coverage-integration/.coverage.integration combined-coverage/.coverage.integration
           echo "✅ Copied integration coverage"
           has_coverage=true
+        elif [ -f ./coverage-integration/.coverage ]; then
+          cp ./coverage-integration/.coverage combined-coverage/.coverage.integration
+          echo "✅ Copied integration coverage (found as .coverage)"
+          has_coverage=true
         else
           echo "❌ No integration .coverage file found"
+          echo "Available files in coverage-integration:"
+          find ./coverage-integration/ -type f 2>/dev/null || echo "No files found"
         fi
         
         # Only combine if we have coverage files
