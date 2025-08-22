@@ -68,7 +68,11 @@ jobs:
     
     - name: Run routing unit tests
       run: |
-        make test-routing
+        uv run python -m pytest tests/routing/unit -m unit \
+          --cov=src/app/routing \
+          --cov-report=term-missing \
+          --cov-report=xml:coverage_routing.xml \
+          --cov-fail-under=43
     
     - name: Check coverage files
       run: |
@@ -126,7 +130,10 @@ jobs:
         # Run mocked integration tests that don't require real LLM services
         # GLiNER tests can run since the model is small and fast
         # Exclude local_only tests which need full environment
-        make test-routing-integration
+        uv run python -m pytest tests/routing/integration -m integration \
+          --cov=src/app/routing \
+          --cov-report=term-missing \
+          --cov-report=xml:coverage_routing_integration.xml
       env:
         MOCK_LLM_RESPONSES: "true"
     
