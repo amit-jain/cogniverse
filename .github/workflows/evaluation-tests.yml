@@ -53,11 +53,12 @@ jobs:
         uv pip install pytest-cov tabulate
     
     - name: Run unit tests
+      env:
+        COVERAGE_FILE: .coverage
       run: |
         uv run python -m pytest tests/evaluation/unit -m unit \
           --cov=src/evaluation \
           --cov-report=term-missing \
-          --cov-report= \
           --cov-report=xml:coverage_evaluation.xml \
           --cov-fail-under=50
     
@@ -109,11 +110,12 @@ jobs:
         echo "Phoenix is ready!"
     
     - name: Run integration tests
+      env:
+        COVERAGE_FILE: .coverage
       run: |
         uv run python -m pytest tests/evaluation/integration -v -m integration \
           --cov=src/evaluation \
           --cov-report=term-missing \
-          --cov-report= \
           --cov-report=xml:coverage_evaluation_integration.xml
     
     - name: Upload integration test coverage data
