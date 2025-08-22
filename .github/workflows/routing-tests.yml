@@ -99,10 +99,10 @@ jobs:
       with:
         name: coverage-unit
         path: |
-          .coverage.unit
-          coverage_routing.xml
+          ./.coverage.unit
+          ./coverage_routing.xml
         retention-days: 1
-        if-no-files-found: warn
+        if-no-files-found: error
 
 
   integration-tests:
@@ -155,10 +155,10 @@ jobs:
       with:
         name: coverage-integration
         path: |
-          .coverage.integration
-          coverage_routing_integration.xml
+          ./.coverage.integration
+          ./coverage_routing_integration.xml
         retention-days: 1
-        if-no-files-found: warn
+        if-no-files-found: error
 
   lint:
     runs-on: ubuntu-latest

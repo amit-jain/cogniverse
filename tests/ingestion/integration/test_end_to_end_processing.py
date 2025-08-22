@@ -13,8 +13,10 @@ import pytest
 from src.app.ingestion.processing_strategy_set import ProcessingStrategySet
 from src.app.ingestion.processor_manager import ProcessorManager
 from src.app.ingestion.strategies import (
+    AudioTranscriptionStrategy,
     ChunkSegmentationStrategy,
     FrameSegmentationStrategy,
+    MultiVectorEmbeddingStrategy,
 )
 
 
@@ -38,7 +40,13 @@ class TestEndToEndVideoProcessing:
     def frame_based_strategy_set(self):
         """Create frame-based processing strategy set."""
         frame_strategy = FrameSegmentationStrategy(max_frames=5, fps=1.0, threshold=0.8)
-        return ProcessingStrategySet(segmentation=frame_strategy)
+        audio_strategy = AudioTranscriptionStrategy()
+        embedding_strategy = MultiVectorEmbeddingStrategy()
+        return ProcessingStrategySet(
+            segmentation=frame_strategy,
+            audio=audio_strategy,
+            embedding=embedding_strategy,
+        )
 
     @pytest.fixture
     def chunk_based_strategy_set(self):
@@ -46,7 +54,13 @@ class TestEndToEndVideoProcessing:
         chunk_strategy = ChunkSegmentationStrategy(
             chunk_duration=10.0, chunk_overlap=1.0, cache_chunks=False
         )
-        return ProcessingStrategySet(segmentation=chunk_strategy)
+        audio_strategy = AudioTranscriptionStrategy()
+        embedding_strategy = MultiVectorEmbeddingStrategy()
+        return ProcessingStrategySet(
+            segmentation=chunk_strategy,
+            audio=audio_strategy,
+            embedding=embedding_strategy,
+        )
 
     @patch("src.app.ingestion.processors.keyframe_processor.KeyframeProcessor")
     @patch("src.app.ingestion.processors.audio_processor.AudioProcessor")
@@ -78,6 +92,7 @@ class TestEndToEndVideoProcessing:
         }
         mock_keyframe.extract_keyframes.return_value = mock_keyframe_result
         mock_keyframe_class.return_value = mock_keyframe
+        mock_keyframe_class.from_config = Mock(return_value=mock_keyframe)
 
         # Mock audio processor
         mock_audio = Mock()
@@ -93,6 +108,7 @@ class TestEndToEndVideoProcessing:
         }
         mock_audio.transcribe_audio.return_value = mock_audio_result
         mock_audio_class.return_value = mock_audio
+        mock_audio_class.from_config = Mock(return_value=mock_audio)
 
         # Mock embedding processor
         mock_embedding = Mock()
@@ -110,6 +126,7 @@ class TestEndToEndVideoProcessing:
         }
         mock_embedding.generate_embeddings.return_value = mock_embedding_result
         mock_embedding_class.return_value = mock_embedding
+        mock_embedding_class.from_config = Mock(return_value=mock_embedding)
 
         # Create processor manager with mocked processors
         with patch(
@@ -154,8 +171,10 @@ class TestEndToEndVideoProcessing:
 
     @patch("src.app.ingestion.processors.chunk_processor.ChunkProcessor")
     @patch("src.app.ingestion.processors.audio_processor.AudioProcessor")
+    @patch("src.app.ingestion.processors.embedding_processor.EmbeddingProcessor")
     def test_complete_chunk_based_pipeline(
         self,
+        mock_embedding_class,
         mock_audio_class,
         mock_chunk_class,
         mock_logger,
@@ -178,6 +197,7 @@ class TestEndToEndVideoProcessing:
         }
         mock_chunk.extract_chunks.return_value = mock_chunk_result
         mock_chunk_class.return_value = mock_chunk
+        mock_chunk_class.from_config = Mock(return_value=mock_chunk)
 
         # Mock audio processor
         mock_audio = Mock()
@@ -192,6 +212,23 @@ class TestEndToEndVideoProcessing:
         }
         mock_audio.transcribe_audio.return_value = mock_audio_result
         mock_audio_class.return_value = mock_audio
+        mock_audio_class.from_config = Mock(return_value=mock_audio)
+
+        # Mock embedding processor
+        mock_embedding = Mock()
+        mock_embedding.PROCESSOR_NAME = "embedding"
+        mock_embedding_result = {
+            "video_id": "test_video",
+            "embeddings": {
+                "chunk_embeddings": [
+                    {"chunk_index": 0, "embedding": np.random.rand(128).tolist()},
+                    {"chunk_index": 1, "embedding": np.random.rand(128).tolist()},
+                ],
+            },
+        }
+        mock_embedding.generate_embeddings.return_value = mock_embedding_result
+        mock_embedding_class.return_value = mock_embedding
+        mock_embedding_class.from_config = Mock(return_value=mock_embedding)
 
         # Create processor manager
         with patch(
@@ -202,6 +239,7 @@ class TestEndToEndVideoProcessing:
             manager = ProcessorManager(mock_logger)
             manager._processor_classes["chunk"] = mock_chunk_class
             manager._processor_classes["audio"] = mock_audio_class
+            manager._processor_classes["embedding"] = mock_embedding_class
 
             # Initialize from strategies
             manager.initialize_from_strategies(chunk_based_strategy_set)
@@ -209,20 +247,26 @@ class TestEndToEndVideoProcessing:
             # Execute chunk-based pipeline
             chunk_processor = manager.get_processor("chunk")
             audio_processor = manager.get_processor("audio")
+            embedding_processor = manager.get_processor("embedding")
 
             # Process video
             chunk_result = chunk_processor.extract_chunks(
                 sample_video_path, video_duration=20.0
             )
             audio_result = audio_processor.transcribe_audio(sample_video_path)
+            embedding_result = embedding_processor.generate_embeddings(
+                {"chunks": chunk_result, "transcript": audio_result}
+            )
 
             # Verify results
             assert chunk_result["total_chunks"] == 2
             assert audio_result["text"] == "Chunk-based audio transcription."
+            assert "chunk_embeddings" in embedding_result["embeddings"]
 
             # Verify processing calls
             mock_chunk.extract_chunks.assert_called_once()
             mock_audio.transcribe_audio.assert_called_once_with(sample_video_path)
+            mock_embedding.generate_embeddings.assert_called_once()
 
     def test_pipeline_error_propagation(
         self, mock_logger, frame_based_strategy_set, temp_dir, sample_video_path
@@ -235,6 +279,10 @@ class TestEndToEndVideoProcessing:
 
             def __init__(self, logger, **kwargs):
                 self.logger = logger
+
+            @classmethod
+            def from_config(cls, config, logger):
+                return cls(logger, **config)
 
             def extract_keyframes(self, *args, **kwargs):
                 raise ValueError("Keyframe extraction failed")
@@ -266,6 +314,10 @@ class TestEndToEndVideoProcessing:
             def __init__(self, logger, **kwargs):
                 self.logger = logger
 
+            @classmethod
+            def from_config(cls, config, logger):
+                return cls(logger, **config)
+
             def extract_keyframes(self, *args, **kwargs):
                 return {
                     "video_id": "test_video",
@@ -279,6 +331,10 @@ class TestEndToEndVideoProcessing:
 
             def __init__(self, logger, **kwargs):
                 self.logger = logger
+
+            @classmethod
+            def from_config(cls, config, logger):
+                return cls(logger, **config)
 
             def transcribe_audio(self, *args, **kwargs):
                 raise Exception("Audio processing failed")
@@ -331,6 +387,7 @@ class TestEndToEndVideoProcessing:
         }
         mock_keyframe.extract_keyframes.return_value = mock_keyframe_result
         mock_keyframe_class.return_value = mock_keyframe
+        mock_keyframe_class.from_config = Mock(return_value=mock_keyframe)
 
         mock_audio = Mock()
         mock_audio_result = {
@@ -340,6 +397,7 @@ class TestEndToEndVideoProcessing:
         }
         mock_audio.transcribe_audio.return_value = mock_audio_result
         mock_audio_class.return_value = mock_audio
+        mock_audio_class.from_config = Mock(return_value=mock_audio)
 
         with patch(
             "src.app.ingestion.processor_manager.pkgutil.iter_modules"
@@ -399,6 +457,10 @@ class TestEndToEndVideoProcessing:
                     self.logger = logger
                     self.config = kwargs
 
+                @classmethod
+                def from_config(cls, config, logger):
+                    return cls(logger, **config)
+
                 def get_config(self):
                     return self.config
 
@@ -429,6 +491,10 @@ class TestEndToEndVideoProcessing:
                 self.logger = logger
                 self.call_count = 0
                 self._lock = threading.Lock()
+
+            @classmethod
+            def from_config(cls, config, logger):
+                return cls(logger, **config)
 
             def extract_keyframes(self, *args, **kwargs):
                 with self._lock:

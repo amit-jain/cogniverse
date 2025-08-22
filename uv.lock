@@ -635,7 +635,7 @@ requires-dist = [
     { name = "jax", specifier = ">=0.7.0" },
     { name = "jaxlib", specifier = ">=0.7.0" },
     { name = "langextract", specifier = ">=1.0.6" },
-    { name = "litellm", specifier = ">=1.74.0.post1" },
+    { name = "litellm", specifier = "==1.73.0" },
     { name = "modal", specifier = ">=1.0.5" },
     { name = "msgpack", specifier = ">=1.1.1" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8.0" },
@@ -1990,7 +1990,7 @@ wheels = [
 
 [[package]]
 name = "litellm"
-version = "1.74.0.post1"
+version = "1.73.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -2005,7 +2005,10 @@ dependencies = [
     { name = "tiktoken" },
     { name = "tokenizers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4d/68/a58b31f25c42fe052d7e7a0fc27d96d20c88b171070acc7b5d3cd553db0e/litellm-1.74.0.post1.tar.gz", hash = "sha256:417b08d0584ffc2788386261f1b3dea6e0b1b09b0231f48c46426c0c7a9b7278", size = 9032360, upload-time = "2025-07-07T17:48:08.376Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3e/5e/e110a45916b18ac93234e1b76a6ca57e7a3f9d38c4b9c004b68aedcddf41/litellm-1.73.0.tar.gz", hash = "sha256:4fdbb86f349be2038068827517786f6f7e7f761528d8f5d4b941b406d33bb8c3", size = 8553383, upload-time = "2025-06-22T00:56:14.44Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8c/ef/a788e2aca00e1afa97e07a14e85b9a1189498bbd424be7e1aea57cc5a831/litellm-1.73.0-py3-none-any.whl", hash = "sha256:0a0a14c2f2522ffaf6cfbea043108d837047ee2b8dff5fb1dc14a7bd3cea0118", size = 8358192, upload-time = "2025-06-22T00:56:12.15Z" },
+]
 
 [[package]]
 name = "llvmlite"
