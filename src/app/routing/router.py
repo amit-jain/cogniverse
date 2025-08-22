@@ -96,6 +96,7 @@ class ComprehensiveRouter:
         self.cache: dict[str, tuple[RoutingDecision, float]] = {}
         self.metrics_buffer: list[RoutingMetrics] = []
         self.query_count = 0
+        self.optimizer = None  # Placeholder for testing
 
     def _initialize_strategies(self):
         """Initialize routing strategies for each tier."""
@@ -594,11 +595,6 @@ class ComprehensiveRouter:
         """
         # For now, just use the standard routing logic
         return await self.route(query)
-
-    @property
-    def optimizer(self):
-        """Placeholder optimizer property for testing."""
-        return None
 
 
 class TieredRouter(ComprehensiveRouter):
