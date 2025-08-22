@@ -6,8 +6,7 @@ Unit tests for VideoChunkExtractor.
 import pytest
 import json
 import subprocess
-from pathlib import Path
-from unittest.mock import Mock, patch, mock_open, MagicMock
+from unittest.mock import Mock, patch, mock_open
 import numpy as np
 
 from src.app.ingestion.processors.video_chunk_extractor import VideoChunkExtractor
