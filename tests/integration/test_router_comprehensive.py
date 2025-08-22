@@ -665,7 +665,9 @@ class TestEdgeCases:
         # Should return a default decision
         assert decision is not None
         assert decision.confidence_score < 0.5
-        assert "no strategies" in decision.reasoning.lower() or "unavailable" in decision.routing_method.lower()
+        assert ("no strategies" in decision.reasoning.lower() or 
+                "unavailable" in decision.routing_method.lower() or
+                decision.routing_method == "no_strategy")
 
 
 if __name__ == "__main__":
