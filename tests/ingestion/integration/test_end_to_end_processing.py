@@ -37,9 +37,7 @@ class TestEndToEndVideoProcessing:
     @pytest.fixture
     def frame_based_strategy_set(self):
         """Create frame-based processing strategy set."""
-        frame_strategy = FrameSegmentationStrategy(
-            max_frames=5, fps=1.0, threshold=0.8
-        )
+        frame_strategy = FrameSegmentationStrategy(max_frames=5, fps=1.0, threshold=0.8)
         return ProcessingStrategySet(segmentation=frame_strategy)
 
     @pytest.fixture

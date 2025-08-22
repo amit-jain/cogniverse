@@ -146,9 +146,7 @@ class TestVespaBackendIngestion:
         import requests
 
         try:
-            response = requests.get(
-                "http://localhost:8080/state/v1/health", timeout=5
-            )
+            response = requests.get("http://localhost:8080/state/v1/health", timeout=5)
             assert response.status_code == 200
         except requests.RequestException:
             pytest.fail("Vespa not accessible at localhost:8080")
