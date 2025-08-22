@@ -6,14 +6,14 @@ Tests the video processing pipeline functionality with proper mocking.
 """
 
 import pytest
-import json
-import asyncio
-import time
-import logging
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock, AsyncMock
+from unittest.mock import Mock, patch
 
-from src.app.ingestion.pipeline import VideoIngestionPipeline, PipelineConfig, PipelineStep
+from src.app.ingestion.pipeline import (
+    VideoIngestionPipeline,
+    PipelineConfig,
+    PipelineStep,
+)
 
 
 @pytest.mark.unit
@@ -23,7 +23,7 @@ class TestPipelineConfig:
     def test_pipeline_config_defaults(self):
         """Test PipelineConfig initialization with defaults."""
         config = PipelineConfig()
-        
+
         assert config.extract_keyframes is True
         assert config.transcribe_audio is True
         assert config.generate_descriptions is True
@@ -46,9 +46,9 @@ class TestPipelineConfig:
             max_frames_per_video=1000,
             vlm_batch_size=100,
             video_dir=Path("/custom/path"),
-            search_backend="vespa"
+            search_backend="vespa",
         )
-        
+
         assert config.extract_keyframes is False
         assert config.transcribe_audio is False
         assert config.generate_descriptions is False
@@ -59,8 +59,8 @@ class TestPipelineConfig:
         assert config.video_dir == Path("/custom/path")
         assert config.search_backend == "vespa"
 
-    @patch('src.common.utils.output_manager.get_output_manager')
-    @patch('src.app.ingestion.pipeline.get_config')
+    @patch("src.common.utils.output_manager.get_output_manager")
+    @patch("src.app.ingestion.pipeline.get_config")
     def test_from_config_method(self, mock_get_config, mock_get_output_manager):
         """Test PipelineConfig.from_config method."""
         # Mock config data
@@ -72,19 +72,19 @@ class TestPipelineConfig:
                 "generate_embeddings": True,
                 "keyframe_threshold": 0.95,
                 "max_frames_per_video": 2000,
-                "vlm_batch_size": 200
+                "vlm_batch_size": 200,
             },
-            "search_backend": "vespa"
+            "search_backend": "vespa",
         }
         mock_get_config.return_value = config_data
-        
+
         # Mock output manager
         mock_output_manager = Mock()
         mock_output_manager.get_processing_dir.return_value = Path("/test/output")
         mock_get_output_manager.return_value = mock_output_manager
-        
+
         config = PipelineConfig.from_config()
-        
+
         assert config.extract_keyframes is False
         assert config.transcribe_audio is True
         assert config.generate_descriptions is False
@@ -95,8 +95,8 @@ class TestPipelineConfig:
         assert config.search_backend == "vespa"
         assert config.output_dir == Path("/test/output")
 
-    @patch('src.common.utils.output_manager.get_output_manager')
-    @patch('src.app.ingestion.pipeline.get_config')
+    @patch("src.common.utils.output_manager.get_output_manager")
+    @patch("src.app.ingestion.pipeline.get_config")
     def test_from_profile_method(self, mock_get_config, mock_get_output_manager):
         """Test PipelineConfig.from_profile method."""
         # Mock config data with profiles
@@ -110,21 +110,21 @@ class TestPipelineConfig:
                         "generate_embeddings": False,
                         "keyframe_threshold": 0.99,
                         "max_frames_per_video": 1500,
-                        "vlm_batch_size": 300
+                        "vlm_batch_size": 300,
                     }
                 }
             },
-            "search_backend": "byaldi"
+            "search_backend": "byaldi",
         }
         mock_get_config.return_value = config_data
-        
+
         # Mock output manager
         mock_output_manager = Mock()
         mock_output_manager.get_processing_dir.return_value = Path("/profile/output")
         mock_get_output_manager.return_value = mock_output_manager
-        
+
         config = PipelineConfig.from_profile("test_profile")
-        
+
         assert config.extract_keyframes is True
         assert config.transcribe_audio is False
         assert config.generate_descriptions is True
@@ -135,16 +135,15 @@ class TestPipelineConfig:
         assert config.search_backend == "byaldi"
         assert config.output_dir == Path("/profile/output")
 
-    @patch('src.app.ingestion.pipeline.get_config')
+    @patch("src.app.ingestion.pipeline.get_config")
     def test_from_profile_method_profile_not_found(self, mock_get_config):
         """Test PipelineConfig.from_profile with non-existent profile."""
-        config_data = {
-            "video_processing_profiles": {},
-            "search_backend": "byaldi"
-        }
+        config_data = {"video_processing_profiles": {}, "search_backend": "byaldi"}
         mock_get_config.return_value = config_data
-        
-        with pytest.raises(ValueError, match="Profile 'missing_profile' not found in config"):
+
+        with pytest.raises(
+            ValueError, match="Profile 'missing_profile' not found in config"
+        ):
             PipelineConfig.from_profile("missing_profile")
 
 
@@ -161,7 +160,7 @@ class TestVideoIngestionPipelineUtilityMethods:
             generate_descriptions=True,
             generate_embeddings=True,
             max_frames_per_video=100,
-            search_backend="vespa"
+            search_backend="vespa",
         )
 
     @pytest.fixture
@@ -181,7 +180,7 @@ class TestVideoIngestionPipelineUtilityMethods:
             mock_segmentation.chunk_duration = 30.0
             mock_strategy_set.segmentation = mock_segmentation
             pipeline.strategy_set = mock_strategy_set
-            
+
             # Add app_config for _get_chunk_duration method
             pipeline.app_config = Mock()
             pipeline.app_config.get.return_value = {}
@@ -194,38 +193,40 @@ class TestVideoIngestionPipelineUtilityMethods:
             pipeline.profile_output_dir = Path("/test/output")  # Add output directory
             return pipeline
 
-    @patch('cv2.VideoCapture')
+    @patch("cv2.VideoCapture")
     def test_get_video_duration_success(self, mock_video_capture, mock_pipeline):
         """Test successful video duration extraction."""
         # Mock cv2.VideoCapture
         mock_cap = Mock()
+
         # Mock the get method to return fps=25, frame_count=3012.5 for 120.5 seconds
         def mock_get(prop):
             import cv2
+
             if prop == cv2.CAP_PROP_FPS:
                 return 25.0
             elif prop == cv2.CAP_PROP_FRAME_COUNT:
                 return 3012.5
             return 0
-        
+
         mock_cap.get.side_effect = mock_get
         mock_video_capture.return_value = mock_cap
-        
+
         video_path = Path("/test/video.mp4")
         duration = mock_pipeline._get_video_duration(video_path)
-        
+
         assert duration == 120.5
         mock_video_capture.assert_called_once_with(str(video_path))
         mock_cap.release.assert_called_once()
 
-    @patch('cv2.VideoCapture')
+    @patch("cv2.VideoCapture")
     def test_get_video_duration_error(self, mock_video_capture, mock_pipeline):
         """Test video duration extraction with cv2 error."""
         mock_video_capture.side_effect = Exception("OpenCV error")
-        
+
         video_path = Path("/test/video.mp4")
         duration = mock_pipeline._get_video_duration(video_path)
-        
+
         assert duration == 0.0
 
     def test_get_video_files(self, mock_pipeline, tmp_path):
@@ -233,15 +234,15 @@ class TestVideoIngestionPipelineUtilityMethods:
         # Create test video files
         video_dir = tmp_path / "videos"
         video_dir.mkdir()
-        
+
         (video_dir / "video1.mp4").touch()
         (video_dir / "video2.avi").touch()
         (video_dir / "video3.mov").touch()
         (video_dir / "not_video.txt").touch()
         (video_dir / "video4.mkv").touch()
-        
+
         video_files = mock_pipeline.get_video_files(video_dir)
-        
+
         # Should find 4 video files (excluding .txt)
         assert len(video_files) == 4
         video_names = [f.name for f in video_files]
@@ -255,9 +256,9 @@ class TestVideoIngestionPipelineUtilityMethods:
         """Test get_video_files with empty directory."""
         video_dir = tmp_path / "empty"
         video_dir.mkdir()
-        
+
         video_files = mock_pipeline.get_video_files(video_dir)
-        
+
         assert len(video_files) == 0
 
     def test_extract_base_video_data(self, mock_pipeline):
@@ -270,11 +271,11 @@ class TestVideoIngestionPipelineUtilityMethods:
             "keyframes": {"frame_count": 100},
             "audio": {"transcript": "test transcript"},
             "descriptions": {"desc_count": 50},
-            "other_data": "should_be_ignored"
+            "other_data": "should_be_ignored",
         }
-        
+
         base_data = mock_pipeline._extract_base_video_data(results)
-        
+
         assert base_data["video_id"] == "test_video"
         assert base_data["video_path"] == "/test/video.mp4"
         assert base_data["duration"] == 120.5
@@ -283,9 +284,9 @@ class TestVideoIngestionPipelineUtilityMethods:
     def test_add_strategy_metadata(self, mock_pipeline):
         """Test _add_strategy_metadata method."""
         video_data = {"video_id": "test_video"}
-        
+
         result = mock_pipeline._add_strategy_metadata(video_data)
-        
+
         assert result["video_id"] == "test_video"
         assert result["processing_type"] == "frame"
         assert result["storage_mode"] == "vector"
@@ -294,10 +295,10 @@ class TestVideoIngestionPipelineUtilityMethods:
     def test_prepare_base_results(self, mock_pipeline):
         """Test _prepare_base_results method."""
         video_path = Path("/test/video.mp4")
-        
-        with patch.object(mock_pipeline, '_get_video_duration', return_value=120.5):
+
+        with patch.object(mock_pipeline, "_get_video_duration", return_value=120.5):
             results = mock_pipeline._prepare_base_results(video_path)
-            
+
             assert results["video_id"] == "video"
             assert results["video_path"] == str(video_path)
             assert results["duration"] == 120.5
@@ -308,18 +309,18 @@ class TestVideoIngestionPipelineUtilityMethods:
         mock_chunk_strategy = Mock()
         mock_chunk_strategy.chunk_duration = 30.0
         mock_pipeline.strategy_set.segmentation = mock_chunk_strategy
-        
+
         duration = mock_pipeline._get_chunk_duration()
-        
+
         assert duration == 30.0
 
     def test_get_chunk_duration_no_strategy(self, mock_pipeline):
         """Test _get_chunk_duration method with no strategy."""
         # No strategy set
         mock_pipeline.strategy_set = None
-        
+
         duration = mock_pipeline._get_chunk_duration()
-        
+
         assert duration == 30.0  # Default value
 
     def test_convert_embedding_result_dict(self, mock_pipeline):
@@ -333,9 +334,9 @@ class TestVideoIngestionPipelineUtilityMethods:
         mock_result.processing_time = 1.5
         mock_result.errors = []
         mock_result.metadata = {"test": "data"}
-        
+
         converted = mock_pipeline._convert_embedding_result(mock_result)
-        
+
         assert converted["video_id"] == "test_video"
         assert converted["total_documents"] == 10
         assert converted["documents_processed"] == 8
@@ -351,7 +352,7 @@ class TestVideoIngestionPipelineUtilityMethods:
         mock_result.processing_time = 0.0
         mock_result.errors = ["error message"]
         mock_result.metadata = {}
-        
+
         converted = mock_pipeline._convert_embedding_result(mock_result)
         assert converted["errors"] == ["error message"]
 
@@ -365,7 +366,7 @@ class TestVideoIngestionPipelineUtilityMethods:
         mock_result.processing_time = 2.0
         mock_result.errors = []
         mock_result.metadata = {"status": "success"}
-        
+
         converted = mock_pipeline._convert_embedding_result(mock_result)
         assert converted["video_id"] == "success_video"
         assert converted["metadata"]["status"] == "success"
@@ -379,20 +380,20 @@ class TestVideoIngestionPipelineUtilityMethods:
                 "keyframes": {
                     "keyframes": [
                         {"frame_id": "frame_1", "timestamp": 1.0},
-                        {"frame_id": "frame_2", "timestamp": 2.0}
+                        {"frame_id": "frame_2", "timestamp": 2.0},
                     ]
                 },
                 "descriptions": {
                     "descriptions": {
                         "frame_1": "Description 1",
-                        "frame_2": "Description 2"
+                        "frame_2": "Description 2",
                     }
-                }
+                },
             }
         }
-        
+
         result_data = mock_pipeline._process_frame_data(video_data, results)
-        
+
         # The method returns video_data with keyframes and descriptions added
         assert result_data["video_id"] == "test_video"
         assert "keyframes" in result_data
@@ -406,17 +407,15 @@ class TestVideoIngestionPipelineUtilityMethods:
                 "chunks": {
                     "chunks": [
                         {"chunk_id": "chunk_1", "start_time": 0.0, "end_time": 30.0},
-                        {"chunk_id": "chunk_2", "start_time": 30.0, "end_time": 60.0}
+                        {"chunk_id": "chunk_2", "start_time": 30.0, "end_time": 60.0},
                     ]
                 },
-                "audio": {
-                    "transcript": "Full transcript"
-                }
+                "audio": {"transcript": "Full transcript"},
             }
         }
-        
+
         result_data = mock_pipeline._process_chunk_data(video_data, results)
-        
+
         # The method returns video_data with chunks added
         assert result_data["video_id"] == "test_video"
         assert "chunks" in result_data
@@ -432,13 +431,13 @@ class TestVideoIngestionPipelineUtilityMethods:
                     ],
                     "metadata": {"test": "data"},
                     "full_transcript": "Test transcript",
-                    "document_structure": {"sections": ["intro"]}
+                    "document_structure": {"sections": ["intro"]},
                 }
             }
         }
-        
+
         result_data = mock_pipeline._process_single_vector_data(video_data, results)
-        
+
         # The method returns video_data with single vector processing data added
         assert result_data["video_id"] == "test_video"
         assert "segments" in result_data
@@ -446,15 +445,15 @@ class TestVideoIngestionPipelineUtilityMethods:
         assert "full_transcript" in result_data
         assert "document_structure" in result_data
 
-    @patch('asyncio.run')
+    @patch("asyncio.run")
     def test_process_video_sync_wrapper(self, mock_asyncio_run, mock_pipeline):
         """Test process_video method (sync wrapper)."""
         mock_result = {"video_id": "test", "status": "completed"}
         mock_asyncio_run.return_value = mock_result
-        
+
         video_path = Path("/test/video.mp4")
         result = mock_pipeline.process_video(video_path)
-        
+
         assert result == mock_result
         mock_asyncio_run.assert_called_once()
 
@@ -467,18 +466,20 @@ class TestVideoIngestionPipelineUtilityMethods:
             "duration": 120.0,
             "results": {
                 "keyframes": {"keyframes": [{"frame_id": "frame_1"}]},
-                "descriptions": {"descriptions": {"frame_1": "Test description"}}
-            }
+                "descriptions": {"descriptions": {"frame_1": "Test description"}},
+            },
         }
-        
+
         # Set processing_type to something other than video_chunks to trigger frame processing
         mock_pipeline.strategy.processing_type = "frames"
-        
+
         video_data = mock_pipeline._prepare_video_data(results)
-        
+
         assert video_data["video_id"] == "test_video"
         assert "keyframes" in video_data  # _process_frame_data adds keyframes directly
-        assert "descriptions" in video_data  # _process_frame_data adds descriptions directly
+        assert (
+            "descriptions" in video_data
+        )  # _process_frame_data adds descriptions directly
 
     def test_prepare_video_data_chunk_strategy(self, mock_pipeline):
         """Test _prepare_video_data with chunk strategy."""
@@ -488,12 +489,12 @@ class TestVideoIngestionPipelineUtilityMethods:
             "duration": 120.0,
             "results": {
                 "chunks": {"chunks": [{"chunk_id": "chunk_1"}]},
-                "audio": {"transcript": "Test transcript"}
-            }
+                "audio": {"transcript": "Test transcript"},
+            },
         }
-        
+
         video_data = mock_pipeline._prepare_video_data(results)
-        
+
         assert video_data["video_id"] == "test_video"
         assert "chunks" in video_data  # _process_chunk_data adds chunks directly
 
@@ -505,24 +506,28 @@ class TestVideoIngestionPipelineUtilityMethods:
             "duration": 120.0,
             "results": {
                 "single_vector_processing": {
-                    "segments": [{"start_time": 0.0, "end_time": 60.0, "text": "Test segment"}],
+                    "segments": [
+                        {"start_time": 0.0, "end_time": 60.0, "text": "Test segment"}
+                    ],
                     "metadata": {"test": "data"},
                     "full_transcript": "Test transcript",
-                    "document_structure": {"sections": ["intro"]}
+                    "document_structure": {"sections": ["intro"]},
                 }
-            }
+            },
         }
-        
+
         video_data = mock_pipeline._prepare_video_data(results)
-        
+
         assert video_data["video_id"] == "test_video"
-        assert "segments" in video_data  # _process_single_vector_data adds segments directly
+        assert (
+            "segments" in video_data
+        )  # _process_single_vector_data adds segments directly
 
 
-@pytest.mark.unit 
+@pytest.mark.unit
 class TestPipelineStep:
     """Test PipelineStep enum."""
-    
+
     def test_pipeline_step_values(self):
         """Test PipelineStep enum values."""
         assert PipelineStep.EXTRACT_KEYFRAMES.value == "extract_keyframes"
