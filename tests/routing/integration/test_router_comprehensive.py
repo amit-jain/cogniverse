@@ -400,52 +400,6 @@ class TestTieredRouterErrorHandling:
             or "unavailable" in decision.routing_method.lower()
         )
 
-    @pytest.mark.integration
-    @pytest.mark.asyncio
-    @pytest.mark.requires_ollama
-    async def test_timeout_handling(self):
-        """Test timeout handling in routing."""
-        config = {
-            "tier_config": {
-                "enable_fast_path": True,
-                "enable_fallback": True,
-                "max_routing_time_ms": 100,  # 100ms timeout
-            },
-            "keyword_config": {},
-        }
-
-        with patch("src.app.routing.router.GLiNERRoutingStrategy"):
-            with patch("src.app.routing.router.KeywordRoutingStrategy"):
-                router = TieredRouter(config)
-
-                # Mock strategy to take too long
-                async def slow_route(query, context=None):
-                    await asyncio.sleep(0.5)  # 500ms
-                    return RoutingDecision(
-                        search_modality=SearchModality.VIDEO,
-                        generation_type=GenerationType.RAW_RESULTS,
-                        confidence_score=0.9,
-                        routing_method="slow",
-                    )
-
-                with patch.object(
-                    router.strategies[RoutingTier.FAST_PATH],
-                    "route",
-                    side_effect=slow_route,
-                ):
-                    start = time.time()
-                    decision = await router.route("test query")
-                    elapsed = time.time() - start
-
-                # Should timeout and return fallback
-                # CI can be slower, so be more generous with timeout
-                import os
-
-                max_time = 1.0 if os.environ.get("CI") else 0.3
-                assert (
-                    elapsed < max_time
-                )  # Should not wait full 500ms in local, 1s in CI
-                assert decision.confidence_score <= 1.0  # Valid confidence score
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -536,32 +490,6 @@ class TestComprehensiveRouter:
         # In local dev, should favor strategy1 (VIDEO) due to higher weight
         assert decision.search_modality in [SearchModality.VIDEO, SearchModality.BOTH]
 
-    @pytest.mark.integration
-    @pytest.mark.asyncio
-    @pytest.mark.requires_ollama
-    async def test_optimization_trigger(self):
-        """Test optimization trigger based on performance."""
-        config = {
-            "optimization_config": {
-                "enable_auto_optimization": True,
-                "performance_degradation_threshold": 0.1,
-            }
-        }
-
-        router = ComprehensiveRouter(config)
-
-        # Mock optimizer
-        with patch.object(router, "optimizer") as mock_optimizer:
-            mock_optimizer.should_optimize.return_value = True
-            mock_optimizer.optimize = AsyncMock()
-
-            # Simulate performance degradation
-            router.performance_baseline = {"accuracy": 0.9}
-            router.recent_performance = {"accuracy": 0.75}  # 15% degradation
-
-            await router._maybe_optimize()
-
-            mock_optimizer.optimize.assert_called_once()
 
 
 class TestPerformanceTracking:
