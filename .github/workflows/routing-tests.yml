@@ -83,14 +83,6 @@ jobs:
         echo "All files in current directory:"
         ls -la
     
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
-      with:
-        file: ./coverage.xml
-        flags: routing-unittests
-        name: routing-coverage
-        fail_ci_if_error: false
-    
     - name: Upload coverage data
       if: always()
       uses: actions/upload-artifact@v4
@@ -155,14 +147,6 @@ jobs:
         ls -la coverage.* || true
         echo "All files in current directory:"
         ls -la
-    
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
-      with:
-        file: ./coverage.xml
-        flags: routing-integration
-        name: routing-coverage
-        fail_ci_if_error: false
     
     - name: Upload coverage data
       if: always()
@@ -317,11 +301,3 @@ jobs:
       with:
         name: routing-coverage-report
         path: htmlcov/
-    
-    - name: Upload combined coverage to Codecov
-      uses: codecov/codecov-action@v3
-      with:
-        file: ./coverage.xml
-        flags: routing-combined
-        name: routing-coverage-combined
-        fail_ci_if_error: false
