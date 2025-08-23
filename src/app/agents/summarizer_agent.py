@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from src.tools.a2a_utils import A2AMessage, DataPart, TextPart, Task, create_task, create_data_message
 from src.common.config import get_config
+from src.app.agents.dspy_integration_mixin import DSPySummaryMixin
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +194,7 @@ Format your response as JSON with keys: descriptions, themes, key_objects, emoti
         # For now, return mock analysis
         return self._mock_visual_analysis(image_paths, query)
 
-class SummarizerAgent:
+class SummarizerAgent(DSPySummaryMixin):
     """
     Intelligent summarizer agent with VLM integration and thinking phase.
     Provides comprehensive analysis and summarization of search results.
@@ -202,6 +203,7 @@ class SummarizerAgent:
     def __init__(self, **kwargs):
         """Initialize summarizer agent"""
         logger.info("Initializing SummarizerAgent...")
+        super().__init__()  # Initialize DSPy mixin
         
         self.config = get_config()
         self.vlm = VLMInterface(kwargs.get("vlm_model", "gpt-4-vision-preview"))

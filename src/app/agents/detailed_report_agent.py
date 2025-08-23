@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from src.common.config import get_config
 from src.tools.a2a_utils import A2AMessage, DataPart, Task
+from src.app.agents.dspy_integration_mixin import DSPyDetailedReportMixin
 
 logger = logging.getLogger(__name__)
 
@@ -120,12 +121,13 @@ class VLMInterface:
         }
 
 
-class DetailedReportAgent:
+class DetailedReportAgent(DSPyDetailedReportMixin):
     """Agent for generating comprehensive detailed reports with VLM integration"""
     
     def __init__(self, **kwargs):
         """Initialize detailed report agent"""
         logger.info("Initializing DetailedReportAgent...")
+        super().__init__()  # Initialize DSPy mixin
         
         self.config = get_config()
         self.vlm = VLMInterface(kwargs.get("vlm_model", "gpt-4-vision-preview"))

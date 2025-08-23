@@ -15,6 +15,7 @@ from enum import Enum
 from src.common.config import get_config
 from src.app.agents.routing_agent import RoutingAgent
 from src.tools.a2a_utils import A2AMessage, DataPart, Task
+from src.app.agents.dspy_integration_mixin import DSPyQueryAnalysisMixin
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +121,7 @@ class QueryAnalysisResult:
         }
 
 
-class QueryAnalysisToolV3:
+class QueryAnalysisToolV3(DSPyQueryAnalysisMixin):
     """
     Enhanced Query Analysis Tool with agent integration and thinking phase.
     
@@ -136,6 +137,7 @@ class QueryAnalysisToolV3:
     def __init__(self, **kwargs):
         """Initialize the enhanced query analysis tool"""
         logger.info("Initializing QueryAnalysisToolV3...")
+        super().__init__()  # Initialize DSPy mixin
         
         self.config = get_config()
         
