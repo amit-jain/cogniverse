@@ -14,6 +14,7 @@ from src.app.routing.router import ComprehensiveRouter, RouterConfig
 from src.app.routing.config import RoutingConfig
 from src.common.config import get_config
 from src.tools.a2a_utils import A2AMessage, DataPart, TextPart
+from src.app.agents.dspy_integration_mixin import DSPyRoutingMixin
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +41,14 @@ class RoutingDecisionResponse(BaseModel):
     status: str
 
 
-class RoutingAgent:
+class RoutingAgent(DSPyRoutingMixin):
     """
     Main routing agent that analyzes queries and determines appropriate agent workflows.
     """
     
     def __init__(self, config_path: Optional[str] = None):
         """Initialize routing agent with configuration"""
+        super().__init__()  # Initialize DSPy mixin
         self.system_config = get_config()
         
         # Load routing configuration
