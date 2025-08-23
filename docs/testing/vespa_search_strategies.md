@@ -134,17 +134,19 @@ All BM25 strategies use fieldsets to search across:
 - **Second phase**: Reranking top candidates (default: top 100)
 - **Hybrid**: Different models for each phase
 
-## Performance Characteristics
+## Performance Characteristics (Estimated)
 
-| Strategy | Response Time | Memory Usage | Accuracy |
-|----------|---------------|--------------|----------|
+<!-- TODO: Benchmark and update with actual measured performance -->
+
+| Strategy | Response Time* | Memory Usage | Accuracy |
+|----------|----------------|--------------|----------|
 | `bm25_only` | ~50ms | Low | Text-only |
 | `binary_binary` | ~100ms | Medium | Good |
 | `float_float` | ~300ms | High | Highest |
 | `hybrid_float_bm25` | ~350ms | High | Highest |
 | `hybrid_binary_bm25` | ~150ms | Medium | Good |
 
-*Performance varies based on index size and query complexity*
+*Estimated values - actual performance varies based on index size, hardware, and query complexity
 
 ## Strategy Selection
 

@@ -1,199 +1,232 @@
-# Vespa Schema Management
+# Vespa Backend
 
-This directory contains utilities for managing Vespa schemas, converting JSON schema definitions to PyVespa objects, and deploying them to Vespa instances.
+The Vespa backend provides high-performance vector search capabilities for video content analysis, supporting multiple embedding models and search strategies with configurable ranking profiles.
 
-## 📁 Files Overview
+## Quick Start
 
-- **`json_schema_parser.py`** - Converts JSON schema definitions to PyVespa objects
-- **`vespa_schema_manager.py`** - Manages schema deployment and validation
-- **`README.md`** - This documentation
-
-## 🚀 Quick Start
-
-### 1. Deploy Schema from JSON
-
-Deploy a JSON schema definition to Vespa:
+### Deploy Schema
 
 ```python
-from src.processing.vespa.vespa_schema_manager import VespaSchemaManager
+from src.backends.vespa.vespa_schema_manager import VespaSchemaManager
 
-# Deploy comprehensive video schema with 9 ranking profiles
+# Deploy video schema with ranking profiles
 manager = VespaSchemaManager()
-result = manager.upload_schema_from_json_file('schemas/video_frame_schema.json', 'videosearch')
-print("Schema deployed successfully!")
+result = manager.upload_schema_from_json_file('configs/schemas/video_colpali_smol500_mv_frame_schema.json', 'videosearch')
 ```
 
-### 2. Command Line Deployment
+### Command Line Deployment
 
 ```bash
-# Deploy schema using Python
 python -c "
-from src.processing.vespa.vespa_schema_manager import VespaSchemaManager
-manager = VespaSchemaManager()
-manager.upload_schema_from_json_file('schemas/video_frame_schema.json', 'videosearch')
-print('✅ Schema deployed!')
+from src.backends.vespa.vespa_schema_manager import VespaSchemaManager
+VespaSchemaManager().upload_schema_from_json_file('configs/schemas/video_colpali_smol500_mv_frame_schema.json', 'videosearch')
 "
 ```
 
-## 🔍 Schema Validation Commands
+## Schema Design
 
-### Check Vespa Application Status
+### Document Fields
+
+- `video_id` (string) - Video identifier
+- `video_title` (string) - BM25 indexed title
+- `creation_timestamp` (long) - Creation time
+- `segment_id` (int) - Segment identifier
+- `start_time`, `end_time` (double) - Time boundaries
+- `segment_description` (string) - VLM-generated description
+- `audio_transcript` (string) - Audio transcript
+- `embedding` (tensor<float>) - Float embeddings (128/768/1024-dim based on model)
+- `embedding_binary` (tensor<int8>) - Binary embeddings (16/96/128-dim based on model)
+
+### Tensor Storage Format
+
+```json
+{
+  "embedding": {
+    "type": "tensor<bfloat16>(patch{}, v[128])",
+    "blocks": {
+      "0": "hex_encoded_vector",
+      "1": "hex_encoded_vector"
+    }
+  }
+}
+```
+
+**Note**: Use `.blocks | length` to count patches, not top-level keys.
+
+## Search Strategies (15 Ranking Profiles)
+
+Key profiles include:
+1. **`bm25_only`** - Pure text search
+2. **`float_float`** - Float embeddings only
+3. **`binary_binary`** - Binary embeddings with Hamming distance
+4. **`float_binary`** - Float query × unpacked binary
+5. **`phased`** - Two-phase ranking
+6. **`hybrid_float_bm25`** - Float + BM25
+7. **`hybrid_binary_bm25`** - Binary + BM25
+8. **`hybrid_bm25_float`** - BM25 + Float reranking
+9. **`hybrid_bm25_binary`** - BM25 + Binary reranking
+Plus variations with/without descriptions
+
+### Search Strategy Flow
+
+```mermaid
+graph TD
+    A[Search Query] --> B{Strategy Selection}
+    
+    B -->|Text Only| C[BM25]
+    B -->|Visual Only| D{Embedding Type}
+    B -->|Hybrid| E[Combined Search]
+    
+    D -->|Float| F[float_float]
+    D -->|Binary| G[binary_binary]
+    D -->|Mixed| H[float_binary]
+    
+    E --> I{Ranking Strategy}
+    I -->|BM25 First| J[bm25_float_rerank]
+    I -->|Visual First| K[hybrid_float_bm25]
+    I -->|Phased| L[Two-phase Ranking]
+    
+    C --> M[Text Fields Search]
+    F --> N[Cosine Similarity]
+    G --> O[Hamming Distance]
+    H --> P[Unpacked Binary]
+    
+    J --> Q[Initial BM25]
+    Q --> R[Rerank with Embeddings]
+    
+    K --> S[Combine Scores]
+    L --> T[Phase 1: Fast]
+    T --> U[Phase 2: Accurate]
+    
+    M --> V[Results]
+    N --> V
+    O --> V
+    P --> V
+    R --> V
+    S --> V
+    U --> V
+    
+    V --> W[Score Normalization]
+    W --> X[Final Ranking]
+```
+
+### Model Dimensions
+
+- **ColPali**: 128-dim embeddings, 16-dim binary
+- **ColQwen**: 128-dim embeddings, 16-dim binary
+- **VideoPrism Base**: 768-dim embeddings, 96-dim binary
+- **VideoPrism Large**: 1024-dim embeddings, 128-dim binary
+
+## Feed Configuration
+
+### Environment Variables
 
 ```bash
-# Check if Vespa is running and ready
+export VESPA_FEED_MAX_QUEUE_SIZE=500    # Documents in queue
+export VESPA_FEED_MAX_WORKERS=4         # Worker threads
+export VESPA_FEED_MAX_CONNECTIONS=8     # HTTP connections
+export VESPA_FEED_COMPRESS=auto         # Compression setting
+```
+
+### Performance Tuning
+
+**Small Documents (< 1KB)**:
+```bash
+export VESPA_FEED_MAX_QUEUE_SIZE=1000
+export VESPA_FEED_MAX_WORKERS=8
+export VESPA_FEED_COMPRESS=false
+```
+
+**Large Documents (> 10KB)**:
+```bash
+export VESPA_FEED_MAX_QUEUE_SIZE=200
+export VESPA_FEED_MAX_WORKERS=2
+export VESPA_FEED_COMPRESS=true
+```
+
+## Testing & Validation
+
+### Check Status
+```bash
 curl -s http://localhost:8080/ApplicationStatus | head -10
 ```
 
-### Verify Schema Deployment
-
-```bash
-# Basic search to verify schema is deployed
-curl -s "http://localhost:8080/search/?yql=select%20*%20from%20sources%20*%20where%20true&hits=0"
-
-# Expected response for successful deployment:
-# {"root":{"id":"toplevel","relevance":1.0,"fields":{"totalCount":0},"coverage":{"coverage":100,"documents":0,"full":true,"nodes":1,"results":1,"resultsFull":1}}}
-```
-
-### Test All Ranking Profiles
-
-```bash
-# Test each ranking profile to ensure they're deployed correctly
-python -c "
+### Test Ranking Profiles
+```python
 import requests
 
-strategies = ['bm25_only', 'float_float', 'binary_binary', 'float_binary', 'phased', 'hybrid_float_bm25', 'binary_bm25', 'bm25_binary_rerank', 'bm25_float_rerank']
-
-print('Testing all ranking profiles...')
+strategies = ['bm25_only', 'float_float', 'binary_binary', 'phased']
 for strategy in strategies:
-    try:
-        params = {'yql': 'select * from sources * where true', 'ranking': strategy, 'hits': 0}
-        response = requests.get('http://localhost:8080/search/', params=params)
-        status = '✅' if response.status_code == 200 else '❌'
-        print(f'{status} {strategy}: {response.status_code}')
-    except Exception as e:
-        print(f'❌ {strategy}: Error - {e}')
-"
+    params = {'yql': 'select * from sources * where true', 
+              'ranking': strategy, 'hits': 0}
+    response = requests.get('http://localhost:8080/search/', params=params)
+    print(f'{strategy}: {response.status_code}')
 ```
 
-### Verify Document Count
-
+### Document Count
 ```bash
-# Check number of documents in the index
-curl -s "http://localhost:8080/search/?yql=select%20*%20from%20sources%20*%20where%20true&hits=0" | python -c "
-import json, sys
-data = json.load(sys.stdin)
-count = data.get('root', {}).get('fields', {}).get('totalCount', 0)
-print(f'Total documents: {count}')
-"
+curl -s "http://localhost:8080/search/?yql=select%20*%20from%20sources%20*%20where%20true&hits=0" | \
+  jq '.root.fields.totalCount'
 ```
 
-## 📊 Current Schema: Video Frame Search
+## Troubleshooting
 
-The current schema (`schemas/video_frame_schema.json`) includes:
+### Connection Reset
+- Reduce `max_workers` and `max_connections`
+- Increase batch delay
+- Check Vespa memory
 
-### Document Fields
-- `video_id` (string) - Video identifier
-- `video_title` (string) - Video title with BM25 indexing
-- `creation_timestamp` (long) - Video creation time
-- `frame_id` (int) - Frame identifier within video
-- `start_time`, `end_time` (double) - Frame time boundaries
-- `frame_description` (string) - VLM-generated frame description
-- `audio_transcript` (string) - Audio transcript for this frame
-- `embedding` (tensor<float>) - Float embeddings (128-dim per patch)
-- `embedding_binary` (tensor<int8>) - Binary embeddings (16-dim per patch)
+### Out of Memory
+- Reduce `max_queue_size`
+- Enable compression
+- Reduce batch size
 
-### Ranking Profiles (9 Total)
-
-1. **`bm25_only`** - Pure text search baseline
-2. **`float_float`** - Direct ColPali with float embeddings
-3. **`binary_binary`** - Hamming distance on binary embeddings
-4. **`float_binary`** - Float query × unpack_bits(binary storage)
-5. **`phased`** - Hamming first → Float reranking (20 candidates)
-6. **`hybrid_float_bm25`** - Float ColPali + BM25 reranking
-7. **`binary_bm25`** - Binary ColPali + BM25 combined
-8. **`bm25_binary_rerank`** - BM25 first → Binary reranking
-9. **`bm25_float_rerank`** - BM25 first → Float reranking
-
-## 🛠️ Troubleshooting
-
-### Schema Deployment Issues
-
+### Clean Restart
 ```bash
-# If deployment fails, check Vespa logs
-docker logs vespa | tail -20
-
-# Restart Vespa if needed
-docker restart vespa
-
-# Wait for Vespa to be ready (30 seconds)
-sleep 30 && curl -s http://localhost:8080/ApplicationStatus
-```
-
-### Clean Deployment
-
-To start completely fresh:
-
-```bash
-# Stop and remove Vespa container
 docker stop vespa && docker rm vespa
-
-# Start fresh Vespa instance
-docker run -d --name vespa -p 8080:8080 -p 19071:19071 vespaengine/vespa
-
-# Wait for startup (60 seconds)
+docker run -d --name vespa -p 8080:8080 vespaengine/vespa
 sleep 60
-
-# Deploy schema
-python -c "
-from src.processing.vespa.vespa_schema_manager import VespaSchemaManager
-manager = VespaSchemaManager()
-manager.upload_schema_from_json_file('schemas/video_frame_schema.json', 'videosearch')
-"
+# Redeploy schema
 ```
 
-### Validate Tensor Fields
+## API Reference
+
+### VespaSchemaManager
+- `upload_schema_from_json_file(json_path, app_name)` - Deploy schema
+- `parse_sd_schema(sd_content)` - Parse .sd files
+- `upload_frame_schema()` - Programmatic creation
+
+### JsonSchemaParser
+- `load_schema_from_json_file(json_path)` - Load JSON schema
+- `parse_schema(schema_config)` - Convert to PyVespa
+- `validate_schema_config(schema_config)` - Validate structure
+
+## Usage Examples
 
 ```bash
-# Test if tensor fields are properly configured
-python -c "
-import requests
+# Ingestion
+uv run python scripts/run_ingestion.py \
+    --video_dir data/videos \
+    --backend vespa
 
-# Test with dummy tensor inputs
-params = {
-    'yql': 'select * from sources * where true',
-    'ranking': 'float_float',
-    'hits': 0,
-    'input.query(qt).querytoken0': '[0.1] * 128'  # Dummy float tensor
-}
-
-response = requests.get('http://localhost:8080/search/', params=params)
-if response.status_code == 200:
-    print('✅ Float tensor inputs working')
-else:
-    print(f'❌ Float tensor error: {response.text[:100]}')
-"
+# Testing
+JAX_PLATFORM_NAME=cpu uv run python tests/comprehensive_video_query_test_v2.py \
+    --profiles frame_based_colpali \
+    --test-multiple-strategies
 ```
 
-## 📚 API Reference
+## Performance Monitoring
 
-### VespaSchemaManager Methods
+Client logs include:
+- Feed configuration on init
+- Batch progress (X/Y documents)
+- Success/failure counts
+- Retry attempts
+- HTTP status codes
 
-- `upload_schema_from_json_file(json_path, app_name)` - Deploy JSON schema to Vespa
-- `parse_sd_schema(sd_content)` - Parse .sd files to PyVespa objects
-- `upload_frame_schema()` - Programmatic schema creation
-
-### JsonSchemaParser Methods
-
-- `load_schema_from_json_file(json_path)` - Load and parse JSON schema
-- `parse_schema(schema_config)` - Convert JSON to PyVespa Schema
-- `parse_rank_profile(rp_config)` - Convert JSON rank profile
-- `validate_schema_config(schema_config)` - Validate JSON structure
-
-## 🎯 Next Steps
-
-After successful schema deployment:
-
-1. **Ingest video data** using `scripts/run_ingestion.py`
-2. **Benchmark ranking profiles** using `src/utils/comprehensive_query_utils.py`
-3. **Test with Video-ChatGPT Q&A** dataset for evaluation
-4. **Optimize performance** based on benchmarking results
+Example:
+```
+INFO: Feed configuration: {'max_queue_size': 500, 'max_workers': 4}
+INFO: Processing batch 1/5 (100 documents)
+INFO: Batch 1: 98/100 documents fed successfully
+```
