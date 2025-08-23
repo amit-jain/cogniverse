@@ -1,284 +1,310 @@
-# Cogniverse Evaluation Module - Developer Documentation
+# Evaluation Framework
 
-> **For user documentation and usage examples, see [`docs/EVALUATION_FRAMEWORK.md`](../../docs/EVALUATION_FRAMEWORK.md)**
+Comprehensive evaluation capabilities for the video RAG system using Inspect AI, Arize Phoenix, and custom evaluators.
 
-This README contains technical documentation for developers working on the evaluation module itself.
+## Overview
 
-## Features
+The evaluation framework provides:
+- **Inspect AI**: Task-based evaluation with custom solvers and scorers
+- **Arize Phoenix**: Real-time tracing, observability, and experiment tracking
+- **Quality Metrics**: Reference-free relevance, diversity, temporal coverage
+- **LLM Judges**: Visual and text evaluation with configurable providers
+- **Schema-Driven**: Generic evaluation that works beyond video
 
-- **Inspect AI Integration**
-  - Task-based evaluation with custom solvers and scorers
-  - Plugin architecture for extensibility
-  - Async execution with proper error handling
+## Evaluation Framework Flow
 
-- **Phoenix Integration**
-  - Centralized storage for traces, datasets, and experiments
-  - Real-time observability and monitoring
-  - Experiment tracking and comparison
-
-- **Flexible Metrics**
-  - **Quality Metrics**: Relevance, diversity, distribution, temporal coverage
-  - **LLM Evaluators**: Visual judge with configurable providers (Ollama, Modal, OpenAI)
-  - **Ground Truth**: Automated extraction and evaluation
-  - **Reranking**: Temporal and semantic strategies
-
-- **Experiment Tracking**
-  - Use `src/evaluation/core/experiment_tracker.py` for running experiments
-  - Full compatibility with legacy `run_experiments_with_visualization.py`
-  - Automatic HTML report generation
-
-## Installation
-
-### As Part of Cogniverse
-
-```bash
-uv pip install -e .
-```
-
-### As Standalone Module
-
-```bash
-cd src/evaluation
-pip install -e .
-```
-
-### With Visual Evaluation Support
-
-```bash
-pip install -e ".[visual]"
-```
-
-### For Development
-
-```bash
-pip install -e ".[dev]"
+```mermaid
+graph TD
+    A[Start Evaluation] --> B[Load Dataset]
+    B --> C[Select Profiles]
+    C --> D[Choose Strategies]
+    
+    D --> E[Initialize Phoenix]
+    E --> F[Start Tracing]
+    
+    F --> G[For Each Query]
+    G --> H[Execute Search]
+    H --> I[Capture Results]
+    
+    I --> J{Evaluation Type}
+    
+    J -->|Quality| K[Reference-Free Metrics]
+    J -->|LLM Judge| L[Visual Evaluation]
+    J -->|Ground Truth| M[Reference-Based]
+    
+    K --> N[Relevance Score]
+    K --> O[Diversity Score]
+    K --> P[Distribution Analysis]
+    
+    L --> Q[Load Video Frames]
+    Q --> R[Send to LLM]
+    R --> S[Judge Response]
+    
+    M --> T[Compare with Expected]
+    T --> U[Calculate Precision/Recall]
+    
+    N --> V[Aggregate Scores]
+    O --> V
+    P --> V
+    S --> V
+    U --> V
+    
+    V --> W[Generate Report]
+    W --> X[Phoenix Dashboard]
+    X --> Y[Visualize Results]
 ```
 
 ## Quick Start
 
-### Using Experiment Tracker
+### Installation
 
 ```bash
-# Run experiments with new evaluation framework
-python src/evaluation/core/experiment_tracker.py \
+# Install dependencies
+uv pip install inspect-ai arize-phoenix phoenix-evals
+
+# With visual evaluation
+uv pip install -e ".[visual]"
+```
+
+### Start Phoenix Server
+
+```bash
+# Option 1: Local server
+python scripts/start_phoenix.py
+
+# Option 2: Docker (if docker-compose.yml exists)
+docker run -p 6006:6006 arizephoenix/phoenix:latest
+
+# Phoenix available at http://localhost:6006
+```
+
+### Run Evaluation
+
+```bash
+# Basic quality evaluation
+uv run python src/evaluation/core/experiment_tracker.py \
   --dataset-name golden_eval_v1 \
-  --profiles frame_based_colpali \
-  --strategies binary_binary \
+  --profiles video_colpali_smol500_mv_frame \
   --quality-evaluators
+
+# With LLM visual evaluation
+uv run python src/evaluation/core/experiment_tracker.py \
+  --dataset-name test_visual \
+  --profiles video_videoprism_base_mv_chunk_30s \
+  --llm-evaluators \
+  --evaluator visual_judge \
+  --llm-model ollama/llava:7b
 ```
 
-### Python API
+## Core Components
 
-```python
-from src.evaluation.core.task import evaluation_task
-from inspect_ai import eval
+### Architecture
 
-# Create evaluation task
-task = evaluation_task(
-    mode="experiment",
-    dataset_name="my_dataset",
-    profiles=["frame_based_colpali"],
-    strategies=["binary_binary"]
-)
+- **Task Orchestrator** (`core/task.py`): Main evaluation coordinator
+- **Experiment Tracker** (`core/experiment_tracker.py`): High-level runner
+- **Solvers** (`core/inspect_solvers.py`): Data acquisition
+- **Scorers** (`core/scorers.py`): Metric calculation
+- **Evaluators** (`evaluators/`): Quality and LLM-based evaluation
+- **Plugins** (`plugins/`): Domain-specific extensions
 
-# Run evaluation
-results = await eval(task)
+### Metrics
+
+#### Quality Metrics (Reference-Free)
+- **Relevance**: Semantic similarity (0-1)
+- **Diversity**: Result variety (0-1)
+- **Distribution**: Score consistency
+- **Temporal Coverage**: Video timeline coverage
+
+#### LLM Evaluators
+- **Visual Judge**: Multimodal frame analysis
+- **Reference-Free**: Query-result relevance
+- **Reference-Based**: Ground truth comparison
+- **Hybrid**: Combined approach
+
+#### Retrieval Metrics
+- MRR, NDCG, Precision@k, Recall@k, MAP
+- Temporal IoU for moment retrieval
+
+## Creating Datasets
+
+### From Production Traces
+```bash
+uv run python scripts/bootstrap_dataset_from_traces.py \
+  --hours 48 \
+  --min-score 0.8 \
+  --dataset-name production_v1
 ```
 
-For detailed usage and examples, see `docs/EVALUATION_FRAMEWORK.md`
+### From Videos
+```bash
+uv run python scripts/generate_dataset_from_videos.py \
+  --video-dir data/videos \
+  --num-queries 100 \
+  --dataset-name synthetic_v1
+```
+
+### CSV Format
+```csv
+query,expected_videos,category
+"person wearing red",video1|video2,visual
+"after the meeting",video3,temporal
+```
 
 ## Configuration
 
 ### Evaluation Config
-
-Create a JSON or YAML config file:
-
 ```json
 {
-  "use_ragas": true,
-  "ragas_metrics": ["context_relevancy", "answer_relevancy"],
   "use_custom": true,
   "custom_metrics": ["diversity", "temporal_coherence"],
-  "use_visual": false,
-  "top_k": 10
+  "top_k": 10,
+  "evaluators": {
+    "visual_judge": {
+      "provider": "ollama",
+      "model": "llava:7b",
+      "base_url": "http://localhost:11434",
+      "frames_per_video": 30,
+      "max_videos": 2
+    }
+  }
 }
 ```
 
-Use with CLI:
-
+### LLM Setup
 ```bash
-cogniverse-eval evaluate --mode experiment \
-  --dataset my_dataset \
-  --config config.json \
-  -p profile1 -s strategy1
+# Install Ollama
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Pull models
+ollama pull deepseek-r1:7b  # Text
+ollama pull llava:7b        # Visual
+
+# Start service
+ollama serve
 ```
 
-### Dataset Format
+## Phoenix Integration
 
-#### CSV Format
+### Features
+- **Traces**: All evaluation traces with timing
+- **Datasets**: Managed datasets with versions
+- **Experiments**: Result comparisons
+- **Evaluations**: Scores attached to traces
 
-```csv
-query,expected_videos,category
-"person wearing red shirt","video1,video2",visual
-"what happened after the meeting",video3,temporal
-```
-
-#### JSON Format
-
-```json
-[
-  {
-    "query": "person wearing red shirt",
-    "expected_videos": ["video1", "video2"],
-    "category": "visual"
-  }
-]
-```
-
-## Testing
-
-### Run All Tests
-
+### Dashboard
 ```bash
-pytest src/evaluation/tests -v
+# Start Streamlit dashboard
+streamlit run scripts/phoenix_dashboard_standalone.py
+# Access at http://localhost:8501
 ```
 
-### Run Unit Tests Only
-
+### Analytics
 ```bash
-pytest src/evaluation/tests/unit -v -m unit
+# Analyze last 24 hours
+python scripts/analyze_traces.py analyze --hours 24
+
+# Real-time monitoring
+python scripts/analyze_traces.py monitor --refresh 30
 ```
 
-### Run Integration Tests
+## Migration to Generic Framework
 
-```bash
-pytest src/evaluation/tests/integration -v -m integration
+### Key Changes
+
+**Ground Truth Extraction:**
+```python
+# Before: Video-specific
+from src.evaluation.core.ground_truth import BackendMetadataGroundTruthStrategy
+
+# After: Generic
+from src.evaluation.core.ground_truth_generic import SchemaAwareGroundTruthStrategy
 ```
 
-### Check Coverage
+**Scorers:**
+```python
+# Before: Hardcoded video_id
+from src.evaluation.core.scorers import custom_diversity_scorer
 
-```bash
-pytest src/evaluation/tests --cov=src/evaluation --cov-report=term-missing
+# After: Schema-aware
+from src.evaluation.core.scorers_generic import get_configured_scorers
 ```
 
-The framework requires 80% test coverage minimum.
-
-## Architecture
-
-### Core Components
-
-- **Task Orchestrator** (`core/task.py`): Main evaluation coordinator using Inspect AI
-- **Experiment Tracker** (`core/experiment_tracker.py`): High-level experiment runner
-- **Solvers** (`core/inspect_solvers.py`): Inspect AI solvers for data acquisition
-  - `CogniverseRetrievalSolver`: Runs new searches
-  - Protocol implementations for analysis
-- **Scorers** (`core/scorers.py`): Metric calculation
-  - Quality scorers for relevance, diversity
-  - Custom scorers for domain-specific metrics
-- **Evaluators** (`evaluators/`): LLM and quality evaluators
-  - `configurable_visual_judge.py`: Multi-provider visual evaluation
-  - `quality_evaluator.py`: Reference-free quality metrics
-- **Plugins** (`plugins/`): Extensible functionality
-  - `visual_evaluator.py`: Visual evaluation plugin
-  - `phoenix_experiment.py`: Experiment tracking plugin
-- **Tools** (`core/tools.py`): Phoenix integration utilities
-- **Reranking** (`core/reranking.py`): Result reranking strategies
-- **Ground Truth** (`core/ground_truth.py`): Ground truth extraction
-
-### Design Principles
-
-1. **No Hidden Defaults**: All configuration must be explicit
-2. **Loud Failures**: Errors fail fast with clear messages
-3. **Dashboard Compatibility**: Preserves existing dashboard functionality
-4. **Extensibility**: Easy to add new metrics and solvers
-5. **Testability**: Comprehensive test coverage with mocking
-
-## Dashboard Integration
-
-The framework maintains compatibility with the existing Phoenix dashboard by:
-
-1. Preserving legacy metric names (MRR, Recall@1, Recall@5)
-2. Maintaining the same data structure for experiment results
-3. Supporting the existing GraphQL queries
-4. Keeping profile/strategy comparison functionality
+### Benefits
+- Schema agnostic (works with any domain)
+- Plugin extensibility
+- Automatic field discovery
+- Backward compatible
 
 ## Extending the Framework
 
-### Adding a New Metric
-
+### Custom Metric
 ```python
 from inspect_ai import Score, scorer
 
 @scorer
 def my_custom_scorer():
     def score(state):
-        # Calculate metric
-        value = calculate_my_metric(state.outputs)
-        
-        return Score(
-            value=value,
-            explanation=f"My metric: {value:.3f}"
-        )
-    
+        value = calculate_metric(state.outputs)
+        return Score(value=value)
     return score
-
-# Register in get_configured_scorers()
 ```
 
-### Adding a New Solver
-
+### Custom Solver
 ```python
 from inspect_ai import solver
 
 @solver
 def my_custom_solver(config):
     def solve(state):
-        # Acquire data
-        data = fetch_my_data(state.dataset)
-        
-        # Return updated state
+        data = fetch_data(state.dataset)
         return state.update(outputs=data)
-    
     return solve
+```
+
+## Testing
+
+```bash
+# All tests
+pytest tests/evaluation -v
+
+# Unit tests only
+pytest tests/evaluation -m unit
+
+# Coverage (80% required)
+pytest tests/evaluation --cov=src/evaluation
 ```
 
 ## Troubleshooting
 
-### Phoenix Connection Issues
-
+### Phoenix Connection Error
 ```bash
-# Check Phoenix is running
-curl http://localhost:6006/health
-
-# Set custom Phoenix URL
-export PHOENIX_URL=http://my-phoenix:6006
+ps aux | grep phoenix
+python scripts/start_phoenix.py
 ```
 
-### Missing Dependencies
+### Out of Memory
+- Reduce batch_size in config
+- Limit parallel_runs: false
+- Increase system memory
 
+### Missing Traces
+- Check instrumentation enabled
+- Verify PHOENIX_WORKING_DIR
+- Check Phoenix UI filters
+
+### Debug Mode
 ```bash
-# Install all dependencies
-uv pip install -e ".[dev,visual]"
+export LOG_LEVEL=DEBUG
+uv run python src/evaluation/core/experiment_tracker.py --dataset-name test --debug
 ```
 
-### Test Failures
+## Best Practices
 
-```bash
-# Run with verbose output
-pytest -vv --tb=short
-
-# Run specific test
-pytest src/evaluation/tests/unit/test_task.py::TestEvaluationTask::test_experiment_mode
-```
-
-## Contributing
-
-1. Write tests for any new functionality
-2. Ensure 80% code coverage minimum
-3. Follow existing patterns for consistency
-4. Update documentation as needed
-5. Run the full test suite before submitting
-
-## License
-
-See the main Cogniverse LICENSE file.
+1. Version datasets for reproducibility
+2. Monitor metrics continuously
+3. Document configuration changes
+4. Update baselines regularly
+5. Clean old traces periodically
+6. Maintain 80% test coverage
+7. Use explicit configuration
+8. Fail fast with clear errors

@@ -1,44 +1,40 @@
-# Documentation Structure
+# Documentation
 
-This directory contains detailed documentation for various components of the Cogniverse system.
+## Essential Guides
 
-## Directory Structure
+Core documentation for the Cogniverse system:
 
-### `/setup`
-- **detailed_setup.md** - Comprehensive setup guide (formerly GETTING_STARTED.md)
-  - Detailed prerequisites
-  - Step-by-step installation
-  - Configuration walkthrough
-  - Troubleshooting common issues
+- **[Architecture](architecture.md)** - System design and component overview
+- **[System Flows](system-flows.md)** - Detailed flow diagrams for all modules
+- **[Evaluation](evaluation.md)** - Evaluation framework and metrics guide
+- **[Deployment](deployment.md)** - Deployment instructions for various environments
 
-### `/modal`
-- **deploy_modal_vlm.md** - Step-by-step guide for deploying the Modal VLM service
-  - Prerequisites and setup
-  - Deployment instructions
-  - Configuration guide
-  - Troubleshooting tips
-  - Cost estimation and scaling
-- **setup_modal_vlm.py** - Automated setup script (optional helper)
-  - Automatically installs Modal CLI
-  - Deploys the service
-  - Updates config.json
-  - Tests the integration
+## Module Documentation
 
-### `/pipeline` (future)
-- Detailed pipeline architecture documentation
-- Pipeline configuration guide
-- Custom pipeline step development
+Detailed module-specific documentation is located within each module:
 
-### `/testing`
-- **README.md** - Testing overview and quick commands
-- **search_client_testing.md** - How to test Vespa search client
-- **vespa_search_strategies.md** - Complete guide to all 13 ranking strategies
+- **[Ingestion Pipeline](../src/app/ingestion/README.md)** - Video processing and ingestion
+- **[Query Routing](../src/app/routing/README.md)** - Query analysis and routing
+- **[Vespa Backend](../src/backends/vespa/README.md)** - Vector database configuration
+- **[Evaluation Framework](../src/evaluation/README.md)** - Testing and evaluation
+- **[Test Suite](../tests/README.md)** - Testing guidelines and structure
+
+## Additional Resources
+
+### Setup & Configuration
+- **[Detailed Setup](setup/detailed_setup.md)** - Comprehensive installation guide
+- **[Modal Deployment](modal/deployment_guide.md)** - Serverless deployment with Modal
+- **[GPU Recommendations](modal/gpu_recommendations.md)** - Hardware requirements
+
+### Testing & Development
+- **[Search Client Testing](testing/search_client_testing.md)** - Vespa client testing
+- **[Search Strategies](testing/vespa_search_strategies.md)** - All ranking strategies
 
 ## Quick Links
 
-For getting started quickly, see the root directory docs:
-- **QUICKSTART.md** - 3-step quick setup (recommended for first-time users)
-- **Readme.md** - Complete system overview and architecture
+- **[Project README](../README.md)** - Project overview and quick start
+- **[Contributing](../CONTRIBUTING.md)** - Contribution guidelines
 
-For developer instructions and codebase guidelines:
-- **CLAUDE.md** - AI assistant instructions and system architecture
+## Archive
+
+Historical and detailed technical documentation has been moved to the `archive/` directory for reference.
