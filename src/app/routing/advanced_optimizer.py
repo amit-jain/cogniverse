@@ -1,17 +1,18 @@
 """
-GRPO (Generalized Reward-based Policy Optimization) for Routing Optimization
+Advanced Multi-Stage Optimizer for Routing Optimization
 
-This module implements GRPO to optimize routing decisions based on user feedback,
-search result quality, and downstream agent performance. It learns to improve
-routing choices over time by analyzing the effectiveness of different agents
-for various query types.
+This module implements a sophisticated routing optimizer using DSPy's advanced
+optimization techniques including GEPA, MIPROv2, SIMBA, and BootstrapFewShot.
+It learns to improve routing choices over time by analyzing the effectiveness
+of different agents for various query types.
 
 Key Features:
+- Advanced DSPy optimization techniques (GEPA, MIPROv2, SIMBA)
+- Configurable optimizer selection based on dataset size and strategy
 - Reward signal generation from user feedback and agent performance
-- Policy gradient optimization for routing decisions
-- Adaptive confidence threshold learning
 - Experience replay for stable learning
-- Integration with DSPy 3.0 optimization features
+- Confidence calibration and threshold adaptation
+- Multi-stage optimization pipeline
 """
 
 import asyncio
@@ -26,7 +27,7 @@ import pickle
 
 # DSPy 3.0 imports
 import dspy
-from dspy.teleprompt import BootstrapFewShot, GRPO
+from dspy.teleprompt import BootstrapFewShot, MIPROv2, GEPA, SIMBA
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,17 @@ class RoutingExperience:
     timestamp: datetime = field(default_factory=datetime.now)
 
 
+@dataclass
+class PolicyOptimizationResult:
+    """Result of policy optimization step"""
+    optimization_performed: bool
+    optimizer_used: str
+    training_examples_count: int
+    improvement_score: float = 0.0
+    message: str = ""
+    timestamp: datetime = field(default_factory=datetime.now)
+
+
 @dataclass 
 class OptimizationMetrics:
     """Metrics for tracking optimization performance"""
@@ -67,13 +79,24 @@ class OptimizationMetrics:
 
 
 @dataclass
-class GRPOConfig:
-    """Configuration for GRPO optimization"""
+class AdvancedOptimizerConfig:
+    """Configuration for advanced routing optimization"""
     # Learning parameters
     learning_rate: float = 0.001
     batch_size: int = 32
     experience_replay_size: int = 1000
     update_frequency: int = 10  # Update every N experiences
+    
+    # Advanced optimizer selection
+    optimizer_strategy: str = "adaptive"  # "adaptive", "gepa", "mipro", "simba", "bootstrap"
+    force_optimizer: Optional[str] = None  # Force specific optimizer regardless of data size
+    enable_multi_stage: bool = True  # Enable multi-stage optimization pipeline
+    
+    # Optimizer thresholds
+    bootstrap_threshold: int = 20
+    simba_threshold: int = 50  
+    mipro_threshold: int = 100
+    gepa_threshold: int = 200
     
     # Reward computation
     search_quality_weight: float = 0.4
@@ -99,18 +122,19 @@ class GRPOConfig:
     min_experiences_for_training: int = 50
 
 
-class GRPORoutingOptimizer:
+class AdvancedRoutingOptimizer:
     """
-    GRPO-based optimizer for routing decisions
+    Advanced multi-stage optimizer for routing decisions
     
     This class learns from routing experiences to improve future routing decisions.
     It uses reward signals derived from search quality, agent performance, and
-    user satisfaction to optimize the routing policy using GRPO.
+    user satisfaction to optimize the routing policy using advanced DSPy techniques
+    including GEPA, MIPROv2, SIMBA, and BootstrapFewShot.
     """
     
-    def __init__(self, config: Optional[GRPOConfig] = None, storage_dir: str = "data/optimization"):
-        """Initialize GRPO routing optimizer"""
-        self.config = config or GRPOConfig()
+    def __init__(self, config: Optional[AdvancedOptimizerConfig] = None, storage_dir: str = "data/optimization"):
+        """Initialize advanced routing optimizer"""
+        self.config = config or AdvancedOptimizerConfig()
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         
@@ -146,13 +170,13 @@ class GRPORoutingOptimizer:
         # Load existing data
         self._load_stored_data()
         
-        # Initialize GRPO components
-        self._initialize_grpo_components()
+        # Initialize advanced optimization components
+        self._initialize_advanced_components()
         
-        logger.info(f"GRPO routing optimizer initialized with {len(self.experiences)} experiences")
+        logger.info(f"Advanced routing optimizer initialized with {len(self.experiences)} experiences")
     
-    def _initialize_grpo_components(self):
-        """Initialize GRPO optimization components"""
+    def _initialize_advanced_components(self):
+        """Initialize advanced optimization components"""
         try:
             # Create routing policy signatures
             class RoutingPolicySignature(dspy.Signature):
@@ -185,19 +209,168 @@ class GRPORoutingOptimizer:
             
             self.routing_policy = OptimizedRoutingPolicy()
             
-            # Initialize GRPO optimizer
+            # Initialize advanced optimizer
             if len(self.experiences) >= self.config.min_experiences_for_training:
-                self.grpo_optimizer = GRPO()
-                logger.info("GRPO optimizer initialized with sufficient experience data")
+                self.grpo_optimizer = self._create_advanced_optimizer()
+                logger.info("Advanced optimizer initialized with sufficient experience data")
             else:
-                logger.info(f"Need {self.config.min_experiences_for_training - len(self.experiences)} more experiences to start GRPO training")
+                logger.info(f"Need {self.config.min_experiences_for_training - len(self.experiences)} more experiences to start advanced optimization training")
             
             # Initialize confidence calibrator
             self._initialize_confidence_calibrator()
             
         except Exception as e:
-            logger.error(f"Failed to initialize GRPO components: {e}")
+            logger.error(f"Failed to initialize advanced optimization components: {e}")
             self.grpo_optimizer = None
+    
+    def _create_advanced_optimizer(self):
+        """
+        Create an advanced multi-stage optimizer using DSPy's GEPA, MIPROv2, and SIMBA
+        
+        This implements a sophisticated optimization pipeline:
+        1. GEPA for reflective prompt evolution  
+        2. MIPROv2 for metric-aware instruction optimization
+        3. SIMBA for similarity-based memory augmentation
+        4. Multi-stage optimization with experience-based learning
+        """
+        class AdvancedMultiStageOptimizer:
+            def __init__(self, config: AdvancedOptimizerConfig):
+                self.config = config
+                
+                # Initialize all advanced optimizers
+                self.gepa_optimizer = GEPA()
+                self.mipro_optimizer = MIPROv2() 
+                self.simba_optimizer = SIMBA()
+                self.bootstrap_optimizer = BootstrapFewShot()
+                
+                # Optimization strategy based on config and data size
+                self.optimization_stages = [
+                    ("bootstrap", self.bootstrap_optimizer, config.bootstrap_threshold),
+                    ("simba", self.simba_optimizer, config.simba_threshold),
+                    ("mipro", self.mipro_optimizer, config.mipro_threshold), 
+                    ("gepa", self.gepa_optimizer, config.gepa_threshold)
+                ]
+                
+                # Optimizer mapping for direct selection
+                self.optimizers = {
+                    "bootstrap": self.bootstrap_optimizer,
+                    "simba": self.simba_optimizer,
+                    "mipro": self.mipro_optimizer,
+                    "gepa": self.gepa_optimizer
+                }
+                
+            def compile(self, module, trainset, **kwargs):
+                """Advanced multi-stage optimization with configurable strategy"""
+                try:
+                    dataset_size = len(trainset)
+                    logger.info(f"Starting optimization with {dataset_size} examples, strategy: {self.config.optimizer_strategy}")
+                    
+                    # Select optimizer based on configuration
+                    selected_optimizer, optimizer_name = self._select_optimizer(dataset_size)
+                    
+                    # Apply the selected optimization
+                    optimized_module = self._apply_optimizer(
+                        selected_optimizer, optimizer_name, module, trainset, **kwargs
+                    )
+                    
+                    logger.info(f"Optimization complete using {optimizer_name}")
+                    return optimized_module
+                    
+                except Exception as e:
+                    logger.error(f"Optimization failed: {e}, falling back to bootstrap")
+                    return self.bootstrap_optimizer.compile(module, trainset=trainset, **kwargs)
+            
+            def _select_optimizer(self, dataset_size):
+                """Select optimizer based on config strategy and dataset size"""
+                # Force specific optimizer if configured
+                if self.config.force_optimizer:
+                    if self.config.force_optimizer in self.optimizers:
+                        optimizer = self.optimizers[self.config.force_optimizer]
+                        return optimizer, self.config.force_optimizer
+                    else:
+                        logger.warning(f"Unknown forced optimizer: {self.config.force_optimizer}")
+                
+                # Strategy-based selection
+                if self.config.optimizer_strategy == "adaptive":
+                    # Adaptive: select best optimizer based on dataset size
+                    applicable_optimizers = [
+                        (name, optimizer) for name, optimizer, min_size in self.optimization_stages
+                        if dataset_size >= min_size
+                    ]
+                    
+                    if applicable_optimizers:
+                        # Use the most advanced applicable optimizer
+                        name, optimizer = applicable_optimizers[-1]
+                        return optimizer, name
+                    else:
+                        # Fallback to bootstrap
+                        return self.bootstrap_optimizer, "bootstrap"
+                
+                elif self.config.optimizer_strategy in self.optimizers:
+                    # Direct strategy selection
+                    optimizer = self.optimizers[self.config.optimizer_strategy]
+                    return optimizer, self.config.optimizer_strategy
+                
+                else:
+                    # Unknown strategy, use bootstrap
+                    logger.warning(f"Unknown optimizer strategy: {self.config.optimizer_strategy}")
+                    return self.bootstrap_optimizer, "bootstrap"
+            
+            def _apply_optimizer(self, optimizer, optimizer_name, module, trainset, **kwargs):
+                """Apply specific optimizer with appropriate parameters"""
+                
+                if optimizer_name == "gepa":
+                    # GEPA: Reflective prompt evolution
+                    return optimizer.compile(
+                        module,
+                        trainset=trainset,
+                        max_bootstrapped_demos=kwargs.get('max_bootstrapped_demos', 4),
+                        max_labeled_demos=kwargs.get('max_labeled_demos', 8),
+                        num_threads=kwargs.get('num_threads', 1)
+                    )
+                    
+                elif optimizer_name == "mipro":
+                    # MIPROv2: Metric-aware instruction optimization
+                    return optimizer.compile(
+                        module,
+                        trainset=trainset,
+                        max_bootstrapped_demos=kwargs.get('max_bootstrapped_demos', 4),
+                        max_labeled_demos=kwargs.get('max_labeled_demos', 8),
+                        num_threads=kwargs.get('num_threads', 1)
+                    )
+                    
+                elif optimizer_name == "simba":
+                    # SIMBA: Similarity-based memory augmentation
+                    return optimizer.compile(
+                        module,
+                        trainset=trainset,
+                        max_bootstrapped_demos=kwargs.get('max_bootstrapped_demos', 4),
+                        max_labeled_demos=kwargs.get('max_labeled_demos', 8)
+                    )
+                    
+                else:
+                    # Bootstrap or fallback
+                    return optimizer.compile(
+                        module,
+                        trainset=trainset,
+                        max_bootstrapped_demos=kwargs.get('max_bootstrapped_demos', 4),
+                        max_labeled_demos=kwargs.get('max_labeled_demos', 8)
+                    )
+                
+            def get_optimization_info(self, dataset_size):
+                """Get information about which optimizers will be used"""
+                applicable = [
+                    (name, min_size) for name, _, min_size in self.optimization_stages
+                    if dataset_size >= min_size
+                ]
+                return {
+                    'dataset_size': dataset_size,
+                    'applicable_optimizers': applicable,
+                    'primary_optimizer': applicable[-1][0] if applicable else 'bootstrap',
+                    'optimization_stages': len(applicable)
+                }
+        
+        return AdvancedMultiStageOptimizer(self.config)
     
     def _initialize_confidence_calibrator(self):
         """Initialize confidence calibration component"""
@@ -434,7 +607,7 @@ class GRPORoutingOptimizer:
                 
                 training_examples.append(example)
             
-            # Run GRPO optimization
+            # Run bootstrap optimization
             if self.routing_policy and training_examples:
                 optimized_policy = self.grpo_optimizer.compile(
                     self.routing_policy,
@@ -463,7 +636,105 @@ class GRPORoutingOptimizer:
                         self.metrics.improvement_rate = np.mean(new_rewards) - np.mean(old_rewards)
         
         except Exception as e:
-            logger.error(f"GRPO optimization step failed: {e}")
+            logger.error(f"Advanced optimization step failed: {e}")
+    
+    async def get_routing_recommendations(
+        self,
+        query: str,
+        entities: List[Dict[str, Any]],
+        relationships: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Get routing recommendations using the optimized policy
+        
+        Args:
+            query: User query
+            entities: Extracted entities
+            relationships: Extracted relationships
+            
+        Returns:
+            Routing recommendations with confidence and reasoning
+        """
+        try:
+            # If optimization not ready, provide basic recommendations
+            if not self.routing_policy or len(self.experiences) < self.config.min_experiences_for_training:
+                return self._get_baseline_recommendations(query, entities, relationships)
+            
+            # Use optimized policy for recommendations
+            enhanced_query = query  # Could enhance with relationships here
+            
+            prediction = self.routing_policy(
+                query=query,
+                entities=entities,
+                relationships=relationships,
+                enhanced_query=enhanced_query
+            )
+            
+            # Extract and calibrate results
+            recommended_agent = prediction.recommended_agent
+            raw_confidence = float(prediction.confidence)
+            reasoning = prediction.reasoning
+            
+            # Apply confidence calibration
+            calibrated_confidence = await self._calibrate_confidence(
+                raw_confidence, query, entities, relationships
+            )
+            
+            return {
+                "recommended_agent": recommended_agent,
+                "confidence": calibrated_confidence,
+                "reasoning": f"Optimized policy: {reasoning}",
+                "optimization_ready": True,
+                "experiences_count": len(self.experiences),
+                "training_step": self.training_step
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get routing recommendations: {e}")
+            return self._get_baseline_recommendations(query, entities, relationships)
+    
+    def _get_baseline_recommendations(
+        self, 
+        query: str, 
+        entities: List[Dict[str, Any]], 
+        relationships: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Provide baseline recommendations when optimization not ready"""
+        
+        # Simple rule-based recommendations
+        query_lower = query.lower()
+        
+        if any(word in query_lower for word in ['video', 'visual', 'watch', 'clip', 'footage']):
+            agent = "video_search_agent"
+            confidence = 0.8
+            reasoning = "Query contains video-related keywords"
+        elif any(word in query_lower for word in ['summary', 'summarize', 'overview', 'brief']):
+            agent = "summarizer_agent"
+            confidence = 0.7
+            reasoning = "Query requests summary/overview"
+        elif any(word in query_lower for word in ['detail', 'detailed', 'analysis', 'report']):
+            agent = "detailed_report_agent"
+            confidence = 0.7
+            reasoning = "Query requests detailed analysis"
+        else:
+            # Default to video search for general queries
+            agent = "video_search_agent"
+            confidence = 0.6
+            reasoning = "Default routing to video search agent"
+        
+        # Adjust confidence based on historical performance if available
+        if agent in self.metrics.agent_preferences:
+            agent_performance = self.metrics.agent_preferences[agent]
+            confidence = min(1.0, confidence * (0.8 + 0.4 * agent_performance))
+        
+        return {
+            "recommended_agent": agent,
+            "confidence": confidence,
+            "reasoning": reasoning,
+            "optimization_ready": False,
+            "experiences_count": len(self.experiences),
+            "training_step": self.training_step
+        }
     
     async def optimize_routing_decision(
         self,
@@ -730,7 +1001,7 @@ class GRPORoutingOptimizer:
     
     async def reset_optimization(self):
         """Reset optimization state (useful for testing or fresh start)"""
-        logger.warning("Resetting GRPO optimization state...")
+        logger.warning("Resetting advanced optimization state...")
         
         self.experiences.clear()
         self.experience_replay.clear()
@@ -762,6 +1033,6 @@ class GRPORoutingOptimizer:
             logger.error(f"Failed to clear stored files: {e}")
         
         # Re-initialize components
-        self._initialize_grpo_components()
+        self._initialize_advanced_components()
         
-        logger.info("GRPO optimization reset complete")
+        logger.info("Advanced optimization reset complete")

@@ -35,8 +35,8 @@ from src.app.routing.relationship_extraction_tools import RelationshipExtractorT
 from src.app.routing.dspy_relationship_router import DSPyAdvancedRoutingModule
 from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
 
-# Phase 6: GRPO optimization
-from src.app.routing.grpo_optimizer import GRPORoutingOptimizer, GRPOConfig
+# Phase 6: Advanced optimization
+from src.app.routing.advanced_optimizer import AdvancedRoutingOptimizer, AdvancedOptimizerConfig
 
 # Phase 6.4: MLflow integration
 from src.app.routing.mlflow_integration import MLflowIntegration, ExperimentConfig
@@ -113,10 +113,10 @@ class EnhancedRoutingConfig:
     enable_query_enhancement: bool = True
     enable_fallback_routing: bool = True
     enable_confidence_calibration: bool = True
-    enable_grpo_optimization: bool = True
+    enable_advanced_optimization: bool = True
     
-    # GRPO optimization configuration
-    grpo_config: Optional[GRPOConfig] = None
+    # Advanced optimization configuration
+    optimizer_config: Optional[AdvancedOptimizerConfig] = None
     optimization_storage_dir: str = "data/optimization"
     
     # MLflow integration configuration
@@ -154,8 +154,8 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
         # Initialize DSPy routing module
         self._initialize_routing_module()
         
-        # Initialize Phase 6: GRPO optimization
-        self._initialize_grpo_optimizer()
+        # Initialize Phase 6: Advanced optimization
+        self._initialize_advanced_optimizer()
         
         # Initialize Phase 6.4: MLflow integration
         self._initialize_mlflow_tracking()
@@ -269,22 +269,22 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
         self.routing_module = FallbackRoutingModule()
         self.logger.warning("Using fallback routing module")
 
-    def _initialize_grpo_optimizer(self) -> None:
-        """Initialize Phase 6: GRPO optimization"""
+    def _initialize_advanced_optimizer(self) -> None:
+        """Initialize Phase 6: Advanced optimization"""
         try:
-            if self.config.enable_grpo_optimization:
-                grpo_config = self.config.grpo_config or GRPOConfig()
-                self.grpo_optimizer = GRPORoutingOptimizer(
-                    config=grpo_config,
+            if self.config.enable_advanced_optimization:
+                optimizer_config = self.config.optimizer_config or AdvancedOptimizerConfig()
+                self.grpo_optimizer = AdvancedRoutingOptimizer(
+                    config=optimizer_config,
                     storage_dir=self.config.optimization_storage_dir
                 )
-                self.logger.info("GRPO routing optimizer initialized")
+                self.logger.info("Advanced routing optimizer initialized")
             else:
                 self.grpo_optimizer = None
-                self.logger.info("GRPO optimization disabled")
+                self.logger.info("Advanced optimization disabled")
                 
         except Exception as e:
-            self.logger.error(f"Failed to initialize GRPO optimizer: {e}")
+            self.logger.error(f"Failed to initialize advanced optimizer: {e}")
             self.grpo_optimizer = None
 
     def _initialize_mlflow_tracking(self) -> None:
