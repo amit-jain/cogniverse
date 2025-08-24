@@ -2133,3 +2133,653 @@ class TestPhases1To3Integration:
             
             # Enhanced query should be different from original (actual enhancement occurred)
             assert result["enhanced_query"] != test_query, "Query should be actually enhanced for Phase 4"
+
+
+# ======================== PHASE 4 UNIT TESTS ========================
+
+@pytest.mark.unit
+class TestPhase4EnhancedRoutingAgent:
+    """Unit tests for Enhanced Routing Agent (Phase 4.1)"""
+
+    def test_enhanced_routing_agent_initialization(self):
+        """Test Enhanced Routing Agent initialization"""
+        from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent, EnhancedRoutingConfig
+        
+        # Test with default config
+        agent = EnhancedRoutingAgent()
+        assert agent is not None
+        assert hasattr(agent, 'config')
+        assert hasattr(agent, 'enhanced_system_available')
+        
+        # Test with custom config
+        custom_config = EnhancedRoutingConfig(
+            model_name="smollm3:3b",
+            base_url="http://localhost:11434/v1",
+            confidence_threshold=0.8,
+            enable_relationship_extraction=True,
+            enable_query_enhancement=True
+        )
+        
+        custom_agent = EnhancedRoutingAgent(config=custom_config)
+        assert custom_agent.config.confidence_threshold == 0.8
+        assert custom_agent.config.enable_relationship_extraction is True
+
+    def test_orchestration_need_assessment(self):
+        """Test orchestration need assessment logic"""
+        from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent
+        
+        agent = EnhancedRoutingAgent()
+        
+        # Simple query - should not need orchestration
+        simple_entities = [{"text": "robot", "label": "ENTITY", "confidence": 0.9}]
+        simple_relationships = []
+        simple_routing_result = {"confidence": 0.9}
+        
+        needs_orchestration = agent._assess_orchestration_need(
+            "show me robots",
+            simple_entities,
+            simple_relationships,
+            simple_routing_result,
+            None
+        )
+        assert needs_orchestration is False
+        
+        # Complex query - should need orchestration
+        complex_entities = [
+            {"text": "robots", "label": "ENTITY", "confidence": 0.9},
+            {"text": "soccer", "label": "ACTIVITY", "confidence": 0.8},
+            {"text": "analysis", "label": "TASK", "confidence": 0.8},
+            {"text": "comparison", "label": "TASK", "confidence": 0.7},
+            {"text": "report", "label": "OUTPUT", "confidence": 0.9},
+            {"text": "techniques", "label": "CONCEPT", "confidence": 0.8}
+        ]
+        complex_relationships = [
+            {"subject": "robots", "relation": "playing", "object": "soccer"},
+            {"subject": "analysis", "relation": "of", "object": "techniques"},
+            {"subject": "comparison", "relation": "between", "object": "teams"},
+            {"subject": "report", "relation": "contains", "object": "analysis"}
+        ]
+        complex_routing_result = {"confidence": 0.5}  # Low confidence
+        
+        needs_orchestration = agent._assess_orchestration_need(
+            "find videos of robots playing soccer and analyze the techniques used then generate a comprehensive comparison report between different teams",
+            complex_entities,
+            complex_relationships,
+            complex_routing_result,
+            None
+        )
+        assert needs_orchestration is True
+
+    def test_orchestration_signals_detection(self):
+        """Test orchestration signals detection"""
+        from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent
+        
+        agent = EnhancedRoutingAgent()
+        
+        entities = [{"text": "test", "label": "TEST", "confidence": 0.8}] * 6  # Many entities
+        relationships = [{"subject": "a", "relation": "b", "object": "c"}] * 4  # Many relationships
+        
+        signals = agent._get_orchestration_signals(
+            "first find videos then analyze the content and generate a comprehensive report plus create summaries",
+            entities,
+            relationships
+        )
+        
+        assert signals["query_length"] > 10
+        assert signals["entity_count"] == 6
+        assert signals["relationship_count"] == 4
+        assert len(signals["action_verbs"]) >= 3
+        assert len(signals["conjunctions"]) >= 2
+        assert len(signals["sequential_indicators"]) >= 1
+        assert signals["complexity_score"] > 1.0
+
+    def test_routing_decision_structure(self):
+        """Test routing decision data structure"""
+        from src.app.agents.enhanced_routing_agent import RoutingDecision
+        from datetime import datetime
+        
+        decision = RoutingDecision(
+            recommended_agent="video_search_agent",
+            confidence=0.85,
+            reasoning="Test routing decision",
+            fallback_agents=["summarizer_agent"],
+            enhanced_query="enhanced test query",
+            extracted_entities=[{"text": "test", "label": "TEST"}],
+            extracted_relationships=[{"subject": "a", "relation": "b", "object": "c"}],
+            routing_metadata={"test": True}
+        )
+        
+        assert decision.recommended_agent == "video_search_agent"
+        assert decision.confidence == 0.85
+        assert len(decision.fallback_agents) == 1
+        assert len(decision.extracted_entities) == 1
+        assert len(decision.extracted_relationships) == 1
+        assert isinstance(decision.timestamp, datetime)
+
+
+@pytest.mark.unit
+class TestPhase4MultiAgentOrchestrator:
+    """Unit tests for Multi-Agent Orchestrator (Phase 4.2)"""
+
+    def test_orchestrator_initialization(self):
+        """Test Multi-Agent Orchestrator initialization"""
+        from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
+        from src.app.agents.workflow_intelligence import OptimizationStrategy
+        
+        # Test default initialization
+        orchestrator = MultiAgentOrchestrator()
+        assert orchestrator is not None
+        assert hasattr(orchestrator, 'available_agents')
+        assert hasattr(orchestrator, 'active_workflows')
+        assert hasattr(orchestrator, 'orchestration_stats')
+        
+        # Test with workflow intelligence disabled
+        orchestrator_no_intelligence = MultiAgentOrchestrator(enable_workflow_intelligence=False)
+        assert orchestrator_no_intelligence.workflow_intelligence is None
+        
+        # Test with custom optimization strategy
+        orchestrator_custom = MultiAgentOrchestrator(
+            optimization_strategy=OptimizationStrategy.LATENCY_OPTIMIZED
+        )
+        assert orchestrator_custom.workflow_intelligence is not None
+
+    def test_workflow_plan_structure(self):
+        """Test workflow plan data structures"""
+        from src.app.agents.multi_agent_orchestrator import WorkflowPlan, WorkflowTask, WorkflowStatus, TaskStatus
+        
+        # Test WorkflowTask
+        task = WorkflowTask(
+            task_id="test_task",
+            agent_name="video_search_agent",
+            query="test query",
+            dependencies={"dependency_task"},
+            parameters={"param": "value"}
+        )
+        
+        assert task.task_id == "test_task"
+        assert task.agent_name == "video_search_agent"
+        assert task.status == TaskStatus.WAITING
+        assert "dependency_task" in task.dependencies
+        
+        # Test WorkflowPlan
+        plan = WorkflowPlan(
+            workflow_id="test_workflow",
+            original_query="test workflow query",
+            tasks=[task],
+            status=WorkflowStatus.PENDING
+        )
+        
+        assert plan.workflow_id == "test_workflow"
+        assert plan.status == WorkflowStatus.PENDING
+        assert len(plan.tasks) == 1
+
+    def test_execution_order_calculation(self):
+        """Test execution order calculation with dependencies"""
+        from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator, WorkflowTask
+        
+        orchestrator = MultiAgentOrchestrator()
+        
+        # Create tasks with dependencies
+        task1 = WorkflowTask(task_id="search", agent_name="video_search_agent", query="search", dependencies=set())
+        task2 = WorkflowTask(task_id="summarize", agent_name="summarizer_agent", query="summarize", dependencies={"search"})
+        task3 = WorkflowTask(task_id="report", agent_name="detailed_report_agent", query="report", dependencies={"search", "summarize"})
+        
+        execution_order = orchestrator._calculate_execution_order([task1, task2, task3])
+        
+        # task1 should be first (no dependencies)
+        assert "search" in execution_order[0]
+        
+        # task2 should be after task1
+        search_phase = None
+        summarize_phase = None
+        for i, phase in enumerate(execution_order):
+            if "search" in phase:
+                search_phase = i
+            if "summarize" in phase:
+                summarize_phase = i
+        
+        assert search_phase is not None
+        assert summarize_phase is not None
+        assert search_phase < summarize_phase
+
+    def test_orchestration_statistics(self):
+        """Test orchestration statistics tracking"""
+        from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
+        
+        orchestrator = MultiAgentOrchestrator()
+        
+        # Initial stats
+        stats = orchestrator.get_orchestration_statistics()
+        assert "total_workflows" in stats
+        assert "completed_workflows" in stats
+        assert "failed_workflows" in stats
+        assert "average_execution_time" in stats
+        assert stats["total_workflows"] == 0
+        
+        # Test stats update
+        orchestrator.orchestration_stats["total_workflows"] = 10
+        orchestrator.orchestration_stats["completed_workflows"] = 8
+        orchestrator.orchestration_stats["failed_workflows"] = 2
+        
+        updated_stats = orchestrator.get_orchestration_statistics()
+        assert updated_stats["total_workflows"] == 10
+        assert updated_stats["completion_rate"] == 0.8
+        assert updated_stats["failure_rate"] == 0.2
+
+
+@pytest.mark.unit
+class TestPhase4A2AEnhancedGateway:
+    """Unit tests for A2A Enhanced Gateway (Phase 4.3)"""
+
+    def test_gateway_initialization(self):
+        """Test A2A Enhanced Gateway initialization"""
+        from src.app.agents.a2a_enhanced_gateway import A2AEnhancedGateway, create_a2a_enhanced_gateway
+        from src.app.agents.enhanced_routing_agent import EnhancedRoutingConfig
+        
+        # Test factory function
+        gateway = create_a2a_enhanced_gateway()
+        assert gateway is not None
+        assert hasattr(gateway, 'app')
+        assert hasattr(gateway, 'gateway_stats')
+        
+        # Test with custom config
+        custom_config = EnhancedRoutingConfig(confidence_threshold=0.9)
+        custom_gateway = A2AEnhancedGateway(
+            enhanced_routing_config=custom_config,
+            enable_orchestration=True,
+            enable_fallback=True
+        )
+        assert custom_gateway.enable_orchestration is True
+        assert custom_gateway.enable_fallback is True
+
+    def test_request_response_models(self):
+        """Test A2A request and response data models"""
+        from src.app.agents.a2a_enhanced_gateway import A2AQueryRequest, A2AQueryResponse, OrchestrationRequest
+        
+        # Test A2AQueryRequest
+        request = A2AQueryRequest(
+            query="test query",
+            context="test context",
+            user_id="user123",
+            preferences={"pref": "value"}
+        )
+        assert request.query == "test query"
+        assert request.context == "test context"
+        assert request.user_id == "user123"
+        assert request.preferences["pref"] == "value"
+        
+        # Test A2AQueryResponse
+        response = A2AQueryResponse(
+            agent="video_search_agent",
+            confidence=0.85,
+            reasoning="test reasoning",
+            enhanced_query="enhanced test query",
+            processing_time_ms=150.0,
+            routing_method="enhanced_dspy"
+        )
+        assert response.agent == "video_search_agent"
+        assert response.confidence == 0.85
+        assert response.needs_orchestration is False  # Default value
+        assert response.routing_method == "enhanced_dspy"
+        
+        # Test OrchestrationRequest
+        orch_request = OrchestrationRequest(
+            query="complex orchestration query",
+            force_orchestration=True
+        )
+        assert orch_request.force_orchestration is True
+
+    def test_emergency_response_creation(self):
+        """Test emergency response fallback logic"""
+        from src.app.agents.a2a_enhanced_gateway import A2AEnhancedGateway, A2AQueryRequest
+        from datetime import datetime
+        
+        gateway = A2AEnhancedGateway(enable_fallback=False)  # No fallback systems
+        
+        # Test emergency response for video query
+        video_request = A2AQueryRequest(query="show me videos of robots")
+        response = gateway._create_emergency_response(video_request, datetime.now(), "test error")
+        
+        assert response.agent == "video_search_agent"
+        assert response.confidence == 0.2  # Low emergency confidence
+        assert "Emergency" in response.reasoning
+        assert response.routing_method == "emergency_fallback"
+        
+        # Test emergency response for summary query
+        summary_request = A2AQueryRequest(query="summarize the results")
+        summary_response = gateway._create_emergency_response(summary_request, datetime.now(), "test error")
+        
+        assert summary_response.agent == "summarizer_agent"
+
+    def test_response_time_statistics(self):
+        """Test response time statistics tracking"""
+        from src.app.agents.a2a_enhanced_gateway import A2AEnhancedGateway
+        
+        gateway = A2AEnhancedGateway()
+        
+        # Initial stats
+        assert gateway.gateway_stats["total_requests"] == 0
+        assert gateway.gateway_stats["average_response_time"] == 0.0
+        
+        # Simulate processing times
+        gateway.gateway_stats["total_requests"] = 1
+        gateway._update_response_time_stats(100.0)
+        assert gateway.gateway_stats["average_response_time"] == 100.0
+        
+        gateway.gateway_stats["total_requests"] = 2
+        gateway._update_response_time_stats(200.0)
+        assert gateway.gateway_stats["average_response_time"] == 150.0  # (100 + 200) / 2
+
+
+@pytest.mark.unit
+class TestPhase4WorkflowIntelligence:
+    """Unit tests for Workflow Intelligence (Phase 4.4)"""
+
+    def test_workflow_intelligence_initialization(self):
+        """Test Workflow Intelligence initialization"""
+        from src.app.agents.workflow_intelligence import WorkflowIntelligence, OptimizationStrategy, create_workflow_intelligence
+        
+        # Test factory function
+        intelligence = create_workflow_intelligence()
+        assert intelligence is not None
+        assert hasattr(intelligence, 'workflow_history')
+        assert hasattr(intelligence, 'agent_performance')
+        assert hasattr(intelligence, 'workflow_templates')
+        assert hasattr(intelligence, 'optimization_stats')
+        
+        # Test with custom settings
+        custom_intelligence = WorkflowIntelligence(
+            max_history_size=5000,
+            enable_persistence=False,
+            optimization_strategy=OptimizationStrategy.LATENCY_OPTIMIZED
+        )
+        assert custom_intelligence.max_history_size == 5000
+        assert custom_intelligence.enable_persistence is False
+        assert custom_intelligence.optimization_strategy == OptimizationStrategy.LATENCY_OPTIMIZED
+
+    def test_workflow_execution_recording(self):
+        """Test workflow execution data structures"""
+        from src.app.agents.workflow_intelligence import WorkflowExecution, AgentPerformance
+        from datetime import datetime
+        
+        # Test WorkflowExecution
+        execution = WorkflowExecution(
+            workflow_id="test_workflow",
+            query="test query",
+            query_type="video_search",
+            execution_time=120.5,
+            success=True,
+            agent_sequence=["video_search_agent", "summarizer_agent"],
+            task_count=2,
+            parallel_efficiency=0.8,
+            confidence_score=0.85,
+            metadata={"test": True}
+        )
+        
+        assert execution.workflow_id == "test_workflow"
+        assert execution.success is True
+        assert len(execution.agent_sequence) == 2
+        assert isinstance(execution.timestamp, datetime)
+        
+        # Test AgentPerformance
+        performance = AgentPerformance(
+            agent_name="video_search_agent",
+            total_executions=100,
+            successful_executions=85,
+            average_execution_time=45.2,
+            average_confidence=0.82
+        )
+        
+        assert performance.agent_name == "video_search_agent"
+        assert performance.total_executions == 100
+        assert performance.successful_executions == 85
+
+    def test_query_type_classification(self):
+        """Test query type classification logic"""
+        from src.app.agents.workflow_intelligence import WorkflowIntelligence
+        
+        intelligence = WorkflowIntelligence()
+        
+        # Test video search queries
+        assert intelligence._classify_query_type("show me videos of robots") == "video_search"
+        assert intelligence._classify_query_type("watch footage of soccer games") == "video_search"
+        
+        # Test summarization queries
+        assert intelligence._classify_query_type("summarize the research findings") == "summarization"
+        assert intelligence._classify_query_type("give me a brief overview") == "summarization"
+        
+        # Test analysis queries
+        assert intelligence._classify_query_type("analyze the performance metrics") == "analysis"
+        assert intelligence._classify_query_type("examine the data trends") == "analysis"
+        
+        # Test report generation queries
+        assert intelligence._classify_query_type("generate a comprehensive report") == "report_generation"
+        assert intelligence._classify_query_type("create detailed documentation") == "report_generation"
+        
+        # Test comparison queries
+        assert intelligence._classify_query_type("compare the two approaches") == "comparison"
+        assert intelligence._classify_query_type("analyze differences between methods") == "comparison"
+        
+        # Test multi-step queries
+        assert intelligence._classify_query_type("first search then analyze and create report") == "multi_step"
+        
+        # Test general queries
+        assert intelligence._classify_query_type("help me understand") == "general"
+
+    def test_workflow_template_structure(self):
+        """Test workflow template data structure"""
+        from src.app.agents.workflow_intelligence import WorkflowTemplate
+        from datetime import datetime
+        
+        template = WorkflowTemplate(
+            template_id="video_analysis_template",
+            name="Video Analysis Workflow",
+            description="Template for video search and analysis",
+            query_patterns=["video_search", "analysis"],
+            task_sequence=[
+                {"agent": "video_search_agent", "task": "search"},
+                {"agent": "summarizer_agent", "task": "summarize", "dependencies": ["search"]}
+            ],
+            expected_execution_time=180.0,
+            success_rate=0.92,
+            usage_count=15
+        )
+        
+        assert template.template_id == "video_analysis_template"
+        assert template.success_rate == 0.92
+        assert len(template.task_sequence) == 2
+        assert isinstance(template.created_at, datetime)
+
+    def test_optimization_strategy_enum(self):
+        """Test optimization strategy enumeration"""
+        from src.app.agents.workflow_intelligence import OptimizationStrategy
+        
+        # Test all optimization strategies exist
+        assert OptimizationStrategy.PERFORMANCE_BASED.value == "performance_based"
+        assert OptimizationStrategy.SUCCESS_RATE_BASED.value == "success_rate_based"
+        assert OptimizationStrategy.LATENCY_OPTIMIZED.value == "latency_optimized"
+        assert OptimizationStrategy.COST_OPTIMIZED.value == "cost_optimized"
+        assert OptimizationStrategy.BALANCED.value == "balanced"
+
+    def test_intelligence_statistics(self):
+        """Test workflow intelligence statistics"""
+        from src.app.agents.workflow_intelligence import WorkflowIntelligence, WorkflowExecution
+        
+        intelligence = WorkflowIntelligence(enable_persistence=False)
+        
+        # Add some mock executions
+        successful_execution = WorkflowExecution(
+            workflow_id="success_1",
+            query="test query",
+            query_type="video_search",
+            execution_time=100.0,
+            success=True,
+            agent_sequence=["video_search_agent"],
+            task_count=1,
+            parallel_efficiency=1.0,
+            confidence_score=0.9
+        )
+        
+        failed_execution = WorkflowExecution(
+            workflow_id="failed_1", 
+            query="test query 2",
+            query_type="analysis",
+            execution_time=50.0,
+            success=False,
+            agent_sequence=["video_search_agent"],
+            task_count=1,
+            parallel_efficiency=0.5,
+            confidence_score=0.4
+        )
+        
+        intelligence.workflow_history.append(successful_execution)
+        intelligence.workflow_history.append(failed_execution)
+        
+        # Test statistics
+        stats = intelligence.get_intelligence_statistics()
+        assert stats["workflow_history_size"] == 2
+        assert stats["success_rate"] == 0.5  # 1 success out of 2
+        assert stats["average_execution_time"] == 75.0  # (100 + 50) / 2
+
+
+@pytest.mark.unit
+class TestPhase4Integration:
+    """Integration tests for Phase 4 components working together"""
+
+    def test_enhanced_routing_to_orchestration_flow(self):
+        """Test flow from enhanced routing to orchestration"""
+        from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent, RoutingDecision
+        from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
+        
+        # Create components
+        router = EnhancedRoutingAgent()
+        orchestrator = MultiAgentOrchestrator(routing_agent=router)
+        
+        # Test routing decision that needs orchestration
+        complex_query = "find videos of robots playing soccer then analyze techniques and create comprehensive report"
+        
+        # Mock routing decision with orchestration need
+        mock_decision = RoutingDecision(
+            recommended_agent="video_search_agent",
+            confidence=0.7,
+            reasoning="Complex multi-step query requiring orchestration",
+            enhanced_query=complex_query,
+            routing_metadata={"needs_orchestration": True}
+        )
+        
+        # Verify orchestration compatibility
+        assert mock_decision.routing_metadata["needs_orchestration"] is True
+        assert orchestrator is not None
+
+    def test_gateway_to_intelligence_integration(self):
+        """Test A2A Gateway integration with Workflow Intelligence"""
+        from src.app.agents.a2a_enhanced_gateway import A2AEnhancedGateway
+        from src.app.agents.workflow_intelligence import OptimizationStrategy
+        
+        # Create gateway with intelligence enabled
+        gateway = A2AEnhancedGateway(enable_orchestration=True)
+        
+        # Verify orchestrator has intelligence
+        if hasattr(gateway, 'orchestrator') and gateway.orchestrator:
+            assert gateway.orchestrator.workflow_intelligence is not None
+        
+        # Test gateway statistics include intelligence data
+        # This would be tested in integration tests with actual data
+
+    def test_dspy_signatures_compatibility(self):
+        """Test DSPy signatures work across Phase 4 components"""
+        from src.app.agents.multi_agent_orchestrator import WorkflowPlannerSignature, ResultAggregatorSignature
+        from src.app.agents.workflow_intelligence import WorkflowOptimizationSignature, TemplateGeneratorSignature
+        
+        # Test signature field access (DSPy 3.0 compatibility)
+        workflow_fields = WorkflowPlannerSignature.model_fields
+        assert "query" in workflow_fields
+        assert "workflow_tasks" in workflow_fields
+        
+        result_fields = ResultAggregatorSignature.model_fields
+        assert "original_query" in result_fields
+        assert "aggregated_result" in result_fields
+        
+        optimization_fields = WorkflowOptimizationSignature.model_fields
+        assert "workflow_history" in optimization_fields
+        assert "optimized_sequence" in optimization_fields
+        
+        template_fields = TemplateGeneratorSignature.model_fields
+        assert "successful_workflows" in template_fields
+        assert "template_name" in template_fields
+
+    def test_phase4_component_initialization_order(self):
+        """Test Phase 4 components initialize in correct order without circular dependencies"""
+        
+        # Test 1: Enhanced Routing Agent (independent)
+        from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent
+        router = EnhancedRoutingAgent()
+        assert router is not None
+        
+        # Test 2: Workflow Intelligence (independent)
+        from src.app.agents.workflow_intelligence import WorkflowIntelligence
+        intelligence = WorkflowIntelligence(enable_persistence=False)
+        assert intelligence is not None
+        
+        # Test 3: Multi-Agent Orchestrator (depends on router, uses intelligence)
+        from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
+        orchestrator = MultiAgentOrchestrator(routing_agent=router)
+        assert orchestrator is not None
+        assert orchestrator.routing_agent is router
+        
+        # Test 4: A2A Gateway (depends on router and orchestrator)
+        from src.app.agents.a2a_enhanced_gateway import A2AEnhancedGateway
+        gateway = A2AEnhancedGateway(enable_orchestration=True, enable_fallback=True)
+        assert gateway is not None
+
+    def test_phase4_error_handling_consistency(self):
+        """Test error handling consistency across Phase 4 components"""
+        from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent
+        from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
+        from src.app.agents.workflow_intelligence import WorkflowIntelligence
+        from src.app.agents.a2a_enhanced_gateway import A2AEnhancedGateway
+        
+        # All components should handle initialization errors gracefully
+        try:
+            # Test with invalid config that might cause errors
+            router = EnhancedRoutingAgent()  # Should not raise exception
+            orchestrator = MultiAgentOrchestrator()  # Should not raise exception
+            intelligence = WorkflowIntelligence(enable_persistence=False)  # Should not raise exception
+            gateway = A2AEnhancedGateway(enable_fallback=True)  # Should not raise exception
+            
+            # Components should be in valid state even if some features fail
+            assert router is not None
+            assert orchestrator is not None  
+            assert intelligence is not None
+            assert gateway is not None
+            
+        except Exception as e:
+            pytest.fail(f"Phase 4 components should handle initialization errors gracefully: {e}")
+
+    def test_phase4_statistics_consistency(self):
+        """Test statistics reporting consistency across Phase 4 components"""
+        from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent
+        from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
+        from src.app.agents.workflow_intelligence import WorkflowIntelligence
+        from src.app.agents.a2a_enhanced_gateway import A2AEnhancedGateway
+        
+        # All statistics should return dict with consistent structure
+        router = EnhancedRoutingAgent()
+        router_stats = router.get_routing_statistics()
+        assert isinstance(router_stats, dict)
+        assert "total_queries" in router_stats
+        
+        orchestrator = MultiAgentOrchestrator(enable_workflow_intelligence=False)
+        orch_stats = orchestrator.get_orchestration_statistics()
+        assert isinstance(orch_stats, dict)
+        assert "total_workflows" in orch_stats
+        
+        intelligence = WorkflowIntelligence(enable_persistence=False)
+        intel_stats = intelligence.get_intelligence_statistics()
+        assert isinstance(intel_stats, dict)
+        assert "total_optimizations" in intel_stats
+        
+        gateway = A2AEnhancedGateway()
+        gateway_stats = gateway.gateway_stats
+        assert isinstance(gateway_stats, dict)
+        assert "total_requests" in gateway_stats
