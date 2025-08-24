@@ -123,6 +123,7 @@ def mock_ollama_query_client():
 class TestQueryAnalysisV3OllamaIntegration:
     """Integration tests for QueryAnalysisToolV3 with Ollama models"""
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_query_analysis_with_smollm3(
         self, ollama_config, mock_ollama_query_client
@@ -160,6 +161,7 @@ class TestQueryAnalysisV3OllamaIntegration:
                 assert "machine" in result.keywords
                 assert "learning" in result.keywords
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_complex_query_analysis_with_qwen(
         self, ollama_config, mock_ollama_query_client, sample_conversation_context
@@ -203,6 +205,7 @@ class TestQueryAnalysisV3OllamaIntegration:
                 assert result.thinking_phase["has_context"] is True
                 assert len(result.thinking_phase["complexity_signals"]) >= 2
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_thinking_phase_with_ollama_reasoning(
         self, ollama_config, mock_ollama_query_client
@@ -238,6 +241,7 @@ class TestQueryAnalysisV3OllamaIntegration:
                     or "comparative" in thinking["reasoning"].lower()
                 )
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_query_expansion_with_context(
         self, ollama_config, sample_conversation_context
@@ -272,6 +276,7 @@ class TestQueryAnalysisV3OllamaIntegration:
                     for term in ["machine", "neural", "ai"]
                 )
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_routing_agent_integration_with_ollama(
         self, ollama_config, mock_routing_agent
@@ -306,6 +311,7 @@ class TestQueryAnalysisV3OllamaIntegration:
                     "thinking_phase" in call_args[1]["context"]
                 )  # Context included thinking phase
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_multimodal_query_detection(self, ollama_config):
         """Test detection of multimodal queries"""
@@ -335,6 +341,7 @@ class TestQueryAnalysisV3OllamaIntegration:
                 assert result.needs_visual_analysis is True
                 assert result.thinking_phase["modality_hints"]["video"] is True
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_temporal_query_analysis(self, ollama_config):
         """Test analysis of temporal queries"""
@@ -363,6 +370,7 @@ class TestQueryAnalysisV3OllamaIntegration:
                 ]
                 assert result.thinking_phase["temporal_indicators"]
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_entity_and_keyword_extraction(self, ollama_config):
         """Test entity and keyword extraction capabilities"""
@@ -402,6 +410,7 @@ class TestQueryAnalysisV3OllamaIntegration:
                 assert "about" not in result.keywords
                 assert "by" not in result.keywords
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_confidence_scoring_integration(self, ollama_config):
         """Test confidence scoring across different query types"""
@@ -433,6 +442,7 @@ class TestQueryAnalysisV3OllamaIntegration:
 class TestQueryAnalysisV3WorkflowIntegration:
     """Integration tests for complete workflow scenarios"""
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_end_to_end_simple_search_workflow(self, ollama_config):
         """Test complete workflow for simple search query"""
@@ -464,6 +474,7 @@ class TestQueryAnalysisV3WorkflowIntegration:
                 assert result.workflow_steps[0]["agent"] == "video_search"
                 assert result.thinking_phase["reasoning"] is not None
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_end_to_end_analytical_workflow(
         self, ollama_config, sample_conversation_context
@@ -502,6 +513,7 @@ class TestQueryAnalysisV3WorkflowIntegration:
                 assert len(result.temporal_filters) > 0
                 assert QueryIntent.TEMPORAL in result.secondary_intents
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_statistics_and_monitoring_integration(self, ollama_config):
         """Test statistics collection and monitoring"""
@@ -546,6 +558,7 @@ class TestQueryAnalysisV3WorkflowIntegration:
 class TestQueryAnalysisV3ErrorHandlingIntegration:
     """Integration tests for error handling scenarios"""
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_routing_agent_failure_handling(self, ollama_config):
         """Test handling of routing agent failures"""
@@ -577,6 +590,7 @@ class TestQueryAnalysisV3ErrorHandlingIntegration:
                 ]
                 assert len(result.workflow_steps) > 0
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_thinking_phase_error_handling(self, ollama_config):
         """Test handling of thinking phase errors"""
@@ -602,6 +616,7 @@ class TestQueryAnalysisV3ErrorHandlingIntegration:
 
                     assert "Thinking failed" in str(exc_info.value)
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_empty_and_edge_case_queries(self, ollama_config):
         """Test handling of empty and edge case queries"""
