@@ -4,6 +4,9 @@ Query Enhancement Engine for DSPy 3.0 Routing System
 This module implements sophisticated query enhancement using relationship tuples
 to improve search quality. It takes extracted entities and relationships and
 rewrites queries to increase the likelihood of better retrieval results.
+
+Phase 6.2: Enhanced with SIMBA (Similarity-Based Memory Augmentation) for 
+learning-based query enhancement using patterns from successful transformations.
 """
 
 import logging
@@ -14,6 +17,7 @@ import dspy
 
 from .dspy_routing_signatures import QueryEnhancementSignature
 from .relationship_extraction_tools import RelationshipExtractorTool
+from .simba_query_enhancer import SIMBAQueryEnhancer, SIMBAConfig
 
 logger = logging.getLogger(__name__)
 
@@ -707,25 +711,42 @@ class QueryEnhancementPipeline:
     """
     Complete query enhancement pipeline that integrates relationship extraction
     with advanced query rewriting for optimal search performance.
+    
+    Phase 6.2: Enhanced with SIMBA for learning-based query enhancement.
     """
     
-    def __init__(self):
+    def __init__(self, enable_simba: bool = True, simba_config: Optional[SIMBAConfig] = None):
         """Initialize the enhancement pipeline."""
         self.relationship_tool = RelationshipExtractorTool()
         self.dspy_enhancer = DSPyQueryEnhancerModule()
-        logger.info("Query enhancement pipeline initialized")
+        
+        # Phase 6.2: Initialize SIMBA enhancer
+        self.enable_simba = enable_simba
+        if enable_simba:
+            self.simba_enhancer = SIMBAQueryEnhancer(
+                config=simba_config or SIMBAConfig(),
+                storage_dir="data/enhancement"
+            )
+            logger.info("Query enhancement pipeline initialized with SIMBA")
+        else:
+            self.simba_enhancer = None
+            logger.info("Query enhancement pipeline initialized without SIMBA")
     
     async def enhance_query_with_relationships(
         self,
         query: str,
+        entities: Optional[List[Dict[str, Any]]] = None,
+        relationships: Optional[List[Dict[str, Any]]] = None,
         search_context: str = "general",
         entity_labels: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
-        Complete end-to-end query enhancement with relationship extraction.
+        Complete end-to-end query enhancement with relationship extraction and SIMBA learning.
         
         Args:
             query: Original query to enhance
+            entities: Pre-extracted entities (optional, will extract if not provided)
+            relationships: Pre-extracted relationships (optional, will extract if not provided) 
             search_context: Target search system context
             entity_labels: Optional entity labels for extraction
             
@@ -733,51 +754,108 @@ class QueryEnhancementPipeline:
             Complete enhancement results
         """
         try:
-            # Step 1: Extract entities and relationships
-            relationship_data = await self.relationship_tool.extract_comprehensive_relationships(
-                query, entity_labels
-            )
+            # Step 1: Extract entities and relationships if not provided
+            if entities is None or relationships is None:
+                relationship_data = await self.relationship_tool.extract_comprehensive_relationships(
+                    query, entity_labels
+                )
+                entities = relationship_data["entities"]
+                relationships = relationship_data["relationships"]
+                relationship_types = relationship_data["relationship_types"]
+                semantic_connections = relationship_data["semantic_connections"]
+                complexity_indicators = relationship_data.get("complexity_indicators", [])
+            else:
+                # Use provided entities and relationships
+                relationship_types = list(set([r.get("relation", "") for r in relationships if r.get("relation")]))
+                semantic_connections = []
+                complexity_indicators = []
             
-            entities = relationship_data["entities"]
-            relationships = relationship_data["relationships"]
+            # Step 2: Try SIMBA enhancement first (Phase 6.2)
+            simba_result = None
+            if self.enable_simba and self.simba_enhancer:
+                simba_result = await self.simba_enhancer.enhance_query_with_patterns(
+                    original_query=query,
+                    entities=entities,
+                    relationships=relationships,
+                    context=search_context
+                )
             
-            # Step 2: Enhance query with DSPy module
-            enhancement_prediction = self.dspy_enhancer.forward(
-                query, entities, relationships, search_context
-            )
+            # Step 3: Use SIMBA result or fallback to DSPy baseline
+            if simba_result and simba_result.get("enhanced", False):
+                # Use SIMBA enhancement
+                enhanced_query = simba_result["enhanced_query"]
+                enhancement_strategy = simba_result["enhancement_strategy"]
+                quality_score = simba_result["confidence"]
+                
+                # Create compatible structure for legacy code
+                enhancement_prediction_data = {
+                    "enhanced_query": enhanced_query,
+                    "semantic_expansions": [],
+                    "relationship_phrases": [],
+                    "enhancement_strategy": enhancement_strategy,
+                    "search_operators": [],
+                    "quality_score": quality_score
+                }
+                
+                logger.info(
+                    f"SIMBA enhanced query '{query[:50]}...' -> "
+                    f"'{enhanced_query[:50]}...' "
+                    f"(patterns: {simba_result.get('similar_patterns_used', 0)})"
+                )
+                
+            else:
+                # Fallback to DSPy baseline enhancement
+                enhancement_prediction = self.dspy_enhancer.forward(
+                    query, entities, relationships, search_context
+                )
+                
+                enhancement_prediction_data = {
+                    "enhanced_query": enhancement_prediction.enhanced_query,
+                    "semantic_expansions": enhancement_prediction.semantic_expansions,
+                    "relationship_phrases": enhancement_prediction.relationship_phrases,
+                    "enhancement_strategy": enhancement_prediction.enhancement_strategy,
+                    "search_operators": enhancement_prediction.search_operators,
+                    "quality_score": enhancement_prediction.quality_score
+                }
+                
+                logger.info(
+                    f"DSPy enhanced query '{query[:50]}...' -> "
+                    f"'{enhancement_prediction.enhanced_query[:50]}...' "
+                    f"(quality: {enhancement_prediction.quality_score})"
+                )
             
-            # Step 3: Combine results
+            # Step 4: Combine results
             complete_result = {
                 # Original extraction data
                 "original_query": query,
                 "extracted_entities": entities,
                 "extracted_relationships": relationships,
-                "relationship_types": relationship_data["relationship_types"],
-                "semantic_connections": relationship_data["semantic_connections"],
+                "relationship_types": relationship_types,
+                "semantic_connections": semantic_connections,
                 
                 # Enhancement results
-                "enhanced_query": enhancement_prediction.enhanced_query,
-                "semantic_expansions": enhancement_prediction.semantic_expansions,
-                "relationship_phrases": enhancement_prediction.relationship_phrases,
-                "enhancement_strategy": enhancement_prediction.enhancement_strategy,
-                "search_operators": enhancement_prediction.search_operators,
-                "quality_score": enhancement_prediction.quality_score,
+                "enhanced_query": enhancement_prediction_data["enhanced_query"],
+                "semantic_expansions": enhancement_prediction_data["semantic_expansions"],
+                "relationship_phrases": enhancement_prediction_data["relationship_phrases"],
+                "enhancement_strategy": enhancement_prediction_data["enhancement_strategy"],
+                "search_operators": enhancement_prediction_data["search_operators"],
+                "quality_score": enhancement_prediction_data["quality_score"],
+                
+                # SIMBA metadata
+                "simba_applied": simba_result is not None and simba_result.get("enhanced", False),
+                "simba_patterns_used": simba_result.get("similar_patterns_used", 0) if simba_result else 0,
+                "pattern_avg_improvement": simba_result.get("pattern_avg_improvement", 0.0) if simba_result else 0.0,
                 
                 # Metadata
                 "search_context": search_context,
                 "processing_metadata": {
                     "entities_found": len(entities),
                     "relationships_found": len(relationships),
-                    "enhancement_quality": enhancement_prediction.quality_score,
-                    "query_complexity": relationship_data.get("complexity_indicators", [])
+                    "enhancement_quality": enhancement_prediction_data["quality_score"],
+                    "query_complexity": complexity_indicators,
+                    "enhancement_method": "simba" if simba_result and simba_result.get("enhanced", False) else "dspy_baseline"
                 }
             }
-            
-            logger.info(
-                f"Enhanced query '{query[:50]}...' -> "
-                f"'{enhancement_prediction.enhanced_query[:50]}...' "
-                f"(quality: {enhancement_prediction.quality_score})"
-            )
             
             return complete_result
             
@@ -803,6 +881,79 @@ class QueryEnhancementPipeline:
                     "fallback_used": True
                 }
             }
+    
+    async def record_enhancement_outcome(
+        self,
+        original_query: str,
+        enhanced_query: str,
+        entities: List[Dict[str, Any]],
+        relationships: List[Dict[str, Any]],
+        enhancement_strategy: str,
+        search_quality_improvement: float,
+        routing_confidence_improvement: float,
+        user_satisfaction: Optional[float] = None
+    ) -> None:
+        """
+        Record outcome of query enhancement for SIMBA learning
+        
+        Args:
+            original_query: Original query
+            enhanced_query: Enhanced query
+            entities: Entities from query
+            relationships: Relationships from query
+            enhancement_strategy: Strategy used for enhancement
+            search_quality_improvement: Improvement in search quality (0-1)
+            routing_confidence_improvement: Improvement in routing confidence  
+            user_satisfaction: Optional user feedback (0-1)
+        """
+        if not self.enable_simba or not self.simba_enhancer:
+            return
+        
+        try:
+            await self.simba_enhancer.record_enhancement_outcome(
+                original_query=original_query,
+                enhanced_query=enhanced_query,
+                entities=entities,
+                relationships=relationships,
+                enhancement_strategy=enhancement_strategy,
+                search_quality_improvement=search_quality_improvement,
+                routing_confidence_improvement=routing_confidence_improvement,
+                user_satisfaction=user_satisfaction
+            )
+            
+            logger.debug(f"Recorded enhancement outcome for SIMBA learning: improvement={search_quality_improvement:.3f}")
+            
+        except Exception as e:
+            logger.error(f"Failed to record enhancement outcome: {e}")
+    
+    def get_simba_status(self) -> Dict[str, Any]:
+        """Get SIMBA enhancement status and metrics"""
+        if not self.enable_simba or not self.simba_enhancer:
+            return {"simba_enabled": False, "reason": "SIMBA disabled or not initialized"}
+        
+        try:
+            return self.simba_enhancer.get_enhancement_status()
+            
+        except Exception as e:
+            return {
+                "simba_enabled": True,
+                "error": str(e),
+                "status": "error"
+            }
+    
+    async def reset_simba_memory(self) -> bool:
+        """Reset SIMBA memory (useful for testing)"""
+        if not self.enable_simba or not self.simba_enhancer:
+            return False
+        
+        try:
+            await self.simba_enhancer.reset_memory()
+            logger.info("SIMBA enhancement memory reset")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to reset SIMBA memory: {e}")
+            return False
 
 
 # Factory functions
@@ -817,6 +968,6 @@ def create_dspy_query_enhancer() -> DSPyQueryEnhancerModule:
     return DSPyQueryEnhancerModule()
 
 
-def create_enhancement_pipeline() -> QueryEnhancementPipeline:
-    """Create complete query enhancement pipeline."""
-    return QueryEnhancementPipeline()
+def create_enhancement_pipeline(enable_simba: bool = True, simba_config: Optional[SIMBAConfig] = None) -> QueryEnhancementPipeline:
+    """Create complete query enhancement pipeline with optional SIMBA integration."""
+    return QueryEnhancementPipeline(enable_simba=enable_simba, simba_config=simba_config)
