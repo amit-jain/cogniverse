@@ -243,7 +243,8 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
         self,
         query: str,
         context: Optional[str] = None,
-        user_id: Optional[str] = None
+        user_id: Optional[str] = None,
+        require_orchestration: Optional[bool] = None
     ) -> RoutingDecision:
         """
         Enhanced query routing with relationship extraction and query enhancement
@@ -271,6 +272,11 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
                 context=context
             )
             
+            # Determine if orchestration is needed
+            needs_orchestration = self._assess_orchestration_need(
+                query, entities, relationships, routing_result, require_orchestration
+            )
+            
             # Create structured routing decision
             decision = RoutingDecision(
                 recommended_agent=routing_result.get("recommended_agent", "video_search_agent"),
@@ -284,7 +290,9 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
                     **enhancement_metadata,
                     "processing_time_ms": (datetime.now() - start_time).total_seconds() * 1000,
                     "dspy_routing_result": routing_result,
-                    "user_id": user_id
+                    "user_id": user_id,
+                    "needs_orchestration": needs_orchestration,
+                    "orchestration_signals": self._get_orchestration_signals(query, entities, relationships)
                 }
             )
             
@@ -485,6 +493,91 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
         }
         
         return fallback_mapping.get(primary_agent, ["video_search_agent"])
+
+    def _assess_orchestration_need(
+        self,
+        query: str,
+        entities: List[Dict[str, Any]],
+        relationships: List[Dict[str, Any]],
+        routing_result: Dict[str, Any],
+        require_orchestration: Optional[bool]
+    ) -> bool:
+        """Assess if query requires multi-agent orchestration"""
+        if require_orchestration is not None:
+            return require_orchestration
+        
+        # Heuristics for detecting orchestration need
+        orchestration_signals = 0
+        
+        # Check for multiple action verbs (find, analyze, summarize, compare, etc.)
+        action_verbs = ["find", "search", "analyze", "summarize", "compare", "generate", "create", "extract", "identify"]
+        query_lower = query.lower()
+        action_count = sum(1 for verb in action_verbs if verb in query_lower)
+        if action_count >= 2:
+            orchestration_signals += 1
+        
+        # Check for complex conjunctions (and, then, also, plus, etc.)
+        conjunctions = ["and", "then", "also", "plus", "followed by", "as well as"]
+        conjunction_count = sum(1 for conj in conjunctions if conj in query_lower)
+        if conjunction_count >= 1:
+            orchestration_signals += 1
+        
+        # Check query complexity (length, entity count, relationship count)
+        if len(query.split()) > 15:  # Long queries often need orchestration
+            orchestration_signals += 1
+        
+        if len(entities) > 5:  # Many entities suggest complex processing
+            orchestration_signals += 1
+        
+        if len(relationships) > 3:  # Complex relationships suggest multi-step processing
+            orchestration_signals += 1
+        
+        # Check for sequential indicators (first, then, finally, etc.)
+        sequential_indicators = ["first", "then", "finally", "after", "before", "next", "subsequently"]
+        if any(indicator in query_lower for indicator in sequential_indicators):
+            orchestration_signals += 1
+        
+        # Check routing confidence - low confidence might benefit from orchestration
+        if routing_result.get("confidence", 0.5) < 0.6:
+            orchestration_signals += 1
+        
+        # Orchestration needed if we have >= 3 signals
+        return orchestration_signals >= 3
+
+    def _get_orchestration_signals(
+        self,
+        query: str,
+        entities: List[Dict[str, Any]],
+        relationships: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Get detailed orchestration signals for debugging/analysis"""
+        query_lower = query.lower()
+        
+        # Action verbs detection
+        action_verbs = ["find", "search", "analyze", "summarize", "compare", "generate", "create", "extract", "identify"]
+        found_actions = [verb for verb in action_verbs if verb in query_lower]
+        
+        # Conjunctions detection
+        conjunctions = ["and", "then", "also", "plus", "followed by", "as well as"]
+        found_conjunctions = [conj for conj in conjunctions if conj in query_lower]
+        
+        # Sequential indicators
+        sequential_indicators = ["first", "then", "finally", "after", "before", "next", "subsequently"]
+        found_sequential = [indicator for indicator in sequential_indicators if indicator in query_lower]
+        
+        return {
+            "query_length": len(query.split()),
+            "entity_count": len(entities),
+            "relationship_count": len(relationships),
+            "action_verbs": found_actions,
+            "conjunctions": found_conjunctions,
+            "sequential_indicators": found_sequential,
+            "complexity_score": (
+                len(query.split()) / 20 +  # Normalize query length
+                len(entities) / 10 +       # Normalize entity count
+                len(relationships) / 5     # Normalize relationship count
+            )
+        }
 
     def _create_fallback_decision(self, query: str, error: str) -> RoutingDecision:
         """Create fallback routing decision when processing fails"""
