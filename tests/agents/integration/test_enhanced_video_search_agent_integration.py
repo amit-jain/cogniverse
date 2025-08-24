@@ -82,6 +82,7 @@ class TestEnhancedVideoSearchAgentIntegration:
 
     @patch("src.app.agents.enhanced_video_search_agent.get_config")
     @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_multimodal_search_workflow_integration(
         self, mock_vespa_client_class, mock_config, mock_vespa_client, mock_processor
@@ -129,6 +130,7 @@ class TestEnhancedVideoSearchAgentIntegration:
 
     @patch("src.app.agents.enhanced_video_search_agent.get_config")
     @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_a2a_message_processing_integration(
         self, mock_vespa_client_class, mock_config, mock_vespa_client, mock_processor
@@ -177,6 +179,7 @@ class TestEnhancedVideoSearchAgentIntegration:
 
     @patch("src.app.agents.enhanced_video_search_agent.get_config")
     @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_error_handling_integration(
         self, mock_vespa_client_class, mock_config, mock_vespa_client
@@ -209,6 +212,7 @@ class TestEnhancedVideoSearchAgentIntegration:
 
     @patch("src.app.agents.enhanced_video_search_agent.get_config")
     @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_concurrent_search_operations(
         self, mock_vespa_client_class, mock_config, mock_vespa_client, mock_processor
@@ -249,6 +253,7 @@ class TestEnhancedVideoSearchAgentIntegration:
 
     @patch("src.app.agents.enhanced_video_search_agent.get_config")
     @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_search_result_aggregation(
         self, mock_vespa_client_class, mock_config, mock_vespa_client, mock_processor
@@ -299,6 +304,7 @@ class TestEnhancedVideoSearchAgentIntegration:
 
     @patch("src.app.agents.enhanced_video_search_agent.get_config")
     @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_performance_monitoring_integration(
         self, mock_vespa_client_class, mock_config, mock_vespa_client
@@ -373,6 +379,7 @@ class TestEnhancedVideoSearchAgentEdgeCasesIntegration:
 
     @patch("src.app.agents.enhanced_video_search_agent.get_config")
     @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_large_file_handling_integration(
         self, mock_vespa_client_class, mock_config, mock_vespa_client, mock_processor
@@ -407,6 +414,7 @@ class TestEnhancedVideoSearchAgentEdgeCasesIntegration:
 
     @patch("src.app.agents.enhanced_video_search_agent.get_config")
     @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_empty_results_handling(
         self, mock_vespa_client_class, mock_config, mock_vespa_client
@@ -435,6 +443,7 @@ class TestEnhancedVideoSearchAgentEdgeCasesIntegration:
 
     @patch("src.app.agents.enhanced_video_search_agent.get_config")
     @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_malformed_a2a_message_handling(
         self, mock_vespa_client_class, mock_config, mock_vespa_client
@@ -471,6 +480,7 @@ class TestEnhancedVideoSearchAgentEdgeCasesIntegration:
 
     @patch("src.app.agents.enhanced_video_search_agent.get_config")
     @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_resource_cleanup_integration(
         self, mock_vespa_client_class, mock_config, mock_vespa_client, mock_processor

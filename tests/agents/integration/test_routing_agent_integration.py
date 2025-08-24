@@ -82,6 +82,7 @@ class TestRoutingAgentIntegration:
         )  # Should have at least fallback strategy
 
     @patch("src.app.agents.routing_agent.get_config")
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_real_routing_decision_flow(self, mock_get_config, test_config):
         """Test actual routing decision flow through comprehensive router"""
@@ -117,6 +118,7 @@ class TestRoutingAgentIntegration:
                 assert "parameters" in step
 
     @patch("src.app.agents.routing_agent.get_config")
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_routing_agent_context_propagation(
         self, mock_get_config, test_config
@@ -159,6 +161,7 @@ class TestRoutingAgentIntegration:
         assert agent.agent_registry["text_search"] == "http://localhost:8003"
 
     @patch("src.app.agents.routing_agent.get_config")
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_workflow_generation_consistency(self, mock_get_config, test_config):
         """Test that workflow generation is consistent across multiple calls"""
@@ -395,6 +398,7 @@ class TestRoutingAgentErrorHandling:
     """Test error handling in integration scenarios"""
 
     @patch("src.app.agents.routing_agent.get_config")
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_routing_failure_propagation(self, mock_get_config):
         """Test that routing failures are properly handled and propagated"""

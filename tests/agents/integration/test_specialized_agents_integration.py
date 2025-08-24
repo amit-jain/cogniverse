@@ -138,6 +138,7 @@ def mock_openai_client():
 class TestSummarizerAgentOpenAIIntegration:
     """Integration tests for SummarizerAgent with OpenAI-compatible APIs"""
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_summarizer_with_small_model(
         self, openai_compatible_config, sample_search_results, mock_openai_client
@@ -175,6 +176,7 @@ class TestSummarizerAgentOpenAIIntegration:
                 assert result.confidence_score > 0
                 assert result.metadata["summary_type"] == "brief"
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_summarizer_with_qwen_comprehensive(
         self, ollama_config, sample_search_results, mock_ollama_client
@@ -220,6 +222,7 @@ class TestSummarizerAgentOpenAIIntegration:
                     assert len(result.visual_insights) > 0
                     assert result.thinking_phase.reasoning is not None
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_summarizer_a2a_with_ollama(
         self, ollama_config, sample_search_results, mock_ollama_client
@@ -262,6 +265,7 @@ class TestSummarizerAgentOpenAIIntegration:
                 assert result["result"]["summary"] is not None
                 assert result["result"]["confidence_score"] > 0
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_summarizer_thinking_phase_with_ollama(
         self, ollama_config, sample_search_results, mock_ollama_client
@@ -301,6 +305,7 @@ class TestSummarizerAgentOpenAIIntegration:
 class TestDetailedReportAgentOllamaIntegration:
     """Integration tests for DetailedReportAgent with Ollama models"""
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_detailed_report_with_qwen(
         self, ollama_config, sample_search_results, mock_ollama_client
@@ -356,6 +361,7 @@ class TestDetailedReportAgentOllamaIntegration:
                     assert len(result.recommendations) > 0
                     assert result.confidence_assessment["overall"] > 0
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_detailed_report_technical_analysis(
         self, ollama_config, sample_search_results, mock_ollama_client
@@ -410,6 +416,7 @@ class TestDetailedReportAgentOllamaIntegration:
                 assert technical_section is not None
                 assert "mp4" in str(technical_section["details"])
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_detailed_report_a2a_with_ollama(
         self, ollama_config, sample_search_results, mock_ollama_client
@@ -460,6 +467,7 @@ class TestDetailedReportAgentOllamaIntegration:
                     assert len(result["result"]["detailed_findings"]) > 0
                     assert len(result["result"]["recommendations"]) > 0
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_detailed_report_pattern_identification(
         self, ollama_config, sample_search_results, mock_ollama_client
@@ -518,6 +526,7 @@ class TestDetailedReportAgentOllamaIntegration:
 class TestCrossAgentIntegration:
     """Integration tests across multiple agents with Ollama"""
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_summarizer_to_detailed_report_workflow(
         self, ollama_config, sample_search_results, mock_ollama_client
@@ -608,6 +617,7 @@ class TestCrossAgentIntegration:
                     )
                     assert report_result.confidence_assessment["overall"] > 0.7
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_model_switching_integration(
         self, ollama_config, sample_search_results, mock_ollama_client
@@ -665,6 +675,7 @@ class TestOllamaConfigurationIntegration:
         assert "smollm3" in ollama_config["models"]["small"]
         assert "qwen" in ollama_config["models"]["medium"]
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_ollama_model_availability_check(
         self, ollama_config, mock_ollama_client
@@ -685,6 +696,7 @@ class TestOllamaConfigurationIntegration:
             assert "smollm3:8b" in model_names
             assert "qwen:7b" in model_names
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_ollama_error_handling(self, ollama_config, mock_ollama_client):
         """Test Ollama error handling"""

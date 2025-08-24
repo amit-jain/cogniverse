@@ -127,6 +127,7 @@ def temp_optimized_prompts_dir():
 class TestDSPyOptimizerIntegration:
     """Integration tests for DSPy optimizer with OpenAI-compatible APIs."""
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_optimizer_with_local_llm(self, mock_openai_compatible_api):
         """Test DSPy optimizer with local LLM via OpenAI-compatible API."""
@@ -158,6 +159,7 @@ class TestDSPyOptimizerIntegration:
                 temperature=0.7,
             )
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_pipeline_optimization_with_mocked_teleprompter(
         self, mock_openai_compatible_api
@@ -223,6 +225,7 @@ class TestDSPyOptimizerIntegration:
                 # Verify optimize_module was called for each module
                 assert mock_optimize.call_count == len(expected_modules)
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_module_optimization_with_training_data(
         self, mock_openai_compatible_api
@@ -479,6 +482,7 @@ class TestDSPyAgentIntegration:
 class TestDSPyEndToEndOptimization:
     """End-to-end integration tests for DSPy optimization."""
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_optimization_to_agent_integration_pipeline(
         self, temp_optimized_prompts_dir, mock_openai_compatible_api
@@ -597,6 +601,7 @@ class TestDSPyEndToEndOptimization:
                             assert metadata["enabled"]
                             assert "agent_type" in metadata
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_performance_comparison_optimized_vs_default(self):
         """Test performance comparison between optimized and default prompts."""

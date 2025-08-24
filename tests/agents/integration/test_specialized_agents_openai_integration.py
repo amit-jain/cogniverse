@@ -143,6 +143,7 @@ def mock_openai_client():
 class TestSummarizerAgentOpenAIIntegration:
     """Integration tests for SummarizerAgent with OpenAI-compatible APIs"""
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_summarizer_with_small_model(
         self, openai_compatible_config, sample_search_results, mock_openai_client
@@ -187,6 +188,7 @@ class TestSummarizerAgentOpenAIIntegration:
                 assert result.confidence_score > 0
                 assert result.metadata["summary_type"] == "brief"
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_summarizer_with_medium_model_comprehensive(
         self, openai_compatible_config, sample_search_results, mock_openai_client
@@ -231,6 +233,7 @@ class TestSummarizerAgentOpenAIIntegration:
                     assert len(result.visual_insights) > 0
                     assert result.thinking_phase.reasoning is not None
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_summarizer_a2a_with_openai_api(
         self, openai_compatible_config, sample_search_results, mock_openai_client
@@ -274,6 +277,7 @@ class TestSummarizerAgentOpenAIIntegration:
 class TestDetailedReportAgentOpenAIIntegration:
     """Integration tests for DetailedReportAgent with OpenAI-compatible APIs"""
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_detailed_report_with_medium_model(
         self, openai_compatible_config, sample_search_results, mock_openai_client
@@ -328,6 +332,7 @@ class TestDetailedReportAgentOpenAIIntegration:
                     assert len(result.recommendations) > 0
                     assert result.confidence_assessment["overall"] > 0
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_detailed_report_a2a_with_openai_api(
         self, openai_compatible_config, sample_search_results, mock_openai_client
@@ -382,6 +387,7 @@ class TestDetailedReportAgentOpenAIIntegration:
 class TestCrossAgentIntegrationWithOpenAI:
     """Integration tests across multiple agents with OpenAI-compatible APIs"""
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_summarizer_to_detailed_report_workflow(
         self, openai_compatible_config, sample_search_results, mock_openai_client
@@ -480,6 +486,7 @@ class TestOpenAIConfigurationIntegration:
         assert "smollm3" in openai_compatible_config["models"]["small"]
         assert "qwen" in openai_compatible_config["models"]["medium"]
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_openai_client_initialization(
         self, openai_compatible_config, mock_openai_client
@@ -498,6 +505,7 @@ class TestOpenAIConfigurationIntegration:
         assert response.choices[0].message.content is not None
         assert response.model == "smollm3:8b"
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_openai_error_handling(
         self, openai_compatible_config, mock_openai_client
