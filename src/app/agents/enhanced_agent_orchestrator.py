@@ -13,7 +13,7 @@ from src.app.agents.enhanced_result_aggregator import (
     AggregatedResult, 
     EnhancedResultAggregator
 )
-from src.backends.vespa.vespa_client import VespaClient
+from src.backends.vespa.vespa_search_client import VespaVideoSearchClient
 from src.common.config import get_config
 
 logger = logging.getLogger(__name__)
@@ -95,7 +95,7 @@ class EnhancedAgentOrchestrator:
             logger.info("Result aggregator initialized")
             
             # Initialize Vespa client
-            self.vespa_client = VespaClient()
+            self.vespa_client = VespaVideoSearchClient()
             logger.info("Vespa client initialized")
             
         except Exception as e:
