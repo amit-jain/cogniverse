@@ -16,6 +16,7 @@ Key Features:
 
 import asyncio
 import logging
+import json
 from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -36,6 +37,9 @@ from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
 
 # Phase 6: GRPO optimization
 from src.app.routing.grpo_optimizer import GRPORoutingOptimizer, GRPOConfig
+
+# Phase 6.4: MLflow integration
+from src.app.routing.mlflow_integration import MLflowIntegration, ExperimentConfig
 
 # A2A protocol imports
 from src.tools.a2a_utils import A2AClient
@@ -114,6 +118,11 @@ class EnhancedRoutingConfig:
     # GRPO optimization configuration
     grpo_config: Optional[GRPOConfig] = None
     optimization_storage_dir: str = "data/optimization"
+    
+    # MLflow integration configuration
+    enable_mlflow_tracking: bool = True
+    mlflow_experiment_name: str = "enhanced_routing_agent"
+    mlflow_tracking_uri: str = "http://localhost:5000"
 
 
 class EnhancedRoutingAgent(DSPyA2AAgentBase):
@@ -147,6 +156,9 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
         
         # Initialize Phase 6: GRPO optimization
         self._initialize_grpo_optimizer()
+        
+        # Initialize Phase 6.4: MLflow integration
+        self._initialize_mlflow_tracking()
         
         # Initialize A2A base with DSPy module
         super().__init__(
@@ -275,6 +287,39 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
             self.logger.error(f"Failed to initialize GRPO optimizer: {e}")
             self.grpo_optimizer = None
 
+    def _initialize_mlflow_tracking(self) -> None:
+        """Initialize Phase 6.4: MLflow tracking integration"""
+        try:
+            if self.config.enable_mlflow_tracking:
+                mlflow_config = ExperimentConfig(
+                    experiment_name=self.config.mlflow_experiment_name,
+                    tracking_uri=self.config.mlflow_tracking_uri,
+                    description="Enhanced routing agent with DSPy 3.0, GRPO, SIMBA, and adaptive thresholds",
+                    tags={
+                        "component": "routing_agent",
+                        "version": "1.0.0",
+                        "features": "dspy,grpo,simba,adaptive_thresholds"
+                    },
+                    auto_log_parameters=True,
+                    auto_log_metrics=True,
+                    track_dspy_modules=True,
+                    track_optimization_state=True,
+                    track_threshold_parameters=True
+                )
+                
+                self.mlflow_integration = MLflowIntegration(
+                    config=mlflow_config,
+                    storage_dir=f"{self.config.optimization_storage_dir}/mlflow"
+                )
+                self.logger.info("MLflow tracking integration initialized")
+            else:
+                self.mlflow_integration = None
+                self.logger.info("MLflow tracking disabled")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to initialize MLflow tracking: {e}")
+            self.mlflow_integration = None
+
     def _get_routing_capabilities(self) -> List[str]:
         """Get routing agent capabilities"""
         capabilities = [
@@ -302,6 +347,13 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
                 "grpo_optimization",
                 "adaptive_learning",
                 "performance_optimization"
+            ])
+        
+        if self.config.enable_mlflow_tracking:
+            capabilities.extend([
+                "mlflow_tracking",
+                "experiment_management",
+                "performance_monitoring"
             ])
             
         return capabilities
@@ -862,6 +914,31 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
                 user_satisfaction=user_satisfaction
             )
             
+            # Log to MLflow if enabled
+            if self.mlflow_integration:
+                try:
+                    performance_metrics = {
+                        "search_quality": search_quality,
+                        "agent_success": 1.0 if agent_success else 0.0,
+                        "processing_time": processing_time,
+                        "routing_confidence": decision.confidence,
+                        "grpo_reward": reward if reward is not None else 0.0
+                    }
+                    
+                    if user_satisfaction is not None:
+                        performance_metrics["user_satisfaction"] = user_satisfaction
+                    
+                    # Use MLflow context if available
+                    if hasattr(self.mlflow_integration, 'current_run') and self.mlflow_integration.current_run:
+                        await self.mlflow_integration.log_routing_performance(
+                            query=decision.query,
+                            routing_decision=decision.metadata,
+                            performance_metrics=performance_metrics,
+                            step=self._routing_stats["total_queries"]
+                        )
+                except Exception as e:
+                    self.logger.warning(f"Failed to log to MLflow: {e}")
+            
             self.logger.info(
                 f"Recorded routing outcome: agent={decision.recommended_agent}, "
                 f"success={agent_success}, reward={reward:.3f}"
@@ -949,6 +1026,112 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
             self.logger.error(f"Failed to reset GRPO optimization: {e}")
             return False
 
+    def get_mlflow_status(self) -> Dict[str, Any]:
+        """Get MLflow tracking status and experiment information"""
+        if not self.mlflow_integration:
+            return {"mlflow_enabled": False, "reason": "MLflow tracking disabled"}
+        
+        try:
+            return {
+                "mlflow_enabled": True,
+                "experiment_summary": self.mlflow_integration.get_experiment_summary(),
+                "current_run_active": self.mlflow_integration.current_run is not None,
+                "total_samples_logged": self.mlflow_integration.total_samples_logged,
+                "tracking_uri": self.config.mlflow_tracking_uri
+            }
+            
+        except Exception as e:
+            return {
+                "mlflow_enabled": True,
+                "error": str(e),
+                "status": "error"
+            }
+
+    def start_mlflow_run(self, run_name: Optional[str] = None, tags: Optional[Dict[str, str]] = None):
+        """Start MLflow run context manager"""
+        if not self.mlflow_integration:
+            # Return dummy context manager
+            from contextlib import nullcontext
+            return nullcontext()
+        
+        additional_tags = {
+            "agent_type": "enhanced_routing_agent",
+            "grpo_enabled": self.config.enable_grpo_optimization,
+            "simba_enabled": self.config.enable_query_enhancement,
+            "adaptive_thresholds_enabled": True,
+            **(tags or {})
+        }
+        
+        return self.mlflow_integration.start_run(run_name=run_name, tags=additional_tags)
+
+    async def log_optimization_metrics(self):
+        """Log optimization metrics from GRPO, SIMBA, and adaptive thresholds"""
+        if not self.mlflow_integration or not self.mlflow_integration.current_run:
+            return
+        
+        try:
+            # Get GRPO metrics
+            grpo_metrics = None
+            if self.grpo_optimizer:
+                grpo_metrics = self.grpo_optimizer.get_optimization_status()
+            
+            # Get SIMBA metrics (would need to access query enhancer)
+            simba_metrics = None
+            if hasattr(self, 'query_enhancer') and hasattr(self.query_enhancer, 'get_simba_status'):
+                simba_metrics = self.query_enhancer.get_simba_status()
+            
+            # Get threshold metrics (would need adaptive threshold learner)
+            threshold_metrics = None
+            # This would be implemented when adaptive threshold learner is integrated
+            
+            # Log to MLflow
+            await self.mlflow_integration.log_optimization_metrics(
+                grpo_metrics=grpo_metrics,
+                simba_metrics=simba_metrics,
+                threshold_metrics=threshold_metrics,
+                step=self._routing_stats["total_queries"]
+            )
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to log optimization metrics to MLflow: {e}")
+
+    async def save_dspy_model(self, model_name: str = "enhanced_routing_model", description: str = ""):
+        """Save current DSPy routing module to MLflow model registry"""
+        if not self.mlflow_integration or not self.routing_module:
+            return None
+        
+        try:
+            tags = {
+                "model_type": "dspy_routing_module",
+                "agent_type": "enhanced_routing_agent",
+                "features": "relationship_extraction,query_enhancement,grpo_optimization"
+            }
+            
+            model_uri = self.mlflow_integration.save_dspy_model(
+                model=self.routing_module,
+                model_name=model_name,
+                description=description or "Enhanced routing agent DSPy module with relationship extraction and optimization",
+                tags=tags
+            )
+            
+            if model_uri:
+                self.logger.info(f"DSPy model saved to MLflow: {model_uri}")
+            
+            return model_uri
+            
+        except Exception as e:
+            self.logger.error(f"Failed to save DSPy model to MLflow: {e}")
+            return None
+
+    def cleanup_mlflow(self):
+        """Cleanup MLflow integration"""
+        if self.mlflow_integration:
+            try:
+                self.mlflow_integration.cleanup()
+                self.logger.info("MLflow integration cleaned up")
+            except Exception as e:
+                self.logger.error(f"MLflow cleanup failed: {e}")
+
 
 def create_enhanced_routing_agent(
     config: Optional[EnhancedRoutingConfig] = None,
@@ -968,32 +1151,53 @@ if __name__ == "__main__":
     import asyncio
     
     async def main():
-        # Create enhanced routing agent with local SmolLM 3B
+        # Create enhanced routing agent with local SmolLM 3B and MLflow tracking
         config = EnhancedRoutingConfig(
             model_name="smollm3:3b",
             base_url="http://localhost:11434/v1",
             confidence_threshold=0.7,
             enable_relationship_extraction=True,
-            enable_query_enhancement=True
+            enable_query_enhancement=True,
+            enable_grpo_optimization=True,
+            enable_mlflow_tracking=True,
+            mlflow_experiment_name="enhanced_routing_demo",
+            mlflow_tracking_uri="http://localhost:5000"
         )
         
         agent = create_enhanced_routing_agent(config, port=8001)
         
-        # Test queries
-        test_queries = [
-            "Show me videos of robots playing soccer in tournaments",
-            "Summarize the key findings from the latest AI research papers",
-            "Generate a detailed report on renewable energy trends"
-        ]
-        
-        for query in test_queries:
-            print(f"\nProcessing: {query}")
-            decision = await agent.route_query(query)
-            print(f"Route to: {decision.recommended_agent} (confidence: {decision.confidence:.3f})")
-            print(f"Enhanced query: {decision.enhanced_query}")
-            print(f"Entities: {len(decision.extracted_entities)}")
-            print(f"Relationships: {len(decision.extracted_relationships)}")
-        
+        # Start MLflow run for this demonstration
+        with agent.start_mlflow_run(run_name="routing_demo", tags={"demo": "true"}):
+            # Test queries
+            test_queries = [
+                "Show me videos of robots playing soccer in tournaments",
+                "Summarize the key findings from the latest AI research papers", 
+                "Generate a detailed report on renewable energy trends"
+            ]
+            
+            for query in test_queries:
+                print(f"\nProcessing: {query}")
+                decision = await agent.route_query(query)
+                print(f"Route to: {decision.recommended_agent} (confidence: {decision.confidence:.3f})")
+                print(f"Enhanced query: {decision.enhanced_query}")
+                print(f"Entities: {len(decision.entities)}")
+                print(f"Relationships: {len(decision.relationships)}")
+                
+                # Simulate routing outcome for GRPO learning
+                await agent.record_routing_outcome(
+                    decision=decision,
+                    search_quality=0.8,
+                    agent_success=True,
+                    processing_time=0.15,
+                    user_satisfaction=0.85
+                )
+            
+            # Log optimization metrics
+            await agent.log_optimization_metrics()
+            
+            # Save model to registry
+            await agent.save_dspy_model("demo_routing_model", "Demo model from example")
+            
         # Print statistics
         print("\nRouting Statistics:")
         stats = agent.get_routing_statistics()
@@ -1002,5 +1206,17 @@ if __name__ == "__main__":
                 print(f"  {key}: {value:.3f}")
             else:
                 print(f"  {key}: {value}")
+        
+        # Print MLflow status
+        print("\nMLflow Status:")
+        mlflow_status = agent.get_mlflow_status()
+        for key, value in mlflow_status.items():
+            if isinstance(value, dict):
+                print(f"  {key}: {json.dumps(value, indent=4)}")
+            else:
+                print(f"  {key}: {value}")
+        
+        # Cleanup
+        agent.cleanup_mlflow()
     
     asyncio.run(main())
