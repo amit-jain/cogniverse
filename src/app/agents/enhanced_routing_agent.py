@@ -35,7 +35,7 @@ from src.app.routing.dspy_relationship_router import DSPyAdvancedRoutingModule
 from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
 
 # A2A protocol imports
-from src.app.agents.a2a_client import A2AClient
+from src.tools.a2a_utils import A2AClient
 
 
 @dataclass
@@ -140,6 +140,23 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
             "relationship_extractions": 0,
             "confidence_scores": []
         }
+
+    @property
+    def enhanced_system_available(self) -> bool:
+        """Check if enhanced routing features are available"""
+        has_relationship_extraction = (
+            self.config.enable_relationship_extraction and 
+            self.relationship_extractor is not None
+        )
+        
+        has_query_enhancement = (
+            self.config.enable_query_enhancement and 
+            self.query_enhancer is not None
+        )
+        
+        has_routing_module = self.routing_module is not None
+        
+        return has_relationship_extraction and has_query_enhancement and has_routing_module
 
     def _configure_dspy(self) -> None:
         """Configure DSPy 3.0 with local SmolLM via Ollama"""
@@ -647,6 +664,65 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
             "relationships": routing_decision.extracted_relationships,
             "metadata": routing_decision.routing_metadata
         }
+    
+    def _dspy_to_a2a_output(self, dspy_output: Any) -> Dict[str, Any]:
+        """Convert DSPy routing output to A2A format"""
+        if isinstance(dspy_output, dict):
+            return {
+                "status": "success",
+                "routing_decision": dspy_output,
+                "agent": self.agent_name,
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            return {
+                "status": "success", 
+                "routing_decision": str(dspy_output),
+                "agent": self.agent_name,
+                "timestamp": datetime.now().isoformat()
+            }
+    
+    def _get_agent_skills(self) -> List[Dict[str, Any]]:
+        """Define enhanced routing agent skills for A2A protocol"""
+        base_skills = [
+            {
+                "name": "route_query",
+                "description": "Route queries to appropriate agents with relationship-aware intelligence",
+                "input_schema": {
+                    "query": "string",
+                    "context": "string (optional)",
+                    "user_id": "string (optional)"
+                },
+                "output_schema": {
+                    "recommended_agent": "string",
+                    "confidence": "number",
+                    "reasoning": "string",
+                    "enhanced_query": "string",
+                    "entities": "array",
+                    "relationships": "array"
+                }
+            }
+        ]
+        
+        if self.config.enable_relationship_extraction:
+            base_skills.extend([
+                {
+                    "name": "extract_relationships",
+                    "description": "Extract entities and relationships from text",
+                    "input_schema": {"query": "string"},
+                    "output_schema": {"entities": "array", "relationships": "array"}
+                }
+            ])
+        
+        if self.config.enable_query_enhancement:
+            base_skills.append({
+                "name": "enhance_query",
+                "description": "Enhance queries with relationship context",
+                "input_schema": {"query": "string", "entities": "array", "relationships": "array"},
+                "output_schema": {"enhanced_query": "string", "metadata": "object"}
+            })
+        
+        return base_skills
 
 
 def create_enhanced_routing_agent(

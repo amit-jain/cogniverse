@@ -38,12 +38,15 @@ try:
 except ImportError:
     SQLITE_AVAILABLE = False
 
-# Workflow orchestration imports
-from src.app.agents.multi_agent_orchestrator import (
+# Shared workflow types
+from src.app.agents.workflow_types import (
     WorkflowPlan,
     WorkflowTask,
     WorkflowStatus,
-    TaskStatus
+    TaskStatus,
+    WorkflowExecutionResult,
+    WorkflowTemplate,
+    AgentPerformanceProfile
 )
 
 

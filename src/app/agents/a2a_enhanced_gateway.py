@@ -36,7 +36,7 @@ from src.app.agents.multi_agent_orchestrator import (
 )
 
 # Original A2A imports (for fallback compatibility)
-from src.app.agents.a2a_client import A2AClient
+from src.tools.a2a_utils import A2AClient
 
 # Existing agent imports (for fallback routing)
 try:

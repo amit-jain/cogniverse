@@ -28,7 +28,7 @@ import uuid
 import dspy
 
 # A2A protocol imports
-from src.app.agents.a2a_client import A2AClient
+from src.tools.a2a_utils import A2AClient
 
 # Enhanced routing imports
 from src.app.agents.enhanced_routing_agent import (
@@ -36,63 +36,24 @@ from src.app.agents.enhanced_routing_agent import (
     RoutingDecision,
     EnhancedRoutingConfig
 )
+# Shared workflow types 
+from src.app.agents.workflow_types import (
+    WorkflowPlan,
+    WorkflowTask, 
+    WorkflowStatus,
+    TaskStatus,
+    WorkflowExecutionResult,
+    WorkflowTemplate,
+    AgentPerformanceProfile
+)
+
+# Workflow intelligence (import after types to avoid circular dependency)
 from src.app.agents.workflow_intelligence import (
     WorkflowIntelligence,
     OptimizationStrategy,
     create_workflow_intelligence
 )
 
-
-class WorkflowStatus(Enum):
-    """Workflow execution status"""
-    PENDING = "pending"
-    RUNNING = "running" 
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-    PARTIALLY_COMPLETED = "partially_completed"
-
-
-class TaskStatus(Enum):
-    """Individual task status"""
-    WAITING = "waiting"
-    READY = "ready"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    SKIPPED = "skipped"
-
-
-@dataclass
-class WorkflowTask:
-    """Individual task within a workflow"""
-    task_id: str
-    agent_name: str
-    query: str
-    dependencies: Set[str] = field(default_factory=set)
-    parameters: Dict[str, Any] = field(default_factory=dict)
-    status: TaskStatus = TaskStatus.WAITING
-    result: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
-    start_time: Optional[datetime] = None
-    end_time: Optional[datetime] = None
-    timeout_seconds: int = 300  # 5 minutes default
-    retry_count: int = 0
-    max_retries: int = 2
-
-
-@dataclass
-class WorkflowPlan:
-    """Complete workflow execution plan"""
-    workflow_id: str
-    original_query: str
-    tasks: List[WorkflowTask] = field(default_factory=list)
-    execution_order: List[List[str]] = field(default_factory=list)  # Parallel execution groups
-    status: WorkflowStatus = WorkflowStatus.PENDING
-    start_time: Optional[datetime] = None
-    end_time: Optional[datetime] = None
-    final_result: Optional[Dict[str, Any]] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class WorkflowPlannerSignature(dspy.Signature):
