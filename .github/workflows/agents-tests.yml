@@ -1,0 +1,353 @@
+name: Agents Tests
+
+on:
+  push:
+    branches: [ main, develop, feature/* ]
+    paths:
+      - 'src/app/agents/**'
+      - 'src/common/**'
+      - 'tests/agents/**'
+      - 'pytest.ini'
+      - 'pyproject.toml'
+      - '.github/workflows/agents-tests.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'src/app/agents/**'
+      - 'src/common/**'
+      - 'tests/agents/**'
+      - 'pytest.ini'
+      - 'pyproject.toml'
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg libgl1-mesa-dri libgl1 libglib2.0-0
+    
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+    
+    - name: Install dependencies
+      run: |
+        uv sync --all-extras
+        uv pip install pytest-cov torch dspy-ai
+    
+    - name: Run unit tests
+      env:
+        COVERAGE_FILE: .coverage
+      run: |
+        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/unit -m unit \
+          --cov=src/app/agents \
+          --cov-report=term-missing \
+          --cov-report=xml:coverage_agents.xml
+        # Rename the coverage file to avoid conflicts and make it uploadable
+        if [ -f .coverage ]; then
+          echo "✅ Coverage file found, renaming to coverage_unit.dat"
+          mv .coverage coverage_unit.dat
+        else
+          echo "⚠️ No .coverage file found - this will affect coverage combining"
+        fi
+    
+    - name: Upload coverage data
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-unit
+        path: coverage_unit.dat
+        retention-days: 1
+        if-no-files-found: warn
+    
+    - name: Upload coverage XML
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-unit-xml
+        path: coverage_agents.xml
+        retention-days: 1
+        if-no-files-found: warn
+    
+
+  lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+    
+    - name: Install dependencies
+      run: |
+        uv sync --all-extras
+        uv pip install pytest-cov torch dspy-ai
+    
+    - name: Run linting
+      run: |
+        make lint-agents
+
+  test-cli:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg libgl1-mesa-dri libgl1 libglib2.0-0
+    
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+    
+    - name: Install dependencies
+      run: |
+        uv sync --all-extras
+        uv pip install pytest-cov torch dspy-ai
+    
+    - name: Test agent modules
+      run: |        
+        # Test agent module imports
+        uv run python -c "from src.app.agents.routing_agent import RoutingAgent; print('RoutingAgent import successful')"
+        
+        uv run python -c "from src.app.agents.query_analysis_tool_v3 import QueryAnalysisToolV3; print('QueryAnalysisToolV3 import successful')"
+        
+        uv run python -c "from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent; print('EnhancedVideoSearchAgent import successful')"
+        
+        uv run python -c "from src.app.agents.summarizer_agent import SummarizerAgent; print('SummarizerAgent import successful')"
+        
+        uv run python -c "from src.app.agents.detailed_report_agent import DetailedReportAgent; print('DetailedReportAgent import successful')"
+        
+        # Test DSPy integration
+        uv run python -c "
+        from src.app.agents.dspy_agent_optimizer import DSPyAgentPromptOptimizer
+        optimizer = DSPyAgentPromptOptimizer()
+        print('✅ DSPy optimizer import successful')
+        "
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg libgl1-mesa-dri libgl1 libglib2.0-0
+    
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+    
+    - name: Install dependencies
+      run: |
+        uv sync --all-extras
+        uv pip install pytest-cov torch dspy-ai
+    
+    - name: Check for external services
+      run: |
+        echo "🔍 Checking for external service dependencies..."
+        
+        # Check if Ollama is available (for E2E tests)
+        if curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
+          echo "✅ Ollama is available"
+          echo "SKIP_OLLAMA_TESTS=false" >> $GITHUB_ENV
+        else
+          echo "⚠️ Ollama not available - will skip Ollama-dependent tests"
+          echo "SKIP_OLLAMA_TESTS=true" >> $GITHUB_ENV
+        fi
+        
+        # Check if Vespa is available (for video search tests)
+        if curl -s http://localhost:8080/state/v1/health >/dev/null 2>&1; then
+          echo "✅ Vespa is available"
+          echo "SKIP_VESPA_TESTS=false" >> $GITHUB_ENV
+        else
+          echo "⚠️ Vespa not available - will skip Vespa-dependent tests"
+          echo "SKIP_VESPA_TESTS=true" >> $GITHUB_ENV
+        fi
+    
+    - name: Run integration tests
+      env:
+        COVERAGE_FILE: .coverage
+      run: |
+        # Run integration tests with coverage reporting only (no failure threshold)
+        echo "🧪 Running integration tests (skipping external service dependencies)..."
+        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/integration/ \
+          -m "integration and not requires_ollama and not requires_vespa" \
+          -v \
+          --tb=short \
+          --cov=src/app/agents \
+          --cov-report=term-missing \
+          --cov-report=xml:coverage_agents_integration.xml
+        
+        # Rename the coverage file to avoid conflicts and make it uploadable
+        if [ -f .coverage ]; then
+          echo "✅ Integration coverage file found, renaming to coverage_integration.dat"
+          mv .coverage coverage_integration.dat
+        else
+          echo "⚠️ No .coverage file found - this will affect coverage combining"
+        fi
+    
+    - name: Upload coverage data
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-integration
+        path: coverage_integration.dat
+        retention-days: 1
+        if-no-files-found: warn
+    
+    - name: Upload coverage XML
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-integration-xml
+        path: coverage_agents_integration.xml
+        retention-days: 1
+        if-no-files-found: warn
+
+  coverage-report:
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests]
+    if: always() && (needs.unit-tests.result == 'success' || needs.integration-tests.result == 'success')
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+    
+    - name: Install coverage tools
+      run: |
+        pip install coverage[toml]
+    
+    - name: Download unit test coverage
+      uses: actions/download-artifact@v4
+      with:
+        name: coverage-unit
+        path: ./coverage-unit/
+      continue-on-error: true
+    
+    - name: Download unit test coverage XML
+      uses: actions/download-artifact@v4
+      with:
+        name: coverage-unit-xml
+        path: ./coverage-unit-xml/
+      continue-on-error: true
+    
+    - name: Download integration test coverage
+      uses: actions/download-artifact@v4
+      with:
+        name: coverage-integration
+        path: ./coverage-integration/
+      continue-on-error: true
+    
+    - name: Download integration test coverage XML
+      uses: actions/download-artifact@v4
+      with:
+        name: coverage-integration-xml
+        path: ./coverage-integration-xml/
+      continue-on-error: true
+    
+    - name: Combine coverage reports
+      run: |
+        # Copy coverage files with unique names
+        mkdir -p combined-coverage
+        has_coverage=false
+        
+        # Look for unit coverage file (uploaded as coverage_unit.dat)
+        if [ -f ./coverage-unit/coverage_unit.dat ]; then
+          cp ./coverage-unit/coverage_unit.dat combined-coverage/.coverage.unit
+          echo "✅ Copied unit coverage"
+          has_coverage=true
+        else
+          echo "❌ No unit coverage file found"
+        fi
+        
+        # Look for integration coverage file (uploaded as coverage_integration.dat)
+        if [ -f ./coverage-integration/coverage_integration.dat ]; then
+          cp ./coverage-integration/coverage_integration.dat combined-coverage/.coverage.integration
+          echo "✅ Copied integration coverage"
+          has_coverage=true
+        else
+          echo "❌ No integration coverage file found"
+        fi
+        
+        # Only combine if we have coverage files
+        if [ "$has_coverage" = true ]; then
+          cd combined-coverage
+          ls -la .coverage.*
+          coverage combine .coverage.*
+        else
+          echo "⚠️ No coverage files to combine, skipping"
+          mkdir -p combined-coverage
+          cd combined-coverage
+          # Create empty coverage file so later steps don't fail
+          echo "No coverage data available" > coverage-combined.xml
+        fi
+        
+        # Generate reports only if we have coverage data
+        if [ "$has_coverage" = true ]; then
+          echo "📊 Generating coverage reports..."
+          coverage report --show-missing
+          coverage xml -o coverage-combined.xml
+          coverage html -d htmlcov-combined
+          
+          echo "## Agents Module Coverage Summary" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          coverage report >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        else
+          echo "⚠️ No coverage data to report" >> $GITHUB_STEP_SUMMARY
+          # Create dummy files so upload doesn't fail
+          mkdir -p htmlcov-combined
+          echo "<html><body>No coverage data available</body></html>" > htmlcov-combined/index.html
+        fi
+    
+    - name: Upload combined coverage report
+      uses: actions/upload-artifact@v4
+      with:
+        name: agents-coverage-combined
+        path: |
+          combined-coverage/coverage-combined.xml
+          combined-coverage/htmlcov-combined/
+        retention-days: 7

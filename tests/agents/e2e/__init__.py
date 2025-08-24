@@ -6,7 +6,7 @@ to test complete workflows without mocks.
 
 Test Categories:
 - Real LLM Integration: Tests with actual Ollama models
-- Real DSPy Optimization: Tests actual prompt optimization pipeline  
+- Real DSPy Optimization: Tests actual prompt optimization pipeline
 - Real Multi-Agent Workflow: Tests complete agent communication
 - Performance Comparison: Tests optimized vs default agent performance
 
