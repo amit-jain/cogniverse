@@ -8,9 +8,10 @@ dependencies = [
     "modal>=1.0.5",
     # Machine Learning Dependencies
     "jax>=0.7.0",
-    "jaxlib>=0.7.0", 
-    "torch>=2.8.0",
+    "jaxlib>=0.7.0",
+    "torch>=2.5.0",
     "transformers>=4.50.0",
+    "colpali-engine>=0.3.12",
     # Computer Vision Dependencies
     "numpy>=1.24.0",
     "opencv-python>=4.8.0",
@@ -42,6 +43,7 @@ dependencies = [
     "aiofiles>=24.1.0",
     "msgpack>=1.1.1",
     "opencv-python>=4.12.0.88",
+    "dspy-ai>=3.0.2",
 ]
 
 [project.optional-dependencies]
@@ -161,4 +163,12 @@ disable_error_code = [
     "call-overload",      # Function overload issues
     "abstract",           # Abstract class instantiation
     "list-item",          # List item type mismatches
+]
+
+[dependency-groups]
+dev = [
+    "black>=25.1.0",
+    "isort>=6.0.1",
+    "mypy>=1.17.1",
+    "ruff>=0.12.9",
 ]
