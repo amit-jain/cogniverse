@@ -1,0 +1,612 @@
+"""
+Enhanced Routing Agent with DSPy 3.0, Relationship Extraction, and Query Enhancement
+
+This agent combines all Phase 1-3 components:
+- Phase 1: DSPy-A2A integration with local SmolLM 3B
+- Phase 2: Relationship extraction for routing intelligence  
+- Phase 3: Query enhancement with relationship context
+
+Key Features:
+- Uses DSPy 3.0 as core implementation
+- Extracts relationships for intelligent routing decisions
+- Enhances queries with relationship tuples before routing
+- Maintains A2A protocol compatibility
+- Supports local SmolLM 3B via Ollama OpenAI-compatible API
+"""
+
+import asyncio
+import logging
+from typing import Any, Dict, List, Optional, Tuple, Union
+from dataclasses import dataclass, field
+from datetime import datetime
+
+# DSPy 3.0 imports
+import dspy
+from dspy import LM
+
+# Phase 1-3 component imports
+from src.app.agents.dspy_a2a_agent_base import DSPyA2AAgentBase
+from src.app.routing.dspy_routing_signatures import (
+    BasicQueryAnalysisSignature,
+    AdvancedRoutingSignature,
+)
+from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
+from src.app.routing.dspy_relationship_router import DSPyAdvancedRoutingModule
+from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
+
+# A2A protocol imports
+from src.app.agents.a2a_client import A2AClient
+
+
+@dataclass
+class RoutingDecision:
+    """Structured routing decision with confidence and reasoning"""
+    recommended_agent: str
+    confidence: float
+    reasoning: str
+    fallback_agents: List[str] = field(default_factory=list)
+    enhanced_query: str = ""
+    extracted_entities: List[Dict[str, Any]] = field(default_factory=list)
+    extracted_relationships: List[Dict[str, Any]] = field(default_factory=list)
+    routing_metadata: Dict[str, Any] = field(default_factory=dict)
+    timestamp: datetime = field(default_factory=datetime.now)
+
+
+@dataclass
+class EnhancedRoutingConfig:
+    """Configuration for Enhanced Routing Agent"""
+    # DSPy LM Configuration (defaults to local SmolLM 3B)
+    model_name: str = "smollm3:3b"
+    base_url: str = "http://localhost:11434/v1"
+    api_key: str = "dummy"  # Not needed for local Ollama
+    
+    # Routing thresholds
+    confidence_threshold: float = 0.7
+    relationship_weight: float = 0.3
+    enhancement_weight: float = 0.4
+    
+    # Agent capabilities mapping
+    agent_capabilities: Dict[str, List[str]] = field(default_factory=lambda: {
+        "video_search_agent": [
+            "video_content_search",
+            "visual_query_analysis", 
+            "multimodal_retrieval",
+            "temporal_video_analysis"
+        ],
+        "summarizer_agent": [
+            "content_summarization",
+            "key_point_extraction",
+            "document_synthesis",
+            "report_generation"
+        ],
+        "detailed_report_agent": [
+            "comprehensive_analysis",
+            "detailed_reporting",
+            "data_correlation",
+            "in_depth_investigation"
+        ]
+    })
+    
+    # Enable/disable features
+    enable_relationship_extraction: bool = True
+    enable_query_enhancement: bool = True
+    enable_fallback_routing: bool = True
+    enable_confidence_calibration: bool = True
+
+
+class EnhancedRoutingAgent(DSPyA2AAgentBase):
+    """
+    Enhanced Routing Agent combining DSPy 3.0, relationship extraction, and query enhancement
+    
+    This agent represents the culmination of Phases 1-3:
+    - Uses DSPy 3.0 with local SmolLM 3B for intelligent routing
+    - Extracts relationships from queries for routing context
+    - Enhances queries with relationship tuples before routing decisions
+    - Maintains full A2A protocol compatibility
+    """
+
+    def __init__(
+        self,
+        config: Optional[EnhancedRoutingConfig] = None,
+        port: int = 8001,
+        enable_telemetry: bool = True
+    ):
+        self.config = config or EnhancedRoutingConfig()
+        self.logger = logging.getLogger(__name__)
+        
+        # Initialize DSPy 3.0 with local SmolLM
+        self._configure_dspy()
+        
+        # Initialize Phase 2 & 3 components
+        self._initialize_enhancement_pipeline()
+        
+        # Initialize DSPy routing module
+        self._initialize_routing_module()
+        
+        # Initialize A2A base with DSPy module
+        super().__init__(
+            agent_name="enhanced_routing_agent",
+            agent_description="Intelligent routing with relationship extraction and query enhancement",
+            dspy_module=self.routing_module,
+            capabilities=self._get_routing_capabilities(),
+            port=port
+        )
+        
+        self.enable_telemetry = enable_telemetry
+        self._routing_stats = {
+            "total_queries": 0,
+            "successful_routes": 0,
+            "enhanced_queries": 0,
+            "relationship_extractions": 0,
+            "confidence_scores": []
+        }
+
+    def _configure_dspy(self) -> None:
+        """Configure DSPy 3.0 with local SmolLM via Ollama"""
+        try:
+            # Configure DSPy to use local SmolLM 3B via OpenAI-compatible API
+            lm = LM(
+                model=self.config.model_name,
+                base_url=self.config.base_url,
+                api_key=self.config.api_key,
+                # Additional LM configurations
+                max_tokens=1000,
+                temperature=0.1,  # Low temperature for consistent routing decisions
+                top_p=0.9
+            )
+            
+            dspy.settings.configure(lm=lm)
+            self.logger.info(f"DSPy configured with {self.config.model_name} at {self.config.base_url}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to configure DSPy with local SmolLM: {e}")
+            # Fallback to mock for development/testing
+            self.logger.warning("Falling back to mock LM for development")
+
+    def _initialize_enhancement_pipeline(self) -> None:
+        """Initialize Phase 2 & 3 components"""
+        try:
+            # Phase 2: Relationship extraction
+            if self.config.enable_relationship_extraction:
+                self.relationship_extractor = RelationshipExtractorTool()
+                self.logger.info("Relationship extraction tool initialized")
+            
+            # Phase 3: Query enhancement  
+            if self.config.enable_query_enhancement:
+                self.query_enhancer = QueryEnhancementPipeline()
+                self.logger.info("Query enhancement pipeline initialized")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to initialize enhancement pipeline: {e}")
+            # Set None values for graceful degradation
+            self.relationship_extractor = None
+            self.query_enhancer = None
+
+    def _initialize_routing_module(self) -> None:
+        """Initialize DSPy routing module"""
+        try:
+            self.routing_module = DSPyAdvancedRoutingModule()
+            self.logger.info("DSPy advanced routing module initialized")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to initialize routing module: {e}")
+            # Create basic fallback module
+            self._create_fallback_routing_module()
+
+    def _create_fallback_routing_module(self) -> None:
+        """Create fallback routing module for graceful degradation"""
+        class FallbackRoutingModule(dspy.Module):
+            def __init__(self):
+                super().__init__()
+                self.analyze = dspy.ChainOfThought(BasicQueryAnalysisSignature)
+            
+            def forward(self, query: str, context: Optional[str] = None):
+                try:
+                    return self.analyze(query=query)
+                except Exception:
+                    # Ultimate fallback
+                    return dspy.Prediction(
+                        primary_intent="search",
+                        needs_video_search=True,
+                        recommended_agent="video_search_agent",
+                        confidence=0.5
+                    )
+        
+        self.routing_module = FallbackRoutingModule()
+        self.logger.warning("Using fallback routing module")
+
+    def _get_routing_capabilities(self) -> List[str]:
+        """Get routing agent capabilities"""
+        capabilities = [
+            "intelligent_routing",
+            "query_analysis",
+            "agent_orchestration"
+        ]
+        
+        if self.config.enable_relationship_extraction:
+            capabilities.extend([
+                "relationship_extraction",
+                "entity_recognition",
+                "semantic_analysis"
+            ])
+        
+        if self.config.enable_query_enhancement:
+            capabilities.extend([
+                "query_enhancement", 
+                "query_rewriting",
+                "context_enrichment"
+            ])
+            
+        return capabilities
+
+    async def route_query(
+        self,
+        query: str,
+        context: Optional[str] = None,
+        user_id: Optional[str] = None
+    ) -> RoutingDecision:
+        """
+        Enhanced query routing with relationship extraction and query enhancement
+        
+        This is the main routing method that combines all Phase 1-3 components
+        """
+        self._routing_stats["total_queries"] += 1
+        start_time = datetime.now()
+        
+        try:
+            # Phase 2: Extract relationships and entities
+            entities, relationships = await self._extract_relationships(query)
+            
+            # Phase 3: Enhance query with relationship context
+            enhanced_query, enhancement_metadata = await self._enhance_query(
+                query, entities, relationships
+            )
+            
+            # Phase 1: DSPy-powered routing decision
+            routing_result = await self._make_routing_decision(
+                original_query=query,
+                enhanced_query=enhanced_query,
+                entities=entities,
+                relationships=relationships,
+                context=context
+            )
+            
+            # Create structured routing decision
+            decision = RoutingDecision(
+                recommended_agent=routing_result.get("recommended_agent", "video_search_agent"),
+                confidence=routing_result.get("confidence", 0.5),
+                reasoning=routing_result.get("reasoning", "Default routing decision"),
+                fallback_agents=self._get_fallback_agents(routing_result.get("recommended_agent")),
+                enhanced_query=enhanced_query,
+                extracted_entities=entities,
+                extracted_relationships=relationships,
+                routing_metadata={
+                    **enhancement_metadata,
+                    "processing_time_ms": (datetime.now() - start_time).total_seconds() * 1000,
+                    "dspy_routing_result": routing_result,
+                    "user_id": user_id
+                }
+            )
+            
+            # Update statistics
+            self._update_routing_stats(decision)
+            
+            # Log successful routing
+            self.logger.info(
+                f"Query routed to {decision.recommended_agent} "
+                f"(confidence: {decision.confidence:.3f}, "
+                f"relationships: {len(relationships)}, "
+                f"enhanced: {'yes' if enhanced_query != query else 'no'})"
+            )
+            
+            return decision
+            
+        except Exception as e:
+            self.logger.error(f"Routing failed for query '{query}': {e}")
+            return self._create_fallback_decision(query, str(e))
+
+    async def _extract_relationships(
+        self, 
+        query: str
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Phase 2: Extract relationships and entities from query"""
+        if not self.config.enable_relationship_extraction or not self.relationship_extractor:
+            return [], []
+            
+        try:
+            extraction_result = await self.relationship_extractor.extract_comprehensive_relationships(query)
+            
+            entities = extraction_result.get("entities", [])
+            relationships = extraction_result.get("relationships", [])
+            
+            self._routing_stats["relationship_extractions"] += 1
+            
+            self.logger.debug(
+                f"Extracted {len(entities)} entities and {len(relationships)} relationships"
+            )
+            
+            return entities, relationships
+            
+        except Exception as e:
+            self.logger.warning(f"Relationship extraction failed: {e}")
+            return [], []
+
+    async def _enhance_query(
+        self,
+        query: str,
+        entities: List[Dict[str, Any]],
+        relationships: List[Dict[str, Any]]
+    ) -> Tuple[str, Dict[str, Any]]:
+        """Phase 3: Enhance query with relationship context"""
+        if not self.config.enable_query_enhancement or not self.query_enhancer:
+            return query, {}
+            
+        try:
+            enhancement_result = await self.query_enhancer.enhance_query_with_relationships(
+                query, entities, relationships
+            )
+            
+            enhanced_query = enhancement_result.get("enhanced_query", query)
+            enhancement_metadata = {
+                "quality_score": enhancement_result.get("quality_score", 0.5),
+                "enhancement_strategy": enhancement_result.get("enhancement_strategy", "none"),
+                "semantic_expansions": enhancement_result.get("semantic_expansions", [])
+            }
+            
+            if enhanced_query != query:
+                self._routing_stats["enhanced_queries"] += 1
+            
+            self.logger.debug(f"Query enhanced: '{query}' -> '{enhanced_query}'")
+            
+            return enhanced_query, enhancement_metadata
+            
+        except Exception as e:
+            self.logger.warning(f"Query enhancement failed: {e}")
+            return query, {}
+
+    async def _make_routing_decision(
+        self,
+        original_query: str,
+        enhanced_query: str,
+        entities: List[Dict[str, Any]],
+        relationships: List[Dict[str, Any]],
+        context: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Phase 1: Make DSPy-powered routing decision"""
+        try:
+            # Use enhanced query for routing if available, fallback to original
+            routing_query = enhanced_query if enhanced_query != original_query else original_query
+            
+            # Prepare context with relationship information
+            routing_context = self._prepare_routing_context(
+                context, entities, relationships
+            )
+            
+            # DSPy routing decision
+            dspy_result = self.routing_module.forward(
+                query=routing_query,
+                context=routing_context
+            )
+            
+            # Extract routing information from DSPy result
+            routing_info = {
+                "recommended_agent": getattr(dspy_result, "recommended_agent", "video_search_agent"),
+                "confidence": getattr(dspy_result, "confidence", 0.5),
+                "reasoning": getattr(dspy_result, "reasoning", "DSPy routing decision"),
+                "primary_intent": getattr(dspy_result, "primary_intent", "search"),
+                "complexity_score": getattr(dspy_result, "complexity_score", 0.5)
+            }
+            
+            # Apply confidence calibration if enabled
+            if self.config.enable_confidence_calibration:
+                routing_info["confidence"] = self._calibrate_confidence(
+                    routing_info["confidence"],
+                    len(entities),
+                    len(relationships),
+                    enhanced_query != original_query
+                )
+            
+            return routing_info
+            
+        except Exception as e:
+            self.logger.error(f"DSPy routing decision failed: {e}")
+            return {
+                "recommended_agent": "video_search_agent",
+                "confidence": 0.3,
+                "reasoning": f"Fallback routing due to error: {e}",
+                "primary_intent": "search",
+                "complexity_score": 0.5
+            }
+
+    def _prepare_routing_context(
+        self,
+        original_context: Optional[str],
+        entities: List[Dict[str, Any]],
+        relationships: List[Dict[str, Any]]
+    ) -> str:
+        """Prepare enriched context for routing decision"""
+        context_parts = []
+        
+        if original_context:
+            context_parts.append(f"Original context: {original_context}")
+        
+        if entities:
+            entity_texts = [e.get("text", "") for e in entities[:5]]  # Top 5 entities
+            context_parts.append(f"Key entities: {', '.join(entity_texts)}")
+        
+        if relationships:
+            relationship_summaries = []
+            for rel in relationships[:3]:  # Top 3 relationships
+                subj = rel.get("subject", "")
+                obj = rel.get("object", "")
+                relation = rel.get("relation", "")
+                if subj and obj and relation:
+                    relationship_summaries.append(f"{subj} {relation} {obj}")
+            
+            if relationship_summaries:
+                context_parts.append(f"Key relationships: {'; '.join(relationship_summaries)}")
+        
+        return " | ".join(context_parts) if context_parts else ""
+
+    def _calibrate_confidence(
+        self,
+        base_confidence: float,
+        entity_count: int,
+        relationship_count: int,
+        query_enhanced: bool
+    ) -> float:
+        """Calibrate confidence based on enhancement features"""
+        confidence = base_confidence
+        
+        # Boost confidence if we have good entity extraction
+        if entity_count > 2:
+            confidence += 0.1 * min(entity_count / 5, 0.2)
+        
+        # Boost confidence if we have relationship information
+        if relationship_count > 0:
+            confidence += self.config.relationship_weight * min(relationship_count / 3, 0.15)
+        
+        # Boost confidence if query was enhanced
+        if query_enhanced:
+            confidence += self.config.enhancement_weight * 0.1
+        
+        # Ensure confidence stays in valid range
+        return min(max(confidence, 0.0), 1.0)
+
+    def _get_fallback_agents(self, primary_agent: str) -> List[str]:
+        """Get fallback agents based on primary recommendation"""
+        if not self.config.enable_fallback_routing:
+            return []
+        
+        fallback_mapping = {
+            "video_search_agent": ["summarizer_agent", "detailed_report_agent"],
+            "summarizer_agent": ["detailed_report_agent", "video_search_agent"],
+            "detailed_report_agent": ["summarizer_agent", "video_search_agent"]
+        }
+        
+        return fallback_mapping.get(primary_agent, ["video_search_agent"])
+
+    def _create_fallback_decision(self, query: str, error: str) -> RoutingDecision:
+        """Create fallback routing decision when processing fails"""
+        return RoutingDecision(
+            recommended_agent="video_search_agent",  # Default fallback
+            confidence=0.2,
+            reasoning=f"Fallback routing due to processing error: {error}",
+            fallback_agents=["summarizer_agent", "detailed_report_agent"],
+            enhanced_query=query,
+            routing_metadata={"error": error, "fallback": True}
+        )
+
+    def _update_routing_stats(self, decision: RoutingDecision) -> None:
+        """Update routing statistics for telemetry"""
+        if decision.confidence >= self.config.confidence_threshold:
+            self._routing_stats["successful_routes"] += 1
+        
+        self._routing_stats["confidence_scores"].append(decision.confidence)
+        
+        # Keep only last 1000 confidence scores for memory management
+        if len(self._routing_stats["confidence_scores"]) > 1000:
+            self._routing_stats["confidence_scores"] = self._routing_stats["confidence_scores"][-1000:]
+
+    def get_routing_statistics(self) -> Dict[str, Any]:
+        """Get routing performance statistics"""
+        stats = self._routing_stats.copy()
+        
+        if stats["confidence_scores"]:
+            confidence_scores = stats["confidence_scores"]
+            stats["average_confidence"] = sum(confidence_scores) / len(confidence_scores)
+            stats["confidence_std"] = (
+                sum((x - stats["average_confidence"]) ** 2 for x in confidence_scores) / 
+                len(confidence_scores)
+            ) ** 0.5
+        else:
+            stats["average_confidence"] = 0.0
+            stats["confidence_std"] = 0.0
+        
+        stats["success_rate"] = (
+            stats["successful_routes"] / stats["total_queries"] 
+            if stats["total_queries"] > 0 else 0.0
+        )
+        
+        stats["enhancement_rate"] = (
+            stats["enhanced_queries"] / stats["total_queries"] 
+            if stats["total_queries"] > 0 else 0.0
+        )
+        
+        return stats
+
+    # DSPyA2AAgentBase implementation
+    async def _process_with_dspy(self, dspy_input: Dict[str, Any]) -> Any:
+        """Process A2A input with DSPy routing logic"""
+        query = dspy_input.get("query", "")
+        context = dspy_input.get("context")
+        user_id = dspy_input.get("user_id")
+        
+        routing_decision = await self.route_query(query, context, user_id)
+        
+        return {
+            "agent": routing_decision.recommended_agent,
+            "confidence": routing_decision.confidence,
+            "reasoning": routing_decision.reasoning,
+            "enhanced_query": routing_decision.enhanced_query,
+            "fallback_agents": routing_decision.fallback_agents,
+            "entities": routing_decision.extracted_entities,
+            "relationships": routing_decision.extracted_relationships,
+            "metadata": routing_decision.routing_metadata
+        }
+
+
+def create_enhanced_routing_agent(
+    config: Optional[EnhancedRoutingConfig] = None,
+    port: int = 8001
+) -> EnhancedRoutingAgent:
+    """Factory function to create Enhanced Routing Agent"""
+    return EnhancedRoutingAgent(config=config, port=port)
+
+
+def create_default_routing_config() -> EnhancedRoutingConfig:
+    """Create default routing configuration"""
+    return EnhancedRoutingConfig()
+
+
+# Example usage and configuration
+if __name__ == "__main__":
+    import asyncio
+    
+    async def main():
+        # Create enhanced routing agent with local SmolLM 3B
+        config = EnhancedRoutingConfig(
+            model_name="smollm3:3b",
+            base_url="http://localhost:11434/v1",
+            confidence_threshold=0.7,
+            enable_relationship_extraction=True,
+            enable_query_enhancement=True
+        )
+        
+        agent = create_enhanced_routing_agent(config, port=8001)
+        
+        # Test queries
+        test_queries = [
+            "Show me videos of robots playing soccer in tournaments",
+            "Summarize the key findings from the latest AI research papers",
+            "Generate a detailed report on renewable energy trends"
+        ]
+        
+        for query in test_queries:
+            print(f"\nProcessing: {query}")
+            decision = await agent.route_query(query)
+            print(f"Route to: {decision.recommended_agent} (confidence: {decision.confidence:.3f})")
+            print(f"Enhanced query: {decision.enhanced_query}")
+            print(f"Entities: {len(decision.extracted_entities)}")
+            print(f"Relationships: {len(decision.extracted_relationships)}")
+        
+        # Print statistics
+        print("\nRouting Statistics:")
+        stats = agent.get_routing_statistics()
+        for key, value in stats.items():
+            if isinstance(value, float):
+                print(f"  {key}: {value:.3f}")
+            else:
+                print(f"  {key}: {value}")
+    
+    asyncio.run(main())
