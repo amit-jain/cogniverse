@@ -34,6 +34,9 @@ from src.app.routing.relationship_extraction_tools import RelationshipExtractorT
 from src.app.routing.dspy_relationship_router import DSPyAdvancedRoutingModule
 from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
 
+# Phase 6: GRPO optimization
+from src.app.routing.grpo_optimizer import GRPORoutingOptimizer, GRPOConfig
+
 # A2A protocol imports
 from src.tools.a2a_utils import A2AClient
 
@@ -41,15 +44,29 @@ from src.tools.a2a_utils import A2AClient
 @dataclass
 class RoutingDecision:
     """Structured routing decision with confidence and reasoning"""
+    query: str
     recommended_agent: str
     confidence: float
     reasoning: str
     fallback_agents: List[str] = field(default_factory=list)
     enhanced_query: str = ""
-    extracted_entities: List[Dict[str, Any]] = field(default_factory=list)
-    extracted_relationships: List[Dict[str, Any]] = field(default_factory=list)
-    routing_metadata: Dict[str, Any] = field(default_factory=dict)
+    entities: List[Dict[str, Any]] = field(default_factory=list)
+    relationships: List[Dict[str, Any]] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
     timestamp: datetime = field(default_factory=datetime.now)
+    
+    # Legacy compatibility properties
+    @property
+    def extracted_entities(self) -> List[Dict[str, Any]]:
+        return self.entities
+    
+    @property  
+    def extracted_relationships(self) -> List[Dict[str, Any]]:
+        return self.relationships
+    
+    @property
+    def routing_metadata(self) -> Dict[str, Any]:
+        return self.metadata
 
 
 @dataclass
@@ -92,6 +109,11 @@ class EnhancedRoutingConfig:
     enable_query_enhancement: bool = True
     enable_fallback_routing: bool = True
     enable_confidence_calibration: bool = True
+    enable_grpo_optimization: bool = True
+    
+    # GRPO optimization configuration
+    grpo_config: Optional[GRPOConfig] = None
+    optimization_storage_dir: str = "data/optimization"
 
 
 class EnhancedRoutingAgent(DSPyA2AAgentBase):
@@ -122,6 +144,9 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
         
         # Initialize DSPy routing module
         self._initialize_routing_module()
+        
+        # Initialize Phase 6: GRPO optimization
+        self._initialize_grpo_optimizer()
         
         # Initialize A2A base with DSPy module
         super().__init__(
@@ -232,6 +257,24 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
         self.routing_module = FallbackRoutingModule()
         self.logger.warning("Using fallback routing module")
 
+    def _initialize_grpo_optimizer(self) -> None:
+        """Initialize Phase 6: GRPO optimization"""
+        try:
+            if self.config.enable_grpo_optimization:
+                grpo_config = self.config.grpo_config or GRPOConfig()
+                self.grpo_optimizer = GRPORoutingOptimizer(
+                    config=grpo_config,
+                    storage_dir=self.config.optimization_storage_dir
+                )
+                self.logger.info("GRPO routing optimizer initialized")
+            else:
+                self.grpo_optimizer = None
+                self.logger.info("GRPO optimization disabled")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to initialize GRPO optimizer: {e}")
+            self.grpo_optimizer = None
+
     def _get_routing_capabilities(self) -> List[str]:
         """Get routing agent capabilities"""
         capabilities = [
@@ -252,6 +295,13 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
                 "query_enhancement", 
                 "query_rewriting",
                 "context_enrichment"
+            ])
+        
+        if self.config.enable_grpo_optimization:
+            capabilities.extend([
+                "grpo_optimization",
+                "adaptive_learning",
+                "performance_optimization"
             ])
             
         return capabilities
@@ -280,8 +330,8 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
                 query, entities, relationships
             )
             
-            # Phase 1: DSPy-powered routing decision
-            routing_result = await self._make_routing_decision(
+            # Phase 1: DSPy-powered routing decision (baseline)
+            baseline_routing_result = await self._make_routing_decision(
                 original_query=query,
                 enhanced_query=enhanced_query,
                 entities=entities,
@@ -289,24 +339,39 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
                 context=context
             )
             
+            # Phase 6: Apply GRPO optimization if available
+            optimized_routing_result = await self._apply_grpo_optimization(
+                query=query,
+                entities=entities,
+                relationships=relationships,
+                enhanced_query=enhanced_query,
+                baseline_prediction=baseline_routing_result
+            )
+            
+            # Use optimized result if available, otherwise baseline
+            final_routing_result = optimized_routing_result or baseline_routing_result
+            
             # Determine if orchestration is needed
             needs_orchestration = self._assess_orchestration_need(
-                query, entities, relationships, routing_result, require_orchestration
+                query, entities, relationships, final_routing_result, require_orchestration
             )
             
             # Create structured routing decision
             decision = RoutingDecision(
-                recommended_agent=routing_result.get("recommended_agent", "video_search_agent"),
-                confidence=routing_result.get("confidence", 0.5),
-                reasoning=routing_result.get("reasoning", "Default routing decision"),
-                fallback_agents=self._get_fallback_agents(routing_result.get("recommended_agent")),
+                query=query,
+                recommended_agent=final_routing_result.get("recommended_agent", "video_search_agent"),
+                confidence=final_routing_result.get("confidence", 0.5),
+                reasoning=final_routing_result.get("reasoning", "Default routing decision"),
+                fallback_agents=self._get_fallback_agents(final_routing_result.get("recommended_agent")),
                 enhanced_query=enhanced_query,
-                extracted_entities=entities,
-                extracted_relationships=relationships,
-                routing_metadata={
+                entities=entities,
+                relationships=relationships,
+                metadata={
                     **enhancement_metadata,
                     "processing_time_ms": (datetime.now() - start_time).total_seconds() * 1000,
-                    "dspy_routing_result": routing_result,
+                    "baseline_routing_result": baseline_routing_result,
+                    "optimized_routing_result": optimized_routing_result,
+                    "grpo_applied": optimized_routing_result is not None,
                     "user_id": user_id,
                     "needs_orchestration": needs_orchestration,
                     "orchestration_signals": self._get_orchestration_signals(query, entities, relationships)
@@ -388,6 +453,38 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
         except Exception as e:
             self.logger.warning(f"Query enhancement failed: {e}")
             return query, {}
+
+    async def _apply_grpo_optimization(
+        self,
+        query: str,
+        entities: List[Dict[str, Any]],
+        relationships: List[Dict[str, Any]],
+        enhanced_query: str,
+        baseline_prediction: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Phase 6: Apply GRPO optimization to routing decision"""
+        if not self.grpo_optimizer:
+            return None
+            
+        try:
+            optimized_result = await self.grpo_optimizer.optimize_routing_decision(
+                query=query,
+                entities=entities,
+                relationships=relationships,
+                enhanced_query=enhanced_query,
+                baseline_prediction=baseline_prediction
+            )
+            
+            self.logger.debug(
+                f"GRPO optimization applied: baseline_agent={baseline_prediction.get('recommended_agent')}, "
+                f"optimized_agent={optimized_result.get('recommended_agent')}"
+            )
+            
+            return optimized_result
+            
+        except Exception as e:
+            self.logger.warning(f"GRPO optimization failed: {e}")
+            return None
 
     async def _make_routing_decision(
         self,
@@ -599,12 +696,15 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
     def _create_fallback_decision(self, query: str, error: str) -> RoutingDecision:
         """Create fallback routing decision when processing fails"""
         return RoutingDecision(
+            query=query,
             recommended_agent="video_search_agent",  # Default fallback
             confidence=0.2,
             reasoning=f"Fallback routing due to processing error: {error}",
             fallback_agents=["summarizer_agent", "detailed_report_agent"],
             enhanced_query=query,
-            routing_metadata={"error": error, "fallback": True}
+            entities=[],
+            relationships=[],
+            metadata={"error": error, "fallback": True}
         )
 
     def _update_routing_stats(self, decision: RoutingDecision) -> None:
@@ -723,6 +823,131 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
             })
         
         return base_skills
+
+    async def record_routing_outcome(
+        self,
+        decision: RoutingDecision,
+        search_quality: float,
+        agent_success: bool,
+        processing_time: float = 0.0,
+        user_satisfaction: Optional[float] = None
+    ) -> Optional[float]:
+        """
+        Record routing outcome for GRPO learning
+        
+        Args:
+            decision: The routing decision that was made
+            search_quality: Quality of search results (0-1)
+            agent_success: Whether the chosen agent completed successfully
+            processing_time: Total processing time in seconds
+            user_satisfaction: Optional explicit user feedback (0-1)
+            
+        Returns:
+            Computed reward if GRPO is enabled, None otherwise
+        """
+        if not self.grpo_optimizer:
+            return None
+        
+        try:
+            reward = await self.grpo_optimizer.record_routing_experience(
+                query=decision.query,
+                entities=decision.entities,
+                relationships=decision.relationships,
+                enhanced_query=decision.enhanced_query,
+                chosen_agent=decision.recommended_agent,
+                routing_confidence=decision.confidence,
+                search_quality=search_quality,
+                agent_success=agent_success,
+                processing_time=processing_time,
+                user_satisfaction=user_satisfaction
+            )
+            
+            self.logger.info(
+                f"Recorded routing outcome: agent={decision.recommended_agent}, "
+                f"success={agent_success}, reward={reward:.3f}"
+            )
+            
+            return reward
+            
+        except Exception as e:
+            self.logger.error(f"Failed to record routing outcome: {e}")
+            return None
+
+    async def analyze_and_route_with_relationships(
+        self,
+        query: str,
+        enable_relationship_extraction: bool = True,
+        enable_query_enhancement: bool = True,
+        context: Optional[str] = None,
+        user_id: Optional[str] = None
+    ) -> RoutingDecision:
+        """
+        Analyze query and route with relationship extraction and enhancement
+        
+        This method is used by the orchestrator and other systems that need
+        explicit control over the enhancement features.
+        
+        Args:
+            query: User query to analyze and route
+            enable_relationship_extraction: Whether to extract relationships
+            enable_query_enhancement: Whether to enhance the query
+            context: Optional context information
+            user_id: Optional user identifier
+            
+        Returns:
+            Routing decision with relationship context
+        """
+        # Temporarily override config settings if needed
+        original_rel_setting = self.config.enable_relationship_extraction
+        original_enh_setting = self.config.enable_query_enhancement
+        
+        self.config.enable_relationship_extraction = enable_relationship_extraction
+        self.config.enable_query_enhancement = enable_query_enhancement
+        
+        try:
+            decision = await self.route_query(
+                query=query,
+                context=context,
+                user_id=user_id
+            )
+            
+            return decision
+            
+        finally:
+            # Restore original settings
+            self.config.enable_relationship_extraction = original_rel_setting
+            self.config.enable_query_enhancement = original_enh_setting
+
+    def get_grpo_status(self) -> Dict[str, Any]:
+        """Get GRPO optimization status and metrics"""
+        if not self.grpo_optimizer:
+            return {"grpo_enabled": False, "reason": "GRPO optimizer not initialized"}
+        
+        try:
+            status = self.grpo_optimizer.get_optimization_status()
+            status["grpo_enabled"] = True
+            return status
+            
+        except Exception as e:
+            return {
+                "grpo_enabled": True,
+                "error": str(e),
+                "status": "error"
+            }
+
+    async def reset_grpo_optimization(self) -> bool:
+        """Reset GRPO optimization state (useful for testing)"""
+        if not self.grpo_optimizer:
+            return False
+        
+        try:
+            await self.grpo_optimizer.reset_optimization()
+            self.logger.info("GRPO optimization state reset")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to reset GRPO optimization: {e}")
+            return False
 
 
 def create_enhanced_routing_agent(
