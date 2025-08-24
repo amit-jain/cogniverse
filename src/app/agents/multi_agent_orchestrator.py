@@ -36,6 +36,11 @@ from src.app.agents.enhanced_routing_agent import (
     RoutingDecision,
     EnhancedRoutingConfig
 )
+from src.app.agents.workflow_intelligence import (
+    WorkflowIntelligence,
+    OptimizationStrategy,
+    create_workflow_intelligence
+)
 
 
 class WorkflowStatus(Enum):
@@ -127,7 +132,9 @@ class MultiAgentOrchestrator:
         routing_agent: Optional[EnhancedRoutingAgent] = None,
         available_agents: Optional[Dict[str, Dict[str, Any]]] = None,
         max_parallel_tasks: int = 3,
-        workflow_timeout_minutes: int = 15
+        workflow_timeout_minutes: int = 15,
+        enable_workflow_intelligence: bool = True,
+        optimization_strategy: OptimizationStrategy = OptimizationStrategy.BALANCED
     ):
         self.logger = logging.getLogger(__name__)
         
@@ -146,6 +153,16 @@ class MultiAgentOrchestrator:
         
         # A2A client for agent communication
         self.a2a_client = A2AClient()
+        
+        # Initialize workflow intelligence
+        self.enable_workflow_intelligence = enable_workflow_intelligence
+        if enable_workflow_intelligence:
+            self.workflow_intelligence = create_workflow_intelligence(
+                optimization_strategy=optimization_strategy
+            )
+            self.logger.info("Workflow intelligence enabled")
+        else:
+            self.workflow_intelligence = None
         
         # Active workflows tracking
         self.active_workflows: Dict[str, WorkflowPlan] = {}
@@ -366,8 +383,19 @@ class MultiAgentOrchestrator:
             workflow_plan.tasks = tasks
             workflow_plan.execution_order = self._calculate_execution_order(tasks)
             
+            # Apply workflow intelligence optimization if available
+            if self.workflow_intelligence:
+                try:
+                    optimized_plan = await self.workflow_intelligence.optimize_workflow_plan(
+                        query, workflow_plan, {"user_id": user_id, "preferences": preferences}
+                    )
+                    workflow_plan = optimized_plan
+                    self.logger.info("Applied workflow intelligence optimization")
+                except Exception as e:
+                    self.logger.warning(f"Workflow optimization failed, using original plan: {e}")
+            
             self.logger.info(
-                f"Workflow planned: {len(tasks)} tasks, "
+                f"Workflow planned: {len(workflow_plan.tasks)} tasks, "
                 f"{len(workflow_plan.execution_order)} execution phases"
             )
             
@@ -463,6 +491,13 @@ class MultiAgentOrchestrator:
             return False
         
         finally:
+            # Record workflow execution for intelligence learning
+            if self.workflow_intelligence and workflow_plan.end_time:
+                try:
+                    await self.workflow_intelligence.record_workflow_execution(workflow_plan)
+                except Exception as e:
+                    self.logger.warning(f"Failed to record workflow execution for learning: {e}")
+            
             # Clean up active workflow
             self.active_workflows.pop(workflow_plan.workflow_id, None)
 
@@ -716,6 +751,12 @@ class MultiAgentOrchestrator:
         # Active workflows info
         stats["active_workflows"] = len(self.active_workflows)
         stats["active_workflow_ids"] = list(self.active_workflows.keys())
+        
+        # Add workflow intelligence stats if available
+        if self.workflow_intelligence:
+            stats["workflow_intelligence_stats"] = self.workflow_intelligence.get_intelligence_statistics()
+            stats["agent_performance_report"] = self.workflow_intelligence.get_agent_performance_report()
+            stats["workflow_templates"] = self.workflow_intelligence.get_workflow_templates_summary()
         
         return stats
 
