@@ -1,0 +1,19 @@
+{
+  "vespa_url": "http://localhost",
+  "vespa_port": 8081,
+  "vespa_schema": "video_colpali_smol500_mv_frame",
+  "search_backend": "vespa",
+  "embedding_backend": "vespa",
+  "phoenix_url": "http://localhost:6006",
+  "video_processing_profiles": {
+    "video_colpali_smol500_mv_frame": {
+      "schema": "video_colpali_smol500_mv_frame",
+      "process_type": "mv_frame",
+      "model_id": "vidore/colsmol-500m",
+      "device": "cpu",
+      "batch_size": 4,
+      "max_frames_per_video": 2,
+      "frame_sampling_strategy": "uniform"
+    }
+  }
+}
