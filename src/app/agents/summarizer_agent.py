@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import dspy
 import uvicorn
 from fastapi import FastAPI, HTTPException
 
@@ -25,6 +26,18 @@ from src.tools.a2a_utils import (
 from src.app.agents.enhanced_routing_agent import RoutingDecision
 
 logger = logging.getLogger(__name__)
+
+
+class SummaryGenerationSignature(dspy.Signature):
+    """Generate structured summaries with key insights."""
+    
+    content = dspy.InputField(desc="Search results content to summarize")
+    query = dspy.InputField(desc="Original user query")
+    summary_type = dspy.InputField(desc="Type of summary: brief, comprehensive, detailed")
+    
+    summary = dspy.OutputField(desc="Generated summary text")
+    key_points = dspy.OutputField(desc="List of key points (comma-separated)")
+    confidence_score = dspy.OutputField(desc="Confidence in summary quality (0.0-1.0)")
 
 
 @dataclass
@@ -261,6 +274,9 @@ class SummarizerAgent(DSPySummaryMixin):
 
         self.config = get_config()
         self.vlm = VLMInterface(kwargs.get("vlm_model", "gpt-4-vision-preview"))
+        
+        # Initialize DSPy summarization module
+        self.dspy_summarizer = dspy.Predict(SummaryGenerationSignature)
 
         # Configuration
         self.max_summary_length = kwargs.get("max_summary_length", 500)
@@ -560,18 +576,40 @@ and structure summary based on identified themes and content categories.
         results: List[Dict[str, Any]],
         thinking_phase: ThinkingPhase,
     ) -> str:
-        """Generate brief summary"""
+        """Generate brief summary using DSPy"""
         result_count = len(results)
-        themes = ", ".join(thinking_phase.key_themes[:3])
 
         if result_count == 0:
             return f"No relevant results found for '{request.query}'."
 
-        return (
-            f"Found {result_count} results for '{request.query}' covering {themes}. "
-            f"Content includes {', '.join(thinking_phase.content_categories)} "
-            f"with varying relevance to the search query."
-        )
+        # Prepare content for DSPy
+        content_parts = []
+        for result in results[:5]:  # Top 5 results for brief summary
+            title = result.get('title', result.get('video_id', 'Unknown'))
+            content_type = result.get('content_type', 'video')
+            content_parts.append(f"- {title}: {content_type}")
+        
+        content_text = "\n".join(content_parts)
+        
+        # Use DSPy for brief summary generation
+        try:
+            dspy_result = self.dspy_summarizer(
+                content=content_text,
+                query=request.query,
+                summary_type="brief"
+            )
+            
+            return dspy_result.summary
+            
+        except Exception as e:
+            logger.error(f"DSPy brief summarization failed: {e}")
+            # Fallback to template-based summary
+            themes = ", ".join(thinking_phase.key_themes[:3])
+            return (
+                f"Found {result_count} results for '{request.query}' covering {themes}. "
+                f"Content includes {', '.join(thinking_phase.content_categories)} "
+                f"with varying relevance to the search query."
+            )
 
     def _generate_bullet_summary(
         self,

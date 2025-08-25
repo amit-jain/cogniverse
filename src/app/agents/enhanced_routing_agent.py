@@ -342,9 +342,9 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
                 "context_enrichment"
             ])
         
-        if self.config.enable_grpo_optimization:
+        if self.config.enable_advanced_optimization:
             capabilities.extend([
-                "grpo_optimization",
+                "advanced_optimization",
                 "adaptive_learning",
                 "performance_optimization"
             ])

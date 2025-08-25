@@ -251,11 +251,38 @@ class EnhancedVideoSearchAgent:
 
         # Initialize base configuration
         self.config = get_config()
-        vespa_url = kwargs.get("vespa_url", "http://localhost")
-        vespa_port = kwargs.get("vespa_port", 8080)
+        
+        # Check environment variables first, then kwargs, then defaults
+        vespa_url = kwargs.get("vespa_url") or os.getenv("VESPA_URL", "http://localhost")
+        
+        # Handle port from env var or kwargs (extract port from URL if needed)
+        env_port = os.getenv("VESPA_PORT")
+        kwargs_port = kwargs.get("vespa_port")
+        
+        if kwargs_port:
+            vespa_port = int(kwargs_port)
+        elif env_port:
+            vespa_port = int(env_port)
+            # If we got port from env var, make sure vespa_url doesn't already include it
+            if ":" in vespa_url and vespa_url.count(":") >= 2:
+                # Remove existing port from URL
+                vespa_url = ":".join(vespa_url.split(":")[:-1])
+        elif ":" in vespa_url and vespa_url.count(":") >= 2:
+            # Extract port from URL like "http://localhost:8081"
+            vespa_port = int(vespa_url.split(":")[-1])
+            # Remove port from URL since VespaVideoSearchClient will add it
+            vespa_url = ":".join(vespa_url.split(":")[:-1])
+        else:
+            vespa_port = 8080
 
-        # Get model from active profile
-        active_profile = self.config.get_active_profile()
+        # Get model from active profile - check environment variable first
+        active_profile = (
+            os.getenv("VESPA_SCHEMA") or 
+            kwargs.get("profile") or 
+            self.config.get("active_video_profile") or
+            "video_colpali_smol500_mv_frame"
+        )
+        
         profiles = self.config.get("video_processing_profiles", {})
 
         if active_profile and active_profile in profiles:
@@ -268,10 +295,18 @@ class EnhancedVideoSearchAgent:
         else:
             model_name = kwargs.get("model_name", "vidore/colsmol-500m")
             self.embedding_type = "frame_based"
-            active_profile = "frame_based_colpali"
 
         # Initialize Vespa search client
         try:
+            logger.info(f"Enhanced Video Search Agent configuration:")
+            logger.info(f"  - Vespa URL: {vespa_url}")
+            logger.info(f"  - Vespa Port: {vespa_port}")
+            logger.info(f"  - Active Profile: {active_profile}")
+            logger.info(f"  - Model Name: {model_name}")
+            logger.info(f"  - Environment VESPA_URL: {os.getenv('VESPA_URL')}")
+            logger.info(f"  - Environment VESPA_PORT: {os.getenv('VESPA_PORT')}")
+            logger.info(f"  - Environment VESPA_SCHEMA: {os.getenv('VESPA_SCHEMA')}")
+            
             self.vespa_client = VespaVideoSearchClient(
                 vespa_url=vespa_url, vespa_port=vespa_port
             )
@@ -318,7 +353,7 @@ class EnhancedVideoSearchAgent:
             # Prepare search parameters
             search_params = {
                 "query": query,
-                "ranking": kwargs.get("ranking", "hybrid_binary_bm25_no_description"),
+                "ranking": kwargs["ranking"],
                 "top_k": top_k,
             }
 
@@ -364,7 +399,7 @@ class EnhancedVideoSearchAgent:
             # Prepare search parameters
             search_params = {
                 "query": f"Video similarity search for {filename}",
-                "ranking": kwargs.get("ranking", "hybrid_binary_bm25_no_description"),
+                "ranking": kwargs["ranking"],
                 "top_k": top_k,
             }
 
@@ -410,7 +445,7 @@ class EnhancedVideoSearchAgent:
             # Prepare search parameters
             search_params = {
                 "query": f"Image similarity search for {filename}",
-                "ranking": kwargs.get("ranking", "hybrid_binary_bm25_no_description"),
+                "ranking": kwargs["ranking"],
                 "top_k": top_k,
             }
 

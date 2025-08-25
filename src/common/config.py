@@ -50,8 +50,10 @@ class Config:
             try:
                 with open(config_file, 'r') as f:
                     file_config = json.load(f)
-                    # File config overrides env defaults
-                    self.config_data.update(file_config)
+                    # Environment variables take precedence over file config
+                    for key, value in file_config.items():
+                        if self.config_data.get(key) is None:  # Only use file value if env var not set
+                            self.config_data[key] = value
                     self.config_path = config_file
                     logger.info(f"Configuration loaded from: {config_file}")
             except Exception as e:

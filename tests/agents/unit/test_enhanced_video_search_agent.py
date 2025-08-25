@@ -124,15 +124,15 @@ class TestEnhancedVideoSearchAgent:
     @pytest.fixture
     def mock_config(self):
         """Mock configuration"""
-        config = Mock()
-        config.get_active_profile.return_value = "frame_based_colpali"
-        config.get.return_value = {
-            "frame_based_colpali": {
-                "embedding_model": "vidore/colsmol-500m",
-                "embedding_type": "frame_based",
+        return {
+            "active_video_profile": "video_colpali_smol500_mv_frame",
+            "video_processing_profiles": {
+                "video_colpali_smol500_mv_frame": {
+                    "embedding_model": "vidore/colsmol-500m",
+                    "embedding_type": "frame_based",
+                }
             }
         }
-        return config
 
     @pytest.fixture
     def mock_vespa_client(self):

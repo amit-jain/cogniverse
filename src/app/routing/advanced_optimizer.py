@@ -155,7 +155,7 @@ class AdvancedRoutingOptimizer:
         )
         
         # GRPO components
-        self.grpo_optimizer = None
+        self.advanced_optimizer = None
         self.routing_policy = None
         self.baseline_policy = None
         
@@ -211,7 +211,7 @@ class AdvancedRoutingOptimizer:
             
             # Initialize advanced optimizer
             if len(self.experiences) >= self.config.min_experiences_for_training:
-                self.grpo_optimizer = self._create_advanced_optimizer()
+                self.advanced_optimizer = self._create_advanced_optimizer()
                 logger.info("Advanced optimizer initialized with sufficient experience data")
             else:
                 logger.info(f"Need {self.config.min_experiences_for_training - len(self.experiences)} more experiences to start advanced optimization training")
@@ -221,7 +221,7 @@ class AdvancedRoutingOptimizer:
             
         except Exception as e:
             logger.error(f"Failed to initialize advanced optimization components: {e}")
-            self.grpo_optimizer = None
+            self.advanced_optimizer = None
     
     def _create_advanced_optimizer(self):
         """
@@ -579,7 +579,7 @@ class AdvancedRoutingOptimizer:
     
     async def _run_optimization_step(self):
         """Run one step of GRPO optimization"""
-        if not self.grpo_optimizer or len(self.experience_replay) < self.config.batch_size:
+        if not self.advanced_optimizer or len(self.experience_replay) < self.config.batch_size:
             return
         
         try:
@@ -609,7 +609,7 @@ class AdvancedRoutingOptimizer:
             
             # Run bootstrap optimization
             if self.routing_policy and training_examples:
-                optimized_policy = self.grpo_optimizer.compile(
+                optimized_policy = self.advanced_optimizer.compile(
                     self.routing_policy,
                     trainset=training_examples,
                     max_bootstrapped_demos=4,
@@ -759,7 +759,7 @@ class AdvancedRoutingOptimizer:
         """
         try:
             # If optimization not ready, return baseline
-            if not self.routing_policy or not self.grpo_optimizer:
+            if not self.routing_policy or not self.advanced_optimizer:
                 return self._apply_baseline_improvements(baseline_prediction)
             
             # Apply exploration vs exploitation
@@ -971,7 +971,7 @@ class AdvancedRoutingOptimizer:
     def get_optimization_status(self) -> Dict[str, Any]:
         """Get current optimization status and metrics"""
         return {
-            'optimizer_ready': self.grpo_optimizer is not None,
+            'optimizer_ready': self.advanced_optimizer is not None,
             'total_experiences': len(self.experiences),
             'experience_replay_size': len(self.experience_replay),
             'training_step': self.training_step,
