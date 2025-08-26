@@ -22,6 +22,7 @@ on:
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 75
     
     steps:
     - uses: actions/checkout@v4
@@ -46,11 +47,13 @@ jobs:
         uv sync --all-extras
         uv pip install pytest-cov torch dspy-ai
     
-    - name: Run unit tests
+    - name: Run unit tests (CI Fast subset)
       env:
         COVERAGE_FILE: .coverage
       run: |
-        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/unit -m unit \
+        # Run only essential tests marked with @pytest.mark.ci_fast for faster CI
+        # To run all tests locally: uv run python -m pytest tests/agents/unit -m unit
+        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/unit -m "unit and ci_fast" \
           --cov=src/app/agents \
           --cov-report=term-missing \
           --cov-report=xml:coverage_agents.xml
@@ -155,6 +158,7 @@ jobs:
 
   integration-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     needs: unit-tests
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     

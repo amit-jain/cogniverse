@@ -23,6 +23,7 @@ from src.app.routing.adaptive_threshold_learner import (
 class TestThresholdParameter:
     """Test threshold parameter enumeration."""
 
+    @pytest.mark.ci_fast
     def test_threshold_parameter_values(self):
         """Test that threshold parameter enum has expected values."""
         assert ThresholdParameter.ROUTING_CONFIDENCE.value == "routing_confidence"

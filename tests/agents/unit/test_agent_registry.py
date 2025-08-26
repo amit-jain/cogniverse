@@ -14,6 +14,7 @@ from src.app.agents.agent_registry import AgentEndpoint, AgentRegistry
 class TestAgentEndpoint:
     """Test cases for AgentEndpoint class"""
 
+    @pytest.mark.ci_fast
     def test_agent_endpoint_creation(self):
         """Test AgentEndpoint creation with basic parameters"""
         endpoint = AgentEndpoint(
@@ -30,6 +31,7 @@ class TestAgentEndpoint:
         assert endpoint.timeout == 30
         assert endpoint.health_status == "unknown"
 
+    @pytest.mark.ci_fast
     def test_is_healthy(self):
         """Test health status checking"""
         endpoint = AgentEndpoint(
@@ -91,6 +93,7 @@ class TestAgentRegistry:
         )
 
     @patch("src.app.agents.agent_registry.get_config")
+    @pytest.mark.ci_fast
     def test_registry_initialization(self, mock_get_config, mock_config):
         """Test AgentRegistry initialization"""
         mock_get_config.return_value = mock_config
@@ -108,6 +111,7 @@ class TestAgentRegistry:
         assert "video_search" in video_agent.capabilities
 
     @patch("src.app.agents.agent_registry.get_config")
+    @pytest.mark.ci_fast
     def test_registry_initialization_minimal_config(self, mock_get_config):
         """Test initialization with minimal config"""
         mock_get_config.return_value = {"video_agent_url": "http://localhost:8002"}
@@ -119,6 +123,7 @@ class TestAgentRegistry:
         assert "routing_agent" in registry.agents
 
     @patch("src.app.agents.agent_registry.get_config")
+    @pytest.mark.ci_fast
     def test_register_agent(self, mock_get_config, sample_agent):
         """Test agent registration"""
         mock_get_config.return_value = {}
@@ -178,6 +183,7 @@ class TestAgentRegistry:
         assert result is False
 
     @patch("src.app.agents.agent_registry.get_config")
+    @pytest.mark.ci_fast
     def test_list_agents(self, mock_get_config, sample_agent):
         """Test listing agents"""
         mock_get_config.return_value = {}

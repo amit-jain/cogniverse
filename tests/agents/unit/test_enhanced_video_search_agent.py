@@ -36,6 +36,7 @@ class TestVideoProcessor:
         """Video processor with mocked encoder"""
         return VideoProcessor(mock_query_encoder)
 
+    @pytest.mark.ci_fast
     def test_video_processor_initialization(self, mock_query_encoder):
         """Test VideoProcessor initialization"""
         processor = VideoProcessor(mock_query_encoder)
@@ -44,6 +45,7 @@ class TestVideoProcessor:
         assert processor.temp_dir.exists()
         assert processor.temp_dir.name == "video_search_agent"
 
+    @pytest.mark.ci_fast
     def test_process_video_file_with_encode_video(self, video_processor):
         """Test video file processing when encoder has encode_video method"""
         video_data = b"fake_video_data"
@@ -156,6 +158,7 @@ class TestEnhancedVideoSearchAgent:
     @patch("src.app.agents.enhanced_video_search_agent.QueryEncoderFactory")
     @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
     @patch("src.app.agents.enhanced_video_search_agent.get_config")
+    @pytest.mark.ci_fast
     def test_enhanced_agent_initialization(
         self,
         mock_get_config,
@@ -181,6 +184,7 @@ class TestEnhancedVideoSearchAgent:
     @patch("src.app.agents.enhanced_video_search_agent.QueryEncoderFactory")
     @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
     @patch("src.app.agents.enhanced_video_search_agent.get_config")
+    @pytest.mark.ci_fast
     def test_search_by_text(
         self,
         mock_get_config,
@@ -197,7 +201,7 @@ class TestEnhancedVideoSearchAgent:
 
         agent = EnhancedVideoSearchAgent(vespa_url="http://localhost", vespa_port=8080)
 
-        results = agent.search_by_text("find cats", top_k=5)
+        results = agent.search_by_text("find cats", top_k=5, ranking="binary_binary")
 
         assert len(results) == 2
         assert results[0]["video_id"] == "video1"
@@ -207,6 +211,7 @@ class TestEnhancedVideoSearchAgent:
     @patch("src.app.agents.enhanced_video_search_agent.QueryEncoderFactory")
     @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
     @patch("src.app.agents.enhanced_video_search_agent.get_config")
+    @pytest.mark.ci_fast
     def test_search_by_video(
         self,
         mock_get_config,
@@ -229,7 +234,7 @@ class TestEnhancedVideoSearchAgent:
         )
 
         video_data = b"fake_video_data"
-        results = agent.search_by_video(video_data, "test.mp4", top_k=5)
+        results = agent.search_by_video(video_data, "test.mp4", top_k=5, ranking="binary_binary")
 
         assert len(results) == 2
         assert results[0]["video_id"] == "video1"

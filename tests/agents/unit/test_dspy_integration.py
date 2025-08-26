@@ -53,6 +53,7 @@ from src.app.routing.relationship_extraction_tools import RelationshipExtractorT
 class TestDSPyIntegrationMixin:
     """Test the base DSPy integration mixin."""
 
+    @pytest.mark.ci_fast
     def test_mixin_initialization(self):
         """Test mixin initialization without optimized prompts."""
         mixin = DSPyIntegrationMixin()
@@ -63,6 +64,7 @@ class TestDSPyIntegrationMixin:
         assert mixin.dspy_optimized_prompts == {}
         assert not mixin.dspy_enabled
 
+    @pytest.mark.ci_fast
     def test_agent_type_detection(self):
         """Test agent type detection from class name."""
 
@@ -324,6 +326,7 @@ class TestDSPyAgentIntegration:
 class TestDSPyAgentOptimizer:
     """Test DSPy agent optimizer and pipeline."""
 
+    @pytest.mark.ci_fast
     def test_optimizer_initialization(self):
         """Test optimizer initialization."""
         optimizer = DSPyAgentPromptOptimizer()
@@ -769,6 +772,7 @@ class TestDSPy30RoutingSignatures:
     old signature creation in dspy_agent_optimizer.py.
     """
 
+    @pytest.mark.ci_fast
     def test_basic_query_analysis_signature_structure(self):
         """Test BasicQueryAnalysisSignature has correct DSPy 3.0 structure"""
 
@@ -987,6 +991,7 @@ class TestDSPyRedundancyAnalysis:
 class TestRelationshipExtraction:
     """Test relationship extraction tools and DSPy modules."""
 
+    @pytest.mark.ci_fast
     def test_relationship_extractor_tool_initialization(self):
         """Test RelationshipExtractorTool can be initialized"""
         try:
@@ -1131,6 +1136,7 @@ class TestDSPyModules:
         assert hasattr(module, "relationship_tool")
         assert isinstance(module, dspy.Module)
 
+    @pytest.mark.ci_fast
     def test_dspy_basic_routing_module_structure(self):
         """Test DSPyBasicRoutingModule structure"""
         from src.app.routing.dspy_relationship_router import DSPyBasicRoutingModule
@@ -1456,6 +1462,7 @@ class TestDSPyIntegrationReadiness:
 class TestQueryEnhancement:
     """Test query rewriter and enhancement functionality."""
 
+    @pytest.mark.ci_fast
     def test_query_rewriter_initialization(self):
         """Test QueryRewriter initialization"""
 
@@ -1936,6 +1943,7 @@ class TestQueryEnhancementIntegration:
 class TestDSPyComponentsIntegration:
     """Integration tests validating complete pipeline from DSPy-A2A through query enhancement"""
 
+    @pytest.mark.ci_fast
     def test_end_to_end_query_processing_pipeline(self):
         """Test complete pipeline: A2A input → relationship extraction → query enhancement"""
 
@@ -2273,6 +2281,7 @@ class TestDSPyComponentsIntegration:
 class TestEnhancedRoutingAgent:
     """Unit tests for Enhanced Routing Agent"""
 
+    @pytest.mark.ci_fast
     def test_enhanced_routing_agent_initialization(self):
         """Test Enhanced Routing Agent initialization"""
         from src.app.agents.enhanced_routing_agent import EnhancedRoutingConfig
