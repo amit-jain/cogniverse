@@ -131,7 +131,7 @@ class TestEnhancedVideoSearchAgent:
                     "embedding_model": "vidore/colsmol-500m",
                     "embedding_type": "frame_based",
                 }
-            }
+            },
         }
 
     @pytest.fixture

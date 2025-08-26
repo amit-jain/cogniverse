@@ -4,7 +4,6 @@ Provides intelligent summarization of search results with visual content analysi
 """
 
 import asyncio
-import base64
 import logging
 import os
 from dataclasses import dataclass
@@ -16,28 +15,43 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 
 from src.app.agents.dspy_integration_mixin import DSPySummaryMixin
+
+# Enhanced routing support
+from src.app.agents.enhanced_routing_agent import RoutingDecision
 from src.common.config import get_config
 from src.tools.a2a_utils import (
     DataPart,
     Task,
 )
 
-# Enhanced routing support
-from src.app.agents.enhanced_routing_agent import RoutingDecision
-
 logger = logging.getLogger(__name__)
 
 
 class SummaryGenerationSignature(dspy.Signature):
     """Generate structured summaries with key insights."""
-    
+
     content = dspy.InputField(desc="Search results content to summarize")
     query = dspy.InputField(desc="Original user query")
-    summary_type = dspy.InputField(desc="Type of summary: brief, comprehensive, detailed")
-    
+    summary_type = dspy.InputField(
+        desc="Type of summary: brief, comprehensive, detailed"
+    )
+
     summary = dspy.OutputField(desc="Generated summary text")
     key_points = dspy.OutputField(desc="List of key points (comma-separated)")
     confidence_score = dspy.OutputField(desc="Confidence in summary quality (0.0-1.0)")
+
+
+class VisualAnalysisSignature(dspy.Signature):
+    """Analyze visual content for search relevance."""
+
+    images = dspy.InputField(desc="Description of images to analyze")
+    query = dspy.InputField(desc="Original search query for context")
+
+    descriptions = dspy.OutputField(desc="Visual descriptions (comma-separated)")
+    themes = dspy.OutputField(desc="Visual themes (comma-separated)")
+    key_objects = dspy.OutputField(desc="Key objects detected (comma-separated)")
+    insights = dspy.OutputField(desc="Key insights (comma-separated)")
+    relevance_score = dspy.OutputField(desc="Relevance to query (0.0-1.0)")
 
 
 @dataclass
@@ -55,7 +69,7 @@ class SummaryRequest:
 @dataclass
 class EnhancedSummaryRequest:
     """Enhanced summarization request with relationship context"""
-    
+
     original_query: str
     enhanced_query: Optional[str]
     search_results: List[Dict[str, Any]]
@@ -104,47 +118,34 @@ class SummaryResult:
 class VLMInterface:
     """Interface for Vision Language Model operations"""
 
-    def __init__(self, model_name: str = "gpt-4-vision-preview"):
-        self.model_name = model_name
+    def __init__(self):
         self.config = get_config()
-
-        # Initialize VLM client (could be OpenAI, Anthropic, etc.)
         self._initialize_vlm_client()
 
     def _initialize_vlm_client(self):
-        """Initialize the VLM client"""
-        try:
-            # Try to use OpenAI client if available
-            import openai
+        """Initialize DSPy LM from configuration"""
+        config = get_config()
 
-            api_key = self.config.get("openai_api_key") or os.getenv("OPENAI_API_KEY")
-            if api_key:
-                self.client = openai.OpenAI(api_key=api_key)
-                self.client_type = "openai"
-                logger.info("Initialized OpenAI VLM client")
-                return
-        except ImportError:
-            logger.warning("OpenAI client not available")
+        # Get LLM configuration from config - no hardcoded providers
+        llm_config = config.get("llm", {})
+        model_name = llm_config.get("model_name")
+        base_url = llm_config.get("base_url")
+        api_key = llm_config.get("api_key")
 
-        try:
-            # Try to use Anthropic client if available
-            import anthropic
-
-            api_key = self.config.get("anthropic_api_key") or os.getenv(
-                "ANTHROPIC_API_KEY"
+        if not all([model_name, base_url]):
+            raise ValueError(
+                "LLM configuration missing: model_name and base_url required"
             )
-            if api_key:
-                self.client = anthropic.Anthropic(api_key=api_key)
-                self.client_type = "anthropic"
-                logger.info("Initialized Anthropic VLM client")
-                return
-        except ImportError:
-            logger.warning("Anthropic client not available")
 
-        # Fallback to mock client for testing
-        logger.warning("No VLM client available, using mock client")
-        self.client = None
-        self.client_type = "mock"
+        # Configure DSPy LM from config
+        if api_key:
+            dspy.settings.configure(
+                lm=dspy.LM(model=model_name, api_base=base_url, api_key=api_key)
+            )
+        else:
+            dspy.settings.configure(lm=dspy.LM(model=model_name, api_base=base_url))
+
+        logger.info(f"Configured DSPy LM: {model_name} at {base_url}")
 
     async def analyze_visual_content(
         self, image_paths: List[str], query: str
@@ -159,106 +160,24 @@ class VLMInterface:
         Returns:
             Analysis results including descriptions, themes, and insights
         """
-        if self.client_type == "mock":
-            return self._mock_visual_analysis(image_paths, query)
+        # Use DSPy for visual analysis - no provider-specific code
+        visual_analysis = dspy.Predict(VisualAnalysisSignature)
 
-        try:
-            if self.client_type == "openai":
-                return await self._openai_visual_analysis(image_paths, query)
-            elif self.client_type == "anthropic":
-                return await self._anthropic_visual_analysis(image_paths, query)
-        except Exception as e:
-            logger.error(f"VLM analysis failed: {e}")
-            return self._mock_visual_analysis(image_paths, query)
+        # Prepare image content for DSPy
+        image_descriptions = []
+        for image_path in image_paths:
+            if Path(image_path).exists():
+                image_descriptions.append(f"Image: {Path(image_path).name}")
 
-    def _mock_visual_analysis(
-        self, image_paths: List[str], query: str
-    ) -> Dict[str, Any]:
-        """Mock visual analysis for testing"""
+        result = visual_analysis(images=", ".join(image_descriptions), query=query)
+
         return {
-            "descriptions": [
-                f"Visual content analysis for {Path(p).name}" for p in image_paths
-            ],
-            "themes": ["visual_content", "media_analysis", "image_processing"],
-            "key_objects": ["people", "objects", "text", "scenes"],
-            "emotions": ["neutral", "positive"],
-            "visual_quality": "high",
-            "relevance_to_query": 0.8,
-            "insights": [
-                "Visual content appears relevant to the search query",
-                "Multiple scenes and objects detected",
-                "Good visual quality for analysis",
-            ],
+            "descriptions": result.descriptions.split(", "),
+            "themes": result.themes.split(", "),
+            "key_objects": result.key_objects.split(", "),
+            "insights": result.insights.split(", "),
+            "relevance_score": float(result.relevance_score),
         }
-
-    async def _openai_visual_analysis(
-        self, image_paths: List[str], query: str
-    ) -> Dict[str, Any]:
-        """OpenAI GPT-4 Vision analysis"""
-        # Encode images to base64
-        encoded_images = []
-        for image_path in image_paths[:5]:  # Limit to 5 images
-            try:
-                with open(image_path, "rb") as img_file:
-                    encoded_images.append(base64.b64encode(img_file.read()).decode())
-            except Exception as e:
-                logger.warning(f"Could not encode image {image_path}: {e}")
-
-        if not encoded_images:
-            return self._mock_visual_analysis(image_paths, query)
-
-        # Prepare messages for GPT-4 Vision
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"""Analyze these images in the context of the search query: "{query}"
-
-Please provide:
-1. Brief description of each image
-2. Key themes and topics
-3. Notable objects or elements
-4. Emotional tone if applicable
-5. Relevance to the search query (0-1 score)
-6. Key insights for summarization
-
-Format your response as JSON with keys: descriptions, themes, key_objects, emotions, relevance_to_query, insights""",
-                    }
-                ]
-                + [
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{img}"},
-                    }
-                    for img in encoded_images
-                ],
-            }
-        ]
-
-        try:
-            response = await self.client.chat.completions.acreate(
-                model=self.model_name, messages=messages, max_tokens=1000
-            )
-
-            # Parse JSON response
-            import json
-
-            content = response.choices[0].message.content
-            return json.loads(content)
-
-        except Exception as e:
-            logger.error(f"OpenAI vision analysis failed: {e}")
-            return self._mock_visual_analysis(image_paths, query)
-
-    async def _anthropic_visual_analysis(
-        self, image_paths: List[str], query: str
-    ) -> Dict[str, Any]:
-        """Anthropic Claude Vision analysis"""
-        # Similar implementation for Anthropic
-        # For now, return mock analysis
-        return self._mock_visual_analysis(image_paths, query)
 
 
 class SummarizerAgent(DSPySummaryMixin):
@@ -273,10 +192,11 @@ class SummarizerAgent(DSPySummaryMixin):
         super().__init__()  # Initialize DSPy mixin
 
         self.config = get_config()
-        self.vlm = VLMInterface(kwargs.get("vlm_model", "gpt-4-vision-preview"))
-        
-        # Initialize DSPy summarization module
+
+        # Initialize DSPy components
+        self._initialize_vlm_client()
         self.dspy_summarizer = dspy.Predict(SummaryGenerationSignature)
+        self.vlm = VLMInterface()
 
         # Configuration
         self.max_summary_length = kwargs.get("max_summary_length", 500)
@@ -284,6 +204,27 @@ class SummarizerAgent(DSPySummaryMixin):
         self.visual_analysis_enabled = kwargs.get("visual_analysis_enabled", True)
 
         logger.info("SummarizerAgent initialization complete")
+
+    def _initialize_vlm_client(self):
+        """Initialize DSPy LM from configuration"""
+        llm_config = self.config.get("llm", {})
+        model_name = llm_config.get("model_name")
+        base_url = llm_config.get("base_url")
+        api_key = llm_config.get("api_key")
+
+        if not all([model_name, base_url]):
+            raise ValueError(
+                "LLM configuration missing: model_name and base_url required"
+            )
+
+        if api_key:
+            dspy.settings.configure(
+                lm=dspy.LM(model=model_name, api_base=base_url, api_key=api_key)
+            )
+        else:
+            dspy.settings.configure(lm=dspy.LM(model=model_name, api_base=base_url))
+
+        logger.info(f"Configured DSPy LM: {model_name} at {base_url}")
 
     async def summarize(self, request: SummaryRequest) -> SummaryResult:
         """
@@ -529,16 +470,15 @@ and structure summary based on identified themes and content categories.
             insights = visual_analysis.get("insights", [])
             descriptions = visual_analysis.get("descriptions", [])
 
-            # Combine insights and descriptions
             visual_insights = insights + [
                 f"Visual: {desc}" for desc in descriptions[:3]
             ]
 
-            return visual_insights[:5]  # Limit to 5 insights
+            return visual_insights[:5]
 
         except Exception as e:
             logger.error(f"Visual analysis failed: {e}")
-            return ["Visual analysis unavailable"]
+            raise
 
     async def _generate_summary(
         self,
@@ -585,31 +525,23 @@ and structure summary based on identified themes and content categories.
         # Prepare content for DSPy
         content_parts = []
         for result in results[:5]:  # Top 5 results for brief summary
-            title = result.get('title', result.get('video_id', 'Unknown'))
-            content_type = result.get('content_type', 'video')
+            title = result.get("title", result.get("video_id", "Unknown"))
+            content_type = result.get("content_type", "video")
             content_parts.append(f"- {title}: {content_type}")
-        
+
         content_text = "\n".join(content_parts)
-        
+
         # Use DSPy for brief summary generation
         try:
             dspy_result = self.dspy_summarizer(
-                content=content_text,
-                query=request.query,
-                summary_type="brief"
+                content=content_text, query=request.query, summary_type="brief"
             )
-            
+
             return dspy_result.summary
-            
+
         except Exception as e:
             logger.error(f"DSPy brief summarization failed: {e}")
-            # Fallback to template-based summary
-            themes = ", ".join(thinking_phase.key_themes[:3])
-            return (
-                f"Found {result_count} results for '{request.query}' covering {themes}. "
-                f"Content includes {', '.join(thinking_phase.content_categories)} "
-                f"with varying relevance to the search query."
-            )
+            raise
 
     def _generate_bullet_summary(
         self,
@@ -807,21 +739,26 @@ and structure summary based on identified themes and content categories.
         }
 
     async def summarize_with_routing_decision(
-        self, routing_decision: RoutingDecision, search_results: List[Dict[str, Any]], **kwargs
+        self,
+        routing_decision: RoutingDecision,
+        search_results: List[Dict[str, Any]],
+        **kwargs,
     ) -> SummaryResult:
         """
         Generate summary with enhanced relationship context from DSPy routing.
-        
+
         Args:
             routing_decision: Enhanced routing decision with relationship context
             search_results: Search results to summarize
             **kwargs: Additional summarization parameters
-            
+
         Returns:
             Enhanced summary with relationship context
         """
-        logger.info(f"Relationship-aware summarization with confidence: {routing_decision.confidence:.3f}")
-        
+        logger.info(
+            f"Relationship-aware summarization with confidence: {routing_decision.confidence:.3f}"
+        )
+
         # Create enhanced summary request
         enhanced_request = EnhancedSummaryRequest(
             original_query=routing_decision.routing_metadata.get("original_query", ""),
@@ -834,53 +771,65 @@ and structure summary based on identified themes and content categories.
             summary_type=kwargs.get("summary_type", "comprehensive"),
             include_visual_analysis=kwargs.get("include_visual_analysis", True),
             max_results_to_analyze=kwargs.get("max_results_to_analyze", 10),
-            focus_on_relationships=kwargs.get("focus_on_relationships", True)
+            focus_on_relationships=kwargs.get("focus_on_relationships", True),
         )
-        
+
         # Perform relationship-aware summarization
         return await self.summarize_with_relationships(enhanced_request)
-    
-    async def summarize_with_relationships(self, request: EnhancedSummaryRequest) -> SummaryResult:
+
+    async def summarize_with_relationships(
+        self, request: EnhancedSummaryRequest
+    ) -> SummaryResult:
         """
         Generate relationship-aware summary using enhanced context.
-        
+
         Args:
             request: Enhanced summary request with relationship context
-            
+
         Returns:
             Enhanced summary result with relationship analysis
         """
         try:
-            logger.info(f"Enhanced summarization - Original: '{request.original_query}', Enhanced: '{request.enhanced_query}'")
-            logger.info(f"Found {len(request.entities)} entities and {len(request.relationships)} relationships")
-            
+            logger.info(
+                f"Enhanced summarization - Original: '{request.original_query}', Enhanced: '{request.enhanced_query}'"
+            )
+            logger.info(
+                f"Found {len(request.entities)} entities and {len(request.relationships)} relationships"
+            )
+
             # Enhanced thinking phase with relationship analysis
             thinking_phase = await self._enhanced_thinking_phase(request)
-            
+
             # Extract visual content if enabled
             visual_insights = []
             if request.include_visual_analysis and self.visual_analysis_enabled:
                 visual_insights = await self._analyze_visual_content_with_relationships(
                     request, thinking_phase
                 )
-            
+
             # Generate relationship-aware summary
             summary = await self._generate_relationship_aware_summary(
                 request, thinking_phase, visual_insights
             )
-            
+
             # Generate relationship-specific summary
-            relationship_summary = self._generate_relationship_summary(request, thinking_phase)
-            
+            relationship_summary = self._generate_relationship_summary(
+                request, thinking_phase
+            )
+
             # Enhanced key points with relationship context
-            key_points = self._extract_enhanced_key_points(request, thinking_phase, summary)
-            
+            key_points = self._extract_enhanced_key_points(
+                request, thinking_phase, summary
+            )
+
             # Entity analysis
             entity_analysis = self._analyze_entities_in_results(request)
-            
+
             # Calculate enhanced confidence
-            confidence_score = self._calculate_enhanced_confidence(request, thinking_phase)
-            
+            confidence_score = self._calculate_enhanced_confidence(
+                request, thinking_phase
+            )
+
             result = SummaryResult(
                 summary=summary,
                 key_points=key_points,
@@ -902,35 +851,43 @@ and structure summary based on identified themes and content categories.
                     "processing_time": asyncio.get_event_loop().time(),
                 },
             )
-            
-            logger.info(f"Enhanced summarization complete. Confidence: {confidence_score:.2f}")
+
+            logger.info(
+                f"Enhanced summarization complete. Confidence: {confidence_score:.2f}"
+            )
             return result
-            
+
         except Exception as e:
             logger.error(f"Enhanced summarization failed: {e}")
-            # Fallback to basic summarization
-            return await self._fallback_summarization(request)
-    
-    async def _enhanced_thinking_phase(self, request: EnhancedSummaryRequest) -> ThinkingPhase:
+            # Re-raise the exception instead of fallback
+            raise
+
+    async def _enhanced_thinking_phase(
+        self, request: EnhancedSummaryRequest
+    ) -> ThinkingPhase:
         """Enhanced thinking phase with relationship analysis"""
-        
+
         # Standard thinking phase analysis
         key_themes = self._extract_themes_with_relationships(request)
         content_categories = self._categorize_content(request.search_results)
         relevance_scores = self._calculate_enhanced_relevance_scores(request)
         visual_elements = self._identify_visual_elements(request.search_results)
-        
+
         # Enhanced relationship analysis
         entity_insights = self._analyze_entity_insights(request)
         relationship_patterns = self._identify_relationship_patterns(request)
         contextual_connections = self._find_contextual_connections(request)
-        
+
         # Enhanced reasoning with relationship context
         reasoning = self._generate_enhanced_reasoning(
-            request, key_themes, content_categories, relevance_scores,
-            entity_insights, relationship_patterns
+            request,
+            key_themes,
+            content_categories,
+            relevance_scores,
+            entity_insights,
+            relationship_patterns,
         )
-        
+
         return ThinkingPhase(
             key_themes=key_themes,
             content_categories=content_categories,
@@ -941,15 +898,17 @@ and structure summary based on identified themes and content categories.
             relationship_patterns=relationship_patterns,
             contextual_connections=contextual_connections,
         )
-    
-    def _extract_themes_with_relationships(self, request: EnhancedSummaryRequest) -> List[str]:
+
+    def _extract_themes_with_relationships(
+        self, request: EnhancedSummaryRequest
+    ) -> List[str]:
         """Extract themes enhanced by relationship context"""
         themes = set()
-        
+
         # Standard theme extraction
         standard_themes = self._extract_themes(request.search_results)
         themes.update(standard_themes)
-        
+
         # Add relationship-derived themes
         for relationship in request.relationships:
             relation = relationship.get("relation", "").lower()
@@ -961,7 +920,7 @@ and structure summary based on identified themes and content categories.
                 themes.add("educational_content")
             elif "create" in relation or "make" in relation:
                 themes.add("creative_content")
-        
+
         # Add entity-derived themes
         for entity in request.entities:
             entity_type = entity.get("label", "").lower()
@@ -971,65 +930,79 @@ and structure summary based on identified themes and content categories.
                 themes.add("event_content")
             elif entity_type in ["location", "venue", "stadium"]:
                 themes.add("location_based")
-        
+
         return list(themes)
-    
-    def _calculate_enhanced_relevance_scores(self, request: EnhancedSummaryRequest) -> Dict[str, float]:
+
+    def _calculate_enhanced_relevance_scores(
+        self, request: EnhancedSummaryRequest
+    ) -> Dict[str, float]:
         """Calculate relevance scores enhanced by relationship context"""
         scores = {}
-        
+
         for i, result in enumerate(request.search_results):
             base_score = result.get("score", result.get("relevance", 0.5))
-            
+
             # Check for relationship metadata if available
             if "relationship_metadata" in result:
                 rel_metadata = result["relationship_metadata"]
-                relationship_boost = rel_metadata.get("relationship_relevance_score", 0.0)
-                enhanced_score = base_score + (relationship_boost * 0.2)  # Up to 20% boost
+                relationship_boost = rel_metadata.get(
+                    "relationship_relevance_score", 0.0
+                )
+                enhanced_score = base_score + (
+                    relationship_boost * 0.2
+                )  # Up to 20% boost
                 scores[f"result_{i}"] = min(enhanced_score, 1.0)
             else:
                 scores[f"result_{i}"] = base_score
-        
+
         return scores
-    
-    def _analyze_entity_insights(self, request: EnhancedSummaryRequest) -> List[Dict[str, Any]]:
+
+    def _analyze_entity_insights(
+        self, request: EnhancedSummaryRequest
+    ) -> List[Dict[str, Any]]:
         """Analyze entity insights from search results"""
         insights = []
-        
+
         for entity in request.entities:
             entity_text = entity.get("text", "").lower()
             entity_type = entity.get("label", "unknown")
-            
+
             # Count mentions in results
             mentions = 0
             result_ids = []
-            
+
             for i, result in enumerate(request.search_results):
-                result_content = " ".join([
-                    result.get("title", ""),
-                    result.get("description", ""),
-                    str(result.get("metadata", {}))
-                ]).lower()
-                
+                result_content = " ".join(
+                    [
+                        result.get("title", ""),
+                        result.get("description", ""),
+                        str(result.get("metadata", {})),
+                    ]
+                ).lower()
+
                 if entity_text in result_content:
                     mentions += 1
                     result_ids.append(i)
-            
+
             if mentions > 0:
-                insights.append({
-                    "entity": entity_text,
-                    "type": entity_type,
-                    "mentions": mentions,
-                    "result_ids": result_ids,
-                    "prominence": mentions / len(request.search_results)
-                })
-        
+                insights.append(
+                    {
+                        "entity": entity_text,
+                        "type": entity_type,
+                        "mentions": mentions,
+                        "result_ids": result_ids,
+                        "prominence": mentions / len(request.search_results),
+                    }
+                )
+
         return insights
-    
-    def _identify_relationship_patterns(self, request: EnhancedSummaryRequest) -> List[Dict[str, Any]]:
+
+    def _identify_relationship_patterns(
+        self, request: EnhancedSummaryRequest
+    ) -> List[Dict[str, Any]]:
         """Identify relationship patterns in search results"""
         patterns = []
-        
+
         # Group relationships by relation type
         relation_groups = {}
         for relationship in request.relationships:
@@ -1037,64 +1010,71 @@ and structure summary based on identified themes and content categories.
             if relation not in relation_groups:
                 relation_groups[relation] = []
             relation_groups[relation].append(relationship)
-        
+
         # Analyze each relation group
         for relation, relationships in relation_groups.items():
             if len(relationships) > 1:  # Only include patterns with multiple instances
                 subjects = [r.get("subject", "") for r in relationships]
                 objects = [r.get("object", "") for r in relationships]
-                
-                patterns.append({
-                    "relation_type": relation,
-                    "frequency": len(relationships),
-                    "subjects": subjects,
-                    "objects": objects,
-                    "pattern_strength": len(relationships) / len(request.relationships)
-                })
-        
+
+                patterns.append(
+                    {
+                        "relation_type": relation,
+                        "frequency": len(relationships),
+                        "subjects": subjects,
+                        "objects": objects,
+                        "pattern_strength": len(relationships)
+                        / len(request.relationships),
+                    }
+                )
+
         return patterns
-    
-    def _find_contextual_connections(self, request: EnhancedSummaryRequest) -> List[str]:
+
+    def _find_contextual_connections(
+        self, request: EnhancedSummaryRequest
+    ) -> List[str]:
         """Find contextual connections between entities and relationships"""
         connections = []
-        
+
         # Find entity-relationship connections
         for entity in request.entities:
             entity_text = entity.get("text", "").lower()
-            
+
             related_relations = []
             for relationship in request.relationships:
                 subject = relationship.get("subject", "").lower()
                 object_text = relationship.get("object", "").lower()
-                
+
                 if entity_text in subject or entity_text in object_text:
                     related_relations.append(relationship.get("relation", ""))
-            
+
             if related_relations:
-                connections.append(f"{entity_text} is connected to {', '.join(set(related_relations))}")
-        
+                connections.append(
+                    f"{entity_text} is connected to {', '.join(set(related_relations))}"
+                )
+
         return connections
-    
+
     def _generate_enhanced_reasoning(
-        self, 
+        self,
         request: EnhancedSummaryRequest,
         themes: List[str],
         categories: List[str],
         scores: Dict[str, float],
         entity_insights: List[Dict[str, Any]],
-        relationship_patterns: List[Dict[str, Any]]
+        relationship_patterns: List[Dict[str, Any]],
     ) -> str:
         """Generate enhanced reasoning with relationship context"""
-        
+
         reasoning_parts = []
-        
+
         # Basic analysis
         avg_score = sum(scores.values()) / len(scores) if scores else 0
         reasoning_parts.append(
             f"Analysis of {len(request.search_results)} results for enhanced query '{request.enhanced_query or request.original_query}' "
             f"shows average relevance of {avg_score:.2f}."
         )
-        
+
         # Entity analysis
         if entity_insights:
             prominent_entities = [e for e in entity_insights if e["prominence"] > 0.3]
@@ -1103,30 +1083,32 @@ and structure summary based on identified themes and content categories.
                 reasoning_parts.append(
                     f"Key entities identified: {', '.join(entity_names)} with high prominence in results."
                 )
-        
+
         # Relationship pattern analysis
         if relationship_patterns:
-            strong_patterns = [p for p in relationship_patterns if p["pattern_strength"] > 0.3]
+            strong_patterns = [
+                p for p in relationship_patterns if p["pattern_strength"] > 0.3
+            ]
             if strong_patterns:
                 pattern_relations = [p["relation_type"] for p in strong_patterns[:2]]
                 reasoning_parts.append(
                     f"Strong relationship patterns found: {', '.join(pattern_relations)} occurring frequently across results."
                 )
-        
+
         # Query enhancement impact
         if request.enhanced_query and request.enhanced_query != request.original_query:
             reasoning_parts.append(
                 f"Query enhancement from '{request.original_query}' to '{request.enhanced_query}' "
                 f"with routing confidence {request.routing_confidence:.2f} improved result relevance."
             )
-        
+
         return " ".join(reasoning_parts)
-    
+
     async def _analyze_visual_content_with_relationships(
         self, request: EnhancedSummaryRequest, thinking_phase: ThinkingPhase
     ) -> List[str]:
         """Analyze visual content with relationship context"""
-        
+
         # Standard visual analysis
         standard_visual = await self._analyze_visual_content(
             SummaryRequest(
@@ -1135,14 +1117,14 @@ and structure summary based on identified themes and content categories.
                 context=request.context,
                 summary_type=request.summary_type,
                 include_visual_analysis=request.include_visual_analysis,
-                max_results_to_analyze=request.max_results_to_analyze
+                max_results_to_analyze=request.max_results_to_analyze,
             ),
-            thinking_phase
+            thinking_phase,
         )
-        
+
         # Add relationship-aware visual insights
         visual_insights = standard_visual.copy()
-        
+
         if request.focus_on_relationships and request.relationships:
             # Add insights based on relationship patterns
             for pattern in thinking_phase.relationship_patterns or []:
@@ -1151,297 +1133,314 @@ and structure summary based on identified themes and content categories.
                         f"Visual content likely shows {pattern['relation_type']} relationships "
                         f"based on {pattern['frequency']} pattern occurrences"
                     )
-        
+
         return visual_insights
-    
+
     async def _generate_relationship_aware_summary(
         self,
         request: EnhancedSummaryRequest,
         thinking_phase: ThinkingPhase,
-        visual_insights: List[str]
+        visual_insights: List[str],
     ) -> str:
         """Generate summary with relationship awareness"""
-        
+
         summary_parts = []
-        
+
         # Enhanced introduction
         query_text = request.enhanced_query or request.original_query
         summary_parts.append(
             f"Enhanced search for '{query_text}' analyzed {len(request.search_results)} results "
             f"with {len(request.entities)} identified entities and {len(request.relationships)} relationship patterns."
         )
-        
+
         # Entity prominence analysis
         if thinking_phase.entity_insights:
-            prominent_entities = [e for e in thinking_phase.entity_insights if e["prominence"] > 0.2]
+            prominent_entities = [
+                e for e in thinking_phase.entity_insights if e["prominence"] > 0.2
+            ]
             if prominent_entities:
-                entity_list = [f"{e['entity']} ({e['mentions']} mentions)" for e in prominent_entities[:3]]
+                entity_list = [
+                    f"{e['entity']} ({e['mentions']} mentions)"
+                    for e in prominent_entities[:3]
+                ]
                 summary_parts.append(f"Key entities: {', '.join(entity_list)}.")
-        
-        # Relationship pattern analysis  
+
+        # Relationship pattern analysis
         if thinking_phase.relationship_patterns:
-            strong_patterns = [p for p in thinking_phase.relationship_patterns if p["pattern_strength"] > 0.3]
+            strong_patterns = [
+                p
+                for p in thinking_phase.relationship_patterns
+                if p["pattern_strength"] > 0.3
+            ]
             if strong_patterns:
-                pattern_desc = [f"{p['relation_type']} ({p['frequency']}x)" for p in strong_patterns[:2]]
-                summary_parts.append(f"Primary relationship patterns: {', '.join(pattern_desc)}.")
-        
+                pattern_desc = [
+                    f"{p['relation_type']} ({p['frequency']}x)"
+                    for p in strong_patterns[:2]
+                ]
+                summary_parts.append(
+                    f"Primary relationship patterns: {', '.join(pattern_desc)}."
+                )
+
         # Content themes with relationship context
         if thinking_phase.key_themes:
             summary_parts.append(
                 f"Content spans {', '.join(thinking_phase.key_themes[:3])} themes, "
                 f"with relationship analysis revealing {', '.join(thinking_phase.contextual_connections[:2] if thinking_phase.contextual_connections else [])}."
             )
-        
+
         # Top results with relationship scoring
         if request.search_results:
             top_result = request.search_results[0]
             title = top_result.get("title", top_result.get("video_id", "Top result"))
             base_score = top_result.get("score", 0)
-            
+
             # Check if relationship boost was applied
             if "relationship_metadata" in top_result:
-                rel_score = top_result["relationship_metadata"].get("relationship_relevance_score", 0)
+                rel_score = top_result["relationship_metadata"].get(
+                    "relationship_relevance_score", 0
+                )
                 summary_parts.append(
                     f"Top result '{title}' shows base relevance {base_score:.2f} "
                     f"with relationship relevance boost of {rel_score:.2f}."
                 )
             else:
-                summary_parts.append(f"Top result '{title}' has relevance score {base_score:.2f}.")
-        
+                summary_parts.append(
+                    f"Top result '{title}' has relevance score {base_score:.2f}."
+                )
+
         # Visual insights with relationship context
         if visual_insights:
-            relationship_visual = [v for v in visual_insights if "relationship" in v.lower()]
+            relationship_visual = [
+                v for v in visual_insights if "relationship" in v.lower()
+            ]
             if relationship_visual:
-                summary_parts.append(f"Visual analysis: {'. '.join(relationship_visual[:1])}.")
+                summary_parts.append(
+                    f"Visual analysis: {'. '.join(relationship_visual[:1])}."
+                )
             elif visual_insights:
-                summary_parts.append(f"Visual analysis: {'. '.join(visual_insights[:1])}.")
-        
+                summary_parts.append(
+                    f"Visual analysis: {'. '.join(visual_insights[:1])}."
+                )
+
         # Enhancement conclusion
         if request.routing_confidence > 0.7:
             summary_parts.append(
                 f"High routing confidence ({request.routing_confidence:.2f}) indicates strong "
                 f"alignment between query enhancement and result relevance."
             )
-        
+
         return " ".join(summary_parts)
-    
+
     def _generate_relationship_summary(
         self, request: EnhancedSummaryRequest, thinking_phase: ThinkingPhase
     ) -> str:
         """Generate focused summary of relationship patterns"""
-        
+
         if not request.relationships:
             return "No specific relationship patterns identified in the search context."
-        
+
         summary_parts = []
-        
+
         # Relationship overview
         summary_parts.append(
             f"Identified {len(request.relationships)} relationships across search results."
         )
-        
+
         # Pattern analysis
         if thinking_phase.relationship_patterns:
             pattern_count = len(thinking_phase.relationship_patterns)
-            strongest_pattern = max(thinking_phase.relationship_patterns, key=lambda p: p["pattern_strength"])
-            
+            strongest_pattern = max(
+                thinking_phase.relationship_patterns,
+                key=lambda p: p["pattern_strength"],
+            )
+
             summary_parts.append(
                 f"Found {pattern_count} distinct relationship patterns, "
                 f"with '{strongest_pattern['relation_type']}' being most prominent ({strongest_pattern['frequency']} occurrences)."
             )
-        
+
         # Entity relationships
         if thinking_phase.entity_insights and thinking_phase.contextual_connections:
             summary_parts.append(
                 f"Key relationship connections: {'. '.join(thinking_phase.contextual_connections[:2])}."
             )
-        
+
         return " ".join(summary_parts)
-    
+
     def _extract_enhanced_key_points(
-        self, 
-        request: EnhancedSummaryRequest, 
-        thinking_phase: ThinkingPhase, 
-        summary: str
+        self,
+        request: EnhancedSummaryRequest,
+        thinking_phase: ThinkingPhase,
+        summary: str,
     ) -> List[str]:
         """Extract key points enhanced with relationship context"""
-        
+
         key_points = []
-        
+
         # Query enhancement impact
         if request.enhanced_query and request.enhanced_query != request.original_query:
             key_points.append(
                 f"Query enhanced from '{request.original_query}' to '{request.enhanced_query}'"
             )
-        
+
         # Entity prominence
         if thinking_phase.entity_insights:
-            top_entities = sorted(thinking_phase.entity_insights, key=lambda e: e["prominence"], reverse=True)[:2]
+            top_entities = sorted(
+                thinking_phase.entity_insights,
+                key=lambda e: e["prominence"],
+                reverse=True,
+            )[:2]
             for entity in top_entities:
-                key_points.append(f"{entity['entity'].title()} appears prominently ({entity['mentions']} mentions)")
-        
+                key_points.append(
+                    f"{entity['entity'].title()} appears prominently ({entity['mentions']} mentions)"
+                )
+
         # Relationship patterns
         if thinking_phase.relationship_patterns:
-            top_patterns = sorted(thinking_phase.relationship_patterns, key=lambda p: p["pattern_strength"], reverse=True)[:2]
+            top_patterns = sorted(
+                thinking_phase.relationship_patterns,
+                key=lambda p: p["pattern_strength"],
+                reverse=True,
+            )[:2]
             for pattern in top_patterns:
-                key_points.append(f"{pattern['relation_type'].title()} relationships occur {pattern['frequency']} times")
-        
+                key_points.append(
+                    f"{pattern['relation_type'].title()} relationships occur {pattern['frequency']} times"
+                )
+
         # Standard key points for additional context
         standard_points = self._extract_key_points(
             SummaryRequest(
                 query=request.enhanced_query or request.original_query,
                 search_results=request.search_results[:3],  # Top 3 for key points
-                summary_type=request.summary_type
+                summary_type=request.summary_type,
             ),
             thinking_phase,
-            summary
+            summary,
         )
-        
+
         key_points.extend(standard_points[:3])  # Add top 3 standard points
-        
+
         return key_points[:5]  # Return top 5 key points
-    
-    def _analyze_entities_in_results(self, request: EnhancedSummaryRequest) -> Dict[str, Any]:
+
+    def _analyze_entities_in_results(
+        self, request: EnhancedSummaryRequest
+    ) -> Dict[str, Any]:
         """Analyze how entities appear across search results"""
-        
+
         analysis = {
             "entity_distribution": {},
             "entity_co_occurrence": [],
-            "entity_result_mapping": {}
+            "entity_result_mapping": {},
         }
-        
+
         # Analyze entity distribution
         for entity in request.entities:
             entity_text = entity.get("text", "").lower()
             entity_type = entity.get("label", "unknown")
-            
+
             result_appearances = []
             for i, result in enumerate(request.search_results):
-                result_content = " ".join([
-                    result.get("title", ""),
-                    result.get("description", ""),
-                    str(result.get("metadata", {}))
-                ]).lower()
-                
+                result_content = " ".join(
+                    [
+                        result.get("title", ""),
+                        result.get("description", ""),
+                        str(result.get("metadata", {})),
+                    ]
+                ).lower()
+
                 if entity_text in result_content:
                     result_appearances.append(i)
-            
+
             if result_appearances:
                 analysis["entity_distribution"][entity_text] = {
                     "type": entity_type,
                     "appearances": len(result_appearances),
                     "result_ids": result_appearances,
-                    "coverage": len(result_appearances) / len(request.search_results)
+                    "coverage": len(result_appearances) / len(request.search_results),
                 }
-        
+
         # Find entity co-occurrences
         entities_list = list(analysis["entity_distribution"].keys())
         for i, entity1 in enumerate(entities_list):
-            for entity2 in entities_list[i+1:]:
-                entity1_results = set(analysis["entity_distribution"][entity1]["result_ids"])
-                entity2_results = set(analysis["entity_distribution"][entity2]["result_ids"])
-                
+            for entity2 in entities_list[i + 1 :]:
+                entity1_results = set(
+                    analysis["entity_distribution"][entity1]["result_ids"]
+                )
+                entity2_results = set(
+                    analysis["entity_distribution"][entity2]["result_ids"]
+                )
+
                 overlap = entity1_results.intersection(entity2_results)
                 if overlap:
-                    analysis["entity_co_occurrence"].append({
-                        "entities": [entity1, entity2],
-                        "shared_results": len(overlap),
-                        "result_ids": list(overlap)
-                    })
-        
+                    analysis["entity_co_occurrence"].append(
+                        {
+                            "entities": [entity1, entity2],
+                            "shared_results": len(overlap),
+                            "result_ids": list(overlap),
+                        }
+                    )
+
         return analysis
-    
+
     def _calculate_enhanced_confidence(
         self, request: EnhancedSummaryRequest, thinking_phase: ThinkingPhase
     ) -> float:
         """Calculate confidence score enhanced by relationship context"""
-        
+
         # Base confidence from routing
         base_confidence = request.routing_confidence
-        
+
         # Entity coverage boost
         entity_boost = 0.0
         if thinking_phase.entity_insights:
-            avg_prominence = sum(e["prominence"] for e in thinking_phase.entity_insights) / len(thinking_phase.entity_insights)
+            avg_prominence = sum(
+                e["prominence"] for e in thinking_phase.entity_insights
+            ) / len(thinking_phase.entity_insights)
             entity_boost = avg_prominence * 0.2  # Up to 20% boost
-        
+
         # Relationship pattern boost
         pattern_boost = 0.0
         if thinking_phase.relationship_patterns:
-            avg_pattern_strength = sum(p["pattern_strength"] for p in thinking_phase.relationship_patterns) / len(thinking_phase.relationship_patterns)
+            avg_pattern_strength = sum(
+                p["pattern_strength"] for p in thinking_phase.relationship_patterns
+            ) / len(thinking_phase.relationship_patterns)
             pattern_boost = avg_pattern_strength * 0.1  # Up to 10% boost
-        
+
         # Query enhancement boost
         enhancement_boost = 0.0
         if request.enhanced_query and request.enhanced_query != request.original_query:
             enhancement_boost = 0.1  # 10% boost for successful enhancement
-        
-        # Calculate final confidence
-        enhanced_confidence = min(base_confidence + entity_boost + pattern_boost + enhancement_boost, 1.0)
-        
-        return enhanced_confidence
-    
-    async def _fallback_summarization(self, request: EnhancedSummaryRequest) -> SummaryResult:
-        """Fallback to basic summarization when enhanced processing fails"""
-        
-        logger.warning("Falling back to basic summarization")
-        
-        try:
-            # Create basic request
-            basic_request = SummaryRequest(
-                query=request.original_query,
-                search_results=request.search_results,
-                context=request.context,
-                summary_type=request.summary_type,
-                include_visual_analysis=request.include_visual_analysis,
-                max_results_to_analyze=request.max_results_to_analyze
-            )
-            
-            # Use standard summarization
-            result = await self.summarize(basic_request)
-            
-            # Add fallback metadata
-            result.metadata["fallback_used"] = True
-            result.metadata["fallback_reason"] = "Enhanced summarization failed"
-            result.enhancement_applied = False
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Fallback summarization also failed: {e}")
-            # Return minimal result
-            return SummaryResult(
-                summary="Summarization failed due to processing errors.",
-                key_points=["Error in summarization process"],
-                visual_insights=[],
-                confidence_score=0.0,
-                thinking_phase=ThinkingPhase(
-                    key_themes=[],
-                    content_categories=[],
-                    relevance_scores={},
-                    visual_elements=[],
-                    reasoning="Summarization process failed"
-                ),
-                metadata={"error": str(e), "fallback_used": True},
-                enhancement_applied=False
-            )
 
-    def process_routing_decision_task(self, routing_decision: RoutingDecision, search_results: List[Dict[str, Any]], task_id: str = None) -> Dict[str, Any]:
+        # Calculate final confidence
+        enhanced_confidence = min(
+            base_confidence + entity_boost + pattern_boost + enhancement_boost, 1.0
+        )
+
+        return enhanced_confidence
+
+    def process_routing_decision_task(
+        self,
+        routing_decision: RoutingDecision,
+        search_results: List[Dict[str, Any]],
+        task_id: str = None,
+    ) -> Dict[str, Any]:
         """
         Process a routing decision as a task for A2A compatibility.
-        
+
         Args:
             routing_decision: Enhanced routing decision from DSPy system
             search_results: Search results to summarize
             task_id: Optional task ID
-            
+
         Returns:
             A2A-compatible task result
         """
-        
+
         # Perform relationship-aware summarization
-        result = asyncio.run(self.summarize_with_routing_decision(routing_decision, search_results))
-        
+        result = asyncio.run(
+            self.summarize_with_routing_decision(routing_decision, search_results)
+        )
+
         # Convert to A2A format
         return {
             "task_id": task_id or "routing_decision_summary",
@@ -1467,8 +1466,8 @@ and structure summary based on identified themes and content categories.
                 "recommended_agent": routing_decision.recommended_agent,
                 "confidence": routing_decision.confidence,
                 "reasoning": routing_decision.reasoning,
-                "fallback_agents": routing_decision.fallback_agents
-            }
+                "fallback_agents": routing_decision.fallback_agents,
+            },
         }
 
 
@@ -1567,9 +1566,6 @@ if __name__ == "__main__":
         "--port", type=int, default=8003, help="Port to run the server on"
     )
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to bind to")
-    parser.add_argument(
-        "--vlm-model", type=str, default="gpt-4-vision-preview", help="VLM model to use"
-    )
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload")
 
     args = parser.parse_args()

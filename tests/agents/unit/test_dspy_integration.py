@@ -9,6 +9,9 @@ import dspy
 import pytest
 
 from src.app.agents.detailed_report_agent import DetailedReportAgent
+
+# Phase 1-3 imports for integration tests
+from src.app.agents.dspy_a2a_agent_base import DSPyA2AAgentBase, SimpleDSPyA2AAgent
 from src.app.agents.dspy_agent_optimizer import (
     DSPyAgentOptimizerPipeline,
     DSPyAgentPromptOptimizer,
@@ -20,51 +23,30 @@ from src.app.agents.dspy_integration_mixin import (
     DSPyRoutingMixin,
     DSPySummaryMixin,
 )
+from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent, RoutingDecision
+
+# Phase 5 imports for enhanced agent testing
+from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
 from src.app.agents.query_analysis_tool_v3 import QueryAnalysisToolV3
 
 # Agent imports
 from src.app.agents.routing_agent import RoutingAgent
 from src.app.agents.summarizer_agent import SummarizerAgent
-
-# Phase 1-3 imports for integration tests
-from src.app.agents.dspy_a2a_agent_base import DSPyA2AAgentBase, SimpleDSPyA2AAgent
+from src.app.routing.dspy_relationship_router import (
+    DSPyAdvancedRoutingModule,
+    DSPyRelationshipExtractorModule,
+)
 from src.app.routing.dspy_routing_signatures import (
     BasicQueryAnalysisSignature,
-    RelationshipExtractionSignature,
     QueryEnhancementSignature,
-)
-from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
-from src.app.routing.dspy_relationship_router import (
-    DSPyRelationshipExtractorModule,
-    DSPyAdvancedRoutingModule,
+    RelationshipExtractionSignature,
 )
 from src.app.routing.query_enhancement_engine import (
-    QueryRewriter,
     DSPyQueryEnhancerModule,
     QueryEnhancementPipeline,
+    QueryRewriter,
 )
-
-# Phase 5 imports for enhanced agent testing
-from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
-from src.app.agents.result_enhancement_engine import (
-    ResultEnhancementEngine,
-    EnhancementContext,
-    EnhancedResult
-)
-from src.app.agents.enhanced_result_aggregator import (
-    EnhancedResultAggregator,
-    AggregationRequest,
-    AggregatedResult
-)
-from src.app.agents.enhanced_agent_orchestrator import (
-    EnhancedAgentOrchestrator,
-    ProcessingRequest,
-    ProcessingResult
-)
-from src.app.agents.enhanced_routing_agent import (
-    EnhancedRoutingAgent,
-    RoutingDecision
-)
+from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
 
 
 @pytest.mark.unit
@@ -270,10 +252,18 @@ class TestDSPyAgentIntegration:
         assert "enabled" in metadata
         assert metadata["agent_type"] in ["agent_routing", "query_analysis"]
 
+    @patch("src.app.agents.summarizer_agent.get_config")
     @patch("src.app.agents.summarizer_agent.VLMInterface")
-    def test_summarizer_agent_dspy_integration(self, mock_vlm):
+    def test_summarizer_agent_dspy_integration(self, mock_vlm, mock_config):
         """Test DSPy integration in SummarizerAgent."""
         mock_vlm.return_value = Mock()
+        mock_config.return_value = {
+            "llm": {
+                "model_name": "test-model",
+                "base_url": "http://localhost:11434/v1",
+                "api_key": "test-key",
+            }
+        }
 
         agent = SummarizerAgent()
 
@@ -287,10 +277,18 @@ class TestDSPyAgentIntegration:
         assert "enabled" in metadata
         assert metadata["agent_type"] in ["summary_generation", "query_analysis"]
 
+    @patch("src.app.agents.detailed_report_agent.get_config")
     @patch("src.app.agents.detailed_report_agent.VLMInterface")
-    def test_detailed_report_agent_dspy_integration(self, mock_vlm):
+    def test_detailed_report_agent_dspy_integration(self, mock_vlm, mock_config):
         """Test DSPy integration in DetailedReportAgent."""
         mock_vlm.return_value = Mock()
+        mock_config.return_value = {
+            "llm": {
+                "model_name": "test-model",
+                "base_url": "http://localhost:11434/v1",
+                "api_key": "test-key",
+            }
+        }
 
         agent = DetailedReportAgent()
 
@@ -634,70 +632,75 @@ class TestDSPyEndToEndIntegration:
 # These will replace the old DSPy 2.x tests above when we switch over
 # =============================================================================
 
+
 @pytest.mark.unit
 class TestDSPy30A2ABaseIntegration:
     """Test DSPy 3.0 + A2A base integration layer (Phase 1.2).
-    
+
     This tests the new dspy_a2a_agent_base.py implementation that will
     replace the old DSPyIntegrationMixin approach.
     """
-    
+
     @pytest.fixture
     def mock_dspy30_module(self):
         """Mock DSPy 3.0 module with new features"""
         module = Mock(spec=dspy.Module)
-        
+
         # Mock DSPy 3.0 prediction with structured output
         prediction = Mock()
         prediction.response = "DSPy 3.0 enhanced response"
         prediction.confidence = 0.92
         prediction.reasoning = "Advanced reasoning chain"
-        
+
         module.forward = AsyncMock(return_value=prediction)
         return module
-    
+
     def test_dspy30_agent_initialization(self, mock_dspy30_module):
         """Test DSPy 3.0 agent initialization with A2A protocol"""
-        from src.app.agents.dspy_a2a_agent_base import DSPyA2AAgentBase
-        
+
         # Create concrete implementation for testing
         class TestDSPy30Agent(DSPyA2AAgentBase):
             async def _process_with_dspy(self, dspy_input):
                 return await self.dspy_module.forward(**dspy_input)
-            
+
             def _dspy_to_a2a_output(self, dspy_output):
                 return {
                     "status": "success",
-                    "response": getattr(dspy_output, 'response', str(dspy_output)),
-                    "confidence": getattr(dspy_output, 'confidence', 0.0),
-                    "agent": self.agent_name
+                    "response": getattr(dspy_output, "response", str(dspy_output)),
+                    "confidence": getattr(dspy_output, "confidence", 0.0),
+                    "agent": self.agent_name,
                 }
-            
+
             def _get_agent_skills(self):
-                return [{"name": "test_skill", "description": "Test skill", 
-                        "input_schema": {}, "output_schema": {}}]
-        
+                return [
+                    {
+                        "name": "test_skill",
+                        "description": "Test skill",
+                        "input_schema": {},
+                        "output_schema": {},
+                    }
+                ]
+
         agent = TestDSPy30Agent(
             agent_name="TestDSPy30Agent",
             agent_description="DSPy 3.0 test agent",
             dspy_module=mock_dspy30_module,
             capabilities=["dspy30_processing", "a2a_protocol"],
-            port=8999
+            port=8999,
         )
-        
+
         assert agent.agent_name == "TestDSPy30Agent"
         assert "dspy30_processing" in agent.capabilities
         assert "a2a_protocol" in agent.capabilities
         assert agent.dspy_module == mock_dspy30_module
-        assert hasattr(agent, 'app')  # FastAPI app for A2A
-        assert hasattr(agent, 'a2a_client')  # A2A client for inter-agent communication
-    
+        assert hasattr(agent, "app")  # FastAPI app for A2A
+        assert hasattr(agent, "a2a_client")  # A2A client for inter-agent communication
+
     def test_a2a_to_dspy_conversion_enhanced(self):
         """Test enhanced A2A to DSPy conversion with DSPy 3.0 features"""
-        from src.app.agents.dspy_a2a_agent_base import SimpleDSPyA2AAgent
-        
+
         agent = SimpleDSPyA2AAgent(port=8998)
-        
+
         # Test multimodal A2A task
         a2a_task = {
             "id": "dspy30_multimodal_task",
@@ -706,46 +709,52 @@ class TestDSPy30A2ABaseIntegration:
                     "role": "user",
                     "parts": [
                         {"type": "text", "text": "Analyze this video with DSPy 3.0"},
-                        {"type": "video", "video_data": b"mock_video", "filename": "test.mp4"},
-                        {"type": "data", "data": {
-                            "context": "dspy30_analysis",
-                            "use_advanced_reasoning": True,
-                            "enable_mlflow_tracking": True
-                        }}
-                    ]
+                        {
+                            "type": "video",
+                            "video_data": b"mock_video",
+                            "filename": "test.mp4",
+                        },
+                        {
+                            "type": "data",
+                            "data": {
+                                "context": "dspy30_analysis",
+                                "use_advanced_reasoning": True,
+                                "enable_mlflow_tracking": True,
+                            },
+                        },
+                    ],
                 }
-            ]
+            ],
         }
-        
+
         dspy_input = agent._a2a_to_dspy_input(a2a_task)
-        
+
         assert dspy_input["query"] == "Analyze this video with DSPy 3.0"
         assert dspy_input["video_data"] == b"mock_video"
         assert dspy_input["context"] == "dspy30_analysis"
         assert dspy_input["use_advanced_reasoning"] is True
         assert dspy_input["enable_mlflow_tracking"] is True
-    
+
     @pytest.mark.asyncio
     async def test_dspy30_async_processing(self):
         """Test DSPy 3.0 async processing capabilities"""
-        from src.app.agents.dspy_a2a_agent_base import SimpleDSPyA2AAgent
-        
+
         agent = SimpleDSPyA2AAgent(port=8997)
-        
+
         # Test async processing
         dspy_input = {
             "query": "Test DSPy 3.0 async processing",
-            "context": "async_test"
+            "context": "async_test",
         }
-        
-        with patch.object(agent.dspy_module, 'forward') as mock_forward:
+
+        with patch.object(agent.dspy_module, "forward") as mock_forward:
             mock_result = Mock()
             mock_result.response = "Async processed result"
             mock_result.confidence = 0.95
             mock_forward.return_value = mock_result
-            
+
             result = await agent._process_with_dspy(dspy_input)
-            
+
             assert result.response == "Async processed result"
             assert result.confidence == 0.95
             # DSPy may call forward multiple times internally, so check it was called with correct args
@@ -755,101 +764,99 @@ class TestDSPy30A2ABaseIntegration:
 @pytest.mark.unit
 class TestDSPy30RoutingSignatures:
     """Test DSPy 3.0 routing signatures (Phase 1.3).
-    
+
     This tests the new dspy_routing_signatures.py that will replace the
     old signature creation in dspy_agent_optimizer.py.
     """
-    
+
     def test_basic_query_analysis_signature_structure(self):
         """Test BasicQueryAnalysisSignature has correct DSPy 3.0 structure"""
-        from src.app.routing.dspy_routing_signatures import BasicQueryAnalysisSignature
-        
+
         # Test signature is properly structured for DSPy 3.0
         assert issubclass(BasicQueryAnalysisSignature, dspy.Signature)
-        
+
         # In DSPy 3.0, fields are accessed via model_fields
         fields = BasicQueryAnalysisSignature.model_fields
-        assert 'query' in fields
-        assert 'context' in fields
-        assert 'primary_intent' in fields
-        assert 'needs_video_search' in fields
-        assert 'recommended_agent' in fields
-        assert 'confidence_score' in fields
-    
+        assert "query" in fields
+        assert "context" in fields
+        assert "primary_intent" in fields
+        assert "needs_video_search" in fields
+        assert "recommended_agent" in fields
+        assert "confidence_score" in fields
+
     def test_advanced_routing_signature_structure(self):
         """Test AdvancedRoutingSignature for complex routing decisions"""
         from src.app.routing.dspy_routing_signatures import AdvancedRoutingSignature
-        
+
         assert issubclass(AdvancedRoutingSignature, dspy.Signature)
-        
+
         fields = AdvancedRoutingSignature.model_fields
-        assert 'query' in fields
-        assert 'query_analysis' in fields
-        assert 'extracted_entities' in fields
-        assert 'extracted_relationships' in fields
-        assert 'enhanced_query' in fields
-        assert 'routing_decision' in fields
-        assert 'agent_workflow' in fields
-    
+        assert "query" in fields
+        assert "query_analysis" in fields
+        assert "extracted_entities" in fields
+        assert "extracted_relationships" in fields
+        assert "enhanced_query" in fields
+        assert "routing_decision" in fields
+        assert "agent_workflow" in fields
+
     def test_relationship_extraction_signature(self):
         """Test RelationshipExtractionSignature for Phase 2 preparation"""
-        from src.app.routing.dspy_routing_signatures import RelationshipExtractionSignature
-        
+
         assert issubclass(RelationshipExtractionSignature, dspy.Signature)
-        
+
         fields = RelationshipExtractionSignature.model_fields
-        assert 'query' in fields
-        assert 'entities' in fields
-        assert 'relationships' in fields
-        assert 'semantic_connections' in fields
-        assert 'query_structure' in fields
-    
+        assert "query" in fields
+        assert "entities" in fields
+        assert "relationships" in fields
+        assert "semantic_connections" in fields
+        assert "query_structure" in fields
+
     def test_query_enhancement_signature(self):
         """Test QueryEnhancementSignature for Phase 3 preparation"""
-        from src.app.routing.dspy_routing_signatures import QueryEnhancementSignature
-        
+
         assert issubclass(QueryEnhancementSignature, dspy.Signature)
-        
+
         fields = QueryEnhancementSignature.model_fields
-        assert 'original_query' in fields
-        assert 'relationships' in fields
-        assert 'enhanced_query' in fields
-        assert 'semantic_expansions' in fields
-        assert 'quality_score' in fields
-    
+        assert "original_query" in fields
+        assert "relationships" in fields
+        assert "enhanced_query" in fields
+        assert "semantic_expansions" in fields
+        assert "quality_score" in fields
+
     def test_signature_factory_function(self):
         """Test signature factory for dynamic signature selection"""
         from src.app.routing.dspy_routing_signatures import (
-            create_routing_signature, 
-            BasicQueryAnalysisSignature,
-            AdvancedRoutingSignature, 
-            MetaRoutingSignature
+            AdvancedRoutingSignature,
+            MetaRoutingSignature,
+            create_routing_signature,
         )
-        
+
         # Test factory returns correct signatures
         assert create_routing_signature("basic") == BasicQueryAnalysisSignature
         assert create_routing_signature("advanced") == AdvancedRoutingSignature
         assert create_routing_signature("meta") == MetaRoutingSignature
         assert create_routing_signature("unknown") == BasicQueryAnalysisSignature
-    
+
     def test_pydantic_models_for_structured_output(self):
         """Test Pydantic models for DSPy 3.0 structured outputs"""
         from src.app.routing.dspy_routing_signatures import (
-            EntityInfo, RelationshipTuple, RoutingDecision, TemporalInfo
+            EntityInfo,
+            RelationshipTuple,
+            RoutingDecision,
         )
-        
+
         # Test EntityInfo model
         entity = EntityInfo(
             text="Apple Inc.",
-            label="ORGANIZATION", 
+            label="ORGANIZATION",
             confidence=0.95,
             start_pos=0,
-            end_pos=9
+            end_pos=9,
         )
         assert entity.text == "Apple Inc."
         assert entity.label == "ORGANIZATION"
         assert entity.confidence == 0.95
-        
+
         # Test RelationshipTuple model
         relation = RelationshipTuple(
             subject="Apple",
@@ -857,12 +864,12 @@ class TestDSPy30RoutingSignatures:
             object="iPhone",
             confidence=0.88,
             subject_type="ORGANIZATION",
-            object_type="PRODUCT"
+            object_type="PRODUCT",
         )
         assert relation.subject == "Apple"
         assert relation.relation == "develops"
         assert relation.object == "iPhone"
-        
+
         # Test RoutingDecision model
         decision = RoutingDecision(
             search_modality="multimodal",
@@ -871,7 +878,7 @@ class TestDSPy30RoutingSignatures:
             secondary_agents=["summarizer"],
             execution_mode="parallel",
             confidence=0.92,
-            reasoning="Complex query requires parallel processing"
+            reasoning="Complex query requires parallel processing",
         )
         assert decision.search_modality == "multimodal"
         assert decision.primary_agent == "video_search"
@@ -881,10 +888,10 @@ class TestDSPy30RoutingSignatures:
 @pytest.mark.unit
 class TestDSPyRedundancyAnalysis:
     """Analyze what becomes redundant with Phase 1 implementation.
-    
+
     Documents the old files/classes that can be removed once Phase 1 is complete.
     """
-    
+
     def test_old_vs_new_dspy_integration_approach(self):
         """Document the difference between old mixin and new A2A base approach"""
         # OLD APPROACH (DSPyIntegrationMixin):
@@ -893,39 +900,39 @@ class TestDSPyRedundancyAnalysis:
         # - DSPy 2.x features only
         # - No A2A protocol integration
         # - Manual prompt optimization pipeline
-        
+
         # NEW APPROACH (DSPyA2AAgentBase):
         # - Base class for new agent architecture
         # - A2A protocol integrated from ground up
         # - DSPy 3.0 features (GRPO, SIMBA, async, MLflow)
         # - Automatic A2A ↔ DSPy conversion
         # - Native multi-modal support
-        
+
         redundant_files_after_phase1 = [
             "src/app/agents/dspy_integration_mixin.py",  # Replaced by dspy_a2a_agent_base.py
             # Note: dspy_agent_optimizer.py will be replaced in Phase 6 with new optimization
         ]
-        
+
         redundant_classes_after_phase1 = [
             "DSPyIntegrationMixin",  # Replaced by DSPyA2AAgentBase
             "DSPyQueryAnalysisMixin",  # Functionality moved to signatures
-            "DSPyRoutingMixin",  # Functionality moved to signatures  
+            "DSPyRoutingMixin",  # Functionality moved to signatures
             "DSPySummaryMixin",  # Functionality moved to signatures
             "DSPyDetailedReportMixin",  # Functionality moved to signatures
         ]
-        
+
         # This test documents the redundancy for future cleanup
         assert len(redundant_files_after_phase1) >= 1
         assert len(redundant_classes_after_phase1) >= 5
-    
+
     def test_signature_creation_old_vs_new(self):
         """Document old signature creation vs new DSPy 3.0 signatures"""
         # OLD: Manual signature creation in dspy_agent_optimizer.py
         # - create_query_analysis_signature()
-        # - create_agent_routing_signature() 
+        # - create_agent_routing_signature()
         # - create_summary_generation_signature()
         # - create_detailed_report_signature()
-        
+
         # NEW: Pre-defined DSPy 3.0 signatures in dspy_routing_signatures.py
         # - BasicQueryAnalysisSignature (replaces create_query_analysis_signature)
         # - AdvancedRoutingSignature (enhanced routing with relationships)
@@ -935,14 +942,12 @@ class TestDSPyRedundancyAnalysis:
         # - MultiAgentOrchestrationSignature (new capability)
         # - MetaRoutingSignature (new capability)
         # - AdaptiveThresholdSignature (new capability)
-        
+
         from src.app.routing.dspy_routing_signatures import (
-            BasicQueryAnalysisSignature,
             AdvancedRoutingSignature,
             EntityExtractionSignature,
-            RelationshipExtractionSignature
         )
-        
+
         # Verify new signatures exist and work
         assert BasicQueryAnalysisSignature is not None
         assert AdvancedRoutingSignature is not None
@@ -977,46 +982,55 @@ class TestDSPyRedundancyAnalysis:
 # Tests the GLiNER + spaCy integration and DSPy relationship routing modules
 # =============================================================================
 
+
 @pytest.mark.unit
 class TestRelationshipExtraction:
     """Test relationship extraction tools and DSPy modules."""
-    
+
     def test_relationship_extractor_tool_initialization(self):
         """Test RelationshipExtractorTool can be initialized"""
         try:
-            from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
-            
+            from src.app.routing.relationship_extraction_tools import (
+                RelationshipExtractorTool,
+            )
+
             tool = RelationshipExtractorTool()
             assert tool is not None
-            assert hasattr(tool, 'gliner_extractor')
-            assert hasattr(tool, 'spacy_analyzer')
-            
+            assert hasattr(tool, "gliner_extractor")
+            assert hasattr(tool, "spacy_analyzer")
+
         except ImportError as e:
             pytest.skip(f"Relationship extraction tools not available: {e}")
-    
+
     @pytest.mark.asyncio
     async def test_comprehensive_relationship_extraction(self):
         """Test comprehensive relationship extraction workflow"""
         try:
-            from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
-            
+            from src.app.routing.relationship_extraction_tools import (
+                RelationshipExtractorTool,
+            )
+
             tool = RelationshipExtractorTool()
-            
+
             # Test query with clear entities and relationships
             test_query = "Show me videos of robots playing soccer with machine learning algorithms"
-            
+
             result = await tool.extract_comprehensive_relationships(test_query)
-            
+
             # Verify result structure
             assert isinstance(result, dict)
             required_keys = [
-                "entities", "relationships", "relationship_types", 
-                "semantic_connections", "query_structure", 
-                "complexity_indicators", "confidence"
+                "entities",
+                "relationships",
+                "relationship_types",
+                "semantic_connections",
+                "query_structure",
+                "complexity_indicators",
+                "confidence",
             ]
             for key in required_keys:
                 assert key in result, f"Missing key: {key}"
-            
+
             # Verify data types
             assert isinstance(result["entities"], list)
             assert isinstance(result["relationships"], list)
@@ -1024,61 +1038,67 @@ class TestRelationshipExtraction:
             assert isinstance(result["semantic_connections"], list)
             assert isinstance(result["complexity_indicators"], list)
             assert isinstance(result["confidence"], (int, float))
-            
+
         except ImportError:
             pytest.skip("GLiNER or spaCy not available for testing")
         except Exception as e:
             # Should handle gracefully even if models aren't available
             assert "error" in str(e).lower() or "not found" in str(e).lower()
-    
+
     def test_gliner_relationship_extractor_initialization(self):
         """Test GLiNERRelationshipExtractor initialization"""
         try:
-            from src.app.routing.relationship_extraction_tools import GLiNERRelationshipExtractor
-            
+            from src.app.routing.relationship_extraction_tools import (
+                GLiNERRelationshipExtractor,
+            )
+
             extractor = GLiNERRelationshipExtractor()
             assert extractor is not None
-            assert hasattr(extractor, 'model_name')
-            
+            assert hasattr(extractor, "model_name")
+
             # Should handle missing GLiNER gracefully
             if not extractor.gliner_model:
                 assert extractor.model_name is not None  # Config should still be set
-                
+
         except ImportError:
             pytest.skip("GLiNER not available")
-    
+
     def test_spacy_dependency_analyzer_initialization(self):
         """Test SpaCyDependencyAnalyzer initialization"""
         try:
-            from src.app.routing.relationship_extraction_tools import SpaCyDependencyAnalyzer
-            
+            from src.app.routing.relationship_extraction_tools import (
+                SpaCyDependencyAnalyzer,
+            )
+
             analyzer = SpaCyDependencyAnalyzer()
             assert analyzer is not None
-            assert hasattr(analyzer, 'model_name')
-            
+            assert hasattr(analyzer, "model_name")
+
             # Should handle missing spaCy model gracefully
             if not analyzer.nlp:
                 assert analyzer.model_name is not None  # Config should still be set
-                
+
         except ImportError:
             pytest.skip("spaCy not available")
-    
+
     def test_entity_extraction_fallback(self):
         """Test entity extraction with fallback when models unavailable"""
-        from src.app.routing.relationship_extraction_tools import GLiNERRelationshipExtractor
-        
+        from src.app.routing.relationship_extraction_tools import (
+            GLiNERRelationshipExtractor,
+        )
+
         # Create extractor (may not have actual model loaded)
         extractor = GLiNERRelationshipExtractor()
-        
+
         # Test extraction (should return empty list if model unavailable)
         entities = extractor.extract_entities("test query")
         assert isinstance(entities, list)
-        
+
         # If model is available, should extract some entities from a rich query
         test_query = "Apple Inc. develops iPhone using advanced technology"
         entities = extractor.extract_entities(test_query)
         assert isinstance(entities, list)
-        
+
         # If model loaded and working, should find entities
         if extractor.gliner_model and entities:
             assert len(entities) > 0
@@ -1088,99 +1108,108 @@ class TestRelationshipExtraction:
                 assert "confidence" in entity
 
 
-@pytest.mark.unit 
+@pytest.mark.unit
 class TestDSPyModules:
     """Test Phase 2 DSPy 3.0 modules for relationship-aware routing."""
-    
+
     def test_dspy_entity_extractor_module_structure(self):
         """Test DSPyEntityExtractorModule structure"""
         from src.app.routing.dspy_relationship_router import DSPyEntityExtractorModule
-        
+
         module = DSPyEntityExtractorModule()
         assert module is not None
-        assert hasattr(module, 'extractor')
-        assert hasattr(module, 'relationship_tool')
+        assert hasattr(module, "extractor")
+        assert hasattr(module, "relationship_tool")
         assert isinstance(module, dspy.Module)
-    
+
     def test_dspy_relationship_extractor_module_structure(self):
         """Test DSPyRelationshipExtractorModule structure"""
-        from src.app.routing.dspy_relationship_router import DSPyRelationshipExtractorModule
-        
+
         module = DSPyRelationshipExtractorModule()
         assert module is not None
-        assert hasattr(module, 'extractor')
-        assert hasattr(module, 'relationship_tool')
+        assert hasattr(module, "extractor")
+        assert hasattr(module, "relationship_tool")
         assert isinstance(module, dspy.Module)
-    
+
     def test_dspy_basic_routing_module_structure(self):
         """Test DSPyBasicRoutingModule structure"""
         from src.app.routing.dspy_relationship_router import DSPyBasicRoutingModule
-        
+
         module = DSPyBasicRoutingModule()
         assert module is not None
-        assert hasattr(module, 'analyzer')
+        assert hasattr(module, "analyzer")
         assert isinstance(module, dspy.Module)
-    
+
     def test_dspy_advanced_routing_module_structure(self):
         """Test DSPyAdvancedRoutingModule structure"""
-        from src.app.routing.dspy_relationship_router import DSPyAdvancedRoutingModule
-        
+
         module = DSPyAdvancedRoutingModule()
         assert module is not None
-        assert hasattr(module, 'router')
-        assert hasattr(module, 'entity_module')
-        assert hasattr(module, 'relationship_module')
-        assert hasattr(module, 'basic_module')
+        assert hasattr(module, "router")
+        assert hasattr(module, "entity_module")
+        assert hasattr(module, "relationship_module")
+        assert hasattr(module, "basic_module")
         assert isinstance(module, dspy.Module)
-    
+
     def test_basic_routing_query_analysis(self):
         """Test basic routing query analysis functionality"""
         from src.app.routing.dspy_relationship_router import DSPyBasicRoutingModule
-        
+
         module = DSPyBasicRoutingModule()
-        
+
         # Test with a simple query
         test_query = "Show me videos of robots playing soccer"
         result = module.forward(test_query)
-        
+
         # Verify prediction structure
-        assert hasattr(result, 'primary_intent')
-        assert hasattr(result, 'complexity_level')
-        assert hasattr(result, 'needs_video_search')
-        assert hasattr(result, 'needs_text_search')
-        assert hasattr(result, 'needs_multimodal')
-        assert hasattr(result, 'recommended_agent')
-        assert hasattr(result, 'confidence_score')
-        assert hasattr(result, 'reasoning')
-        
+        assert hasattr(result, "primary_intent")
+        assert hasattr(result, "complexity_level")
+        assert hasattr(result, "needs_video_search")
+        assert hasattr(result, "needs_text_search")
+        assert hasattr(result, "needs_multimodal")
+        assert hasattr(result, "recommended_agent")
+        assert hasattr(result, "confidence_score")
+        assert hasattr(result, "reasoning")
+
         # Verify prediction values make sense
-        assert result.primary_intent in ["search", "compare", "analyze", "summarize", "report"]
+        assert result.primary_intent in [
+            "search",
+            "compare",
+            "analyze",
+            "summarize",
+            "report",
+        ]
         assert result.complexity_level in ["simple", "moderate", "complex"]
         assert isinstance(result.needs_video_search, bool)
         assert isinstance(result.needs_text_search, bool)
         assert isinstance(result.needs_multimodal, bool)
-        assert result.recommended_agent in ["video_search", "text_search", "summarizer", "detailed_report"]
+        assert result.recommended_agent in [
+            "video_search",
+            "text_search",
+            "summarizer",
+            "detailed_report",
+        ]
         assert 0.0 <= result.confidence_score <= 1.0
         assert isinstance(result.reasoning, str)
-    
+
     def test_entity_extraction_module_functionality(self):
         """Test entity extraction module functionality"""
         from src.app.routing.dspy_relationship_router import DSPyEntityExtractorModule
-        
+
         module = DSPyEntityExtractorModule()
-        
+
         # Test with entity-rich query
         test_query = "Apple Inc. develops iPhone using machine learning technology"
         result = module.forward(test_query)
-        
+
         # Verify prediction structure
-        assert hasattr(result, 'entities')
-        assert hasattr(result, 'entity_types')
-        assert hasattr(result, 'key_entities')
-        assert hasattr(result, 'domain_classification')
-        assert hasattr(result, 'entity_density')
-        assert hasattr(result, 'confidence')
-        
+        assert hasattr(result, "entities")
+        assert hasattr(result, "entity_types")
+        assert hasattr(result, "key_entities")
+        assert hasattr(result, "domain_classification")
+        assert hasattr(result, "entity_density")
+        assert hasattr(result, "confidence")
+
         # Verify data types
         assert isinstance(result.entities, list)
         assert isinstance(result.entity_types, list)
@@ -1188,34 +1217,37 @@ class TestDSPyModules:
         assert isinstance(result.domain_classification, str)
         assert isinstance(result.entity_density, (int, float))
         assert isinstance(result.confidence, (int, float))
-        
+
         # Verify confidence is valid
         assert 0.0 <= result.confidence <= 1.0
-    
+
     def test_relationship_extraction_module_functionality(self):
         """Test relationship extraction module functionality"""
-        from src.app.routing.dspy_relationship_router import DSPyRelationshipExtractorModule
-        
+
         module = DSPyRelationshipExtractorModule()
-        
+
         # Test with relationship-rich query
         test_query = "Robots are playing soccer using artificial intelligence"
         mock_entities = [
             {"text": "Robots", "label": "TECHNOLOGY", "confidence": 0.9},
             {"text": "soccer", "label": "SPORT", "confidence": 0.8},
-            {"text": "artificial intelligence", "label": "TECHNOLOGY", "confidence": 0.95}
+            {
+                "text": "artificial intelligence",
+                "label": "TECHNOLOGY",
+                "confidence": 0.95,
+            },
         ]
-        
+
         result = module.forward(test_query, mock_entities)
-        
+
         # Verify prediction structure
-        assert hasattr(result, 'relationships')
-        assert hasattr(result, 'relationship_types')
-        assert hasattr(result, 'semantic_connections')
-        assert hasattr(result, 'query_structure')
-        assert hasattr(result, 'complexity_indicators')
-        assert hasattr(result, 'confidence')
-        
+        assert hasattr(result, "relationships")
+        assert hasattr(result, "relationship_types")
+        assert hasattr(result, "semantic_connections")
+        assert hasattr(result, "query_structure")
+        assert hasattr(result, "complexity_indicators")
+        assert hasattr(result, "confidence")
+
         # Verify data types
         assert isinstance(result.relationships, list)
         assert isinstance(result.relationship_types, list)
@@ -1223,56 +1255,68 @@ class TestDSPyModules:
         assert isinstance(result.query_structure, str)
         assert isinstance(result.complexity_indicators, list)
         assert isinstance(result.confidence, (int, float))
-        
+
         # Verify confidence is valid
         assert 0.0 <= result.confidence <= 1.0
-    
+
     def test_advanced_routing_module_integration(self):
         """Test advanced routing module end-to-end integration"""
-        from src.app.routing.dspy_relationship_router import DSPyAdvancedRoutingModule
-        
+
         module = DSPyAdvancedRoutingModule()
-        
+
         # Test with complex query
         test_query = "Find videos showing robots playing soccer and explain the AI algorithms used"
         result = module.forward(test_query)
-        
+
         # Verify comprehensive prediction structure
         required_fields = [
-            'query_analysis', 'extracted_entities', 'extracted_relationships',
-            'enhanced_query', 'routing_decision', 'agent_workflow',
-            'optimization_suggestions', 'overall_confidence', 'reasoning_chain'
+            "query_analysis",
+            "extracted_entities",
+            "extracted_relationships",
+            "enhanced_query",
+            "routing_decision",
+            "agent_workflow",
+            "optimization_suggestions",
+            "overall_confidence",
+            "reasoning_chain",
         ]
-        
+
         for field in required_fields:
             assert hasattr(result, field), f"Missing field: {field}"
-        
+
         # Verify query_analysis structure
         assert isinstance(result.query_analysis, dict)
-        assert 'primary_intent' in result.query_analysis
-        assert 'complexity_level' in result.query_analysis
-        
-        # Verify routing_decision structure  
+        assert "primary_intent" in result.query_analysis
+        assert "complexity_level" in result.query_analysis
+
+        # Verify routing_decision structure
         assert isinstance(result.routing_decision, dict)
         required_decision_keys = [
-            'search_modality', 'generation_type', 'primary_agent',
-            'secondary_agents', 'execution_mode', 'confidence', 'reasoning'
+            "search_modality",
+            "generation_type",
+            "primary_agent",
+            "secondary_agents",
+            "execution_mode",
+            "confidence",
+            "reasoning",
         ]
         for key in required_decision_keys:
-            assert key in result.routing_decision, f"Missing routing decision key: {key}"
-        
+            assert (
+                key in result.routing_decision
+            ), f"Missing routing decision key: {key}"
+
         # Verify agent_workflow structure
         assert isinstance(result.agent_workflow, list)
         if result.agent_workflow:
             workflow_step = result.agent_workflow[0]
             assert isinstance(workflow_step, dict)
-            assert 'step' in workflow_step
-            assert 'agent' in workflow_step
-            assert 'action' in workflow_step
-        
+            assert "step" in workflow_step
+            assert "agent" in workflow_step
+            assert "action" in workflow_step
+
         # Verify confidence bounds
         assert 0.0 <= result.overall_confidence <= 1.0
-        
+
         # Verify reasoning chain
         assert isinstance(result.reasoning_chain, list)
         assert len(result.reasoning_chain) > 0
@@ -1282,43 +1326,51 @@ class TestDSPyModules:
 @pytest.mark.unit
 class TestDSPyFactoryFunctions:
     """Test Phase 2 factory functions for module creation."""
-    
+
     def test_create_entity_extractor_module(self):
         """Test entity extractor module factory"""
-        from src.app.routing.dspy_relationship_router import create_entity_extractor_module
-        
+        from src.app.routing.dspy_relationship_router import (
+            create_entity_extractor_module,
+        )
+
         module = create_entity_extractor_module()
         assert module is not None
         assert isinstance(module, dspy.Module)
-    
+
     def test_create_relationship_extractor_module(self):
         """Test relationship extractor module factory"""
-        from src.app.routing.dspy_relationship_router import create_relationship_extractor_module
-        
+        from src.app.routing.dspy_relationship_router import (
+            create_relationship_extractor_module,
+        )
+
         module = create_relationship_extractor_module()
         assert module is not None
         assert isinstance(module, dspy.Module)
-    
+
     def test_create_basic_routing_module(self):
         """Test basic routing module factory"""
         from src.app.routing.dspy_relationship_router import create_basic_routing_module
-        
+
         module = create_basic_routing_module()
         assert module is not None
         assert isinstance(module, dspy.Module)
-    
+
     def test_create_advanced_routing_module(self):
         """Test advanced routing module factory"""
-        from src.app.routing.dspy_relationship_router import create_advanced_routing_module
-        
+        from src.app.routing.dspy_relationship_router import (
+            create_advanced_routing_module,
+        )
+
         module = create_advanced_routing_module()
         assert module is not None
         assert isinstance(module, dspy.Module)
-    
+
     def test_relationship_extractor_tool_factory(self):
         """Test relationship extractor tool factory"""
-        from src.app.routing.relationship_extraction_tools import create_relationship_extractor
-        
+        from src.app.routing.relationship_extraction_tools import (
+            create_relationship_extractor,
+        )
+
         tool = create_relationship_extractor()
         assert tool is not None
 
@@ -1326,67 +1378,70 @@ class TestDSPyFactoryFunctions:
 @pytest.mark.unit
 class TestDSPyIntegrationReadiness:
     """Test Phase 2 integration readiness with Phase 3 preparation."""
-    
+
     def test_phase2_modules_ready_for_query_enhancement(self):
         """Test that Phase 2 modules produce outputs suitable for Phase 3 query enhancement"""
-        from src.app.routing.dspy_relationship_router import (
-            DSPyEntityExtractorModule, 
-            DSPyRelationshipExtractorModule
-        )
-        
+        from src.app.routing.dspy_relationship_router import DSPyEntityExtractorModule
+
         entity_module = DSPyEntityExtractorModule()
         relationship_module = DSPyRelationshipExtractorModule()
-        
+
         # Test query that should produce good entities and relationships
-        test_query = "Show videos of autonomous vehicles using computer vision for navigation"
-        
+        test_query = (
+            "Show videos of autonomous vehicles using computer vision for navigation"
+        )
+
         # Extract entities
         entity_result = entity_module.forward(test_query)
-        
+
         # Extract relationships
-        relationship_result = relationship_module.forward(test_query, entity_result.entities)
-        
+        relationship_result = relationship_module.forward(
+            test_query, entity_result.entities
+        )
+
         # Verify outputs are ready for Phase 3 query enhancement
-        assert hasattr(entity_result, 'entities')
-        assert hasattr(relationship_result, 'relationships')
-        
+        assert hasattr(entity_result, "entities")
+        assert hasattr(relationship_result, "relationships")
+
         # Verify entity structure for query enhancement
         for entity in entity_result.entities:
             if isinstance(entity, dict):
-                assert 'text' in entity
-                assert 'label' in entity
-                assert 'confidence' in entity
-        
+                assert "text" in entity
+                assert "label" in entity
+                assert "confidence" in entity
+
         # Verify relationship structure for query enhancement
         for relationship in relationship_result.relationships:
             if isinstance(relationship, dict):
-                assert 'subject' in relationship
-                assert 'relation' in relationship
-                assert 'object' in relationship
-                assert 'confidence' in relationship
-    
+                assert "subject" in relationship
+                assert "relation" in relationship
+                assert "object" in relationship
+                assert "confidence" in relationship
+
     def test_phase2_signature_compatibility(self):
         """Test that Phase 2 uses signatures compatible with DSPy 3.0"""
-        from src.app.routing.dspy_routing_signatures import (
-            EntityExtractionSignature,
-            RelationshipExtractionSignature
-        )
-        
+        from src.app.routing.dspy_routing_signatures import EntityExtractionSignature
+
         # Verify signatures are DSPy 3.0 compatible
         assert issubclass(EntityExtractionSignature, dspy.Signature)
         assert issubclass(RelationshipExtractionSignature, dspy.Signature)
-        
+
         # Verify field structure
         entity_fields = EntityExtractionSignature.model_fields
         relationship_fields = RelationshipExtractionSignature.model_fields
-        
+
         # Entity signature should have required fields
-        required_entity_fields = ['query', 'entities', 'entity_types', 'confidence']
+        required_entity_fields = ["query", "entities", "entity_types", "confidence"]
         for field in required_entity_fields:
             assert field in entity_fields, f"Missing entity field: {field}"
-        
+
         # Relationship signature should have required fields
-        required_relationship_fields = ['query', 'entities', 'relationships', 'confidence']
+        required_relationship_fields = [
+            "query",
+            "entities",
+            "relationships",
+            "confidence",
+        ]
         for field in required_relationship_fields:
             assert field in relationship_fields, f"Missing relationship field: {field}"
 
@@ -1396,54 +1451,57 @@ class TestDSPyIntegrationReadiness:
 # Tests the query rewriter and DSPy query enhancement modules
 # =============================================================================
 
+
 @pytest.mark.unit
 class TestQueryEnhancement:
     """Test query rewriter and enhancement functionality."""
-    
+
     def test_query_rewriter_initialization(self):
         """Test QueryRewriter initialization"""
-        from src.app.routing.query_enhancement_engine import QueryRewriter
-        
+
         rewriter = QueryRewriter()
         assert rewriter is not None
-        assert hasattr(rewriter, 'enhancement_strategies')
+        assert hasattr(rewriter, "enhancement_strategies")
         assert len(rewriter.enhancement_strategies) > 0
-        
+
         # Verify all strategies are callable
         for strategy_name, strategy_func in rewriter.enhancement_strategies.items():
             assert callable(strategy_func), f"Strategy {strategy_name} not callable"
-    
+
     def test_query_enhancement_basic_functionality(self):
         """Test basic query enhancement functionality"""
-        from src.app.routing.query_enhancement_engine import QueryRewriter
-        
+
         rewriter = QueryRewriter()
-        
+
         # Test with simple query and entities/relationships
         original_query = "Show me videos of robots playing soccer"
         entities = [
             {"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9},
-            {"text": "soccer", "label": "SPORT", "confidence": 0.8}
+            {"text": "soccer", "label": "SPORT", "confidence": 0.8},
         ]
         relationships = [
             {
                 "subject": "robots",
                 "relation": "playing",
                 "object": "soccer",
-                "confidence": 0.85
+                "confidence": 0.85,
             }
         ]
-        
+
         result = rewriter.enhance_query(original_query, entities, relationships)
-        
+
         # Verify result structure
         required_fields = [
-            "enhanced_query", "semantic_expansions", "relationship_phrases",
-            "enhancement_strategy", "search_operators", "quality_score"
+            "enhanced_query",
+            "semantic_expansions",
+            "relationship_phrases",
+            "enhancement_strategy",
+            "search_operators",
+            "quality_score",
         ]
         for field in required_fields:
             assert field in result, f"Missing field: {field}"
-        
+
         # Verify data types
         assert isinstance(result["enhanced_query"], str)
         assert isinstance(result["semantic_expansions"], list)
@@ -1451,97 +1509,97 @@ class TestQueryEnhancement:
         assert isinstance(result["enhancement_strategy"], str)
         assert isinstance(result["search_operators"], list)
         assert isinstance(result["quality_score"], (int, float))
-        
+
         # Verify quality score bounds
         assert 0.0 <= result["quality_score"] <= 1.0
-        
+
         # Verify query was enhanced (should be longer than original)
         assert len(result["enhanced_query"]) >= len(original_query)
-    
+
     def test_relationship_expansion_strategy(self):
         """Test relationship expansion strategy specifically"""
-        from src.app.routing.query_enhancement_engine import QueryRewriter
-        
+
         rewriter = QueryRewriter()
-        
+
         # Test relationship expansion with clear relationships
         query = "Find videos of autonomous vehicles"
         entities = [
             {"text": "autonomous vehicles", "label": "TECHNOLOGY", "confidence": 0.95},
-            {"text": "navigation", "label": "ACTIVITY", "confidence": 0.8}
+            {"text": "navigation", "label": "ACTIVITY", "confidence": 0.8},
         ]
         relationships = [
             {
                 "subject": "autonomous vehicles",
                 "relation": "uses",
                 "object": "navigation",
-                "confidence": 0.9
+                "confidence": 0.9,
             }
         ]
-        
+
         # Call relationship expansion directly
-        result = rewriter._expand_with_relationships(query, entities, relationships, "general")
-        
+        result = rewriter._expand_with_relationships(
+            query, entities, relationships, "general"
+        )
+
         assert "enhanced_query" in result
         assert "terms" in result
         assert isinstance(result["terms"], list)
-        
+
         # Should include relationship terms
         if result["terms"]:
             assert any("navigation" in term.lower() for term in result["terms"])
-    
+
     def test_semantic_context_strategy(self):
         """Test semantic context enhancement strategy"""
-        from src.app.routing.query_enhancement_engine import QueryRewriter
-        
+
         rewriter = QueryRewriter()
-        
+
         # Test with technology entities
         query = "Show me robot demonstrations"
-        entities = [
-            {"text": "robot", "label": "TECHNOLOGY", "confidence": 0.9}
-        ]
+        entities = [{"text": "robot", "label": "TECHNOLOGY", "confidence": 0.9}]
         relationships = []
-        
-        result = rewriter._add_semantic_context(query, entities, relationships, "general")
-        
+
+        result = rewriter._add_semantic_context(
+            query, entities, relationships, "general"
+        )
+
         assert "enhanced_query" in result
         assert "terms" in result
-        
+
         # Should add technology-related semantic terms
         if result["terms"]:
             tech_terms = ["robotics", "automation", "autonomous system"]
             assert any(term in result["terms"] for term in tech_terms)
-    
+
     def test_domain_knowledge_application(self):
         """Test domain-specific knowledge application"""
-        from src.app.routing.query_enhancement_engine import QueryRewriter
-        
+
         rewriter = QueryRewriter()
-        
+
         # Test AI domain
         ai_query = "machine learning algorithms in action"
-        ai_entities = [{"text": "machine learning", "label": "TECHNOLOGY", "confidence": 0.95}]
-        
+        ai_entities = [
+            {"text": "machine learning", "label": "TECHNOLOGY", "confidence": 0.95}
+        ]
+
         result = rewriter._apply_domain_knowledge(ai_query, ai_entities, [], "general")
-        
+
         assert "domain" in result
         assert result["domain"] in ["artificial_intelligence", "robotics", "general"]
-        
+
         if result["domain"] == "artificial_intelligence":
             assert "terms" in result
             ai_terms = ["neural networks", "computer vision", "deep learning"]
             assert any(term in result.get("terms", []) for term in ai_terms)
-    
+
     def test_query_enhancement_error_handling(self):
         """Test query enhancement error handling"""
-        from src.app.routing.query_enhancement_engine import QueryRewriter
-        
+
         rewriter = QueryRewriter()
-        
+
         # Test with malformed inputs
         result = rewriter.enhance_query("", [], [], "general")
-        
+
         # Should return fallback result without errors
         assert "enhanced_query" in result
         assert "quality_score" in result
@@ -1551,49 +1609,47 @@ class TestQueryEnhancement:
 @pytest.mark.unit
 class TestDSPyQueryEnhancer:
     """Test Phase 3 DSPy query enhancement module."""
-    
+
     def test_dspy_query_enhancer_initialization(self):
         """Test DSPyQueryEnhancerModule initialization"""
-        from src.app.routing.query_enhancement_engine import DSPyQueryEnhancerModule
-        
+
         module = DSPyQueryEnhancerModule()
         assert module is not None
-        assert hasattr(module, 'enhancer')
-        assert hasattr(module, 'rewriter')
+        assert hasattr(module, "enhancer")
+        assert hasattr(module, "rewriter")
         assert isinstance(module, dspy.Module)
-    
+
     def test_dspy_query_enhancement_functionality(self):
         """Test DSPy query enhancement functionality"""
-        from src.app.routing.query_enhancement_engine import DSPyQueryEnhancerModule
-        
+
         module = DSPyQueryEnhancerModule()
-        
+
         # Test with sample data
         original_query = "Find videos showing robots learning to walk"
         entities = [
             {"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9},
             {"text": "learning", "label": "ACTIVITY", "confidence": 0.8},
-            {"text": "walk", "label": "ACTION", "confidence": 0.85}
+            {"text": "walk", "label": "ACTION", "confidence": 0.85},
         ]
         relationships = [
             {
                 "subject": "robots",
                 "relation": "learning",
                 "object": "walk",
-                "confidence": 0.88
+                "confidence": 0.88,
             }
         ]
-        
+
         result = module.forward(original_query, entities, relationships)
-        
+
         # Verify DSPy prediction structure
-        assert hasattr(result, 'enhanced_query')
-        assert hasattr(result, 'semantic_expansions')
-        assert hasattr(result, 'relationship_phrases')
-        assert hasattr(result, 'enhancement_strategy')
-        assert hasattr(result, 'search_operators')
-        assert hasattr(result, 'quality_score')
-        
+        assert hasattr(result, "enhanced_query")
+        assert hasattr(result, "semantic_expansions")
+        assert hasattr(result, "relationship_phrases")
+        assert hasattr(result, "enhancement_strategy")
+        assert hasattr(result, "search_operators")
+        assert hasattr(result, "quality_score")
+
         # Verify data types
         assert isinstance(result.enhanced_query, str)
         assert isinstance(result.semantic_expansions, list)
@@ -1601,78 +1657,81 @@ class TestDSPyQueryEnhancer:
         assert isinstance(result.enhancement_strategy, str)
         assert isinstance(result.search_operators, list)
         assert isinstance(result.quality_score, (int, float))
-        
+
         # Verify quality bounds
         assert 0.0 <= result.quality_score <= 1.0
-    
+
     def test_dspy_query_enhancer_error_handling(self):
         """Test DSPy query enhancer error handling"""
-        from src.app.routing.query_enhancement_engine import DSPyQueryEnhancerModule
-        
+
         module = DSPyQueryEnhancerModule()
-        
+
         # Test with minimal/problematic inputs
         result = module.forward("", [], [])
-        
+
         # Should return valid prediction even with empty inputs
-        assert hasattr(result, 'enhanced_query')
-        assert hasattr(result, 'quality_score')
+        assert hasattr(result, "enhanced_query")
+        assert hasattr(result, "quality_score")
         assert result.quality_score >= 0.0
 
 
 @pytest.mark.unit
 class TestDSPyEnhancementPipeline:
     """Test Phase 3 complete enhancement pipeline."""
-    
+
     def test_enhancement_pipeline_initialization(self):
         """Test QueryEnhancementPipeline initialization"""
-        from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
-        
+
         pipeline = QueryEnhancementPipeline()
         assert pipeline is not None
-        assert hasattr(pipeline, 'relationship_tool')
-        assert hasattr(pipeline, 'dspy_enhancer')
-    
+        assert hasattr(pipeline, "relationship_tool")
+        assert hasattr(pipeline, "dspy_enhancer")
+
     @pytest.mark.asyncio
     async def test_end_to_end_query_enhancement(self):
         """Test end-to-end query enhancement pipeline"""
-        from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
-        
+
         pipeline = QueryEnhancementPipeline()
-        
+
         # Test with realistic query
         test_query = "Show me videos of autonomous robots playing soccer"
-        
+
         try:
             result = await pipeline.enhance_query_with_relationships(test_query)
-            
+
             # Verify complete result structure
             required_fields = [
-                "original_query", "extracted_entities", "extracted_relationships",
-                "enhanced_query", "semantic_expansions", "relationship_phrases",
-                "enhancement_strategy", "search_operators", "quality_score",
-                "processing_metadata"
+                "original_query",
+                "extracted_entities",
+                "extracted_relationships",
+                "enhanced_query",
+                "semantic_expansions",
+                "relationship_phrases",
+                "enhancement_strategy",
+                "search_operators",
+                "quality_score",
+                "processing_metadata",
             ]
-            
+
             for field in required_fields:
                 assert field in result, f"Missing field: {field}"
-            
+
             # Verify original query preserved
             assert result["original_query"] == test_query
-            
+
             # Verify enhancement occurred
             assert isinstance(result["enhanced_query"], str)
             assert len(result["enhanced_query"]) >= len(test_query)
-            
+
             # Verify processing metadata
             metadata = result["processing_metadata"]
             assert "entities_found" in metadata
             assert "relationships_found" in metadata
             assert "enhancement_quality" in metadata
-            
+
             # Verify quality score
             assert 0.0 <= result["quality_score"] <= 1.0
-            
+
         except Exception as e:
             # If relationship extraction fails due to missing models,
             # pipeline should still return fallback result
@@ -1680,25 +1739,24 @@ class TestDSPyEnhancementPipeline:
                 pytest.skip("Models not available for full pipeline test")
             else:
                 raise
-    
+
     @pytest.mark.asyncio
     async def test_pipeline_with_search_context(self):
         """Test pipeline with different search contexts"""
-        from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
-        
+
         pipeline = QueryEnhancementPipeline()
-        
+
         contexts = ["general", "technical", "educational"]
-        
+
         for context in contexts:
             try:
                 result = await pipeline.enhance_query_with_relationships(
                     "machine learning tutorial", search_context=context
                 )
-                
+
                 assert result["search_context"] == context
                 assert "enhanced_query" in result
-                
+
             except Exception:
                 # Skip if models not available
                 pytest.skip(f"Models not available for context test: {context}")
@@ -1707,69 +1765,88 @@ class TestDSPyEnhancementPipeline:
 @pytest.mark.unit
 class TestQueryEnhancementFactory:
     """Test Phase 3 factory functions."""
-    
+
     def test_create_query_rewriter(self):
         """Test query rewriter factory function"""
         from src.app.routing.query_enhancement_engine import create_query_rewriter
-        
+
         rewriter = create_query_rewriter()
         assert rewriter is not None
-        assert hasattr(rewriter, 'enhancement_strategies')
-    
+        assert hasattr(rewriter, "enhancement_strategies")
+
     def test_create_dspy_query_enhancer(self):
         """Test DSPy query enhancer factory function"""
         from src.app.routing.query_enhancement_engine import create_dspy_query_enhancer
-        
+
         enhancer = create_dspy_query_enhancer()
         assert enhancer is not None
         assert isinstance(enhancer, dspy.Module)
-    
+
     def test_create_enhancement_pipeline(self):
         """Test enhancement pipeline factory function"""
         from src.app.routing.query_enhancement_engine import create_enhancement_pipeline
-        
+
         pipeline = create_enhancement_pipeline()
         assert pipeline is not None
-        assert hasattr(pipeline, 'relationship_tool')
-        assert hasattr(pipeline, 'dspy_enhancer')
+        assert hasattr(pipeline, "relationship_tool")
+        assert hasattr(pipeline, "dspy_enhancer")
 
 
 @pytest.mark.unit
 class TestQueryEnhancementSignatures:
     """Test Phase 3 compatibility with DSPy 3.0 QueryEnhancementSignature."""
-    
+
     def test_signature_compatibility(self):
         """Test QueryEnhancementSignature compatibility with Phase 3 modules"""
-        from src.app.routing.dspy_routing_signatures import QueryEnhancementSignature
-        
+
         # Verify signature structure
         assert issubclass(QueryEnhancementSignature, dspy.Signature)
-        
+
         fields = QueryEnhancementSignature.model_fields
-        
+
         # Verify required input fields
-        required_inputs = ['original_query', 'entities', 'relationships', 'search_context']
+        required_inputs = [
+            "original_query",
+            "entities",
+            "relationships",
+            "search_context",
+        ]
         for field in required_inputs:
             assert field in fields, f"Missing input field: {field}"
-        
+
         # Verify required output fields
         required_outputs = [
-            'enhanced_query', 'semantic_expansions', 'relationship_phrases',
-            'enhancement_strategy', 'search_operators', 'quality_score'
+            "enhanced_query",
+            "semantic_expansions",
+            "relationship_phrases",
+            "enhancement_strategy",
+            "search_operators",
+            "quality_score",
         ]
         for field in required_outputs:
             assert field in fields, f"Missing output field: {field}"
-    
+
     def test_phase3_integration_with_phase2_outputs(self):
         """Test Phase 3 can process Phase 2 relationship extraction outputs"""
-        from src.app.routing.query_enhancement_engine import QueryRewriter
-        
+
         # Simulate Phase 2 outputs
         phase2_entities = [
-            {"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9, "start_pos": 0, "end_pos": 6},
-            {"text": "soccer", "label": "SPORT", "confidence": 0.8, "start_pos": 15, "end_pos": 21}
+            {
+                "text": "robots",
+                "label": "TECHNOLOGY",
+                "confidence": 0.9,
+                "start_pos": 0,
+                "end_pos": 6,
+            },
+            {
+                "text": "soccer",
+                "label": "SPORT",
+                "confidence": 0.8,
+                "start_pos": 15,
+                "end_pos": 21,
+            },
         ]
-        
+
         phase2_relationships = [
             {
                 "subject": "robots",
@@ -1777,18 +1854,16 @@ class TestQueryEnhancementSignatures:
                 "object": "soccer",
                 "confidence": 0.85,
                 "subject_type": "TECHNOLOGY",
-                "object_type": "SPORT"
+                "object_type": "SPORT",
             }
         ]
-        
+
         # Test Phase 3 can process these outputs
         rewriter = QueryRewriter()
         result = rewriter.enhance_query(
-            "robots playing soccer",
-            phase2_entities,
-            phase2_relationships
+            "robots playing soccer", phase2_entities, phase2_relationships
         )
-        
+
         # Should successfully process Phase 2 outputs
         assert "enhanced_query" in result
         assert "quality_score" in result
@@ -1798,250 +1873,263 @@ class TestQueryEnhancementSignatures:
 @pytest.mark.unit
 class TestQueryEnhancementIntegration:
     """Test Phase 3 integration readiness with Phase 4."""
-    
+
     def test_enhanced_queries_ready_for_routing(self):
         """Test that Phase 3 enhanced queries are ready for Phase 4 routing"""
-        from src.app.routing.query_enhancement_engine import QueryRewriter
-        
+
         rewriter = QueryRewriter()
-        
+
         # Test query enhancement produces routing-ready output
         test_query = "Find educational videos about machine learning algorithms"
-        entities = [{"text": "machine learning", "label": "TECHNOLOGY", "confidence": 0.9}]
+        entities = [
+            {"text": "machine learning", "label": "TECHNOLOGY", "confidence": 0.9}
+        ]
         relationships = []
-        
+
         result = rewriter.enhance_query(test_query, entities, relationships)
-        
+
         # Verify output suitable for routing
         enhanced_query = result["enhanced_query"]
-        
+
         # Should be a valid string suitable for search
         assert isinstance(enhanced_query, str)
         assert len(enhanced_query) > 0
-        
+
         # Should contain original query terms
         assert "machine learning" in enhanced_query.lower()
-        
+
         # Should have quality metrics for routing decisions
         assert "quality_score" in result
         assert isinstance(result["quality_score"], (int, float))
-        
+
         # Should have strategy info for routing optimization
         assert "enhancement_strategy" in result
         assert isinstance(result["enhancement_strategy"], str)
-    
+
     def test_phase3_output_structure_for_phase4(self):
         """Test Phase 3 outputs have correct structure for Phase 4 integration"""
-        from src.app.routing.query_enhancement_engine import DSPyQueryEnhancerModule
-        
+
         module = DSPyQueryEnhancerModule()
-        
+
         # Test module produces correct output structure
         result = module.forward(
-            "test query",
-            [{"text": "test", "label": "TEST", "confidence": 0.8}],
-            []
+            "test query", [{"text": "test", "label": "TEST", "confidence": 0.8}], []
         )
-        
+
         # Phase 4 routing will expect these attributes
         phase4_required_attributes = [
-            'enhanced_query',      # For actual search
-            'quality_score',       # For routing confidence
-            'enhancement_strategy', # For routing optimization
-            'semantic_expansions', # For additional context
-            'relationship_phrases' # For relationship-aware routing
+            "enhanced_query",  # For actual search
+            "quality_score",  # For routing confidence
+            "enhancement_strategy",  # For routing optimization
+            "semantic_expansions",  # For additional context
+            "relationship_phrases",  # For relationship-aware routing
         ]
-        
+
         for attr in phase4_required_attributes:
             assert hasattr(result, attr), f"Missing Phase 4 required attribute: {attr}"
 
 
 # ======================== COMPONENT TESTS ========================
 
-@pytest.mark.unit 
+
+@pytest.mark.unit
 class TestDSPyComponentsIntegration:
     """Integration tests validating complete pipeline from DSPy-A2A through query enhancement"""
 
     def test_end_to_end_query_processing_pipeline(self):
         """Test complete pipeline: A2A input → relationship extraction → query enhancement"""
-        
+
         # Phase 1: A2A-DSPy integration
-        from src.app.agents.dspy_a2a_agent_base import SimpleDSPyA2AAgent
         from src.app.routing.dspy_routing_signatures import BasicQueryAnalysisSignature
-        
+
         # Create a simple DSPy module for testing
         class TestModule(dspy.Module):
             def __init__(self):
                 super().__init__()
                 self.analyze = dspy.ChainOfThought(BasicQueryAnalysisSignature)
-            
+
             def forward(self, query):
                 return self.analyze(query=query)
-        
+
         # Mock A2A message
         a2a_message = {
             "query": "robots playing soccer in competitions",
             "context": "video search request",
-            "source_agent": "user_interface"
+            "source_agent": "user_interface",
         }
-        
+
         # Test Phase 1: A2A to DSPy conversion
         # Create agent with proper constructor
         agent = SimpleDSPyA2AAgent(port=8000)
-        
+
         # Test A2A message processing by testing the base functionality
         # Since we don't need to actually run DSPy modules, test the structure
-        assert hasattr(agent, '_a2a_to_dspy_input')
-        assert hasattr(agent, '_process_with_dspy') 
-        assert hasattr(agent, '_dspy_to_a2a_output')
-        
+        assert hasattr(agent, "_a2a_to_dspy_input")
+        assert hasattr(agent, "_process_with_dspy")
+        assert hasattr(agent, "_dspy_to_a2a_output")
+
         # Verify A2A message processing structure
         # Mock the internal method to avoid DSPy execution
-        with patch.object(agent, '_a2a_to_dspy_input') as mock_convert:
+        with patch.object(agent, "_a2a_to_dspy_input") as mock_convert:
             mock_convert.return_value = {
                 "query": "robots playing soccer in competitions",
-                "context": "video search request"
+                "context": "video search request",
             }
-            
+
             dspy_input = agent._a2a_to_dspy_input(a2a_message)
             assert dspy_input["query"] == "robots playing soccer in competitions"
             assert "context" in dspy_input
 
     def test_phase2_phase3_relationship_to_enhancement_flow(self):
         """Test flow from relationship extraction (Phase 2) to query enhancement (Phase 3)"""
-        
+
         # Mock relationship extraction results (Phase 2 output)
         mock_entities = [
             {"text": "robots", "label": "ENTITY", "confidence": 0.9},
             {"text": "soccer", "label": "ACTIVITY", "confidence": 0.8},
-            {"text": "competitions", "label": "EVENT", "confidence": 0.85}
+            {"text": "competitions", "label": "EVENT", "confidence": 0.85},
         ]
-        
+
         mock_relationships = [
             {"subject": "robots", "relation": "playing", "object": "soccer"},
-            {"subject": "soccer", "relation": "in", "object": "competitions"}
+            {"subject": "soccer", "relation": "in", "object": "competitions"},
         ]
-        
+
         # Test Phase 3 can process Phase 2 outputs
-        from src.app.routing.query_enhancement_engine import QueryRewriter
-        
+
         rewriter = QueryRewriter()
         result = rewriter.enhance_query(
-            "robots playing soccer in competitions",
-            mock_entities,
-            mock_relationships
+            "robots playing soccer in competitions", mock_entities, mock_relationships
         )
-        
+
         # Validate Phase 2 → Phase 3 data flow
         assert result["enhanced_query"] != "robots playing soccer in competitions"
         assert "quality_score" in result
         assert result["quality_score"] > 0
-        
+
         # Should incorporate relationship context
         enhanced_query = result["enhanced_query"].lower()
-        assert any(term in enhanced_query for term in ["robots", "soccer", "competitions"])
+        assert any(
+            term in enhanced_query for term in ["robots", "soccer", "competitions"]
+        )
 
     def test_dspy_signature_compatibility_across_phases(self):
         """Test DSPy signatures work correctly across all phases"""
-        
+
         # Test Phase 1 signatures
-        from src.app.routing.dspy_routing_signatures import BasicQueryAnalysisSignature
-        
+
         phase1_fields = BasicQueryAnalysisSignature.model_fields
         assert "query" in phase1_fields
         assert "primary_intent" in phase1_fields
-        
-        # Test Phase 2 signatures  
-        from src.app.routing.dspy_routing_signatures import RelationshipExtractionSignature
-        
+
+        # Test Phase 2 signatures
+        from src.app.routing.dspy_routing_signatures import (
+            RelationshipExtractionSignature,
+        )
+
         phase2_fields = RelationshipExtractionSignature.model_fields
-        assert "query" in phase2_fields  # RelationshipExtractionSignature uses 'query' not 'text'
-        assert "relationships" in phase2_fields  # Uses 'relationships' not 'extracted_relationships'
-        
+        assert (
+            "query" in phase2_fields
+        )  # RelationshipExtractionSignature uses 'query' not 'text'
+        assert (
+            "relationships" in phase2_fields
+        )  # Uses 'relationships' not 'extracted_relationships'
+
         # Test Phase 3 signatures
         from src.app.routing.dspy_routing_signatures import QueryEnhancementSignature
-        
+
         phase3_fields = QueryEnhancementSignature.model_fields
         assert "original_query" in phase3_fields
         assert "enhanced_query" in phase3_fields
-        
+
         # All signatures should be DSPy 3.0 compatible
-        for signature in [BasicQueryAnalysisSignature, RelationshipExtractionSignature, QueryEnhancementSignature]:
-            assert hasattr(signature, 'model_fields'), f"Signature {signature.__name__} not DSPy 3.0 compatible"
+        for signature in [
+            BasicQueryAnalysisSignature,
+            RelationshipExtractionSignature,
+            QueryEnhancementSignature,
+        ]:
+            assert hasattr(
+                signature, "model_fields"
+            ), f"Signature {signature.__name__} not DSPy 3.0 compatible"
 
     def test_error_propagation_across_phases(self):
         """Test error handling propagates correctly through the pipeline"""
-        
+
         # Test Phase 1 error handling
-        from src.app.agents.dspy_a2a_agent_base import SimpleDSPyA2AAgent
-        from src.app.routing.dspy_routing_signatures import BasicQueryAnalysisSignature
-        
+
         class FailingModule(dspy.Module):
             def forward(self, query):
                 raise ValueError("Test DSPy module failure")
-        
+
         # Create agent with proper constructor
         agent = SimpleDSPyA2AAgent(port=8000)
-        
+
         # Test error handling by mocking the processing method to simulate failures
-        a2a_message = {"query": "test query", "source_agent": "test"}
-        
-        with patch.object(agent, '_process_with_dspy', new_callable=AsyncMock) as mock_process:
+
+        with patch.object(
+            agent, "_process_with_dspy", new_callable=AsyncMock
+        ) as mock_process:
             # Mock a failure response
-            mock_error_result = {
-                "error": "Test DSPy module failure", 
-                "status": "error"
-            }
+            mock_error_result = {"error": "Test DSPy module failure", "status": "error"}
             mock_process.return_value = mock_error_result
-            
+
             # For synchronous test, we'll validate the mock result directly
             result = mock_error_result
-            
+
             # Should return error information, not crash
             assert "error" in result or "status" in result
 
     def test_data_structure_consistency_across_phases(self):
         """Test data structures remain consistent as they flow through phases"""
-        
+
         # Standard test data that should work across all phases
         test_query = "autonomous vehicles navigating urban environments"
         test_entities = [
             {"text": "autonomous vehicles", "label": "TECHNOLOGY", "confidence": 0.9},
-            {"text": "urban environments", "label": "LOCATION", "confidence": 0.8}
+            {"text": "urban environments", "label": "LOCATION", "confidence": 0.8},
         ]
         test_relationships = [
-            {"subject": "autonomous vehicles", "relation": "navigating", "object": "urban environments"}
+            {
+                "subject": "autonomous vehicles",
+                "relation": "navigating",
+                "object": "urban environments",
+            }
         ]
-        
+
         # Test Phase 1 → Phase 2 data compatibility
-        from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
-        
+
         # Create a synchronous mock return value
         mock_return_value = {
             "entities": test_entities,
             "relationships": test_relationships,
-            "confidence_scores": {"overall": 0.85}
+            "confidence_scores": {"overall": 0.85},
         }
-        
-        with patch.object(RelationshipExtractorTool, 'extract_comprehensive_relationships', new_callable=AsyncMock) as mock_extract:
+
+        with patch.object(
+            RelationshipExtractorTool,
+            "extract_comprehensive_relationships",
+            new_callable=AsyncMock,
+        ) as mock_extract:
             mock_extract.return_value = mock_return_value
-            
-            extractor = RelationshipExtractorTool()
+
+            RelationshipExtractorTool()
             # For sync test, we'll mock the return value directly
             phase2_result = mock_return_value
-            
+
             # Phase 2 output should be compatible with Phase 3 input
             assert "entities" in phase2_result
             assert "relationships" in phase2_result
             assert isinstance(phase2_result["entities"], list)
             assert isinstance(phase2_result["relationships"], list)
-        
+
         # Test Phase 2 → Phase 3 data compatibility
         from src.app.routing.query_enhancement_engine import QueryRewriter
-        
+
         rewriter = QueryRewriter()
-        phase3_result = rewriter.enhance_query(test_query, test_entities, test_relationships)
-        
+        phase3_result = rewriter.enhance_query(
+            test_query, test_entities, test_relationships
+        )
+
         # Phase 3 should successfully process Phase 2 outputs
         assert "enhanced_query" in phase3_result
         assert "quality_score" in phase3_result
@@ -2050,30 +2138,32 @@ class TestDSPyComponentsIntegration:
 
     def test_performance_and_resource_management(self):
         """Test resource management and performance across integrated phases"""
-        
+
         # Test multiple queries don't cause resource leaks
         test_queries = [
             "machine learning models for image classification",
-            "quantum computing applications in cryptography", 
-            "renewable energy storage solutions"
+            "quantum computing applications in cryptography",
+            "renewable energy storage solutions",
         ]
-        
-        from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
-        
+
         # Mock the dependencies to avoid actual model loading
         mock_return_value = {
             "entities": [{"text": "test", "label": "TEST", "confidence": 0.8}],
             "relationships": [{"subject": "test", "relation": "is", "object": "test"}],
-            "confidence_scores": {"overall": 0.8}
+            "confidence_scores": {"overall": 0.8},
         }
-        
-        with patch('src.app.routing.relationship_extraction_tools.RelationshipExtractorTool') as mock_extractor_class:
+
+        with patch(
+            "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
+        ) as mock_extractor_class:
             mock_extractor_instance = Mock()
-            mock_extractor_instance.extract_comprehensive_relationships = AsyncMock(return_value=mock_return_value)
+            mock_extractor_instance.extract_comprehensive_relationships = AsyncMock(
+                return_value=mock_return_value
+            )
             mock_extractor_class.return_value = mock_extractor_instance
-            
-            pipeline = QueryEnhancementPipeline()
-            
+
+            QueryEnhancementPipeline()
+
             # Process multiple queries (synchronous test, so we'll simulate the async calls)
             results = []
             for query in test_queries:
@@ -2084,15 +2174,15 @@ class TestDSPyComponentsIntegration:
                         "enhanced_query": f"Enhanced: {query}",
                         "quality_score": 0.85,
                         "entities": mock_return_value["entities"],
-                        "relationships": mock_return_value["relationships"]
+                        "relationships": mock_return_value["relationships"],
                     }
                     results.append(result)
                 except Exception as e:
                     pytest.fail(f"Pipeline failed on query '{query}': {e}")
-            
+
             # All queries should be processed successfully
             assert len(results) == len(test_queries)
-            
+
             # Each result should have consistent structure
             for result in results:
                 assert "enhanced_query" in result
@@ -2102,30 +2192,40 @@ class TestDSPyComponentsIntegration:
 
     def test_phase4_integration_readiness(self):
         """Test that Phases 1-3 outputs are ready for Phase 4 (Enhanced Routing Agent)"""
-        
+
         # Simulate complete Phases 1-3 processing
         test_query = "sports analytics using computer vision"
-        
-        # Mock complete pipeline execution  
+
+        # Mock complete pipeline execution
         mock_return_value = {
             "entities": [
                 {"text": "sports analytics", "label": "DOMAIN", "confidence": 0.9},
-                {"text": "computer vision", "label": "TECHNOLOGY", "confidence": 0.85}
+                {"text": "computer vision", "label": "TECHNOLOGY", "confidence": 0.85},
             ],
             "relationships": [
-                {"subject": "sports analytics", "relation": "using", "object": "computer vision"}
+                {
+                    "subject": "sports analytics",
+                    "relation": "using",
+                    "object": "computer vision",
+                }
             ],
-            "confidence_scores": {"overall": 0.87}
+            "confidence_scores": {"overall": 0.87},
         }
-        
-        with patch('src.app.routing.relationship_extraction_tools.RelationshipExtractorTool') as mock_extractor_class:
+
+        with patch(
+            "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
+        ) as mock_extractor_class:
             mock_extractor_instance = Mock()
-            mock_extractor_instance.extract_comprehensive_relationships = AsyncMock(return_value=mock_return_value)
+            mock_extractor_instance.extract_comprehensive_relationships = AsyncMock(
+                return_value=mock_return_value
+            )
             mock_extractor_class.return_value = mock_extractor_instance
-            
-            from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
-            
-            pipeline = QueryEnhancementPipeline()
+
+            from src.app.routing.query_enhancement_engine import (
+                QueryEnhancementPipeline,
+            )
+
+            QueryEnhancementPipeline()
             # Since this is an async method but we're testing synchronously,
             # we'll simulate the result structure
             result = {
@@ -2134,30 +2234,40 @@ class TestDSPyComponentsIntegration:
                 "relationships": mock_return_value["relationships"],
                 "quality_score": 0.87,
                 "enhancement_strategy": "relationship_expansion",
-                "semantic_expansions": ["sports data analysis", "computer vision algorithms"]
+                "semantic_expansions": [
+                    "sports data analysis",
+                    "computer vision algorithms",
+                ],
             }
-            
+
             # Phase 4 Enhanced Routing Agent will need these attributes
             phase4_requirements = [
-                "enhanced_query",      # Enhanced query for routing decisions
-                "entities",           # Entity information for routing context
-                "relationships",      # Relationship data for routing intelligence  
-                "quality_score",      # Confidence score for routing thresholds
-                "enhancement_strategy", # Strategy info for routing optimization
-                "semantic_expansions" # Additional context for routing
+                "enhanced_query",  # Enhanced query for routing decisions
+                "entities",  # Entity information for routing context
+                "relationships",  # Relationship data for routing intelligence
+                "quality_score",  # Confidence score for routing thresholds
+                "enhancement_strategy",  # Strategy info for routing optimization
+                "semantic_expansions",  # Additional context for routing
             ]
-            
+
             for requirement in phase4_requirements:
-                assert requirement in result, f"Phase 4 requires '{requirement}' but not found in result"
-            
+                assert (
+                    requirement in result
+                ), f"Phase 4 requires '{requirement}' but not found in result"
+
             # Quality score should be reasonable for routing decisions
-            assert 0 <= result["quality_score"] <= 1, "Quality score should be normalized for routing thresholds"
-            
+            assert (
+                0 <= result["quality_score"] <= 1
+            ), "Quality score should be normalized for routing thresholds"
+
             # Enhanced query should be different from original (actual enhancement occurred)
-            assert result["enhanced_query"] != test_query, "Query should be actually enhanced for Phase 4"
+            assert (
+                result["enhanced_query"] != test_query
+            ), "Query should be actually enhanced for Phase 4"
 
 
 # ======================== COMPONENT TESTS ========================
+
 
 @pytest.mark.unit
 class TestEnhancedRoutingAgent:
@@ -2165,47 +2275,46 @@ class TestEnhancedRoutingAgent:
 
     def test_enhanced_routing_agent_initialization(self):
         """Test Enhanced Routing Agent initialization"""
-        from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent, EnhancedRoutingConfig
-        
+        from src.app.agents.enhanced_routing_agent import EnhancedRoutingConfig
+
         # Test with default config
         agent = EnhancedRoutingAgent()
         assert agent is not None
-        assert hasattr(agent, 'config')
-        assert hasattr(agent, 'enhanced_system_available')
-        
+        assert hasattr(agent, "config")
+        assert hasattr(agent, "enhanced_system_available")
+
         # Test with custom config
         custom_config = EnhancedRoutingConfig(
             model_name="smollm3:3b",
             base_url="http://localhost:11434/v1",
             confidence_threshold=0.8,
             enable_relationship_extraction=True,
-            enable_query_enhancement=True
+            enable_query_enhancement=True,
         )
-        
+
         custom_agent = EnhancedRoutingAgent(config=custom_config)
         assert custom_agent.config.confidence_threshold == 0.8
         assert custom_agent.config.enable_relationship_extraction is True
 
     def test_orchestration_need_assessment(self):
         """Test orchestration need assessment logic"""
-        from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent
-        
+
         agent = EnhancedRoutingAgent()
-        
+
         # Simple query - should not need orchestration
         simple_entities = [{"text": "robot", "label": "ENTITY", "confidence": 0.9}]
         simple_relationships = []
         simple_routing_result = {"confidence": 0.9}
-        
+
         needs_orchestration = agent._assess_orchestration_need(
             "show me robots",
             simple_entities,
             simple_relationships,
             simple_routing_result,
-            None
+            None,
         )
         assert needs_orchestration is False
-        
+
         # Complex query - should need orchestration
         complex_entities = [
             {"text": "robots", "label": "ENTITY", "confidence": 0.9},
@@ -2213,40 +2322,43 @@ class TestEnhancedRoutingAgent:
             {"text": "analysis", "label": "TASK", "confidence": 0.8},
             {"text": "comparison", "label": "TASK", "confidence": 0.7},
             {"text": "report", "label": "OUTPUT", "confidence": 0.9},
-            {"text": "techniques", "label": "CONCEPT", "confidence": 0.8}
+            {"text": "techniques", "label": "CONCEPT", "confidence": 0.8},
         ]
         complex_relationships = [
             {"subject": "robots", "relation": "playing", "object": "soccer"},
             {"subject": "analysis", "relation": "of", "object": "techniques"},
             {"subject": "comparison", "relation": "between", "object": "teams"},
-            {"subject": "report", "relation": "contains", "object": "analysis"}
+            {"subject": "report", "relation": "contains", "object": "analysis"},
         ]
         complex_routing_result = {"confidence": 0.5}  # Low confidence
-        
+
         needs_orchestration = agent._assess_orchestration_need(
             "find videos of robots playing soccer and analyze the techniques used then generate a comprehensive comparison report between different teams",
             complex_entities,
             complex_relationships,
             complex_routing_result,
-            None
+            None,
         )
         assert needs_orchestration is True
 
     def test_orchestration_signals_detection(self):
         """Test orchestration signals detection"""
-        from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent
-        
+
         agent = EnhancedRoutingAgent()
-        
-        entities = [{"text": "test", "label": "TEST", "confidence": 0.8}] * 6  # Many entities
-        relationships = [{"subject": "a", "relation": "b", "object": "c"}] * 4  # Many relationships
-        
+
+        entities = [
+            {"text": "test", "label": "TEST", "confidence": 0.8}
+        ] * 6  # Many entities
+        relationships = [
+            {"subject": "a", "relation": "b", "object": "c"}
+        ] * 4  # Many relationships
+
         signals = agent._get_orchestration_signals(
             "first find videos then analyze the content and generate a comprehensive report plus create summaries",
             entities,
-            relationships
+            relationships,
         )
-        
+
         assert signals["query_length"] > 10
         assert signals["entity_count"] == 6
         assert signals["relationship_count"] == 4
@@ -2257,9 +2369,9 @@ class TestEnhancedRoutingAgent:
 
     def test_routing_decision_structure(self):
         """Test routing decision data structure"""
-        from src.app.routing.base import RoutingDecision, SearchModality, GenerationType
-        from datetime import datetime
-        
+
+        from src.app.routing.base import GenerationType, RoutingDecision, SearchModality
+
         decision = RoutingDecision(
             search_modality=SearchModality.VIDEO,
             generation_type=GenerationType.RAW_RESULTS,
@@ -2271,11 +2383,13 @@ class TestEnhancedRoutingAgent:
                 "recommended_agent": "video_search_agent",
                 "fallback_agents": ["summarizer_agent"],
                 "enhanced_query": "enhanced test query",
-                "extracted_relationships": [{"subject": "a", "relation": "b", "object": "c"}],
-                "routing_metadata": {"test": True}
-            }
+                "extracted_relationships": [
+                    {"subject": "a", "relation": "b", "object": "c"}
+                ],
+                "routing_metadata": {"test": True},
+            },
         )
-        
+
         assert decision.search_modality == SearchModality.VIDEO
         assert decision.confidence_score == 0.85
         assert len(decision.entities_detected) == 1
@@ -2292,18 +2406,20 @@ class TestMultiAgentOrchestrator:
         """Test Multi-Agent Orchestrator initialization"""
         from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
         from src.app.agents.workflow_intelligence import OptimizationStrategy
-        
+
         # Test default initialization
         orchestrator = MultiAgentOrchestrator()
         assert orchestrator is not None
-        assert hasattr(orchestrator, 'available_agents')
-        assert hasattr(orchestrator, 'active_workflows')
-        assert hasattr(orchestrator, 'orchestration_stats')
-        
+        assert hasattr(orchestrator, "available_agents")
+        assert hasattr(orchestrator, "active_workflows")
+        assert hasattr(orchestrator, "orchestration_stats")
+
         # Test with workflow intelligence disabled
-        orchestrator_no_intelligence = MultiAgentOrchestrator(enable_workflow_intelligence=False)
+        orchestrator_no_intelligence = MultiAgentOrchestrator(
+            enable_workflow_intelligence=False
+        )
         assert orchestrator_no_intelligence.workflow_intelligence is None
-        
+
         # Test with custom optimization strategy
         orchestrator_custom = MultiAgentOrchestrator(
             optimization_strategy=OptimizationStrategy.LATENCY_OPTIMIZED
@@ -2312,50 +2428,73 @@ class TestMultiAgentOrchestrator:
 
     def test_workflow_plan_structure(self):
         """Test workflow plan data structures"""
-        from src.app.agents.multi_agent_orchestrator import WorkflowPlan, WorkflowTask, WorkflowStatus, TaskStatus
-        
+        from src.app.agents.multi_agent_orchestrator import (
+            TaskStatus,
+            WorkflowPlan,
+            WorkflowStatus,
+            WorkflowTask,
+        )
+
         # Test WorkflowTask
         task = WorkflowTask(
             task_id="test_task",
             agent_name="video_search_agent",
             query="test query",
             dependencies={"dependency_task"},
-            parameters={"param": "value"}
+            parameters={"param": "value"},
         )
-        
+
         assert task.task_id == "test_task"
         assert task.agent_name == "video_search_agent"
         assert task.status == TaskStatus.WAITING
         assert "dependency_task" in task.dependencies
-        
+
         # Test WorkflowPlan
         plan = WorkflowPlan(
             workflow_id="test_workflow",
             original_query="test workflow query",
             tasks=[task],
-            status=WorkflowStatus.PENDING
+            status=WorkflowStatus.PENDING,
         )
-        
+
         assert plan.workflow_id == "test_workflow"
         assert plan.status == WorkflowStatus.PENDING
         assert len(plan.tasks) == 1
 
     def test_execution_order_calculation(self):
         """Test execution order calculation with dependencies"""
-        from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator, WorkflowTask
-        
+        from src.app.agents.multi_agent_orchestrator import (
+            MultiAgentOrchestrator,
+            WorkflowTask,
+        )
+
         orchestrator = MultiAgentOrchestrator()
-        
+
         # Create tasks with dependencies
-        task1 = WorkflowTask(task_id="search", agent_name="video_search_agent", query="search", dependencies=set())
-        task2 = WorkflowTask(task_id="summarize", agent_name="summarizer_agent", query="summarize", dependencies={"search"})
-        task3 = WorkflowTask(task_id="report", agent_name="detailed_report_agent", query="report", dependencies={"search", "summarize"})
-        
+        task1 = WorkflowTask(
+            task_id="search",
+            agent_name="video_search_agent",
+            query="search",
+            dependencies=set(),
+        )
+        task2 = WorkflowTask(
+            task_id="summarize",
+            agent_name="summarizer_agent",
+            query="summarize",
+            dependencies={"search"},
+        )
+        task3 = WorkflowTask(
+            task_id="report",
+            agent_name="detailed_report_agent",
+            query="report",
+            dependencies={"search", "summarize"},
+        )
+
         execution_order = orchestrator._calculate_execution_order([task1, task2, task3])
-        
+
         # task1 should be first (no dependencies)
         assert "search" in execution_order[0]
-        
+
         # task2 should be after task1
         search_phase = None
         summarize_phase = None
@@ -2364,7 +2503,7 @@ class TestMultiAgentOrchestrator:
                 search_phase = i
             if "summarize" in phase:
                 summarize_phase = i
-        
+
         assert search_phase is not None
         assert summarize_phase is not None
         assert search_phase < summarize_phase
@@ -2372,9 +2511,9 @@ class TestMultiAgentOrchestrator:
     def test_orchestration_statistics(self):
         """Test orchestration statistics tracking"""
         from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
-        
+
         orchestrator = MultiAgentOrchestrator()
-        
+
         # Initial stats
         stats = orchestrator.get_orchestration_statistics()
         assert "total_workflows" in stats
@@ -2382,12 +2521,12 @@ class TestMultiAgentOrchestrator:
         assert "failed_workflows" in stats
         assert "average_execution_time" in stats
         assert stats["total_workflows"] == 0
-        
+
         # Test stats update
         orchestrator.orchestration_stats["total_workflows"] = 10
         orchestrator.orchestration_stats["completed_workflows"] = 8
         orchestrator.orchestration_stats["failed_workflows"] = 2
-        
+
         updated_stats = orchestrator.get_orchestration_statistics()
         assert updated_stats["total_workflows"] == 10
         assert updated_stats["completion_rate"] == 0.8
@@ -2400,41 +2539,48 @@ class TestA2AEnhancedGateway:
 
     def test_gateway_initialization(self):
         """Test A2A Enhanced Gateway initialization"""
-        from src.app.agents.a2a_enhanced_gateway import A2AEnhancedGateway, create_a2a_enhanced_gateway
+        from src.app.agents.a2a_enhanced_gateway import (
+            A2AEnhancedGateway,
+            create_a2a_enhanced_gateway,
+        )
         from src.app.agents.enhanced_routing_agent import EnhancedRoutingConfig
-        
+
         # Test factory function
         gateway = create_a2a_enhanced_gateway()
         assert gateway is not None
-        assert hasattr(gateway, 'app')
-        assert hasattr(gateway, 'gateway_stats')
-        
+        assert hasattr(gateway, "app")
+        assert hasattr(gateway, "gateway_stats")
+
         # Test with custom config
         custom_config = EnhancedRoutingConfig(confidence_threshold=0.9)
         custom_gateway = A2AEnhancedGateway(
             enhanced_routing_config=custom_config,
             enable_orchestration=True,
-            enable_fallback=True
+            enable_fallback=True,
         )
         assert custom_gateway.enable_orchestration is True
         assert custom_gateway.enable_fallback is True
 
     def test_request_response_models(self):
         """Test A2A request and response data models"""
-        from src.app.agents.a2a_enhanced_gateway import A2AQueryRequest, A2AQueryResponse, OrchestrationRequest
-        
+        from src.app.agents.a2a_enhanced_gateway import (
+            A2AQueryRequest,
+            A2AQueryResponse,
+            OrchestrationRequest,
+        )
+
         # Test A2AQueryRequest
         request = A2AQueryRequest(
             query="test query",
             context="test context",
             user_id="user123",
-            preferences={"pref": "value"}
+            preferences={"pref": "value"},
         )
         assert request.query == "test query"
         assert request.context == "test context"
         assert request.user_id == "user123"
         assert request.preferences["pref"] == "value"
-        
+
         # Test A2AQueryResponse
         response = A2AQueryResponse(
             agent="video_search_agent",
@@ -2442,60 +2588,69 @@ class TestA2AEnhancedGateway:
             reasoning="test reasoning",
             enhanced_query="enhanced test query",
             processing_time_ms=150.0,
-            routing_method="enhanced_dspy"
+            routing_method="enhanced_dspy",
         )
         assert response.agent == "video_search_agent"
         assert response.confidence == 0.85
         assert response.needs_orchestration is False  # Default value
         assert response.routing_method == "enhanced_dspy"
-        
+
         # Test OrchestrationRequest
         orch_request = OrchestrationRequest(
-            query="complex orchestration query",
-            force_orchestration=True
+            query="complex orchestration query", force_orchestration=True
         )
         assert orch_request.force_orchestration is True
 
     def test_emergency_response_creation(self):
         """Test emergency response fallback logic"""
-        from src.app.agents.a2a_enhanced_gateway import A2AEnhancedGateway, A2AQueryRequest
         from datetime import datetime
-        
+
+        from src.app.agents.a2a_enhanced_gateway import (
+            A2AEnhancedGateway,
+            A2AQueryRequest,
+        )
+
         gateway = A2AEnhancedGateway(enable_fallback=False)  # No fallback systems
-        
+
         # Test emergency response for video query
         video_request = A2AQueryRequest(query="show me videos of robots")
-        response = gateway._create_emergency_response(video_request, datetime.now(), "test error")
-        
+        response = gateway._create_emergency_response(
+            video_request, datetime.now(), "test error"
+        )
+
         assert response.agent == "video_search_agent"
         assert response.confidence == 0.2  # Low emergency confidence
         assert "Emergency" in response.reasoning
         assert response.routing_method == "emergency_fallback"
-        
+
         # Test emergency response for summary query
         summary_request = A2AQueryRequest(query="summarize the results")
-        summary_response = gateway._create_emergency_response(summary_request, datetime.now(), "test error")
-        
+        summary_response = gateway._create_emergency_response(
+            summary_request, datetime.now(), "test error"
+        )
+
         assert summary_response.agent == "summarizer_agent"
 
     def test_response_time_statistics(self):
         """Test response time statistics tracking"""
         from src.app.agents.a2a_enhanced_gateway import A2AEnhancedGateway
-        
+
         gateway = A2AEnhancedGateway()
-        
+
         # Initial stats
         assert gateway.gateway_stats["total_requests"] == 0
         assert gateway.gateway_stats["average_response_time"] == 0.0
-        
+
         # Simulate processing times
         gateway.gateway_stats["total_requests"] = 1
         gateway._update_response_time_stats(100.0)
         assert gateway.gateway_stats["average_response_time"] == 100.0
-        
+
         gateway.gateway_stats["total_requests"] = 2
         gateway._update_response_time_stats(200.0)
-        assert gateway.gateway_stats["average_response_time"] == 150.0  # (100 + 200) / 2
+        assert (
+            gateway.gateway_stats["average_response_time"] == 150.0
+        )  # (100 + 200) / 2
 
 
 @pytest.mark.unit
@@ -2504,31 +2659,42 @@ class TestWorkflowIntelligence:
 
     def test_workflow_intelligence_initialization(self):
         """Test Workflow Intelligence initialization"""
-        from src.app.agents.workflow_intelligence import WorkflowIntelligence, OptimizationStrategy, create_workflow_intelligence
-        
+        from src.app.agents.workflow_intelligence import (
+            OptimizationStrategy,
+            WorkflowIntelligence,
+            create_workflow_intelligence,
+        )
+
         # Test factory function
         intelligence = create_workflow_intelligence()
         assert intelligence is not None
-        assert hasattr(intelligence, 'workflow_history')
-        assert hasattr(intelligence, 'agent_performance')
-        assert hasattr(intelligence, 'workflow_templates')
-        assert hasattr(intelligence, 'optimization_stats')
-        
+        assert hasattr(intelligence, "workflow_history")
+        assert hasattr(intelligence, "agent_performance")
+        assert hasattr(intelligence, "workflow_templates")
+        assert hasattr(intelligence, "optimization_stats")
+
         # Test with custom settings
         custom_intelligence = WorkflowIntelligence(
             max_history_size=5000,
             enable_persistence=False,
-            optimization_strategy=OptimizationStrategy.LATENCY_OPTIMIZED
+            optimization_strategy=OptimizationStrategy.LATENCY_OPTIMIZED,
         )
         assert custom_intelligence.max_history_size == 5000
         assert custom_intelligence.enable_persistence is False
-        assert custom_intelligence.optimization_strategy == OptimizationStrategy.LATENCY_OPTIMIZED
+        assert (
+            custom_intelligence.optimization_strategy
+            == OptimizationStrategy.LATENCY_OPTIMIZED
+        )
 
     def test_workflow_execution_recording(self):
         """Test workflow execution data structures"""
-        from src.app.agents.workflow_intelligence import WorkflowExecution, AgentPerformance
         from datetime import datetime
-        
+
+        from src.app.agents.workflow_intelligence import (
+            AgentPerformance,
+            WorkflowExecution,
+        )
+
         # Test WorkflowExecution
         execution = WorkflowExecution(
             workflow_id="test_workflow",
@@ -2540,23 +2706,23 @@ class TestWorkflowIntelligence:
             task_count=2,
             parallel_efficiency=0.8,
             confidence_score=0.85,
-            metadata={"test": True}
+            metadata={"test": True},
         )
-        
+
         assert execution.workflow_id == "test_workflow"
         assert execution.success is True
         assert len(execution.agent_sequence) == 2
         assert isinstance(execution.timestamp, datetime)
-        
+
         # Test AgentPerformance
         performance = AgentPerformance(
             agent_name="video_search_agent",
             total_executions=100,
             successful_executions=85,
             average_execution_time=45.2,
-            average_confidence=0.82
+            average_confidence=0.82,
         )
-        
+
         assert performance.agent_name == "video_search_agent"
         assert performance.total_executions == 100
         assert performance.successful_executions == 85
@@ -2564,40 +2730,75 @@ class TestWorkflowIntelligence:
     def test_query_type_classification(self):
         """Test query type classification logic"""
         from src.app.agents.workflow_intelligence import WorkflowIntelligence
-        
+
         intelligence = WorkflowIntelligence()
-        
+
         # Test video search queries
-        assert intelligence._classify_query_type("show me videos of robots") == "video_search"
-        assert intelligence._classify_query_type("watch footage of soccer games") == "video_search"
-        
+        assert (
+            intelligence._classify_query_type("show me videos of robots")
+            == "video_search"
+        )
+        assert (
+            intelligence._classify_query_type("watch footage of soccer games")
+            == "video_search"
+        )
+
         # Test summarization queries
-        assert intelligence._classify_query_type("summarize the research findings") == "summarization"
-        assert intelligence._classify_query_type("give me a brief overview") == "summarization"
-        
+        assert (
+            intelligence._classify_query_type("summarize the research findings")
+            == "summarization"
+        )
+        assert (
+            intelligence._classify_query_type("give me a brief overview")
+            == "summarization"
+        )
+
         # Test analysis queries
-        assert intelligence._classify_query_type("analyze the performance metrics") == "analysis"
-        assert intelligence._classify_query_type("examine the data trends") == "analysis"
-        
+        assert (
+            intelligence._classify_query_type("analyze the performance metrics")
+            == "analysis"
+        )
+        assert (
+            intelligence._classify_query_type("examine the data trends") == "analysis"
+        )
+
         # Test report generation queries
-        assert intelligence._classify_query_type("generate a comprehensive report") == "report_generation"
-        assert intelligence._classify_query_type("create detailed documentation") == "report_generation"
-        
+        assert (
+            intelligence._classify_query_type("generate a comprehensive report")
+            == "report_generation"
+        )
+        assert (
+            intelligence._classify_query_type("create detailed documentation")
+            == "report_generation"
+        )
+
         # Test comparison queries
-        assert intelligence._classify_query_type("compare the two approaches") == "comparison"
-        assert intelligence._classify_query_type("analyze differences between methods") == "comparison"
-        
+        assert (
+            intelligence._classify_query_type("compare the two approaches")
+            == "comparison"
+        )
+        assert (
+            intelligence._classify_query_type("analyze differences between methods")
+            == "comparison"
+        )
+
         # Test multi-step queries
-        assert intelligence._classify_query_type("first search then analyze and create report") == "multi_step"
-        
+        assert (
+            intelligence._classify_query_type(
+                "first search then analyze and create report"
+            )
+            == "multi_step"
+        )
+
         # Test general queries
         assert intelligence._classify_query_type("help me understand") == "general"
 
     def test_workflow_template_structure(self):
         """Test workflow template data structure"""
-        from src.app.agents.workflow_intelligence import WorkflowTemplate
         from datetime import datetime
-        
+
+        from src.app.agents.workflow_intelligence import WorkflowTemplate
+
         template = WorkflowTemplate(
             template_id="video_analysis_template",
             name="Video Analysis Workflow",
@@ -2605,13 +2806,17 @@ class TestWorkflowIntelligence:
             query_patterns=["video_search", "analysis"],
             task_sequence=[
                 {"agent": "video_search_agent", "task": "search"},
-                {"agent": "summarizer_agent", "task": "summarize", "dependencies": ["search"]}
+                {
+                    "agent": "summarizer_agent",
+                    "task": "summarize",
+                    "dependencies": ["search"],
+                },
             ],
             expected_execution_time=180.0,
             success_rate=0.92,
-            usage_count=15
+            usage_count=15,
         )
-        
+
         assert template.template_id == "video_analysis_template"
         assert template.success_rate == 0.92
         assert len(template.task_sequence) == 2
@@ -2620,7 +2825,7 @@ class TestWorkflowIntelligence:
     def test_optimization_strategy_enum(self):
         """Test optimization strategy enumeration"""
         from src.app.agents.workflow_intelligence import OptimizationStrategy
-        
+
         # Test all optimization strategies exist
         assert OptimizationStrategy.PERFORMANCE_BASED.value == "performance_based"
         assert OptimizationStrategy.SUCCESS_RATE_BASED.value == "success_rate_based"
@@ -2630,10 +2835,13 @@ class TestWorkflowIntelligence:
 
     def test_intelligence_statistics(self):
         """Test workflow intelligence statistics"""
-        from src.app.agents.workflow_intelligence import WorkflowIntelligence, WorkflowExecution
-        
+        from src.app.agents.workflow_intelligence import (
+            WorkflowExecution,
+            WorkflowIntelligence,
+        )
+
         intelligence = WorkflowIntelligence(enable_persistence=False)
-        
+
         # Add some mock executions
         successful_execution = WorkflowExecution(
             workflow_id="success_1",
@@ -2644,11 +2852,11 @@ class TestWorkflowIntelligence:
             agent_sequence=["video_search_agent"],
             task_count=1,
             parallel_efficiency=1.0,
-            confidence_score=0.9
+            confidence_score=0.9,
         )
-        
+
         failed_execution = WorkflowExecution(
-            workflow_id="failed_1", 
+            workflow_id="failed_1",
             query="test query 2",
             query_type="analysis",
             execution_time=50.0,
@@ -2656,12 +2864,12 @@ class TestWorkflowIntelligence:
             agent_sequence=["video_search_agent"],
             task_count=1,
             parallel_efficiency=0.5,
-            confidence_score=0.4
+            confidence_score=0.4,
         )
-        
+
         intelligence.workflow_history.append(successful_execution)
         intelligence.workflow_history.append(failed_execution)
-        
+
         # Test statistics
         stats = intelligence.get_intelligence_statistics()
         assert stats["workflow_history_size"] == 2
@@ -2675,25 +2883,24 @@ class TestSystemIntegration:
 
     def test_enhanced_routing_to_orchestration_flow(self):
         """Test flow from enhanced routing to orchestration"""
-        from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent, RoutingDecision
         from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
-        
+
         # Create components
         router = EnhancedRoutingAgent()
         orchestrator = MultiAgentOrchestrator(routing_agent=router)
-        
+
         # Test routing decision that needs orchestration
         complex_query = "find videos of robots playing soccer then analyze techniques and create comprehensive report"
-        
+
         # Mock routing decision with orchestration need
         mock_decision = RoutingDecision(
             recommended_agent="video_search_agent",
             confidence=0.7,
             reasoning="Complex multi-step query requiring orchestration",
             enhanced_query=complex_query,
-            routing_metadata={"needs_orchestration": True}
+            routing_metadata={"needs_orchestration": True},
         )
-        
+
         # Verify orchestration compatibility
         assert mock_decision.routing_metadata["needs_orchestration"] is True
         assert orchestrator is not None
@@ -2701,111 +2908,122 @@ class TestSystemIntegration:
     def test_gateway_to_intelligence_integration(self):
         """Test A2A Gateway integration with Workflow Intelligence"""
         from src.app.agents.a2a_enhanced_gateway import A2AEnhancedGateway
-        from src.app.agents.workflow_intelligence import OptimizationStrategy
-        
+
         # Create gateway with intelligence enabled
         gateway = A2AEnhancedGateway(enable_orchestration=True)
-        
+
         # Verify orchestrator has intelligence
-        if hasattr(gateway, 'orchestrator') and gateway.orchestrator:
+        if hasattr(gateway, "orchestrator") and gateway.orchestrator:
             assert gateway.orchestrator.workflow_intelligence is not None
-        
+
         # Test gateway statistics include intelligence data
         # This would be tested in integration tests with actual data
 
     def test_dspy_signatures_compatibility(self):
         """Test DSPy signatures work across Phase 4 components"""
-        from src.app.agents.multi_agent_orchestrator import WorkflowPlannerSignature, ResultAggregatorSignature
-        from src.app.agents.workflow_intelligence import WorkflowOptimizationSignature, TemplateGeneratorSignature
-        
+        from src.app.agents.multi_agent_orchestrator import (
+            ResultAggregatorSignature,
+            WorkflowPlannerSignature,
+        )
+        from src.app.agents.workflow_intelligence import (
+            TemplateGeneratorSignature,
+            WorkflowOptimizationSignature,
+        )
+
         # Test signature field access (DSPy 3.0 compatibility)
         workflow_fields = WorkflowPlannerSignature.model_fields
         assert "query" in workflow_fields
         assert "workflow_tasks" in workflow_fields
-        
+
         result_fields = ResultAggregatorSignature.model_fields
         assert "original_query" in result_fields
         assert "aggregated_result" in result_fields
-        
+
         optimization_fields = WorkflowOptimizationSignature.model_fields
         assert "workflow_history" in optimization_fields
         assert "optimized_sequence" in optimization_fields
-        
+
         template_fields = TemplateGeneratorSignature.model_fields
         assert "successful_workflows" in template_fields
         assert "template_name" in template_fields
 
     def test_phase4_component_initialization_order(self):
         """Test Phase 4 components initialize in correct order without circular dependencies"""
-        
+
         # Test 1: Enhanced Routing Agent (independent)
-        from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent
         router = EnhancedRoutingAgent()
         assert router is not None
-        
+
         # Test 2: Workflow Intelligence (independent)
         from src.app.agents.workflow_intelligence import WorkflowIntelligence
+
         intelligence = WorkflowIntelligence(enable_persistence=False)
         assert intelligence is not None
-        
+
         # Test 3: Multi-Agent Orchestrator (depends on router, uses intelligence)
         from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
+
         orchestrator = MultiAgentOrchestrator(routing_agent=router)
         assert orchestrator is not None
         assert orchestrator.routing_agent is router
-        
+
         # Test 4: A2A Gateway (depends on router and orchestrator)
         from src.app.agents.a2a_enhanced_gateway import A2AEnhancedGateway
+
         gateway = A2AEnhancedGateway(enable_orchestration=True, enable_fallback=True)
         assert gateway is not None
 
     def test_phase4_error_handling_consistency(self):
         """Test error handling consistency across Phase 4 components"""
-        from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent
+        from src.app.agents.a2a_enhanced_gateway import A2AEnhancedGateway
         from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
         from src.app.agents.workflow_intelligence import WorkflowIntelligence
-        from src.app.agents.a2a_enhanced_gateway import A2AEnhancedGateway
-        
+
         # All components should handle initialization errors gracefully
         try:
             # Test with invalid config that might cause errors
             router = EnhancedRoutingAgent()  # Should not raise exception
             orchestrator = MultiAgentOrchestrator()  # Should not raise exception
-            intelligence = WorkflowIntelligence(enable_persistence=False)  # Should not raise exception
-            gateway = A2AEnhancedGateway(enable_fallback=True)  # Should not raise exception
-            
+            intelligence = WorkflowIntelligence(
+                enable_persistence=False
+            )  # Should not raise exception
+            gateway = A2AEnhancedGateway(
+                enable_fallback=True
+            )  # Should not raise exception
+
             # Components should be in valid state even if some features fail
             assert router is not None
-            assert orchestrator is not None  
+            assert orchestrator is not None
             assert intelligence is not None
             assert gateway is not None
-            
+
         except Exception as e:
-            pytest.fail(f"Phase 4 components should handle initialization errors gracefully: {e}")
+            pytest.fail(
+                f"Phase 4 components should handle initialization errors gracefully: {e}"
+            )
 
     def test_phase4_statistics_consistency(self):
         """Test statistics reporting consistency across Phase 4 components"""
-        from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent
+        from src.app.agents.a2a_enhanced_gateway import A2AEnhancedGateway
         from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
         from src.app.agents.workflow_intelligence import WorkflowIntelligence
-        from src.app.agents.a2a_enhanced_gateway import A2AEnhancedGateway
-        
+
         # All statistics should return dict with consistent structure
         router = EnhancedRoutingAgent()
         router_stats = router.get_routing_statistics()
         assert isinstance(router_stats, dict)
         assert "total_queries" in router_stats
-        
+
         orchestrator = MultiAgentOrchestrator(enable_workflow_intelligence=False)
         orch_stats = orchestrator.get_orchestration_statistics()
         assert isinstance(orch_stats, dict)
         assert "total_workflows" in orch_stats
-        
+
         intelligence = WorkflowIntelligence(enable_persistence=False)
         intel_stats = intelligence.get_intelligence_statistics()
         assert isinstance(intel_stats, dict)
         assert "total_optimizations" in intel_stats
-        
+
         gateway = A2AEnhancedGateway()
         gateway_stats = gateway.gateway_stats
         assert isinstance(gateway_stats, dict)
@@ -2814,48 +3032,58 @@ class TestSystemIntegration:
 
 # ======================== COMPONENT TESTS ========================
 
+
 @pytest.mark.unit
 class TestEnhancedVideoSearchAgent:
     """Unit tests for Enhanced Video Search Agent"""
 
     def test_enhanced_video_search_agent_initialization(self):
         """Test Enhanced Video Search Agent initialization"""
-        from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
-        
+
         # Mock the required dependencies
-        with patch('src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient') as mock_vespa:
-            with patch('src.app.agents.enhanced_video_search_agent.get_config') as mock_config:
-                with patch('src.app.agents.enhanced_video_search_agent.QueryEncoderFactory') as mock_encoder_factory:
+        with patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient"):
+            with patch(
+                "src.app.agents.enhanced_video_search_agent.get_config"
+            ) as mock_config:
+                with patch(
+                    "src.app.agents.enhanced_video_search_agent.QueryEncoderFactory"
+                ) as mock_encoder_factory:
                     # Create a mock config with required methods
                     mock_config_obj = Mock()
-                    mock_config_obj.get_active_profile.return_value = "video_colpali_smol500_mv_frame"
+                    mock_config_obj.get_active_profile.return_value = (
+                        "video_colpali_smol500_mv_frame"
+                    )
                     mock_config_obj.get.return_value = "http://localhost:8080"
                     mock_config.return_value = mock_config_obj
-                    
+
                     # Mock encoder factory
                     mock_encoder_factory.create_encoder.return_value = Mock()
-                    
+
                     agent = EnhancedVideoSearchAgent()
                     assert agent is not None
-                    assert hasattr(agent, 'vespa_client')
-                    assert hasattr(agent, 'config')
+                    assert hasattr(agent, "vespa_client")
+                    assert hasattr(agent, "config")
 
     def test_relationship_aware_search_params(self):
         """Test RelationshipAwareSearchParams structure"""
-        from src.app.agents.enhanced_video_search_agent import RelationshipAwareSearchParams
-        
+        from src.app.agents.enhanced_video_search_agent import (
+            RelationshipAwareSearchParams,
+        )
+
         params = RelationshipAwareSearchParams(
             query="robots playing soccer",
             original_query="find videos of robots",
             enhanced_query="robots playing soccer",
             entities=[{"text": "robots", "label": "ENTITY", "confidence": 0.9}],
-            relationships=[{"subject": "robots", "relation": "playing", "object": "soccer"}],
+            relationships=[
+                {"subject": "robots", "relation": "playing", "object": "soccer"}
+            ],
             top_k=20,
             ranking_strategy="binary_binary",
             confidence_threshold=0.1,
-            use_relationship_boost=True
+            use_relationship_boost=True,
         )
-        
+
         assert params.query == "robots playing soccer"
         assert params.original_query == "find videos of robots"
         assert params.enhanced_query == "robots playing soccer"
@@ -2867,10 +3095,13 @@ class TestEnhancedVideoSearchAgent:
 
     def test_enhanced_search_context(self):
         """Test EnhancedSearchContext structure"""
-        from src.app.agents.enhanced_video_search_agent import EnhancedSearchContext, RelationshipAwareSearchParams
-        from src.app.routing.base import RoutingDecision, SearchModality, GenerationType
-        
-        routing_decision = RoutingDecision(
+        from src.app.agents.enhanced_video_search_agent import (
+            EnhancedSearchContext,
+            RelationshipAwareSearchParams,
+        )
+        from src.app.routing.base import GenerationType, RoutingDecision, SearchModality
+
+        RoutingDecision(
             search_modality=SearchModality.VIDEO,
             generation_type=GenerationType.RAW_RESULTS,
             confidence_score=0.8,
@@ -2881,26 +3112,23 @@ class TestEnhancedVideoSearchAgent:
                 "query": "test query",
                 "enhanced_query": "enhanced test query",
                 "recommended_agent": "video_search_agent",
-                "relationships": [{"subject": "a", "relation": "b", "object": "c"}]
-            }
+                "relationships": [{"subject": "a", "relation": "b", "object": "c"}],
+            },
         )
-        
-        search_params = RelationshipAwareSearchParams(
-            query="test query",
-            entities=[],
-            relationships=[],
-            confidence_threshold=0.8
+
+        RelationshipAwareSearchParams(
+            query="test query", entities=[], relationships=[], confidence_threshold=0.8
         )
-        
+
         context = EnhancedSearchContext(
             original_query="test query",
-            enhanced_query="enhanced test query", 
+            enhanced_query="enhanced test query",
             entities=[{"text": "test", "label": "TEST"}],
             relationships=[{"subject": "a", "relation": "b", "object": "c"}],
             routing_metadata={"agent": "video_search_agent"},
-            confidence=0.8
+            confidence=0.8,
         )
-        
+
         assert context.original_query == "test query"
         assert context.enhanced_query == "enhanced test query"
         assert len(context.entities) == 1
@@ -2908,84 +3136,104 @@ class TestEnhancedVideoSearchAgent:
         assert context.confidence == 0.8
         assert context.routing_metadata["agent"] == "video_search_agent"
 
-    @patch('src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient')
+    @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
     def test_relevance_score_calculation(self, mock_vespa_class):
         """Test relevance score calculation with relationship context"""
-        from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
-        
-        with patch('src.app.agents.enhanced_video_search_agent.get_config') as mock_config:
-            with patch('src.app.agents.enhanced_video_search_agent.QueryEncoderFactory') as mock_encoder_factory:
+
+        with patch(
+            "src.app.agents.enhanced_video_search_agent.get_config"
+        ) as mock_config:
+            with patch(
+                "src.app.agents.enhanced_video_search_agent.QueryEncoderFactory"
+            ) as mock_encoder_factory:
                 # Create a mock config with required methods
                 mock_config_obj = Mock()
-                mock_config_obj.get_active_profile.return_value = "video_colpali_smol500_mv_frame"
+                mock_config_obj.get_active_profile.return_value = (
+                    "video_colpali_smol500_mv_frame"
+                )
                 mock_config_obj.get.return_value = "http://localhost:8080"
                 mock_config.return_value = mock_config_obj
-                
+
                 # Mock encoder factory
                 mock_encoder_factory.create_encoder.return_value = Mock()
-                
+
                 agent = EnhancedVideoSearchAgent()
-                
+
                 # Test result with entity matches
                 result = {
                     "title": "Robots playing soccer in championship",
                     "description": "Advanced robots demonstrate soccer skills",
-                    "score": 0.7
+                    "score": 0.7,
                 }
-                
+
                 entities = [
                     {"text": "robots", "label": "ENTITY", "confidence": 0.9},
-                    {"text": "soccer", "label": "ACTIVITY", "confidence": 0.8}
+                    {"text": "soccer", "label": "ACTIVITY", "confidence": 0.8},
                 ]
-                
+
                 relationships = [
                     {"subject": "robots", "relation": "playing", "object": "soccer"}
                 ]
-                
+
                 # Mock the method since it might not exist in the actual implementation
                 agent._calculate_relationship_relevance = Mock(return_value=0.85)
-                
+
                 # Calculate relationship relevance
-                relevance = agent._calculate_relationship_relevance(result, entities, relationships)
-                
+                relevance = agent._calculate_relationship_relevance(
+                    result, entities, relationships
+                )
+
                 # Should boost score due to entity and relationship matches
                 assert relevance > 0.0
                 assert relevance <= 1.0
 
     def test_entity_matching_logic(self):
         """Test entity matching in results"""
-        from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
-        
-        with patch('src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient'):
-            with patch('src.app.agents.enhanced_video_search_agent.get_config') as mock_config:
-                with patch('src.app.agents.enhanced_video_search_agent.QueryEncoderFactory') as mock_encoder_factory:
+
+        with patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient"):
+            with patch(
+                "src.app.agents.enhanced_video_search_agent.get_config"
+            ) as mock_config:
+                with patch(
+                    "src.app.agents.enhanced_video_search_agent.QueryEncoderFactory"
+                ) as mock_encoder_factory:
                     # Create a mock config with required methods
                     mock_config_obj = Mock()
-                    mock_config_obj.get_active_profile.return_value = "video_colpali_smol500_mv_frame"
+                    mock_config_obj.get_active_profile.return_value = (
+                        "video_colpali_smol500_mv_frame"
+                    )
                     mock_config_obj.get.return_value = "http://localhost:8080"
                     mock_config.return_value = mock_config_obj
-                    
+
                     # Mock encoder factory
                     mock_encoder_factory.create_encoder.return_value = Mock()
-                    
+
                     agent = EnhancedVideoSearchAgent()
-                    
+
                     # Mock the method since it might not exist in the actual implementation
-                    agent._find_matching_entities = Mock(return_value=[
-                        {"text": "robots", "label": "ENTITY", "confidence": 0.9},
-                        {"text": "soccer", "label": "ACTIVITY", "confidence": 0.8}
-                    ])
-                    
+                    agent._find_matching_entities = Mock(
+                        return_value=[
+                            {"text": "robots", "label": "ENTITY", "confidence": 0.9},
+                            {"text": "soccer", "label": "ACTIVITY", "confidence": 0.8},
+                        ]
+                    )
+
                     # Test entity matching
                     result_text = "autonomous robots learning to play soccer"
                     entities = [
                         {"text": "robots", "label": "ENTITY", "confidence": 0.9},
                         {"text": "soccer", "label": "ACTIVITY", "confidence": 0.8},
-                        {"text": "basketball", "label": "ACTIVITY", "confidence": 0.7}  # Not in text
+                        {
+                            "text": "basketball",
+                            "label": "ACTIVITY",
+                            "confidence": 0.7,
+                        },  # Not in text
                     ]
-                    
-                    matched_entities = agent._find_matching_entities(result_text, entities)
-                    
+
+                    matched_entities = agent._find_matching_entities(
+                        result_text, entities
+                    )
+
                     # Should match "robots" and "soccer" but not "basketball"
                     assert len(matched_entities) == 2
                     matched_texts = [e["text"] for e in matched_entities]
@@ -2994,57 +3242,70 @@ class TestEnhancedVideoSearchAgent:
 
     def test_search_result_enhancement(self):
         """Test search result enhancement with relationships"""
-        from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
-        
-        with patch('src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient'):
-            with patch('src.app.agents.enhanced_video_search_agent.get_config') as mock_config:
-                with patch('src.app.agents.enhanced_video_search_agent.QueryEncoderFactory') as mock_encoder_factory:
+
+        with patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient"):
+            with patch(
+                "src.app.agents.enhanced_video_search_agent.get_config"
+            ) as mock_config:
+                with patch(
+                    "src.app.agents.enhanced_video_search_agent.QueryEncoderFactory"
+                ) as mock_encoder_factory:
                     # Create a mock config with required methods
                     mock_config_obj = Mock()
-                    mock_config_obj.get_active_profile.return_value = "video_colpali_smol500_mv_frame"
+                    mock_config_obj.get_active_profile.return_value = (
+                        "video_colpali_smol500_mv_frame"
+                    )
                     mock_config_obj.get.return_value = "http://localhost:8080"
                     mock_config.return_value = mock_config_obj
-                    
+
                     # Mock encoder factory
                     mock_encoder_factory.create_encoder.return_value = Mock()
-                    
+
                     agent = EnhancedVideoSearchAgent()
-                    
+
                     # Mock the method since it might not exist in the actual implementation
                     enhanced_results = [
                         {
-                            "id": 1, 
-                            "title": "Robots playing soccer", 
+                            "id": 1,
+                            "title": "Robots playing soccer",
                             "score": 0.7,
                             "enhanced_score": 0.85,
                             "entity_matches": 2,
-                            "relationship_matches": 1
+                            "relationship_matches": 1,
                         },
                         {
                             "id": 2,
-                            "title": "Basketball game highlights", 
+                            "title": "Basketball game highlights",
                             "score": 0.6,
                             "enhanced_score": 0.6,
                             "entity_matches": 0,
-                            "relationship_matches": 0
-                        }
+                            "relationship_matches": 0,
+                        },
                     ]
-                    agent._enhance_results_with_context = Mock(return_value=enhanced_results)
-                    
+                    agent._enhance_results_with_context = Mock(
+                        return_value=enhanced_results
+                    )
+
                     # Test enhancement
                     original_results = [
                         {"id": 1, "title": "Robots playing soccer", "score": 0.7},
-                        {"id": 2, "title": "Basketball game highlights", "score": 0.6}
+                        {"id": 2, "title": "Basketball game highlights", "score": 0.6},
                     ]
-                    
-                    entities = [{"text": "robots", "label": "ENTITY", "confidence": 0.9}]
-                    relationships = [{"subject": "robots", "relation": "playing", "object": "soccer"}]
-                    
+
+                    entities = [
+                        {"text": "robots", "label": "ENTITY", "confidence": 0.9}
+                    ]
+                    relationships = [
+                        {"subject": "robots", "relation": "playing", "object": "soccer"}
+                    ]
+
                     enhanced_results = agent._enhance_results_with_context(
                         original_results, entities, relationships
                     )
-                    
-                    # First result should have higher score due to entity match
-                    assert enhanced_results[0]["enhanced_score"] > enhanced_results[0]["score"]
-                    assert enhanced_results[0]["entity_matches"] > 0
 
+                    # First result should have higher score due to entity match
+                    assert (
+                        enhanced_results[0]["enhanced_score"]
+                        > enhanced_results[0]["score"]
+                    )
+                    assert enhanced_results[0]["entity_matches"] > 0

@@ -1,18 +1,19 @@
 """
 Shared workflow data types for multi-agent orchestration system
 
-This module contains common data classes and enums used by both the 
+This module contains common data classes and enums used by both the
 multi-agent orchestrator and workflow intelligence components.
 """
 
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Union
 from datetime import datetime
+from enum import Enum
+from typing import Any, Dict, List, Optional, Set
 
 
 class TaskStatus(Enum):
     """Individual task status"""
+
     WAITING = "waiting"
     READY = "ready"
     RUNNING = "running"
@@ -23,8 +24,9 @@ class TaskStatus(Enum):
 
 class WorkflowStatus(Enum):
     """Workflow execution status"""
+
     PENDING = "pending"
-    RUNNING = "running" 
+    RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -34,6 +36,7 @@ class WorkflowStatus(Enum):
 @dataclass
 class WorkflowTask:
     """Individual task within a workflow"""
+
     task_id: str
     agent_name: str
     query: str
@@ -52,31 +55,34 @@ class WorkflowTask:
 @dataclass
 class WorkflowPlan:
     """Complete workflow execution plan"""
+
     workflow_id: str
     original_query: str
     tasks: List[WorkflowTask] = field(default_factory=list)
-    execution_order: List[List[str]] = field(default_factory=list)  # Parallel execution groups
+    execution_order: List[List[str]] = field(
+        default_factory=list
+    )  # Parallel execution groups
     status: WorkflowStatus = WorkflowStatus.PENDING
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     final_result: Optional[Dict[str, Any]] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
-    
+
     def get_ready_tasks(self) -> List[WorkflowTask]:
         """Get tasks that are ready to execute (dependencies met)"""
         completed_task_ids = {
-            task.task_id for task in self.tasks 
-            if task.status == TaskStatus.COMPLETED
+            task.task_id for task in self.tasks if task.status == TaskStatus.COMPLETED
         }
-        
+
         ready_tasks = []
         for task in self.tasks:
-            if (task.status == TaskStatus.PENDING and 
-                all(dep_id in completed_task_ids for dep_id in task.dependencies)):
+            if task.status == TaskStatus.PENDING and all(
+                dep_id in completed_task_ids for dep_id in task.dependencies
+            ):
                 ready_tasks.append(task)
-        
+
         return ready_tasks
-    
+
     def get_task_by_id(self, task_id: str) -> Optional[WorkflowTask]:
         """Get task by ID"""
         for task in self.tasks:
@@ -88,6 +94,7 @@ class WorkflowPlan:
 @dataclass
 class WorkflowExecutionResult:
     """Result of workflow execution"""
+
     workflow_id: str
     status: WorkflowStatus
     results: Dict[str, Any] = field(default_factory=dict)
@@ -100,6 +107,7 @@ class WorkflowExecutionResult:
 @dataclass
 class WorkflowTemplate:
     """Reusable workflow template"""
+
     template_id: str
     name: str
     description: str
@@ -115,6 +123,7 @@ class WorkflowTemplate:
 @dataclass
 class AgentPerformanceProfile:
     """Performance profile for an agent"""
+
     agent_type: str
     total_executions: int = 0
     successful_executions: int = 0

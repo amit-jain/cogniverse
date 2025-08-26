@@ -1,31 +1,31 @@
 """Integration tests for Phase 4 and Phase 5 components working together."""
 
 import asyncio
-import pytest
 from unittest.mock import AsyncMock, Mock, patch
 
-# Phase 4 imports
-from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent, RoutingDecision
-from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
-from src.app.agents.a2a_enhanced_gateway import A2AEnhancedGateway, A2AQueryRequest
-from src.app.agents.workflow_intelligence import WorkflowIntelligence
+import pytest
 
-# Phase 5 imports  
-from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
-from src.app.agents.result_enhancement_engine import (
-    ResultEnhancementEngine, 
-    EnhancementContext,
-    EnhancedResult
-)
-from src.app.agents.enhanced_result_aggregator import (
-    EnhancedResultAggregator,
-    AggregationRequest,
-    AggregatedResult
-)
 from src.app.agents.enhanced_agent_orchestrator import (
     EnhancedAgentOrchestrator,
     ProcessingRequest,
-    ProcessingResult
+    ProcessingResult,
+)
+from src.app.agents.enhanced_result_aggregator import (
+    AggregatedResult,
+    AggregationRequest,
+    EnhancedResultAggregator,
+)
+
+# Phase 4 imports
+from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent, RoutingDecision
+
+# Phase 5 imports
+from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
+from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
+from src.app.agents.result_enhancement_engine import (
+    EnhancedResult,
+    EnhancementContext,
+    ResultEnhancementEngine,
 )
 
 
@@ -36,21 +36,29 @@ class TestPhase4To5RoutingIntegration:
     @pytest.fixture
     def mock_dependencies(self):
         """Mock external dependencies for testing"""
-        with patch('src.app.agents.enhanced_routing_agent.get_config') as mock_config:
-            with patch('src.app.agents.enhanced_video_search_agent.VespaClient') as mock_vespa:
-                with patch('src.app.agents.enhanced_video_search_agent.get_config') as mock_search_config:
-                    mock_config.return_value = {"ollama_base_url": "http://localhost:11434"}
-                    mock_search_config.return_value = {"vespa_url": "http://localhost:8080"}
+        with patch("src.app.agents.enhanced_routing_agent.get_config") as mock_config:
+            with patch(
+                "src.app.agents.enhanced_video_search_agent.VespaClient"
+            ) as mock_vespa:
+                with patch(
+                    "src.app.agents.enhanced_video_search_agent.get_config"
+                ) as mock_search_config:
+                    mock_config.return_value = {
+                        "ollama_base_url": "http://localhost:11434"
+                    }
+                    mock_search_config.return_value = {
+                        "vespa_url": "http://localhost:8080"
+                    }
                     mock_vespa.return_value = Mock()
                     yield
 
     def test_enhanced_routing_to_enhanced_search_flow(self, mock_dependencies):
         """Test flow from Enhanced Routing Agent to Enhanced Video Search Agent"""
-        
+
         # Initialize components
-        routing_agent = EnhancedRoutingAgent()
+        EnhancedRoutingAgent()
         search_agent = EnhancedVideoSearchAgent()
-        
+
         # Mock routing decision with relationships
         routing_decision = RoutingDecision(
             query="robots playing soccer in competitions",
@@ -60,28 +68,30 @@ class TestPhase4To5RoutingIntegration:
             entities=[
                 {"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9},
                 {"text": "soccer", "label": "SPORT", "confidence": 0.8},
-                {"text": "competitions", "label": "EVENT", "confidence": 0.85}
+                {"text": "competitions", "label": "EVENT", "confidence": 0.85},
             ],
             relationships=[
                 {"subject": "robots", "relation": "playing", "object": "soccer"},
-                {"subject": "soccer", "relation": "in", "object": "competitions"}
+                {"subject": "soccer", "relation": "in", "object": "competitions"},
             ],
             metadata={
                 "complexity_score": 0.7,
                 "needs_enhancement": True,
-                "relationship_extraction_applied": True
-            }
+                "relationship_extraction_applied": True,
+            },
         )
-        
+
         # Test that routing decision can be used for enhanced search
         assert routing_decision.enhanced_query != routing_decision.query
         assert len(routing_decision.entities) == 3
         assert len(routing_decision.relationships) == 2
         assert routing_decision.metadata["relationship_extraction_applied"] is True
-        
+
         # Verify search agent can process routing decision
-        search_params = search_agent._create_search_params_from_routing_decision(routing_decision)
-        
+        search_params = search_agent._create_search_params_from_routing_decision(
+            routing_decision
+        )
+
         assert search_params.query == routing_decision.enhanced_query
         assert len(search_params.entities) == len(routing_decision.entities)
         assert len(search_params.relationships) == len(routing_decision.relationships)
@@ -90,66 +100,101 @@ class TestPhase4To5RoutingIntegration:
     @pytest.mark.asyncio
     async def test_routing_with_query_enhancement_integration(self, mock_dependencies):
         """Test routing with query enhancement flowing to search"""
-        
+
         # Mock relationship extraction and query enhancement
-        with patch('src.app.routing.relationship_extraction_tools.RelationshipExtractorTool') as mock_extractor_class:
-            with patch('src.app.routing.query_enhancement_engine.QueryEnhancementPipeline') as mock_pipeline_class:
-                
+        with patch(
+            "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
+        ) as mock_extractor_class:
+            with patch(
+                "src.app.routing.query_enhancement_engine.QueryEnhancementPipeline"
+            ) as mock_pipeline_class:
+
                 # Mock relationship extractor
                 mock_extractor = Mock()
-                mock_extractor.extract_comprehensive_relationships = AsyncMock(return_value={
-                    "entities": [
-                        {"text": "autonomous robots", "label": "TECHNOLOGY", "confidence": 0.92},
-                        {"text": "soccer skills", "label": "SKILL", "confidence": 0.88}
-                    ],
-                    "relationships": [
-                        {"subject": "robots", "relation": "demonstrating", "object": "soccer skills"}
-                    ],
-                    "confidence_scores": {"overall": 0.9}
-                })
+                mock_extractor.extract_comprehensive_relationships = AsyncMock(
+                    return_value={
+                        "entities": [
+                            {
+                                "text": "autonomous robots",
+                                "label": "TECHNOLOGY",
+                                "confidence": 0.92,
+                            },
+                            {
+                                "text": "soccer skills",
+                                "label": "SKILL",
+                                "confidence": 0.88,
+                            },
+                        ],
+                        "relationships": [
+                            {
+                                "subject": "robots",
+                                "relation": "demonstrating",
+                                "object": "soccer skills",
+                            }
+                        ],
+                        "confidence_scores": {"overall": 0.9},
+                    }
+                )
                 mock_extractor_class.return_value = mock_extractor
-                
+
                 # Mock query enhancement pipeline
                 mock_pipeline = Mock()
-                mock_pipeline.enhance_query_with_relationships = AsyncMock(return_value={
-                    "original_query": "robots playing soccer",
-                    "enhanced_query": "autonomous robots demonstrating advanced soccer techniques",
-                    "extracted_entities": [{"text": "robots", "label": "TECHNOLOGY"}],
-                    "extracted_relationships": [{"subject": "robots", "relation": "playing", "object": "soccer"}],
-                    "quality_score": 0.85,
-                    "enhancement_strategy": "relationship_expansion",
-                    "semantic_expansions": ["robotic athletes", "AI soccer players"],
-                    "search_operators": ["AND", "NEAR"],
-                    "processing_metadata": {"enhancement_applied": True}
-                })
+                mock_pipeline.enhance_query_with_relationships = AsyncMock(
+                    return_value={
+                        "original_query": "robots playing soccer",
+                        "enhanced_query": "autonomous robots demonstrating advanced soccer techniques",
+                        "extracted_entities": [
+                            {"text": "robots", "label": "TECHNOLOGY"}
+                        ],
+                        "extracted_relationships": [
+                            {
+                                "subject": "robots",
+                                "relation": "playing",
+                                "object": "soccer",
+                            }
+                        ],
+                        "quality_score": 0.85,
+                        "enhancement_strategy": "relationship_expansion",
+                        "semantic_expansions": [
+                            "robotic athletes",
+                            "AI soccer players",
+                        ],
+                        "search_operators": ["AND", "NEAR"],
+                        "processing_metadata": {"enhancement_applied": True},
+                    }
+                )
                 mock_pipeline_class.return_value = mock_pipeline
-                
+
                 # Test complete routing with enhancement
                 routing_agent = EnhancedRoutingAgent(
-                    enable_relationship_extraction=True,
-                    enable_query_enhancement=True
+                    enable_relationship_extraction=True, enable_query_enhancement=True
                 )
-                
-                routing_decision = await routing_agent.analyze_and_route_with_relationships(
-                    query="robots playing soccer",
-                    enable_relationship_extraction=True,
-                    enable_query_enhancement=True
+
+                routing_decision = (
+                    await routing_agent.analyze_and_route_with_relationships(
+                        query="robots playing soccer",
+                        enable_relationship_extraction=True,
+                        enable_query_enhancement=True,
+                    )
                 )
-                
+
                 # Verify enhancement was applied
                 assert routing_decision.enhanced_query != "robots playing soccer"
-                assert routing_decision.enhanced_query == "autonomous robots demonstrating advanced soccer techniques"
+                assert (
+                    routing_decision.enhanced_query
+                    == "autonomous robots demonstrating advanced soccer techniques"
+                )
                 assert len(routing_decision.entities) > 0
                 assert len(routing_decision.relationships) > 0
                 assert routing_decision.metadata["enhancement_applied"] is True
 
     def test_orchestration_need_assessment_integration(self, mock_dependencies):
         """Test orchestration need assessment between routing and orchestrator"""
-        
+
         # Create components
         routing_agent = EnhancedRoutingAgent()
         orchestrator = MultiAgentOrchestrator(routing_agent=routing_agent)
-        
+
         # Test complex query that should trigger orchestration
         complex_routing_decision = RoutingDecision(
             query="find videos of robots playing soccer then analyze techniques and create detailed report with summary",
@@ -162,37 +207,41 @@ class TestPhase4To5RoutingIntegration:
                 {"text": "techniques", "label": "SKILL", "confidence": 0.85},
                 {"text": "analysis", "label": "TASK", "confidence": 0.8},
                 {"text": "report", "label": "OUTPUT", "confidence": 0.9},
-                {"text": "summary", "label": "OUTPUT", "confidence": 0.85}
+                {"text": "summary", "label": "OUTPUT", "confidence": 0.85},
             ],
             relationships=[
                 {"subject": "robots", "relation": "playing", "object": "soccer"},
                 {"subject": "analysis", "relation": "of", "object": "techniques"},
                 {"subject": "report", "relation": "contains", "object": "analysis"},
-                {"subject": "summary", "relation": "from", "object": "report"}
+                {"subject": "summary", "relation": "from", "object": "report"},
             ],
             metadata={
-                "query_length": len("find videos of robots playing soccer then analyze techniques and create detailed report with summary"),
+                "query_length": len(
+                    "find videos of robots playing soccer then analyze techniques and create detailed report with summary"
+                ),
                 "action_verbs": ["find", "analyze", "create"],
                 "conjunctions": ["then", "and"],
                 "output_requests": ["report", "summary"],
-                "complexity_score": 2.8
-            }
+                "complexity_score": 2.8,
+            },
         )
-        
+
         # Test orchestration assessment
         needs_orchestration = routing_agent._assess_orchestration_need(
             complex_routing_decision.query,
             complex_routing_decision.entities,
             complex_routing_decision.relationships,
             {"confidence": complex_routing_decision.confidence},
-            None
+            None,
         )
-        
+
         assert needs_orchestration is True
-        
+
         # Verify orchestrator can handle this decision
-        workflow_plan = orchestrator._create_workflow_plan_from_routing_decision(complex_routing_decision)
-        
+        workflow_plan = orchestrator._create_workflow_plan_from_routing_decision(
+            complex_routing_decision
+        )
+
         assert workflow_plan.workflow_id is not None
         assert workflow_plan.original_query == complex_routing_decision.query
         assert len(workflow_plan.tasks) >= 3  # Search, analysis, report generation
@@ -205,17 +254,25 @@ class TestPhase5ComponentIntegration:
     @pytest.fixture
     def mock_dependencies(self):
         """Mock external dependencies for testing"""
-        with patch('src.app.agents.result_enhancement_engine.logger'):
-            with patch('src.app.agents.enhanced_result_aggregator.ResultEnhancementEngine'):
-                with patch('src.app.agents.enhanced_agent_orchestrator.EnhancedRoutingAgent'):
-                    with patch('src.app.agents.enhanced_agent_orchestrator.VespaClient'):
-                        with patch('src.app.agents.enhanced_agent_orchestrator.get_config') as mock_config:
+        with patch("src.app.agents.result_enhancement_engine.logger"):
+            with patch(
+                "src.app.agents.enhanced_result_aggregator.ResultEnhancementEngine"
+            ):
+                with patch(
+                    "src.app.agents.enhanced_agent_orchestrator.EnhancedRoutingAgent"
+                ):
+                    with patch(
+                        "src.app.agents.enhanced_agent_orchestrator.VespaClient"
+                    ):
+                        with patch(
+                            "src.app.agents.enhanced_agent_orchestrator.get_config"
+                        ) as mock_config:
                             mock_config.return_value = {}
                             yield
 
     def test_search_to_enhancement_to_aggregation_flow(self, mock_dependencies):
         """Test complete flow from search results to enhanced aggregation"""
-        
+
         # Step 1: Mock search results (from Enhanced Video Search Agent)
         search_results = [
             {
@@ -224,26 +281,38 @@ class TestPhase5ComponentIntegration:
                 "description": "Advanced humanoid robots demonstrate complex soccer techniques",
                 "score": 0.75,
                 "video_duration": 180,
-                "frame_descriptions": ["Robot kicking ball", "Team coordination", "Goal scoring"],
-                "segment_descriptions": ["Opening play", "Midfield action", "Scoring sequence"]
+                "frame_descriptions": [
+                    "Robot kicking ball",
+                    "Team coordination",
+                    "Goal scoring",
+                ],
+                "segment_descriptions": [
+                    "Opening play",
+                    "Midfield action",
+                    "Scoring sequence",
+                ],
             },
             {
-                "id": "video_2", 
+                "id": "video_2",
                 "title": "AI and machine learning in sports analytics",
                 "description": "Computer vision applications for sports performance analysis",
                 "score": 0.68,
                 "video_duration": 240,
-                "frame_descriptions": ["Data visualization", "Performance metrics", "Analysis results"]
+                "frame_descriptions": [
+                    "Data visualization",
+                    "Performance metrics",
+                    "Analysis results",
+                ],
             },
             {
                 "id": "video_3",
                 "title": "Basketball game highlights compilation",
                 "description": "Professional basketball players in action",
                 "score": 0.45,
-                "video_duration": 300
-            }
+                "video_duration": 300,
+            },
         ]
-        
+
         # Step 2: Create enhancement context from routing decision
         routing_decision = RoutingDecision(
             query="robots playing soccer using AI techniques",
@@ -254,62 +323,69 @@ class TestPhase5ComponentIntegration:
                 {"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9},
                 {"text": "soccer", "label": "SPORT", "confidence": 0.85},
                 {"text": "AI", "label": "TECHNOLOGY", "confidence": 0.88},
-                {"text": "techniques", "label": "METHOD", "confidence": 0.8}
+                {"text": "techniques", "label": "METHOD", "confidence": 0.8},
             ],
             relationships=[
                 {"subject": "robots", "relation": "playing", "object": "soccer"},
-                {"subject": "robots", "relation": "using", "object": "AI techniques"}
+                {"subject": "robots", "relation": "using", "object": "AI techniques"},
             ],
-            metadata={}
+            metadata={},
         )
-        
+
         # Step 3: Test result enhancement
         enhancement_context = EnhancementContext(
             entities=routing_decision.entities,
             relationships=routing_decision.relationships,
             query=routing_decision.query,
             enhanced_query=routing_decision.enhanced_query,
-            routing_confidence=routing_decision.confidence
+            routing_confidence=routing_decision.confidence,
         )
-        
+
         enhancement_engine = ResultEnhancementEngine()
-        enhanced_results = enhancement_engine.enhance_results(search_results, enhancement_context)
-        
+        enhanced_results = enhancement_engine.enhance_results(
+            search_results, enhancement_context
+        )
+
         # Verify enhancement worked
         assert len(enhanced_results) == 3
         assert all(isinstance(result, EnhancedResult) for result in enhanced_results)
-        
+
         # First result should be most enhanced (best matches)
         first_result = enhanced_results[0]
-        assert first_result.original_result["id"] in ["video_1", "video_2"]  # Both have good matches
+        assert first_result.original_result["id"] in [
+            "video_1",
+            "video_2",
+        ]  # Both have good matches
         assert first_result.enhancement_score > 0
-        
+
         # Step 4: Test result aggregation
         aggregation_request = AggregationRequest(
             routing_decision=routing_decision,
             search_results=search_results,
             include_summaries=True,
             include_detailed_report=True,
-            max_results_to_process=3
+            max_results_to_process=3,
         )
-        
+
         # Mock the aggregator's enhancement engine
-        with patch.object(enhancement_engine, 'enhance_results', return_value=enhanced_results):
+        with patch.object(
+            enhancement_engine, "enhance_results", return_value=enhanced_results
+        ):
             aggregator = EnhancedResultAggregator()
             aggregator.enhancement_engine = enhancement_engine
-            
+
             # Test agent data preparation
             summarizer_data = aggregator._prepare_agent_request_data(
                 "summarizer", aggregation_request, enhanced_results
             )
-            
+
             # Verify data flow
             assert "routing_decision" in summarizer_data
             assert "search_results" in summarizer_data
             assert "enhancement_applied" in summarizer_data
             assert summarizer_data["enhancement_applied"] is True
             assert len(summarizer_data["enhanced_result_metadata"]) == 3
-            
+
             # Verify routing decision data is preserved
             routing_data = summarizer_data["routing_decision"]
             assert routing_data["query"] == routing_decision.query
@@ -320,78 +396,97 @@ class TestPhase5ComponentIntegration:
     @pytest.mark.asyncio
     async def test_orchestrator_complete_pipeline_integration(self, mock_dependencies):
         """Test complete pipeline through Enhanced Agent Orchestrator"""
-        
+
         # Mock all dependencies
-        with patch('src.app.agents.enhanced_agent_orchestrator.EnhancedResultAggregator') as mock_aggregator_class:
-            
+        with patch(
+            "src.app.agents.enhanced_agent_orchestrator.EnhancedResultAggregator"
+        ) as mock_aggregator_class:
+
             # Mock routing agent
             mock_routing_agent = Mock()
             mock_routing_decision = RoutingDecision(
                 query="robots playing soccer",
                 enhanced_query="autonomous robots demonstrating soccer techniques",
-                recommended_agent="enhanced_video_search_agent", 
+                recommended_agent="enhanced_video_search_agent",
                 confidence=0.85,
                 entities=[{"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9}],
-                relationships=[{"subject": "robots", "relation": "playing", "object": "soccer"}],
-                metadata={}
+                relationships=[
+                    {"subject": "robots", "relation": "playing", "object": "soccer"}
+                ],
+                metadata={},
             )
             mock_routing_agent.analyze_and_route_with_relationships = AsyncMock(
                 return_value=mock_routing_decision
             )
-            
+
             # Mock Vespa client
             mock_vespa_client = Mock()
             mock_search_results = [
                 {"id": 1, "title": "Robot soccer championship", "score": 0.8},
-                {"id": 2, "title": "AI in sports", "score": 0.7}
+                {"id": 2, "title": "AI in sports", "score": 0.7},
             ]
             mock_vespa_client.query = AsyncMock(return_value=mock_search_results)
-            
+
             # Mock result aggregator
             mock_aggregator = Mock()
             mock_enhanced_results = [
                 EnhancedResult(
-                    original_result={"id": 1, "title": "Robot soccer championship", "score": 0.8},
+                    original_result={
+                        "id": 1,
+                        "title": "Robot soccer championship",
+                        "score": 0.8,
+                    },
                     relevance_score=0.9,
                     entity_matches=[{"entity": "robots", "strength": 0.9}],
                     relationship_matches=[{"relationship": "playing", "strength": 0.8}],
                     contextual_connections=[],
                     enhancement_score=0.3,
-                    enhancement_metadata={"boost_applied": 0.1}
+                    enhancement_metadata={"boost_applied": 0.1},
                 )
             ]
-            
+
             mock_aggregated_result = AggregatedResult(
                 routing_decision=mock_routing_decision,
                 enhanced_search_results=mock_enhanced_results,
                 agent_results={
-                    "summarizer": Mock(agent_name="summarizer", success=True, processing_time=1.5),
-                    "detailed_report": Mock(agent_name="detailed_report", success=True, processing_time=2.0)
+                    "summarizer": Mock(
+                        agent_name="summarizer", success=True, processing_time=1.5
+                    ),
+                    "detailed_report": Mock(
+                        agent_name="detailed_report", success=True, processing_time=2.0
+                    ),
                 },
                 summaries={"summary": "Enhanced summary of robot soccer content"},
-                detailed_report={"executive_summary": "Comprehensive analysis of autonomous robots in soccer"},
-                enhancement_statistics={"enhancement_rate": 0.8, "total_entity_matches": 5},
+                detailed_report={
+                    "executive_summary": "Comprehensive analysis of autonomous robots in soccer"
+                },
+                enhancement_statistics={
+                    "enhancement_rate": 0.8,
+                    "total_entity_matches": 5,
+                },
                 aggregation_metadata={"agents_invoked": 2},
-                total_processing_time=3.5
+                total_processing_time=3.5,
             )
-            
-            mock_aggregator.aggregate_and_enhance = AsyncMock(return_value=mock_aggregated_result)
+
+            mock_aggregator.aggregate_and_enhance = AsyncMock(
+                return_value=mock_aggregated_result
+            )
             mock_aggregator.get_aggregation_summary.return_value = {
                 "search_results_processed": 2,
-                "agents_invoked": 2, 
+                "agents_invoked": 2,
                 "successful_agents": 2,
                 "enhancement_rate": 0.8,
                 "has_summaries": True,
-                "has_detailed_report": True
+                "has_detailed_report": True,
             }
             mock_aggregator_class.return_value = mock_aggregator
-            
+
             # Create orchestrator with mocked components
             orchestrator = EnhancedAgentOrchestrator()
             orchestrator.routing_agent = mock_routing_agent
             orchestrator.vespa_client = mock_vespa_client
             orchestrator.result_aggregator = mock_aggregator
-            
+
             # Test complete pipeline
             processing_request = ProcessingRequest(
                 query="robots playing soccer",
@@ -400,18 +495,21 @@ class TestPhase5ComponentIntegration:
                 include_summaries=True,
                 include_detailed_report=True,
                 enable_relationship_extraction=True,
-                enable_query_enhancement=True
+                enable_query_enhancement=True,
             )
-            
+
             result = await orchestrator.process_complete_pipeline(processing_request)
-            
+
             # Verify complete pipeline result
             assert isinstance(result, ProcessingResult)
             assert result.original_query == "robots playing soccer"
-            assert result.routing_decision.enhanced_query == "autonomous robots demonstrating soccer techniques"
+            assert (
+                result.routing_decision.enhanced_query
+                == "autonomous robots demonstrating soccer techniques"
+            )
             assert result.aggregated_result.summaries is not None
             assert result.aggregated_result.detailed_report is not None
-            
+
             # Verify processing summary
             summary = result.processing_summary
             assert "query_analysis" in summary
@@ -419,8 +517,10 @@ class TestPhase5ComponentIntegration:
             assert "search_performance" in summary
             assert "agent_processing" in summary
             assert "performance_metrics" in summary
-            
-            assert summary["query_analysis"]["original_query"] == "robots playing soccer"
+
+            assert (
+                summary["query_analysis"]["original_query"] == "robots playing soccer"
+            )
             assert summary["relationship_extraction"]["entities_identified"] == 1
             assert summary["relationship_extraction"]["relationships_identified"] == 1
             assert summary["agent_processing"]["agents_invoked"] == 2
@@ -428,78 +528,91 @@ class TestPhase5ComponentIntegration:
 
     def test_enhancement_statistics_aggregation_integration(self, mock_dependencies):
         """Test integration of enhancement statistics across components"""
-        
+
         # Create enhanced results with varying enhancement levels
         enhanced_results = [
             EnhancedResult(
-                original_result={"id": 1, "title": "High relevance result", "score": 0.8},
+                original_result={
+                    "id": 1,
+                    "title": "High relevance result",
+                    "score": 0.8,
+                },
                 relevance_score=0.95,
                 entity_matches=[
                     {"entity": "robots", "strength": 0.9},
-                    {"entity": "soccer", "strength": 0.85}
+                    {"entity": "soccer", "strength": 0.85},
                 ],
-                relationship_matches=[
-                    {"relationship": "playing", "strength": 0.88}
-                ],
+                relationship_matches=[{"relationship": "playing", "strength": 0.88}],
                 contextual_connections=[
                     {"type": "entity_cooccurrence", "strength": 0.7}
                 ],
                 enhancement_score=0.45,
-                enhancement_metadata={"boost_applied": 0.15, "total_matches": 4}
+                enhancement_metadata={"boost_applied": 0.15, "total_matches": 4},
             ),
             EnhancedResult(
-                original_result={"id": 2, "title": "Medium relevance result", "score": 0.6},
+                original_result={
+                    "id": 2,
+                    "title": "Medium relevance result",
+                    "score": 0.6,
+                },
                 relevance_score=0.75,
-                entity_matches=[
-                    {"entity": "robots", "strength": 0.8}
-                ],
+                entity_matches=[{"entity": "robots", "strength": 0.8}],
                 relationship_matches=[],
                 contextual_connections=[],
                 enhancement_score=0.2,
-                enhancement_metadata={"boost_applied": 0.08, "total_matches": 1}
+                enhancement_metadata={"boost_applied": 0.08, "total_matches": 1},
             ),
             EnhancedResult(
-                original_result={"id": 3, "title": "Low relevance result", "score": 0.4},
+                original_result={
+                    "id": 3,
+                    "title": "Low relevance result",
+                    "score": 0.4,
+                },
                 relevance_score=0.4,
                 entity_matches=[],
                 relationship_matches=[],
                 contextual_connections=[],
                 enhancement_score=0.0,
-                enhancement_metadata={"boost_applied": 0.0, "total_matches": 0}
-            )
+                enhancement_metadata={"boost_applied": 0.0, "total_matches": 0},
+            ),
         ]
-        
+
         # Test enhancement statistics
         enhancement_engine = ResultEnhancementEngine()
         stats = enhancement_engine.get_enhancement_statistics(enhanced_results)
-        
+
         # Verify statistics
         assert stats["total_results"] == 3
         assert stats["enhanced_results"] == 2  # First two had enhancements
-        assert stats["enhancement_rate"] == 2/3  # 66.7%
+        assert stats["enhancement_rate"] == 2 / 3  # 66.7%
         assert stats["total_entity_matches"] == 3  # 2 + 1 + 0
         assert stats["total_relationship_matches"] == 1  # 1 + 0 + 0
         assert stats["total_contextual_connections"] == 1  # 1 + 0 + 0
         assert stats["avg_entity_matches_per_result"] == 1.0  # 3/3
         assert stats["avg_relationship_matches_per_result"] == 0.33  # 1/3 rounded
-        
+
         # Test aggregation with these statistics
         routing_decision = RoutingDecision(
-            query="test", enhanced_query="test", recommended_agent="test",
-            confidence=0.8, entities=[], relationships=[], metadata={}
+            query="test",
+            enhanced_query="test",
+            recommended_agent="test",
+            confidence=0.8,
+            entities=[],
+            relationships=[],
+            metadata={},
         )
-        
+
         aggregated_result = AggregatedResult(
             routing_decision=routing_decision,
             enhanced_search_results=enhanced_results,
             agent_results={},
             enhancement_statistics=stats,
             aggregation_metadata={"enhancement_integration": True},
-            total_processing_time=2.0
+            total_processing_time=2.0,
         )
-        
+
         # Verify statistics are preserved in aggregation
-        assert aggregated_result.enhancement_statistics["enhancement_rate"] == 2/3
+        assert aggregated_result.enhancement_statistics["enhancement_rate"] == 2 / 3
         assert aggregated_result.enhancement_statistics["total_entity_matches"] == 3
         assert aggregated_result.aggregation_metadata["enhancement_integration"] is True
 
@@ -511,86 +624,102 @@ class TestPhase4Phase5ErrorHandlingIntegration:
     @pytest.fixture
     def mock_dependencies(self):
         """Mock dependencies for error testing"""
-        with patch('src.app.agents.enhanced_routing_agent.get_config') as mock_config:
+        with patch("src.app.agents.enhanced_routing_agent.get_config") as mock_config:
             mock_config.return_value = {"ollama_base_url": "http://localhost:11434"}
             yield
 
     def test_routing_failure_to_enhancement_fallback(self, mock_dependencies):
         """Test fallback when routing fails but enhancement can still proceed"""
-        
+
         # Mock failed routing but successful enhancement
-        with patch('src.app.routing.relationship_extraction_tools.RelationshipExtractorTool') as mock_extractor_class:
+        with patch(
+            "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
+        ) as mock_extractor_class:
             mock_extractor = Mock()
             mock_extractor.extract_comprehensive_relationships = AsyncMock(
                 side_effect=Exception("Relationship extraction failed")
             )
             mock_extractor_class.return_value = mock_extractor
-            
+
             # Create routing agent
             routing_agent = EnhancedRoutingAgent(enable_relationship_extraction=True)
-            
+
             # Test that routing falls back gracefully
             try:
-                fallback_decision = routing_agent._create_fallback_routing_decision("test query", {})
-                
+                fallback_decision = routing_agent._create_fallback_routing_decision(
+                    "test query", {}
+                )
+
                 # Verify fallback decision structure
                 assert fallback_decision.query == "test query"
-                assert fallback_decision.enhanced_query == "test query"  # No enhancement
+                assert (
+                    fallback_decision.enhanced_query == "test query"
+                )  # No enhancement
                 assert fallback_decision.entities == []
                 assert fallback_decision.relationships == []
                 assert fallback_decision.confidence < 0.5  # Low confidence for fallback
                 assert "error" in fallback_decision.metadata
-                
+
                 # Test that enhancement engine can still work with fallback
                 enhancement_context = EnhancementContext(
                     entities=fallback_decision.entities,
                     relationships=fallback_decision.relationships,
-                    query=fallback_decision.query
+                    query=fallback_decision.query,
                 )
-                
+
                 enhancement_engine = ResultEnhancementEngine()
                 test_results = [{"id": 1, "title": "test", "score": 0.5}]
-                
-                enhanced_results = enhancement_engine.enhance_results(test_results, enhancement_context)
-                
+
+                enhanced_results = enhancement_engine.enhance_results(
+                    test_results, enhancement_context
+                )
+
                 # Should complete without enhancement but no errors
                 assert len(enhanced_results) == 1
                 assert enhanced_results[0].enhancement_score == 0.0
-                assert enhanced_results[0].enhancement_metadata.get("enhancement_failed") is not True
-                
+                assert (
+                    enhanced_results[0].enhancement_metadata.get("enhancement_failed")
+                    is not True
+                )
+
             except Exception as e:
                 pytest.fail(f"Fallback mechanism should prevent errors: {e}")
 
     @pytest.mark.asyncio
     async def test_agent_failure_to_aggregation_resilience(self, mock_dependencies):
         """Test aggregation resilience when individual agents fail"""
-        
-        with patch('src.app.agents.enhanced_result_aggregator.ResultEnhancementEngine'):
+
+        with patch("src.app.agents.enhanced_result_aggregator.ResultEnhancementEngine"):
             aggregator = EnhancedResultAggregator(enable_fallbacks=True)
-            
+
             # Mock failing agent invocation
             async def failing_agent_invocation(agent_name, request_data):
                 if agent_name == "summarizer":
                     raise Exception("Summarizer agent failed")
                 else:
                     return {"result": f"Success from {agent_name}"}
-            
+
             aggregator._simulate_agent_invocation = failing_agent_invocation
-            
+
             routing_decision = RoutingDecision(
-                query="test", enhanced_query="test", recommended_agent="test",
-                confidence=0.8, entities=[], relationships=[], metadata={}
+                query="test",
+                enhanced_query="test",
+                recommended_agent="test",
+                confidence=0.8,
+                entities=[],
+                relationships=[],
+                metadata={},
             )
-            
+
             # Test aggregation with failing agent
             request = AggregationRequest(
                 routing_decision=routing_decision,
                 search_results=[{"id": 1, "title": "test"}],
                 agents_to_invoke=["summarizer", "detailed_report"],
                 include_summaries=True,
-                include_detailed_report=True
+                include_detailed_report=True,
             )
-            
+
             # Mock enhancement engine
             mock_enhanced_results = [
                 EnhancedResult(
@@ -600,15 +729,23 @@ class TestPhase4Phase5ErrorHandlingIntegration:
                     relationship_matches=[],
                     contextual_connections=[],
                     enhancement_score=0.0,
-                    enhancement_metadata={}
+                    enhancement_metadata={},
                 )
             ]
-            
-            with patch.object(aggregator.enhancement_engine, 'enhance_results', return_value=mock_enhanced_results):
-                with patch.object(aggregator.enhancement_engine, 'get_enhancement_statistics', return_value={}):
-                    
+
+            with patch.object(
+                aggregator.enhancement_engine,
+                "enhance_results",
+                return_value=mock_enhanced_results,
+            ):
+                with patch.object(
+                    aggregator.enhancement_engine,
+                    "get_enhancement_statistics",
+                    return_value={},
+                ):
+
                     result = await aggregator.aggregate_and_enhance(request)
-                    
+
                     # Should complete despite agent failure
                     assert isinstance(result, AggregatedResult)
                     assert "summarizer" in result.agent_results
@@ -618,9 +755,9 @@ class TestPhase4Phase5ErrorHandlingIntegration:
 
     def test_enhancement_engine_graceful_degradation(self, mock_dependencies):
         """Test enhancement engine graceful degradation with problematic data"""
-        
+
         enhancement_engine = ResultEnhancementEngine()
-        
+
         # Test with various problematic inputs
         test_cases = [
             # Empty results
@@ -628,18 +765,18 @@ class TestPhase4Phase5ErrorHandlingIntegration:
                 "results": [],
                 "entities": [{"text": "test", "label": "TEST", "confidence": 0.8}],
                 "relationships": [],
-                "expected_count": 0
+                "expected_count": 0,
             },
             # Results with missing fields
             {
                 "results": [
                     {"id": 1},  # Missing title, description
                     {"title": "Test", "score": "invalid_score"},  # Invalid score type
-                    {"title": None, "description": None, "score": 0.5}  # Null fields
+                    {"title": None, "description": None, "score": 0.5},  # Null fields
                 ],
                 "entities": [],
                 "relationships": [],
-                "expected_count": 3
+                "expected_count": 3,
             },
             # Malformed entities
             {
@@ -647,220 +784,254 @@ class TestPhase4Phase5ErrorHandlingIntegration:
                 "entities": [
                     {"text": "", "label": "EMPTY", "confidence": 0.8},  # Empty text
                     {"confidence": 0.8},  # Missing text and label
-                    {"text": "valid", "label": "VALID", "confidence": "invalid"}  # Invalid confidence
+                    {
+                        "text": "valid",
+                        "label": "VALID",
+                        "confidence": "invalid",
+                    },  # Invalid confidence
                 ],
                 "relationships": [],
-                "expected_count": 1
+                "expected_count": 1,
             },
             # Malformed relationships
             {
                 "results": [{"id": 1, "title": "Test", "score": 0.5}],
                 "entities": [],
                 "relationships": [
-                    {"subject": "", "relation": "test", "object": "test"},  # Empty subject
+                    {
+                        "subject": "",
+                        "relation": "test",
+                        "object": "test",
+                    },  # Empty subject
                     {"relation": "test", "object": "test"},  # Missing subject
                     {"subject": "test", "object": "test"},  # Missing relation
-                    {}  # Empty relationship
+                    {},  # Empty relationship
                 ],
-                "expected_count": 1
-            }
+                "expected_count": 1,
+            },
         ]
-        
+
         for i, case in enumerate(test_cases):
             context = EnhancementContext(
                 entities=case["entities"],
                 relationships=case["relationships"],
-                query="test query"
+                query="test query",
             )
-            
+
             try:
-                enhanced_results = enhancement_engine.enhance_results(case["results"], context)
-                
+                enhanced_results = enhancement_engine.enhance_results(
+                    case["results"], context
+                )
+
                 # Should not crash and return expected number of results
-                assert len(enhanced_results) == case["expected_count"], f"Test case {i} failed"
-                
+                assert (
+                    len(enhanced_results) == case["expected_count"]
+                ), f"Test case {i} failed"
+
                 # All results should be valid EnhancedResult objects
                 for result in enhanced_results:
                     assert isinstance(result, EnhancedResult)
-                    assert hasattr(result, 'enhancement_score')
-                    assert hasattr(result, 'relevance_score')
+                    assert hasattr(result, "enhancement_score")
+                    assert hasattr(result, "relevance_score")
                     assert 0.0 <= result.enhancement_score <= 1.0
-                    
+
             except Exception as e:
-                pytest.fail(f"Enhancement engine should handle problematic data gracefully (case {i}): {e}")
+                pytest.fail(
+                    f"Enhancement engine should handle problematic data gracefully (case {i}): {e}"
+                )
 
 
-@pytest.mark.integration 
+@pytest.mark.integration
 class TestPhase4Phase5PerformanceIntegration:
     """Test performance characteristics of integrated Phase 4 and Phase 5 components"""
 
     def test_large_scale_processing_performance(self):
         """Test performance with large datasets"""
         import time
-        
+
         # Generate large test dataset
         large_search_results = []
         for i in range(500):  # 500 results
-            large_search_results.append({
-                "id": f"video_{i}",
-                "title": f"Test video {i} about robots and soccer",
-                "description": f"Description {i} with various content about robotics and sports",
-                "score": 0.3 + (i % 7) * 0.1,  # Varying scores
-                "video_duration": 60 + (i % 10) * 30,
-                "content_type": "video"
-            })
-        
+            large_search_results.append(
+                {
+                    "id": f"video_{i}",
+                    "title": f"Test video {i} about robots and soccer",
+                    "description": f"Description {i} with various content about robotics and sports",
+                    "score": 0.3 + (i % 7) * 0.1,  # Varying scores
+                    "video_duration": 60 + (i % 10) * 30,
+                    "content_type": "video",
+                }
+            )
+
         # Large entities and relationships
         entities = []
         for i in range(50):  # 50 entities
-            entities.append({
-                "text": f"entity_{i}",
-                "label": "TEST_ENTITY",
-                "confidence": 0.7 + (i % 3) * 0.1
-            })
-        
+            entities.append(
+                {
+                    "text": f"entity_{i}",
+                    "label": "TEST_ENTITY",
+                    "confidence": 0.7 + (i % 3) * 0.1,
+                }
+            )
+
         relationships = []
         for i in range(40):  # 40 relationships
-            relationships.append({
-                "subject": f"entity_{i}",
-                "relation": "relates_to",
-                "object": f"entity_{(i+1) % 50}"
-            })
-        
+            relationships.append(
+                {
+                    "subject": f"entity_{i}",
+                    "relation": "relates_to",
+                    "object": f"entity_{(i+1) % 50}",
+                }
+            )
+
         # Test enhancement performance
         enhancement_context = EnhancementContext(
             entities=entities,
             relationships=relationships,
             query="large scale test query",
             enhanced_query="enhanced large scale test query",
-            routing_confidence=0.8
+            routing_confidence=0.8,
         )
-        
+
         enhancement_engine = ResultEnhancementEngine()
-        
+
         start_time = time.time()
-        enhanced_results = enhancement_engine.enhance_results(large_search_results, enhancement_context)
+        enhanced_results = enhancement_engine.enhance_results(
+            large_search_results, enhancement_context
+        )
         end_time = time.time()
-        
+
         processing_time = end_time - start_time
-        
+
         # Performance assertions
-        assert processing_time < 10.0, f"Large scale enhancement took too long: {processing_time:.2f}s"
+        assert (
+            processing_time < 10.0
+        ), f"Large scale enhancement took too long: {processing_time:.2f}s"
         assert len(enhanced_results) == 500
-        
+
         # Verify enhancement quality isn't degraded
         enhanced_count = sum(1 for r in enhanced_results if r.enhancement_score > 0)
         assert enhanced_count > 0, "No results were enhanced in large scale test"
-        
+
         # Test statistics generation performance
         stats_start = time.time()
         stats = enhancement_engine.get_enhancement_statistics(enhanced_results)
         stats_end = time.time()
-        
+
         stats_time = stats_end - stats_start
-        assert stats_time < 1.0, f"Statistics generation took too long: {stats_time:.2f}s"
+        assert (
+            stats_time < 1.0
+        ), f"Statistics generation took too long: {stats_time:.2f}s"
         assert stats["total_results"] == 500
 
     def test_concurrent_processing_simulation(self):
         """Test simulation of concurrent processing scenarios"""
-        import asyncio
         import time
-        
+
         # Simulate multiple concurrent enhancement requests
         async def simulate_enhancement_request(request_id):
             """Simulate a single enhancement request"""
-            
+
             # Generate test data for this request
             results = [
-                {"id": f"req_{request_id}_vid_{i}", "title": f"Video {i}", "score": 0.5 + i * 0.1}
+                {
+                    "id": f"req_{request_id}_vid_{i}",
+                    "title": f"Video {i}",
+                    "score": 0.5 + i * 0.1,
+                }
                 for i in range(20)
             ]
-            
+
             entities = [
                 {"text": f"entity_{request_id}_{i}", "label": "TEST", "confidence": 0.8}
                 for i in range(5)
             ]
-            
+
             context = EnhancementContext(
-                entities=entities,
-                relationships=[],
-                query=f"test query {request_id}"
+                entities=entities, relationships=[], query=f"test query {request_id}"
             )
-            
+
             enhancement_engine = ResultEnhancementEngine()
-            
+
             start_time = time.time()
             enhanced_results = enhancement_engine.enhance_results(results, context)
             end_time = time.time()
-            
+
             return {
                 "request_id": request_id,
                 "processing_time": end_time - start_time,
                 "results_count": len(enhanced_results),
-                "enhanced_count": sum(1 for r in enhanced_results if r.enhancement_score > 0)
+                "enhanced_count": sum(
+                    1 for r in enhanced_results if r.enhancement_score > 0
+                ),
             }
-        
+
         # Run multiple concurrent simulations
         async def run_concurrent_test():
             tasks = [simulate_enhancement_request(i) for i in range(10)]
             return await asyncio.gather(*tasks)
-        
+
         # Execute concurrent test
         start_time = time.time()
         results = asyncio.run(run_concurrent_test())
         end_time = time.time()
-        
+
         total_time = end_time - start_time
-        
+
         # Verify all requests completed
         assert len(results) == 10
         assert all(r["results_count"] == 20 for r in results)
-        
+
         # Performance should be reasonable
-        assert total_time < 5.0, f"Concurrent processing took too long: {total_time:.2f}s"
-        
+        assert (
+            total_time < 5.0
+        ), f"Concurrent processing took too long: {total_time:.2f}s"
+
         # Individual request times should be reasonable
         avg_request_time = sum(r["processing_time"] for r in results) / len(results)
-        assert avg_request_time < 1.0, f"Average request time too high: {avg_request_time:.2f}s"
+        assert (
+            avg_request_time < 1.0
+        ), f"Average request time too high: {avg_request_time:.2f}s"
 
     def test_memory_usage_stability(self):
         """Test memory usage doesn't grow unbounded during processing"""
         import gc
-        import sys
-        
+
         def get_memory_usage():
             """Get current memory usage (simplified)"""
             return len(gc.get_objects())
-        
+
         enhancement_engine = ResultEnhancementEngine()
-        
+
         # Baseline memory
         gc.collect()
         baseline_objects = get_memory_usage()
-        
+
         # Process multiple batches to check for memory leaks
         for batch in range(5):
             batch_results = [
                 {"id": f"batch_{batch}_vid_{i}", "title": "Test video", "score": 0.5}
                 for i in range(100)
             ]
-            
+
             context = EnhancementContext(
                 entities=[{"text": "test", "label": "TEST", "confidence": 0.8}],
                 relationships=[],
-                query=f"batch {batch} query"
+                query=f"batch {batch} query",
             )
-            
-            enhanced_results = enhancement_engine.enhance_results(batch_results, context)
-            
+
+            enhanced_results = enhancement_engine.enhance_results(
+                batch_results, context
+            )
+
             # Clear references
             del enhanced_results
             del batch_results
             gc.collect()
-        
+
         # Final memory check
         final_objects = get_memory_usage()
         memory_growth = final_objects - baseline_objects
-        
+
         # Memory growth should be minimal (allow some growth for caching, etc.)
         assert memory_growth < 1000, f"Excessive memory growth: {memory_growth} objects"
