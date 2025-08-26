@@ -199,7 +199,7 @@ class A2AEnhancedGateway:
         """Initialize fallback routing system for backward compatibility"""
         try:
             # Initialize original routing agent if available
-            if OriginalRoutingAgent:
+            if OriginalRoutingAgent is not None:
                 self.fallback_router = OriginalRoutingAgent()
                 self.fallback_system_available = True
                 self.logger.info("Fallback routing system initialized")

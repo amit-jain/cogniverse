@@ -220,11 +220,12 @@ class TestSIMBAIntegration:
     def test_component_imports_successfully(self):
         """Test that SIMBA components can be imported."""
         try:
-            from src.app.routing.simba_query_enhancer import (
-                QueryEnhancementPattern,
-                SIMBAConfig,
-                SIMBAQueryEnhancer,
-            )
+            import src.app.routing.simba_query_enhancer as sqe
+
+            # Verify key components exist
+            assert hasattr(sqe, "QueryEnhancementPattern")
+            assert hasattr(sqe, "SIMBAConfig")
+            assert hasattr(sqe, "SIMBAQueryEnhancer")
 
             # If we get here, all imports succeeded
             assert True

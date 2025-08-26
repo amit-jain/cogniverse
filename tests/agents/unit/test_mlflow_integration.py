@@ -363,13 +363,14 @@ class TestMLflowIntegrationIntegration:
     def test_component_imports_successfully(self):
         """Test that MLflow integration components can be imported."""
         try:
-            from src.app.routing.mlflow_integration import (
-                ABTestConfig,
-                ExperimentConfig,
-                MLflowIntegration,
-                ModelVersionInfo,
-                create_mlflow_integration,
-            )
+            import src.app.routing.mlflow_integration as mli
+
+            # Verify key components exist
+            assert hasattr(mli, "ABTestConfig")
+            assert hasattr(mli, "ExperimentConfig")
+            assert hasattr(mli, "MLflowIntegration")
+            assert hasattr(mli, "ModelVersionInfo")
+            assert hasattr(mli, "create_mlflow_integration")
 
             # If we get here, all imports succeeded
             assert True

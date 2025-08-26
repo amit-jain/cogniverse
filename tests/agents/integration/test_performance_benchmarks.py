@@ -263,7 +263,7 @@ class TestPerformanceBenchmarks:
 
                 asyncio.run(routing_agent.route_query("warmup query"))
             asyncio.run(extractor.extract_comprehensive_relationships("warmup query"))
-        except:
+        except Exception:
             pass
 
         # Get baseline after warmup (models loaded)

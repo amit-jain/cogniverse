@@ -292,15 +292,16 @@ class TestAdaptiveThresholdLearnerIntegration:
     def test_component_imports_successfully(self):
         """Test that adaptive threshold learner components can be imported."""
         try:
-            from src.app.routing.adaptive_threshold_learner import (
-                AdaptationStrategy,
-                AdaptiveThresholdConfig,
-                AdaptiveThresholdLearner,
-                PerformanceMetrics,
-                ThresholdConfig,
-                ThresholdParameter,
-                ThresholdState,
-            )
+            import src.app.routing.adaptive_threshold_learner as atl
+
+            # Verify key components exist
+            assert hasattr(atl, "AdaptationStrategy")
+            assert hasattr(atl, "AdaptiveThresholdConfig")
+            assert hasattr(atl, "AdaptiveThresholdLearner")
+            assert hasattr(atl, "PerformanceMetrics")
+            assert hasattr(atl, "ThresholdConfig")
+            assert hasattr(atl, "ThresholdParameter")
+            assert hasattr(atl, "ThresholdState")
 
             # If we get here, all imports succeeded
             assert True

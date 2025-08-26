@@ -257,7 +257,7 @@ class TestCompleteMultiAgentOrchestration:
                 if hasattr(agent, "cleanup"):
                     try:
                         agent.cleanup()
-                    except:
+                    except Exception:
                         pass
 
 

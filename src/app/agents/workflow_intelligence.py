@@ -45,7 +45,6 @@ from src.app.agents.workflow_types import (
     WorkflowPlan,
     WorkflowStatus,
     WorkflowTask,
-    WorkflowTemplate,
 )
 
 
@@ -1062,7 +1061,7 @@ class WorkflowIntelligence:
 
     def get_intelligence_statistics(self) -> Dict[str, Any]:
         """Get workflow intelligence performance statistics"""
-        stats = self.optimization_stats.copy()
+        stats: Dict[str, Any] = self.optimization_stats.copy()
 
         # Add historical data statistics
         stats.update(
@@ -1083,18 +1082,8 @@ class WorkflowIntelligence:
                     if self.workflow_history
                     else 0.0
                 ),
-                "query_types": dict(
-                    defaultdict(
-                        int,
-                        {
-                            exec.query_type: sum(
-                                1
-                                for e in self.workflow_history
-                                if e.query_type == exec.query_type
-                            )
-                            for exec in self.workflow_history
-                        },
-                    )
+                "query_types": len(
+                    set(exec.query_type for exec in self.workflow_history)
                 ),
                 "persistence_enabled": self.enable_persistence,
                 "optimization_strategy": self.optimization_strategy.value,
