@@ -32,6 +32,7 @@ class TestCompleteMultiAgentOrchestration:
         yield
         # Cleanup handled automatically
 
+    @pytest.mark.ci_fast
     def test_routing_to_video_search_workflow(self):
         """Test routing decision leading to video search workflow"""
         from unittest.mock import patch
@@ -172,6 +173,7 @@ class TestCompleteMultiAgentOrchestration:
             print(f"Enhancement handled gracefully: {enhancement_error}")
             assert True  # Graceful handling is success
 
+    @pytest.mark.ci_fast
     def test_agent_coordination_interfaces(self):
         """Test that agents have compatible interfaces for coordination"""
         import logging

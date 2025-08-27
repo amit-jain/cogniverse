@@ -20,6 +20,7 @@ from src.app.routing.relationship_extraction_tools import RelationshipExtractorT
 class TestQueryProcessingPipeline:
     """Test complete query processing pipeline with real queries"""
 
+    @pytest.mark.ci_fast
     def test_simple_video_query_processing(self):
         """Test processing a simple video search query"""
         from unittest.mock import AsyncMock, patch
@@ -140,6 +141,7 @@ class TestQueryProcessingPipeline:
             print(f"Complex query processing handled gracefully: {e}")
             assert True  # Graceful error handling is success in integration tests
 
+    @pytest.mark.ci_fast
     def test_routing_decision_with_real_query(self):
         """Test routing decisions with real queries"""
         import logging
@@ -465,6 +467,7 @@ class TestAgentWorkflowIntegration:
 class TestSystemIntegrationReadiness:
     """Test overall system integration readiness"""
 
+    @pytest.mark.ci_fast
     def test_complete_component_stack(self):
         """Test that all major components can be instantiated together"""
         from unittest.mock import patch

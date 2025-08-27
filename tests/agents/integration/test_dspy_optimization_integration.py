@@ -269,6 +269,7 @@ class TestDSPyOptimizerIntegration:
             assert call_args[0][0] == "query_analysis"  # module_name
             assert len(call_args[0][1]) == 3  # training_examples
 
+    @pytest.mark.ci_fast
     def test_prompt_saving_and_loading(self, temp_optimized_prompts_dir):
         """Test saving and loading optimized prompts."""
 
@@ -320,6 +321,7 @@ class TestDSPyOptimizerIntegration:
 class TestDSPyAgentIntegration:
     """Integration tests for agents with DSPy optimization."""
 
+    @pytest.mark.ci_fast
     def test_routing_agent_with_optimized_prompts(self, temp_optimized_prompts_dir):
         """Test RoutingAgent with loaded optimized prompts."""
 

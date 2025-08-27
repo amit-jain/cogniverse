@@ -22,6 +22,7 @@ from src.app.routing.relationship_extraction_tools import RelationshipExtractorT
 class TestDSPySystemIntegration:
     """Integration tests for DSPy system components"""
 
+    @pytest.mark.ci_fast
     def test_relationship_extraction_functionality(self):
         """Test relationship extraction tool functionality"""
         extractor = RelationshipExtractorTool()
@@ -94,6 +95,7 @@ class TestDSPySystemIntegration:
             # Should handle gracefully if models not available
             pytest.skip(f"Query enhancement not available: {e}")
 
+    @pytest.mark.ci_fast
     def test_advanced_optimizer_initialization(self):
         """Test advanced optimizer components are properly initialized"""
         optimizer = AdvancedRoutingOptimizer()
@@ -173,6 +175,7 @@ class TestDSPySystemIntegration:
                 # Should handle gracefully if external services not available
                 assert "connection" in str(e).lower() or "timeout" in str(e).lower()
 
+    @pytest.mark.ci_fast
     def test_dspy_components_integration(self):
         """Test DSPy components integration"""
         # Test component creation and basic functionality

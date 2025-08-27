@@ -65,6 +65,7 @@ class TestRoutingAgentIntegration:
         os.unlink(config_file_path)
 
     @patch("src.app.agents.routing_agent.get_config")
+    @pytest.mark.ci_fast
     def test_routing_agent_with_real_config_file(
         self, mock_get_config, test_config, routing_config_file
     ):
@@ -244,6 +245,7 @@ class TestRoutingAgentFastAPIIntegration:
             assert response.status_code == 503
             assert "not initialized" in response.json()["detail"]
 
+    @pytest.mark.ci_fast
     def test_health_check_with_initialized_agent(self, test_client):
         """Test health check when agent is initialized"""
         # Mock the global routing_agent to be initialized
@@ -267,6 +269,7 @@ class TestRoutingAgentFastAPIIntegration:
             assert "available_downstream_agents" in data
             assert "routing_config" in data
 
+    @pytest.mark.ci_fast
     def test_analyze_query_endpoint(self, test_client):
         """Test query analysis endpoint"""
         # Mock the routing agent with an async analyze_and_route method

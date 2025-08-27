@@ -18,6 +18,7 @@ import pytest
 class TestCompleteDSPySystem:
     """Integration tests for complete DSPy multi-agent routing system"""
 
+    @pytest.mark.ci_fast
     @pytest.mark.asyncio
     async def test_end_to_end_query_processing(self):
         """Test complete query processing pipeline"""
@@ -140,6 +141,7 @@ class TestCompleteDSPySystem:
                     assert hasattr(video_agent, "vespa_client")
                     assert hasattr(video_agent, "query_encoder")
 
+    @pytest.mark.ci_fast
     def test_routing_system_components_integration(self):
         """Test that all routing system components integrate correctly"""
 

@@ -35,6 +35,7 @@ class TestPerformanceBenchmarks:
         os.environ["VESPA_SCHEMA"] = "video_colpali_smol500_mv_frame"
         yield
 
+    @pytest.mark.ci_fast
     def test_component_initialization_times(self):
         """Benchmark initialization times for all components"""
         components_to_test = [
