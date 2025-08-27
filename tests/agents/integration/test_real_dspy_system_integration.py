@@ -206,19 +206,36 @@ class TestMultiAgentSystem:
 
     def test_core_agents_initialization(self):
         """Test that core agents can be initialized"""
+        from unittest.mock import patch
+
         from src.app.agents.detailed_report_agent import DetailedReportAgent
         from src.app.agents.summarizer_agent import SummarizerAgent
 
-        # Should initialize without extensive mocking
-        summarizer = SummarizerAgent()
-        reporter = DetailedReportAgent()
+        # Mock config to provide required LLM configuration
+        with (
+            patch("src.app.agents.summarizer_agent.get_config") as mock_summarizer_config,
+            patch("src.app.agents.detailed_report_agent.get_config") as mock_reporter_config
+        ):
+            config = {
+                "llm": {
+                    "model_name": "smollm3:3b",
+                    "base_url": "http://localhost:11434/v1",
+                    "api_key": "dummy",
+                }
+            }
+            mock_summarizer_config.return_value = config
+            mock_reporter_config.return_value = config
 
-        assert summarizer is not None
-        assert reporter is not None
+            # Should initialize with proper config mocking
+            summarizer = SummarizerAgent()
+            reporter = DetailedReportAgent()
 
-        # Should have required interfaces
-        assert hasattr(summarizer, "summarize")
-        assert hasattr(reporter, "generate_report")
+            assert summarizer is not None
+            assert reporter is not None
+
+            # Should have required interfaces
+            assert hasattr(summarizer, "summarize")
+            assert hasattr(reporter, "generate_report")
 
     def test_enhanced_video_search_real_config(self):
         """Test enhanced video search agent with real configuration"""

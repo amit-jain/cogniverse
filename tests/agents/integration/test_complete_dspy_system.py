@@ -117,13 +117,18 @@ class TestCompleteDSPySystem:
                     "src.app.agents.enhanced_video_search_agent.QueryEncoderFactory"
                 ) as mock_encoder:
 
-                    # Mock configuration
-                    mock_config_obj = Mock()
-                    mock_config_obj.get_active_profile.return_value = (
-                        "video_colpali_smol500_mv_frame"
-                    )
-                    mock_config_obj.get.return_value = "http://localhost:8080"
-                    mock_config.return_value = mock_config_obj
+                    # Mock configuration as a dict (not object)
+                    mock_config.return_value = {
+                        "vespa_url": "http://localhost:8080",
+                        "vespa_port": 8080,
+                        "active_video_profile": "video_colpali_smol500_mv_frame",
+                        "video_processing_profiles": {
+                            "video_colpali_smol500_mv_frame": {
+                                "embedding_model": "vidore/colsmol-500m",
+                                "embedding_type": "frame_based",
+                            }
+                        },
+                    }
 
                     # Mock encoder
                     mock_encoder.create_encoder.return_value = Mock()

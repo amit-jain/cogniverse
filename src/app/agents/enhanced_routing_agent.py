@@ -125,7 +125,9 @@ class EnhancedRoutingConfig:
     optimization_storage_dir: str = "data/optimization"
 
     # MLflow integration configuration
-    enable_mlflow_tracking: bool = True
+    enable_mlflow_tracking: bool = (
+        False  # Disabled by default to avoid connection issues
+    )
     mlflow_experiment_name: str = "enhanced_routing_agent"
     mlflow_tracking_uri: str = "http://localhost:5000"
 
