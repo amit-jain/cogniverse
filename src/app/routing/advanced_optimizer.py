@@ -15,19 +15,18 @@ Key Features:
 - Multi-stage optimization pipeline
 """
 
-import asyncio
-import logging
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
-from datetime import datetime, timedelta
 import json
-import numpy as np
-from pathlib import Path
+import logging
 import pickle
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 # DSPy 3.0 imports
 import dspy
-from dspy.teleprompt import BootstrapFewShot, MIPROv2, GEPA, SIMBA
+import numpy as np
+from dspy.teleprompt import GEPA, SIMBA, BootstrapFewShot, MIPROv2
 
 logger = logging.getLogger(__name__)
 
@@ -551,7 +550,7 @@ class AdvancedRoutingOptimizer:
                     corr_matrix = np.corrcoef(confidence_predictions, actual_outcomes)
                     correlation = corr_matrix[0, 1] if not np.isnan(corr_matrix[0, 1]) else 0.0
                     self.metrics.confidence_accuracy = max(0.0, correlation)
-                except:
+                except Exception:
                     # Fallback calculation - measure alignment between confidence and success
                     avg_conf = np.mean(confidence_predictions)
                     avg_success = np.mean(actual_outcomes)

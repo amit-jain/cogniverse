@@ -14,19 +14,17 @@ Key Features:
 - Multi-modal similarity (text, entities, relationships)
 """
 
-import asyncio
-import logging
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
-from datetime import datetime, timedelta
 import json
-import numpy as np
-from pathlib import Path
+import logging
 import pickle
-from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 # DSPy 3.0 imports
 import dspy
+import numpy as np
 from dspy.teleprompt import SIMBA
 
 # Embedding and similarity imports

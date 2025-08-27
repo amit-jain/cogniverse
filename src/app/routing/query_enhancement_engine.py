@@ -10,14 +10,13 @@ learning-based query enhancement using patterns from successful transformations.
 """
 
 import logging
-import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import dspy
 
 from .dspy_routing_signatures import QueryEnhancementSignature
 from .relationship_extraction_tools import RelationshipExtractorTool
-from .simba_query_enhancer import SIMBAQueryEnhancer, SIMBAConfig
+from .simba_query_enhancer import SIMBAConfig, SIMBAQueryEnhancer
 
 logger = logging.getLogger(__name__)
 

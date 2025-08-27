@@ -15,17 +15,17 @@ Key Features:
 - Integration with GRPO and SIMBA for system-wide optimization
 """
 
-import asyncio
-import logging
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union, Callable
-from datetime import datetime, timedelta
-from enum import Enum
 import json
-import numpy as np
-from pathlib import Path
+import logging
 import pickle
-from collections import deque, defaultdict
+from collections import defaultdict, deque
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
 from scipy import stats
 
 logger = logging.getLogger(__name__)
@@ -499,7 +499,6 @@ class AdaptiveThresholdLearner:
             
             # Calculate gradient
             values = [sample[0] for sample in recent_samples]
-            performances = [sample[1] for sample in recent_samples]
             
             # Simple gradient calculation using finite differences
             if len(values) >= 2:
@@ -636,7 +635,6 @@ class AdaptiveThresholdLearner:
         """Update threshold using evolutionary approach"""
         # Simplified evolutionary approach - could be expanded
         try:
-            current_performance = self._calculate_current_performance(parameter)
             
             # Generate candidate values (mutations)
             candidates = []

@@ -6,10 +6,10 @@ These signatures leverage DSPy's type system and optimization capabilities to cr
 intelligent, self-improving routing decisions.
 """
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 import dspy
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 # Data Models for Structured Outputs

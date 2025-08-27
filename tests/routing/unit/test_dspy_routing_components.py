@@ -5,17 +5,27 @@ Tests the routing-specific DSPy components including relationship extraction,
 query enhancement, adaptive threshold learning, and advanced optimization.
 """
 
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, Mock
-from datetime import datetime
+
+from src.app.routing.adaptive_threshold_learner import AdaptiveThresholdLearner
+from src.app.routing.advanced_optimizer import (
+    AdvancedOptimizerConfig,
+    AdvancedRoutingOptimizer,
+)
+from src.app.routing.dspy_relationship_router import (
+    DSPyEntityExtractorModule,
+    DSPyRelationshipExtractorModule,
+)
+from src.app.routing.dspy_routing_signatures import (
+    AdvancedRoutingSignature,
+    BasicQueryAnalysisSignature,
+)
+from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
 
 # DSPy routing components
 from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
-from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
-from src.app.routing.adaptive_threshold_learner import AdaptiveThresholdLearner
-from src.app.routing.advanced_optimizer import AdvancedRoutingOptimizer, AdvancedOptimizerConfig
-from src.app.routing.dspy_routing_signatures import BasicQueryAnalysisSignature, AdvancedRoutingSignature
-from src.app.routing.dspy_relationship_router import DSPyEntityExtractorModule, DSPyRelationshipExtractorModule
 
 
 class TestDSPyRoutingSignatures:
@@ -224,7 +234,7 @@ class TestDSPyRoutingIntegration:
             # Initialize components
             extractor = RelationshipExtractorTool()
             pipeline = QueryEnhancementPipeline()
-            learner = AdaptiveThresholdLearner()
+            AdaptiveThresholdLearner()  # Create but don't assign to unused variable
             optimizer = AdvancedRoutingOptimizer(AdvancedOptimizerConfig(min_experiences_for_training=10))
             
             # Mock interactions to avoid model dependencies
