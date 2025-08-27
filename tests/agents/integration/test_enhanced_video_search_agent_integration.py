@@ -55,6 +55,7 @@ class TestEnhancedVideoSearchAgentIntegration:
     """Integration tests for Enhanced Video Search Agent functionality"""
 
     @patch("src.app.agents.enhanced_video_search_agent.get_config")
+    @pytest.mark.ci_fast
     @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
     def test_agent_initialization_with_real_config(
         self, mock_vespa_client_class, mock_config, mock_vespa_client

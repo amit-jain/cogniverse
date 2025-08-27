@@ -9,6 +9,7 @@ import pytest
 
 from src.app.agents.enhanced_video_search_agent import (
     EnhancedA2AMessage,
+    EnhancedSearchContext,
     EnhancedTask,
     EnhancedVideoSearchAgent,
     ImagePart,
@@ -36,6 +37,7 @@ class TestVideoProcessor:
         """Video processor with mocked encoder"""
         return VideoProcessor(mock_query_encoder)
 
+    @pytest.mark.ci_fast
     def test_video_processor_initialization(self, mock_query_encoder):
         """Test VideoProcessor initialization"""
         processor = VideoProcessor(mock_query_encoder)
@@ -44,6 +46,7 @@ class TestVideoProcessor:
         assert processor.temp_dir.exists()
         assert processor.temp_dir.name == "video_search_agent"
 
+    @pytest.mark.ci_fast
     def test_process_video_file_with_encode_video(self, video_processor):
         """Test video file processing when encoder has encode_video method"""
         video_data = b"fake_video_data"
@@ -124,15 +127,15 @@ class TestEnhancedVideoSearchAgent:
     @pytest.fixture
     def mock_config(self):
         """Mock configuration"""
-        config = Mock()
-        config.get_active_profile.return_value = "frame_based_colpali"
-        config.get.return_value = {
-            "frame_based_colpali": {
-                "embedding_model": "vidore/colsmol-500m",
-                "embedding_type": "frame_based",
-            }
+        return {
+            "active_video_profile": "video_colpali_smol500_mv_frame",
+            "video_processing_profiles": {
+                "video_colpali_smol500_mv_frame": {
+                    "embedding_model": "vidore/colsmol-500m",
+                    "embedding_type": "frame_based",
+                }
+            },
         }
-        return config
 
     @pytest.fixture
     def mock_vespa_client(self):
@@ -156,6 +159,7 @@ class TestEnhancedVideoSearchAgent:
     @patch("src.app.agents.enhanced_video_search_agent.QueryEncoderFactory")
     @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
     @patch("src.app.agents.enhanced_video_search_agent.get_config")
+    @pytest.mark.ci_fast
     def test_enhanced_agent_initialization(
         self,
         mock_get_config,
@@ -181,6 +185,7 @@ class TestEnhancedVideoSearchAgent:
     @patch("src.app.agents.enhanced_video_search_agent.QueryEncoderFactory")
     @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
     @patch("src.app.agents.enhanced_video_search_agent.get_config")
+    @pytest.mark.ci_fast
     def test_search_by_text(
         self,
         mock_get_config,
@@ -197,7 +202,7 @@ class TestEnhancedVideoSearchAgent:
 
         agent = EnhancedVideoSearchAgent(vespa_url="http://localhost", vespa_port=8080)
 
-        results = agent.search_by_text("find cats", top_k=5)
+        results = agent.search_by_text("find cats", top_k=5, ranking="binary_binary")
 
         assert len(results) == 2
         assert results[0]["video_id"] == "video1"
@@ -207,6 +212,7 @@ class TestEnhancedVideoSearchAgent:
     @patch("src.app.agents.enhanced_video_search_agent.QueryEncoderFactory")
     @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
     @patch("src.app.agents.enhanced_video_search_agent.get_config")
+    @pytest.mark.ci_fast
     def test_search_by_video(
         self,
         mock_get_config,
@@ -229,7 +235,9 @@ class TestEnhancedVideoSearchAgent:
         )
 
         video_data = b"fake_video_data"
-        results = agent.search_by_video(video_data, "test.mp4", top_k=5)
+        results = agent.search_by_video(
+            video_data, "test.mp4", top_k=5, ranking="binary_binary"
+        )
 
         assert len(results) == 2
         assert results[0]["video_id"] == "video1"
@@ -263,7 +271,9 @@ class TestEnhancedVideoSearchAgent:
         )
 
         image_data = b"fake_image_data"
-        results = agent.search_by_image(image_data, "test.jpg", top_k=5)
+        results = agent.search_by_image(
+            image_data, "test.jpg", top_k=5, ranking="binary_binary"
+        )
 
         assert len(results) == 2
         assert results[0]["video_id"] == "video1"
@@ -543,7 +553,7 @@ class TestEnhancedVideoSearchAgentEdgeCases:
         agent = EnhancedVideoSearchAgent(vespa_url="http://localhost", vespa_port=8080)
 
         with pytest.raises(Exception, match="Search failed"):
-            agent.search_by_text("test query")
+            agent.search_by_text("test query", ranking="binary_binary")
 
 
 @pytest.mark.unit
@@ -601,3 +611,180 @@ class TestDataModels:
         assert task.id == "test_task"
         assert len(task.messages) == 1
         assert task.messages[0] == message
+
+
+@pytest.mark.unit
+class TestEnhancedVideoSearchAgentAdvancedFeatures:
+    """Test advanced features and edge cases"""
+
+    @pytest.fixture
+    def configured_agent(self):
+        """Agent configured for advanced testing"""
+        mock_config = {
+            "active_video_profile": "video_colpali_smol500_mv_frame",
+            "video_processing_profiles": {
+                "video_colpali_smol500_mv_frame": {
+                    "embedding_model": "vidore/colsmol-500m",
+                    "embedding_type": "frame_based",
+                }
+            },
+        }
+
+        with (
+            patch(
+                "src.app.agents.enhanced_video_search_agent.get_config"
+            ) as mock_get_config,
+            patch(
+                "src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient"
+            ) as mock_vespa_class,
+            patch(
+                "src.app.agents.enhanced_video_search_agent.QueryEncoderFactory"
+            ) as mock_encoder_factory,
+        ):
+            mock_get_config.return_value = mock_config
+            mock_vespa_client = Mock()
+            mock_vespa_client.search.return_value = []  # Empty results for some tests
+            mock_vespa_class.return_value = mock_vespa_client
+
+            mock_query_encoder = Mock()
+            mock_query_encoder.encode.return_value = np.random.rand(128)
+            mock_encoder_factory.create_encoder.return_value = mock_query_encoder
+
+            agent = EnhancedVideoSearchAgent(
+                vespa_url="http://localhost", vespa_port=8080
+            )
+            return agent
+
+    @pytest.mark.ci_fast
+    def test_search_with_empty_results(self, configured_agent):
+        """Test handling of empty search results"""
+        # Vespa client is already configured to return empty results
+        results = configured_agent.search_by_text(
+            "non-existent content", top_k=5, ranking="binary_binary"
+        )
+
+        assert isinstance(results, list)
+        assert len(results) == 0
+
+    @pytest.mark.ci_fast
+    def test_search_with_different_rankings(self, configured_agent):
+        """Test search with different ranking strategies"""
+        # Test with float_binary ranking
+        results = configured_agent.search_by_text(
+            "find cats", top_k=5, ranking="float_binary"
+        )
+        assert isinstance(results, list)
+
+        # Test with default ranking (when not specified)
+        results = configured_agent.search_by_text("find cats", top_k=5)
+        assert isinstance(results, list)
+
+    def test_search_with_temporal_parameters(self, configured_agent):
+        """Test search with date range filters"""
+        results = configured_agent.search_by_text(
+            "find recent videos",
+            top_k=5,
+            ranking="binary_binary",
+            start_date="2024-01-01",
+            end_date="2024-01-31",
+        )
+
+        assert isinstance(results, list)
+        # Vespa client should be called with date parameters
+        configured_agent.vespa_client.search.assert_called()
+        call_args = configured_agent.vespa_client.search.call_args
+        search_params = call_args[0][0]  # First argument
+        assert search_params["start_date"] == "2024-01-01"
+        assert search_params["end_date"] == "2024-01-31"
+
+    @pytest.mark.ci_fast
+    def test_video_processor_cleanup_on_error(self, configured_agent):
+        """Test VideoProcessor cleans up temp files on error"""
+        # Mock processor to raise error
+        configured_agent.video_processor.process_video_file = Mock(
+            side_effect=Exception("Processing failed")
+        )
+
+        video_data = b"fake_video_data"
+
+        with pytest.raises(Exception, match="Processing failed"):
+            configured_agent.search_by_video(
+                video_data, "test.mp4", ranking="binary_binary"
+            )
+
+    def test_image_processor_with_different_formats(self, configured_agent):
+        """Test image processing with different file formats"""
+        # Mock processor
+        configured_agent.video_processor.process_image_file = Mock(
+            return_value=np.random.rand(128)
+        )
+
+        # Test different image formats
+        for format_ext in ["jpg", "png", "jpeg", "webp"]:
+            image_data = b"fake_image_data"
+            results = configured_agent.search_by_image(
+                image_data, f"test.{format_ext}", ranking="binary_binary"
+            )
+            assert isinstance(results, list)
+            configured_agent.video_processor.process_image_file.assert_called_with(
+                image_data, f"test.{format_ext}"
+            )
+
+    def test_enhanced_search_context_dataclass_validation(self, configured_agent):
+        """Test EnhancedSearchContext dataclass validation"""
+        # Test complete context
+        context = EnhancedSearchContext(
+            original_query="find cats",
+            enhanced_query="find domestic cats playing",
+            entities=[{"text": "cats", "label": "ANIMAL", "confidence": 0.95}],
+            relationships=[
+                {
+                    "type": "ACTION",
+                    "subject": "cats",
+                    "action": "playing",
+                    "confidence": 0.88,
+                }
+            ],
+            routing_metadata={"source": "test", "version": "1.0"},
+            confidence=0.89,
+        )
+
+        assert context.original_query == "find cats"
+        assert context.enhanced_query == "find domestic cats playing"
+        assert len(context.entities) == 1
+        assert len(context.relationships) == 1
+        assert context.confidence == 0.89
+
+    @pytest.mark.ci_fast
+    def test_relationship_aware_search_params_validation(self, configured_agent):
+        """Test RelationshipAwareSearchParams validation"""
+        from src.app.agents.enhanced_video_search_agent import (
+            RelationshipAwareSearchParams,
+        )
+
+        # Test with minimal parameters
+        params = RelationshipAwareSearchParams(query="test query")
+        assert params.query == "test query"
+        assert params.top_k == 10  # default
+        assert params.use_relationship_boost is True  # default
+
+        # Test with full parameters
+        params_full = RelationshipAwareSearchParams(
+            query="enhanced query",
+            original_query="original query",
+            enhanced_query="enhanced version",
+            entities=[{"text": "test", "label": "TEST"}],
+            relationships=[{"type": "ACTION", "subject": "test"}],
+            top_k=15,
+            ranking_strategy="float_binary",
+            start_date="2024-01-01",
+            end_date="2024-01-31",
+            confidence_threshold=0.8,
+            use_relationship_boost=False,
+        )
+
+        assert params_full.query == "enhanced query"
+        assert params_full.top_k == 15
+        assert params_full.ranking_strategy == "float_binary"
+        assert params_full.confidence_threshold == 0.8
+        assert params_full.use_relationship_boost is False

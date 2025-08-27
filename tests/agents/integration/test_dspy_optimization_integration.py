@@ -269,6 +269,7 @@ class TestDSPyOptimizerIntegration:
             assert call_args[0][0] == "query_analysis"  # module_name
             assert len(call_args[0][1]) == 3  # training_examples
 
+    @pytest.mark.ci_fast
     def test_prompt_saving_and_loading(self, temp_optimized_prompts_dir):
         """Test saving and loading optimized prompts."""
 
@@ -320,6 +321,7 @@ class TestDSPyOptimizerIntegration:
 class TestDSPyAgentIntegration:
     """Integration tests for agents with DSPy optimization."""
 
+    @pytest.mark.ci_fast
     def test_routing_agent_with_optimized_prompts(self, temp_optimized_prompts_dir):
         """Test RoutingAgent with loaded optimized prompts."""
 
@@ -376,17 +378,27 @@ class TestDSPyAgentIntegration:
         }
 
         with patch("src.app.agents.summarizer_agent.VLMInterface"):
-            with patch.object(Path, "exists") as mock_exists:
+            with patch("src.app.agents.summarizer_agent.get_config") as mock_config:
+                with patch.object(Path, "exists") as mock_exists:
 
-                # Mock path exists to find optimized prompts
-                mock_exists.return_value = True
+                    # Mock config
+                    mock_config.return_value = {
+                        "llm": {
+                            "model_name": "smollm3:3b",
+                            "base_url": "http://localhost:11434/v1",
+                            "api_key": "dummy",
+                        }
+                    }
 
-                # Mock file loading directly
-                with patch(
-                    "builtins.open", mock_open(read_data=json.dumps(mock_prompts))
-                ):
+                    # Mock path exists to find optimized prompts
+                    mock_exists.return_value = True
 
-                    agent = SummarizerAgent()
+                    # Mock file loading directly
+                    with patch(
+                        "builtins.open", mock_open(read_data=json.dumps(mock_prompts))
+                    ):
+
+                        agent = SummarizerAgent()
 
                     # Should have loaded DSPy optimization
                     assert agent.dspy_enabled
@@ -415,17 +427,29 @@ class TestDSPyAgentIntegration:
         }
 
         with patch("src.app.agents.detailed_report_agent.VLMInterface"):
-            with patch.object(Path, "exists") as mock_exists:
+            with patch(
+                "src.app.agents.detailed_report_agent.get_config"
+            ) as mock_config:
+                with patch.object(Path, "exists") as mock_exists:
 
-                # Mock path exists to find optimized prompts
-                mock_exists.return_value = True
+                    # Mock config
+                    mock_config.return_value = {
+                        "llm": {
+                            "model_name": "smollm3:3b",
+                            "base_url": "http://localhost:11434/v1",
+                            "api_key": "dummy",
+                        }
+                    }
 
-                # Mock file loading directly
-                with patch(
-                    "builtins.open", mock_open(read_data=json.dumps(mock_prompts))
-                ):
+                    # Mock path exists to find optimized prompts
+                    mock_exists.return_value = True
 
-                    agent = DetailedReportAgent()
+                    # Mock file loading directly
+                    with patch(
+                        "builtins.open", mock_open(read_data=json.dumps(mock_prompts))
+                    ):
+
+                        agent = DetailedReportAgent()
 
                     # Should have loaded DSPy optimization
                     assert agent.dspy_enabled

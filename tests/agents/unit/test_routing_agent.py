@@ -35,6 +35,7 @@ class TestRoutingAgent:
 
     @patch("src.app.agents.routing_agent.ComprehensiveRouter")
     @patch("src.app.agents.routing_agent.get_config")
+    @pytest.mark.ci_fast
     def test_routing_agent_initialization(
         self, mock_get_config, mock_router_class, mock_system_config
     ):
@@ -51,6 +52,7 @@ class TestRoutingAgent:
         assert agent.router == mock_router_instance
 
     @patch("src.app.agents.routing_agent.get_config")
+    @pytest.mark.ci_fast
     def test_routing_agent_initialization_missing_video_agent(self, mock_get_config):
         """Test RoutingAgent initialization fails when video agent URL missing"""
         mock_get_config.return_value = {"text_agent_url": "http://localhost:8003"}
@@ -60,6 +62,7 @@ class TestRoutingAgent:
 
     @patch("src.app.agents.routing_agent.ComprehensiveRouter")
     @patch("src.app.agents.routing_agent.get_config")
+    @pytest.mark.ci_fast
     def test_build_routing_config(
         self, mock_get_config, mock_router_class, mock_system_config
     ):
@@ -82,6 +85,7 @@ class TestRoutingAgent:
     @patch("src.app.agents.routing_agent.ComprehensiveRouter")
     @patch("src.app.agents.routing_agent.get_config")
     @pytest.mark.asyncio
+    @pytest.mark.ci_fast
     async def test_analyze_and_route_video_query(
         self,
         mock_get_config,
@@ -110,6 +114,7 @@ class TestRoutingAgent:
     @patch("src.app.agents.routing_agent.ComprehensiveRouter")
     @patch("src.app.agents.routing_agent.get_config")
     @pytest.mark.asyncio
+    @pytest.mark.ci_fast
     async def test_analyze_and_route_summary_query(
         self,
         mock_get_config,
@@ -159,6 +164,7 @@ class TestRoutingAgent:
 
     @patch("src.app.agents.routing_agent.ComprehensiveRouter")
     @patch("src.app.agents.routing_agent.get_config")
+    @pytest.mark.ci_fast
     def test_determine_workflow_raw_results(
         self,
         mock_get_config,

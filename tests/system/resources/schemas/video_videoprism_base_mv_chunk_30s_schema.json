@@ -1,0 +1,302 @@
+{
+  "name": "video_videoprism_base_mv_chunk_30s",
+  "document": {
+    "name": "video_videoprism_base_mv_chunk_30s",
+    "fields": [
+      {
+        "name": "video_id",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "attribute"
+        ],
+        "attribute": [
+          "fast-search"
+        ]
+      },
+      {
+        "name": "video_title",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "index"
+        ],
+        "index": "enable-bm25"
+      },
+      {
+        "name": "creation_timestamp",
+        "type": "long",
+        "indexing": [
+          "summary",
+          "attribute"
+        ],
+        "attribute": [
+          "fast-search"
+        ]
+      },
+      {
+        "name": "segment_id",
+        "type": "int",
+        "indexing": [
+          "summary",
+          "attribute"
+        ],
+        "attribute": [
+          "fast-search"
+        ]
+      },
+      {
+        "name": "start_time",
+        "type": "double",
+        "indexing": [
+          "summary",
+          "attribute"
+        ]
+      },
+      {
+        "name": "end_time",
+        "type": "double",
+        "indexing": [
+          "summary",
+          "attribute"
+        ]
+      },
+      {
+        "name": "embedding",
+        "type": "tensor<bfloat16>(patch{}, v[768])",
+        "indexing": [
+          "attribute"
+        ]
+      },
+      {
+        "name": "embedding_binary",
+        "type": "tensor<int8>(patch{}, v[96])",
+        "indexing": [
+          "attribute"
+        ]
+      },
+      {
+        "name": "audio_transcript",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "index"
+        ],
+        "index": "enable-bm25"
+      }
+    ]
+  },
+  "fieldsets": [
+    {
+      "name": "default",
+      "fields": [
+        "video_title",
+        "audio_transcript"
+      ]
+    }
+  ],
+  "rank_profiles": [
+    {
+      "name": "default",
+      "inputs": [
+        {
+          "name": "query(qtb)",
+          "type": "tensor<int8>(querytoken{}, v[96])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "max_sim_hamming",
+          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken)"
+        }
+      ],
+      "first_phase": "max_sim_hamming",
+      "timeout": 2.0
+    },
+    {
+      "name": "bm25_only",
+      "first_phase": "bm25(video_title) + bm25(audio_transcript)",
+      "timeout": 2.0
+    },
+    {
+      "name": "binary_binary",
+      "inputs": [
+        {
+          "name": "query(qtb)",
+          "type": "tensor<int8>(querytoken{}, v[96])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "max_sim_hamming",
+          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken)"
+        }
+      ],
+      "first_phase": "max_sim_hamming",
+      "timeout": 2.0
+    },
+    {
+      "name": "float_float",
+      "inputs": [
+        {
+          "name": "query(qt)",
+          "type": "tensor<float>(querytoken{}, v[768])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "max_sim",
+          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, patch), querytoken)"
+        }
+      ],
+      "first_phase": "max_sim",
+      "timeout": 2.0
+    },
+    {
+      "name": "float_binary",
+      "inputs": [
+        {
+          "name": "query(qt)",
+          "type": "tensor<float>(querytoken{}, v[768])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "max_sim",
+          "expression": "sum(reduce(sum(query(qt) * unpack_bits(attribute(embedding_binary)), v), max, patch), querytoken)"
+        }
+      ],
+      "first_phase": "max_sim",
+      "timeout": 2.0
+    },
+    {
+      "name": "phased",
+      "inputs": [
+        {
+          "name": "query(qtb)",
+          "type": "tensor<int8>(querytoken{}, v[96])"
+        },
+        {
+          "name": "query(qt)",
+          "type": "tensor<float>(querytoken{}, v[768])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "max_sim_hamming",
+          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken)"
+        },
+        {
+          "name": "max_sim",
+          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, patch), querytoken)"
+        }
+      ],
+      "first_phase": "max_sim_hamming",
+      "second_phase": {
+        "expression": "max_sim",
+        "rerank_count": 100
+      },
+      "timeout": 5.0
+    },
+    {
+      "name": "hybrid_float_bm25",
+      "inputs": [
+        {
+          "name": "query(qt)",
+          "type": "tensor<float>(querytoken{}, v[768])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "visual_sim_float",
+          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, patch), querytoken)"
+        },
+        {
+          "name": "text_sim",
+          "expression": "bm25(video_title)"
+        }
+      ],
+      "first_phase": "visual_sim_float",
+      "second_phase": {
+        "expression": "text_sim",
+        "rerank_count": 100
+      },
+      "timeout": 2.0
+    },
+    {
+      "name": "hybrid_binary_bm25",
+      "inputs": [
+        {
+          "name": "query(qtb)",
+          "type": "tensor<int8>(querytoken{}, v[96])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "visual_sim_binary",
+          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken)"
+        },
+        {
+          "name": "text_sim",
+          "expression": "bm25(video_title)"
+        }
+      ],
+      "first_phase": "visual_sim_binary",
+      "second_phase": {
+        "expression": "text_sim",
+        "rerank_count": 100
+      },
+      "timeout": 2.0
+    },
+    {
+      "name": "hybrid_bm25_binary",
+      "inputs": [
+        {
+          "name": "query(qtb)",
+          "type": "tensor<int8>(querytoken{}, v[96])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "visual_sim_binary",
+          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, patch), querytoken)"
+        },
+        {
+          "name": "text_sim",
+          "expression": "bm25(video_title)"
+        }
+      ],
+      "first_phase": "text_sim",
+      "second_phase": {
+        "expression": "visual_sim_binary",
+        "rerank_count": 100
+      },
+      "timeout": 2.0
+    },
+    {
+      "name": "hybrid_bm25_float",
+      "inputs": [
+        {
+          "name": "query(qt)",
+          "type": "tensor<float>(querytoken{}, v[768])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "visual_sim_float",
+          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, patch), querytoken)"
+        },
+        {
+          "name": "text_sim",
+          "expression": "bm25(video_title)"
+        }
+      ],
+      "first_phase": "text_sim",
+      "second_phase": {
+        "expression": "visual_sim_float",
+        "rerank_count": 100
+      },
+      "timeout": 2.0
+    }
+  ]
+}
