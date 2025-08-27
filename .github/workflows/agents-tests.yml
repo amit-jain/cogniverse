@@ -158,7 +158,7 @@ jobs:
 
   integration-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 60
     needs: unit-tests
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     
@@ -185,36 +185,23 @@ jobs:
         uv sync --all-extras
         uv pip install pytest-cov torch dspy-ai
     
-    - name: Check for external services
+    - name: Integration test info
       run: |
-        echo "🔍 Checking for external service dependencies..."
-        
-        # Check if Ollama is available (for E2E tests)
-        if curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
-          echo "✅ Ollama is available"
-          echo "SKIP_OLLAMA_TESTS=false" >> $GITHUB_ENV
-        else
-          echo "⚠️ Ollama not available - will skip Ollama-dependent tests"
-          echo "SKIP_OLLAMA_TESTS=true" >> $GITHUB_ENV
-        fi
-        
-        # Check if Vespa is available (for video search tests)
-        if curl -s http://localhost:8080/state/v1/health >/dev/null 2>&1; then
-          echo "✅ Vespa is available"
-          echo "SKIP_VESPA_TESTS=false" >> $GITHUB_ENV
-        else
-          echo "⚠️ Vespa not available - will skip Vespa-dependent tests"
-          echo "SKIP_VESPA_TESTS=true" >> $GITHUB_ENV
-        fi
+        echo "ℹ️ Running CI Fast integration tests (17/116 tests)"
+        echo "⚡ These tests provide quick feedback without external dependencies"
+        echo "📊 To run all integration tests locally:"
+        echo "   JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/integration/ -v"
+        echo "🔧 To run with external services:"
+        echo "   JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/integration/ -m 'integration and not requires_ollama' -v"
     
-    - name: Run integration tests
+    - name: Run integration tests (CI Fast)
       env:
         COVERAGE_FILE: .coverage
       run: |
-        # Run integration tests with coverage reporting only (no failure threshold)
-        echo "🧪 Running integration tests (skipping external service dependencies)..."
+        # Run only ci_fast integration tests for quick CI feedback (2-3 minutes vs 50-60 minutes)
+        echo "🧪 Running CI fast integration tests (essential functionality only)..."
         JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/integration/ \
-          -m "integration and not requires_ollama and not requires_vespa" \
+          -m ci_fast \
           -v \
           --tb=short \
           --cov=src/app/agents \
