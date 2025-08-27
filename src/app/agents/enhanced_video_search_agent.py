@@ -364,7 +364,7 @@ class EnhancedVideoSearchAgent:
             # Prepare search parameters
             search_params = {
                 "query": query,
-                "ranking": kwargs["ranking"],
+                "ranking": kwargs.get("ranking", "binary_binary"),
                 "top_k": top_k,
             }
 
@@ -410,7 +410,7 @@ class EnhancedVideoSearchAgent:
             # Prepare search parameters
             search_params = {
                 "query": f"Video similarity search for {filename}",
-                "ranking": kwargs["ranking"],
+                "ranking": kwargs.get("ranking", "binary_binary"),
                 "top_k": top_k,
             }
 
@@ -456,7 +456,7 @@ class EnhancedVideoSearchAgent:
             # Prepare search parameters
             search_params = {
                 "query": f"Image similarity search for {filename}",
-                "ranking": kwargs["ranking"],
+                "ranking": kwargs.get("ranking", "binary_binary"),
                 "top_k": top_k,
             }
 
