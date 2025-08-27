@@ -308,7 +308,7 @@ class QueryAnalysisToolV3(DSPyQueryAnalysisMixin):
 
             # Phase 10: Calculate confidence score
             confidence_score = self._calculate_confidence(
-                primary_intent, complexity_level, len(entities), len(keywords)
+                query, primary_intent, complexity_level, len(entities), len(keywords)
             )
 
             # Create comprehensive result
@@ -718,6 +718,16 @@ class QueryAnalysisToolV3(DSPyQueryAnalysisMixin):
             "of",
             "with",
             "by",
+            "about",  # Added to filter common preposition
+            "from",
+            "is",
+            "are",
+            "was",
+            "were",
+            "be",
+            "have",
+            "has",
+            "had",
         }
         words = re.findall(r"\b\w+\b", query.lower())
         keywords = [word for word in words if word not in stop_words and len(word) > 2]
@@ -743,13 +753,17 @@ class QueryAnalysisToolV3(DSPyQueryAnalysisMixin):
         """
         expansions = []
 
-        # Basic synonym expansion
+        # Enhanced synonym expansion
         synonyms = {
             "video": ["clip", "footage", "recording"],
             "show": ["display", "demonstrate", "present"],
             "find": ["search", "locate", "discover"],
             "analyze": ["examine", "study", "investigate"],
             "explain": ["describe", "clarify", "elaborate"],
+            "latest": ["recent", "newest", "current"],
+            "developments": ["updates", "progress", "advances"],
+            "research": ["studies", "investigations", "analysis"],
+            "recent": ["latest", "new", "current"],
         }
 
         words = query.lower().split()
@@ -764,6 +778,22 @@ class QueryAnalysisToolV3(DSPyQueryAnalysisMixin):
                         and len(expansions) < self.max_expanded_queries
                     ):
                         expansions.append(expanded)
+
+        # If no synonym expansions, create basic variations
+        if not expansions and len(words) > 1:
+            # Add simple rephrasing
+            if query.lower().startswith(("find", "search", "show")):
+                alternatives = ["display", "locate", "search for"]
+                for alt in alternatives:
+                    if len(expansions) < self.max_expanded_queries:
+                        expanded = query.replace(query.split()[0].lower(), alt, 1)
+                        expansions.append(expanded)
+            else:
+                # Add search prefixes to queries without them
+                prefixes = ["search for", "find information about"]
+                for prefix in prefixes:
+                    if len(expansions) < self.max_expanded_queries:
+                        expansions.append(f"{prefix} {query}")
 
         # Add context-based expansions if available
         if context and context.conversation_history:
@@ -877,6 +907,7 @@ class QueryAnalysisToolV3(DSPyQueryAnalysisMixin):
 
     def _calculate_confidence(
         self,
+        query: str,
         primary_intent: QueryIntent,
         complexity_level: QueryComplexity,
         num_entities: int,
@@ -886,6 +917,7 @@ class QueryAnalysisToolV3(DSPyQueryAnalysisMixin):
         Calculate confidence score for the analysis.
 
         Args:
+            query: Original query text
             primary_intent: Detected primary intent
             complexity_level: Query complexity
             num_entities: Number of detected entities
@@ -894,7 +926,12 @@ class QueryAnalysisToolV3(DSPyQueryAnalysisMixin):
         Returns:
             Confidence score (0-1)
         """
-        base_confidence = 0.5
+        base_confidence = 0.3  # Lower base confidence
+
+        # Check for vague terms that lower confidence
+        vague_terms = ["stuff", "things", "some", "anything", "whatever"]
+        if any(term in query.lower() for term in vague_terms):
+            base_confidence = 0.2  # Very low base for vague queries
 
         # Boost for clear intents
         if primary_intent in [
@@ -902,21 +939,27 @@ class QueryAnalysisToolV3(DSPyQueryAnalysisMixin):
             QueryIntent.SUMMARIZE,
             QueryIntent.REPORT,
         ]:
-            base_confidence += 0.2
+            # Only add boost if we have substantial content (entities/keywords)
+            if num_entities > 0 or num_keywords > 3:
+                base_confidence += 0.3
+            else:
+                base_confidence += 0.1  # Small boost for intent but no content
 
         # Boost for entities and keywords
-        entity_boost = min(0.2, num_entities * 0.05)
-        keyword_boost = min(0.1, num_keywords * 0.01)
+        entity_boost = min(0.3, num_entities * 0.1)
+        keyword_boost = min(0.2, num_keywords * 0.02)
 
-        # Complexity affects confidence
+        # Complexity affects confidence differently
         complexity_boost = {
-            QueryComplexity.SIMPLE: 0.1,
-            QueryComplexity.MODERATE: 0.05,
-            QueryComplexity.COMPLEX: 0.0,
+            QueryComplexity.SIMPLE: (
+                0.05 if num_entities > 0 else -0.1
+            ),  # Simple queries need entities
+            QueryComplexity.MODERATE: 0.1,
+            QueryComplexity.COMPLEX: 0.15,  # Complex queries show thoughtfulness
         }.get(complexity_level, 0.0)
 
         confidence = base_confidence + entity_boost + keyword_boost + complexity_boost
-        return min(1.0, confidence)
+        return max(0.1, min(1.0, confidence))  # Ensure at least 0.1
 
     def _log_analysis_result(self, result: QueryAnalysisResult, execution_time: float):
         """

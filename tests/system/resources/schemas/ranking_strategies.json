@@ -1,0 +1,1468 @@
+{
+  "video_colqwen_omni_mv_chunk_30s": {
+    "default": {
+      "name": "default",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Default ranking profile",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[16])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "bm25_only": {
+      "name": "bm25_only",
+      "strategy_type": "pure_text",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": null,
+      "query_tensor_name": null,
+      "timeout": 2.0,
+      "description": "Pure text search using BM25",
+      "inputs": {},
+      "query_tensors_needed": [],
+      "schema_name": ""
+    },
+    "bm25_no_description": {
+      "name": "bm25_no_description",
+      "strategy_type": "pure_text",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": null,
+      "query_tensor_name": null,
+      "timeout": 2.0,
+      "description": "BM25 text search excluding descriptions",
+      "inputs": {},
+      "query_tensors_needed": [],
+      "schema_name": ""
+    },
+    "float_float": {
+      "name": "float_float",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Visual search with float embeddings",
+      "inputs": {
+        "qt": "tensor<float>(querytoken{}, v[128])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "binary_binary": {
+      "name": "binary_binary",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Fast visual search with binary embeddings",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[16])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "float_binary": {
+      "name": "float_binary",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Float query with binary document embeddings",
+      "inputs": {
+        "qt": "tensor<float>(querytoken{}, v[128])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "phased": {
+      "name": "phased",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": true,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 5.0,
+      "description": "Two-phase ranking: binary first, float reranking",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[16])",
+        "qt": "tensor<float>(querytoken{}, v[128])"
+      },
+      "query_tensors_needed": [
+        "qtb",
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_float_bm25": {
+      "name": "hybrid_float_bm25",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Combined visual (float) and text search",
+      "inputs": {
+        "qt": "tensor<float>(querytoken{}, v[128])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_binary_bm25": {
+      "name": "hybrid_binary_bm25",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Combined visual (binary) and text search",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[16])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_bm25_binary": {
+      "name": "hybrid_bm25_binary",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Text-first search with visual reranking",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[16])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_bm25_float": {
+      "name": "hybrid_bm25_float",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Text-first search with visual reranking",
+      "inputs": {
+        "qt": "tensor<float>(querytoken{}, v[128])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_float_bm25_no_description": {
+      "name": "hybrid_float_bm25_no_description",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Combined visual (float) and text search (excluding descriptions)",
+      "inputs": {
+        "qt": "tensor<float>(querytoken{}, v[128])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_binary_bm25_no_description": {
+      "name": "hybrid_binary_bm25_no_description",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Combined visual (binary) and text search (excluding descriptions)",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[16])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_bm25_binary_no_description": {
+      "name": "hybrid_bm25_binary_no_description",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Text-first search with visual reranking (excluding descriptions)",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[16])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_bm25_float_no_description": {
+      "name": "hybrid_bm25_float_no_description",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Text-first search with visual reranking (excluding descriptions)",
+      "inputs": {
+        "qt": "tensor<float>(querytoken{}, v[128])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    }
+  },
+  "video_videoprism_lvt_base_sv_chunk_6s": {
+    "default": {
+      "name": "default",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Default ranking profile",
+      "inputs": {
+        "qtb": "tensor<int8>(v[96])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "bm25_only": {
+      "name": "bm25_only",
+      "strategy_type": "pure_text",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": null,
+      "query_tensor_name": null,
+      "timeout": 2.0,
+      "description": "Pure text search using BM25",
+      "inputs": {},
+      "query_tensors_needed": [],
+      "schema_name": ""
+    },
+    "binary_binary": {
+      "name": "binary_binary",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": false,
+      "use_nearestneighbor": true,
+      "nearestneighbor_field": "embedding_binary",
+      "nearestneighbor_tensor": "qtb",
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Fast visual search with binary embeddings",
+      "inputs": {
+        "qtb": "tensor<int8>(v[96])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "float_float": {
+      "name": "float_float",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": false,
+      "use_nearestneighbor": true,
+      "nearestneighbor_field": "embedding",
+      "nearestneighbor_tensor": "qt",
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Visual search with float embeddings",
+      "inputs": {
+        "qt": "tensor<float>(v[768])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "float_binary": {
+      "name": "float_binary",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": true,
+      "needs_text_query": false,
+      "use_nearestneighbor": true,
+      "nearestneighbor_field": "embedding",
+      "nearestneighbor_tensor": "qt",
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Float query with binary document embeddings",
+      "inputs": {
+        "qtb": "tensor<int8>(v[96])",
+        "qt": "tensor<float>(v[768])"
+      },
+      "query_tensors_needed": [
+        "qtb",
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "phased": {
+      "name": "phased",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": true,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 5.0,
+      "description": "Two-phase ranking: binary first, float reranking",
+      "inputs": {
+        "qtb": "tensor<int8>(v[96])",
+        "qt": "tensor<float>(v[768])"
+      },
+      "query_tensors_needed": [
+        "qtb",
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_float_bm25": {
+      "name": "hybrid_float_bm25",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": true,
+      "nearestneighbor_field": "embedding",
+      "nearestneighbor_tensor": "qt",
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Combined visual (float) and text search",
+      "inputs": {
+        "qt": "tensor<float>(v[768])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_binary_bm25": {
+      "name": "hybrid_binary_bm25",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": true,
+      "use_nearestneighbor": true,
+      "nearestneighbor_field": "embedding_binary",
+      "nearestneighbor_tensor": "qtb",
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Combined visual (binary) and text search",
+      "inputs": {
+        "qtb": "tensor<int8>(v[96])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_bm25_binary": {
+      "name": "hybrid_bm25_binary",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": true,
+      "use_nearestneighbor": true,
+      "nearestneighbor_field": "embedding_binary",
+      "nearestneighbor_tensor": "qtb",
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Text-first search with visual reranking",
+      "inputs": {
+        "qtb": "tensor<int8>(v[96])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_bm25_float": {
+      "name": "hybrid_bm25_float",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": true,
+      "nearestneighbor_field": "embedding",
+      "nearestneighbor_tensor": "qt",
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Text-first search with visual reranking",
+      "inputs": {
+        "qt": "tensor<float>(v[768])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    }
+  },
+  "video_videoprism_large_mv_chunk_30s": {
+    "default": {
+      "name": "default",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Default ranking profile",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[128])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "bm25_only": {
+      "name": "bm25_only",
+      "strategy_type": "pure_text",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": null,
+      "query_tensor_name": null,
+      "timeout": 2.0,
+      "description": "Pure text search using BM25",
+      "inputs": {},
+      "query_tensors_needed": [],
+      "schema_name": ""
+    },
+    "binary_binary": {
+      "name": "binary_binary",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Fast visual search with binary embeddings",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[128])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "float_float": {
+      "name": "float_float",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Visual search with float embeddings",
+      "inputs": {
+        "qt": "tensor<float>(querytoken{}, v[1024])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "float_binary": {
+      "name": "float_binary",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Float query with binary document embeddings",
+      "inputs": {
+        "qt": "tensor<float>(querytoken{}, v[1024])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "phased": {
+      "name": "phased",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": true,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 5.0,
+      "description": "Two-phase ranking: binary first, float reranking",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[128])",
+        "qt": "tensor<float>(querytoken{}, v[1024])"
+      },
+      "query_tensors_needed": [
+        "qtb",
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_float_bm25": {
+      "name": "hybrid_float_bm25",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Combined visual (float) and text search",
+      "inputs": {
+        "qt": "tensor<float>(querytoken{}, v[1024])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_binary_bm25": {
+      "name": "hybrid_binary_bm25",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Combined visual (binary) and text search",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[128])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_bm25_binary": {
+      "name": "hybrid_bm25_binary",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Text-first search with visual reranking",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[128])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_bm25_float": {
+      "name": "hybrid_bm25_float",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Text-first search with visual reranking",
+      "inputs": {
+        "qt": "tensor<float>(querytoken{}, v[1024])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    }
+  },
+  "video_videoprism_base_mv_chunk_30s": {
+    "default": {
+      "name": "default",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Default ranking profile",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[96])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "bm25_only": {
+      "name": "bm25_only",
+      "strategy_type": "pure_text",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": null,
+      "query_tensor_name": null,
+      "timeout": 2.0,
+      "description": "Pure text search using BM25",
+      "inputs": {},
+      "query_tensors_needed": [],
+      "schema_name": ""
+    },
+    "binary_binary": {
+      "name": "binary_binary",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Fast visual search with binary embeddings",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[96])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "float_float": {
+      "name": "float_float",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Visual search with float embeddings",
+      "inputs": {
+        "qt": "tensor<float>(querytoken{}, v[768])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "float_binary": {
+      "name": "float_binary",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Float query with binary document embeddings",
+      "inputs": {
+        "qt": "tensor<float>(querytoken{}, v[768])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "phased": {
+      "name": "phased",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": true,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 5.0,
+      "description": "Two-phase ranking: binary first, float reranking",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[96])",
+        "qt": "tensor<float>(querytoken{}, v[768])"
+      },
+      "query_tensors_needed": [
+        "qtb",
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_float_bm25": {
+      "name": "hybrid_float_bm25",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Combined visual (float) and text search",
+      "inputs": {
+        "qt": "tensor<float>(querytoken{}, v[768])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_binary_bm25": {
+      "name": "hybrid_binary_bm25",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Combined visual (binary) and text search",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[96])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_bm25_binary": {
+      "name": "hybrid_bm25_binary",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Text-first search with visual reranking",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[96])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_bm25_float": {
+      "name": "hybrid_bm25_float",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Text-first search with visual reranking",
+      "inputs": {
+        "qt": "tensor<float>(querytoken{}, v[768])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    }
+  },
+  "video_videoprism_lvt_large_sv_chunk_6s": {
+    "default": {
+      "name": "default",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Default ranking profile",
+      "inputs": {
+        "qtb": "tensor<int8>(v[128])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "bm25_only": {
+      "name": "bm25_only",
+      "strategy_type": "pure_text",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": null,
+      "query_tensor_name": null,
+      "timeout": 2.0,
+      "description": "Pure text search using BM25",
+      "inputs": {},
+      "query_tensors_needed": [],
+      "schema_name": ""
+    },
+    "binary_binary": {
+      "name": "binary_binary",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": false,
+      "use_nearestneighbor": true,
+      "nearestneighbor_field": "embedding_binary",
+      "nearestneighbor_tensor": "qtb",
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Fast visual search with binary embeddings",
+      "inputs": {
+        "qtb": "tensor<int8>(v[128])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "float_float": {
+      "name": "float_float",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": false,
+      "use_nearestneighbor": true,
+      "nearestneighbor_field": "embedding",
+      "nearestneighbor_tensor": "qt",
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Visual search with float embeddings",
+      "inputs": {
+        "qt": "tensor<float>(v[1024])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "float_binary": {
+      "name": "float_binary",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": true,
+      "needs_text_query": false,
+      "use_nearestneighbor": true,
+      "nearestneighbor_field": "embedding",
+      "nearestneighbor_tensor": "qt",
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Float query with binary document embeddings",
+      "inputs": {
+        "qtb": "tensor<int8>(v[128])",
+        "qt": "tensor<float>(v[1024])"
+      },
+      "query_tensors_needed": [
+        "qtb",
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "phased": {
+      "name": "phased",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": true,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 5.0,
+      "description": "Two-phase ranking: binary first, float reranking",
+      "inputs": {
+        "qtb": "tensor<int8>(v[128])",
+        "qt": "tensor<float>(v[1024])"
+      },
+      "query_tensors_needed": [
+        "qtb",
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_float_bm25": {
+      "name": "hybrid_float_bm25",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": true,
+      "nearestneighbor_field": "embedding",
+      "nearestneighbor_tensor": "qt",
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Combined visual (float) and text search",
+      "inputs": {
+        "qt": "tensor<float>(v[1024])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_binary_bm25": {
+      "name": "hybrid_binary_bm25",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": true,
+      "use_nearestneighbor": true,
+      "nearestneighbor_field": "embedding_binary",
+      "nearestneighbor_tensor": "qtb",
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Combined visual (binary) and text search",
+      "inputs": {
+        "qtb": "tensor<int8>(v[128])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_bm25_binary": {
+      "name": "hybrid_bm25_binary",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": true,
+      "use_nearestneighbor": true,
+      "nearestneighbor_field": "embedding_binary",
+      "nearestneighbor_tensor": "qtb",
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Text-first search with visual reranking",
+      "inputs": {
+        "qtb": "tensor<int8>(v[128])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_bm25_float": {
+      "name": "hybrid_bm25_float",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": true,
+      "nearestneighbor_field": "embedding",
+      "nearestneighbor_tensor": "qt",
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Text-first search with visual reranking",
+      "inputs": {
+        "qt": "tensor<float>(v[1024])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    }
+  },
+  "video_colpali_smol500_mv_frame": {
+    "default": {
+      "name": "default",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Default ranking profile",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[16])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "bm25_only": {
+      "name": "bm25_only",
+      "strategy_type": "pure_text",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": null,
+      "query_tensor_name": null,
+      "timeout": 2.0,
+      "description": "Pure text search using BM25",
+      "inputs": {},
+      "query_tensors_needed": [],
+      "schema_name": ""
+    },
+    "bm25_no_description": {
+      "name": "bm25_no_description",
+      "strategy_type": "pure_text",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": null,
+      "query_tensor_name": null,
+      "timeout": 2.0,
+      "description": "BM25 text search excluding descriptions",
+      "inputs": {},
+      "query_tensors_needed": [],
+      "schema_name": ""
+    },
+    "float_float": {
+      "name": "float_float",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Visual search with float embeddings",
+      "inputs": {
+        "qt": "tensor<float>(querytoken{}, v[128])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "binary_binary": {
+      "name": "binary_binary",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Fast visual search with binary embeddings",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[16])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "float_binary": {
+      "name": "float_binary",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Float query with binary document embeddings",
+      "inputs": {
+        "qt": "tensor<float>(querytoken{}, v[128])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "phased": {
+      "name": "phased",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": true,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 5.0,
+      "description": "Two-phase ranking: binary first, float reranking",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[16])",
+        "qt": "tensor<float>(querytoken{}, v[128])"
+      },
+      "query_tensors_needed": [
+        "qtb",
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_float_bm25": {
+      "name": "hybrid_float_bm25",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Combined visual (float) and text search",
+      "inputs": {
+        "qt": "tensor<float>(querytoken{}, v[128])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_binary_bm25": {
+      "name": "hybrid_binary_bm25",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Combined visual (binary) and text search",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[16])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_bm25_binary": {
+      "name": "hybrid_bm25_binary",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Text-first search with visual reranking",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[16])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_bm25_float": {
+      "name": "hybrid_bm25_float",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Text-first search with visual reranking",
+      "inputs": {
+        "qt": "tensor<float>(querytoken{}, v[128])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_float_bm25_no_description": {
+      "name": "hybrid_float_bm25_no_description",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Combined visual (float) and text search (excluding descriptions)",
+      "inputs": {
+        "qt": "tensor<float>(querytoken{}, v[128])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_binary_bm25_no_description": {
+      "name": "hybrid_binary_bm25_no_description",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Combined visual (binary) and text search (excluding descriptions)",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[16])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_bm25_binary_no_description": {
+      "name": "hybrid_bm25_binary_no_description",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Text-first search with visual reranking (excluding descriptions)",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[16])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": ""
+    },
+    "hybrid_bm25_float_no_description": {
+      "name": "hybrid_bm25_float_no_description",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Text-first search with visual reranking (excluding descriptions)",
+      "inputs": {
+        "qt": "tensor<float>(querytoken{}, v[128])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": ""
+    }
+  }
+}

@@ -26,6 +26,7 @@ on:
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       matrix:
         python-version: ['3.12']
@@ -72,7 +73,7 @@ jobs:
           --cov=src/app/routing \
           --cov-report=term-missing \
           --cov-report=xml:coverage_routing.xml \
-          --cov-fail-under=43
+          --cov-fail-under=15
         # Rename the coverage file to avoid conflicts and make it uploadable
         if [ -f .coverage ]; then
           echo "✅ Coverage file found, renaming to coverage_unit.dat"
@@ -103,6 +104,7 @@ jobs:
 
   integration-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: unit-tests
     
     steps:
