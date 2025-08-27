@@ -213,27 +213,34 @@ class TestRoutingAgentFastAPIIntegration:
             ],
             "agents_to_call": ["video_search"],
         }
-        
+
         # Mock the routing methods as async
         mock_agent.query_analyzer = mock_analyzer
-        mock_agent.route_query = AsyncMock(return_value={
-            "recommended_agent": "video_search",
-            "confidence": 0.8,
-            "reasoning": "Test routing decision"
-        })
-        mock_agent.process_a2a_task = AsyncMock(return_value={
-            "id": "test_task_response",
-            "role": "assistant",
-            "status": "completed",
-            "data": {"result": "processed successfully"}
-        })
-        
+        mock_agent.route_query = AsyncMock(
+            return_value={
+                "recommended_agent": "video_search",
+                "confidence": 0.8,
+                "reasoning": "Test routing decision",
+            }
+        )
+        mock_agent.process_a2a_task = AsyncMock(
+            return_value={
+                "id": "test_task_response",
+                "role": "assistant",
+                "status": "completed",
+                "data": {"result": "processed successfully"},
+            }
+        )
+
         # Mock sync methods with simple values to avoid recursion
-        mock_agent.get_routing_stats.return_value = {"total_requests": 0, "successful_requests": 0}
-        
+        mock_agent.get_routing_stats.return_value = {
+            "total_requests": 0,
+            "successful_requests": 0,
+        }
+
         # Ensure agent is not None to pass health checks
         mock_agent.__bool__ = lambda self: True
-        
+
         with patch("src.app.agents.routing_agent.routing_agent", mock_agent):
             yield mock_agent
 
@@ -353,7 +360,9 @@ class TestRoutingAgentFastAPIIntegration:
 
     def test_process_a2a_task_with_text_part(self, test_client, mock_initialized_agent):
         """Test A2A task processing with TextPart"""
-        message = A2AMessage(role="user", parts=[TextPart(text="Summarize recent AI developments")])
+        message = A2AMessage(
+            role="user", parts=[TextPart(text="Summarize recent AI developments")]
+        )
 
         task_data = {"id": "test_task_456", "messages": [message.model_dump()]}
 
@@ -383,7 +392,9 @@ class TestRoutingAgentFastAPIIntegration:
 
     def test_process_a2a_task_no_query(self, test_client, mock_initialized_agent):
         """Test A2A task processing with message but no query"""
-        message = A2AMessage(role="user", parts=[DataPart(data={"other_field": "value"})])
+        message = A2AMessage(
+            role="user", parts=[DataPart(data={"other_field": "value"})]
+        )
         task_data = {"id": "test_task_no_query", "messages": [message.model_dump()]}
 
         response = test_client.post("/process", json=task_data)
@@ -405,7 +416,7 @@ class TestRoutingAgentFastAPIIntegration:
                 # Handle any status code gracefully
                 print(f"Stats endpoint returned status {response.status_code}")
                 assert True  # Any response is acceptable in integration test
-                
+
         except RecursionError:
             # Handle FastAPI/Pydantic serialization recursion gracefully
             print("Stats endpoint handled gracefully despite serialization complexity")

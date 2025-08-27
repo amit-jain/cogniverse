@@ -15,13 +15,14 @@ def real_dspy_lm():
     """Real DSPy.LM configured for Ollama"""
     # Check if Ollama is available
     import requests
+
     try:
         response = requests.get("http://localhost:11434/v1/models", timeout=2)
         if response.status_code != 200:
             pytest.skip("Ollama not available - skipping real DSPy.LM tests")
     except Exception:
         pytest.skip("Ollama not available - skipping real DSPy.LM tests")
-    
+
     # Configure real DSPy.LM with Ollama using correct API
     try:
         lm = dspy.LM(
@@ -35,7 +36,8 @@ def real_dspy_lm():
     except Exception as e:
         pytest.skip(f"DSPy.LM configuration failed: {e}")
 
-@pytest.fixture  
+
+@pytest.fixture
 def dspy_config():
     """Configuration for DSPy.LM through Ollama"""
     return {
@@ -46,7 +48,7 @@ def dspy_config():
         },
         "models": {
             "small": "smollm3:1b",
-            "medium": "qwen2.5:1.5b", 
+            "medium": "qwen2.5:1.5b",
             "vision": "qwen2.5:1.5b",
         },
         "timeout": 30,
@@ -93,6 +95,7 @@ def sample_search_results():
 def mock_ollama_server():
     """Check if Ollama server is available"""
     import requests
+
     try:
         requests.get("http://localhost:11434", timeout=2)
         return True
@@ -112,13 +115,13 @@ class TestSummarizerAgentDSPyIntegration:
         """Test SummarizerAgent with small model via real DSPy.LM"""
         if not mock_ollama_server:
             pytest.skip("Ollama server not available")
-            
+
         with patch("src.app.agents.summarizer_agent.get_config") as mock_config:
             mock_config.return_value = dspy_config
 
             # Configure real DSPy settings
             dspy.settings.configure(lm=real_dspy_lm)
-            
+
             # Create agent and set real LM
             agent = SummarizerAgent()
             agent.llm = real_dspy_lm
@@ -143,7 +146,7 @@ class TestSummarizerAgentDSPyIntegration:
             assert result.confidence_score > 0
             assert result.metadata["summary_type"] == "brief"
 
-    @pytest.mark.integration  
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_summarizer_a2a_processing(
         self, dspy_config, sample_search_results, real_dspy_lm, mock_ollama_server
@@ -151,13 +154,13 @@ class TestSummarizerAgentDSPyIntegration:
         """Test SummarizerAgent A2A processing with real DSPy.LM"""
         if not mock_ollama_server:
             pytest.skip("Ollama server not available")
-            
+
         with patch("src.app.agents.summarizer_agent.get_config") as mock_config:
             mock_config.return_value = dspy_config
 
             # Configure real DSPy settings
             dspy.settings.configure(lm=real_dspy_lm)
-            
+
             agent = SummarizerAgent()
             agent.llm = real_dspy_lm
 
@@ -197,13 +200,13 @@ class TestDetailedReportAgentDSPyIntegration:
         """Test DetailedReportAgent with real DSPy.LM"""
         if not mock_ollama_server:
             pytest.skip("Ollama server not available")
-            
+
         with patch("src.app.agents.detailed_report_agent.get_config") as mock_config:
             mock_config.return_value = dspy_config
 
             # Configure real DSPy settings
             dspy.settings.configure(lm=real_dspy_lm)
-                
+
             agent = DetailedReportAgent()
             agent.llm = real_dspy_lm
 
@@ -230,9 +233,7 @@ class TestDetailedReportAgentDSPyIntegration:
                     ],
                     "visual_patterns": ["Pattern A", "Pattern B"],
                     "quality_assessment": {"overall": 0.85, "clarity": 0.9},
-                    "annotations": [
-                        {"element": "neural_network", "confidence": 0.9}
-                    ],
+                    "annotations": [{"element": "neural_network", "confidence": 0.9}],
                 }
 
                 result = await agent.generate_report(request)
@@ -254,13 +255,13 @@ class TestDetailedReportAgentDSPyIntegration:
         """Test DetailedReportAgent A2A processing with real DSPy.LM"""
         if not mock_ollama_server:
             pytest.skip("Ollama server not available")
-            
+
         with patch("src.app.agents.detailed_report_agent.get_config") as mock_config:
             mock_config.return_value = dspy_config
 
             # Configure real DSPy settings
             dspy.settings.configure(lm=real_dspy_lm)
-                
+
             agent = DetailedReportAgent()
             agent.llm = real_dspy_lm
 
@@ -294,7 +295,9 @@ class TestDetailedReportAgentDSPyIntegration:
                 assert result["status"] == "completed"
                 assert "result" in result
                 assert result["result"]["executive_summary"] is not None
-                assert len(result["result"]["executive_summary"]) > 20  # Should have actual content
+                assert (
+                    len(result["result"]["executive_summary"]) > 20
+                )  # Should have actual content
                 assert len(result["result"]["detailed_findings"]) > 0
                 assert len(result["result"]["recommendations"]) > 0
 
@@ -311,7 +314,7 @@ class TestCrossAgentDSPyIntegration:
         """Test workflow from summarizer to detailed report using real DSPy.LM"""
         if not mock_ollama_server:
             pytest.skip("Ollama server not available")
-            
+
         with (
             patch("src.app.agents.summarizer_agent.get_config") as mock_config1,
             patch("src.app.agents.detailed_report_agent.get_config") as mock_config2,
@@ -376,10 +379,10 @@ class TestCrossAgentDSPyIntegration:
                 assert summary_result.summary is not None
                 assert len(summary_result.summary) > 20  # Should have actual content
                 assert report_result.executive_summary is not None
-                assert len(report_result.executive_summary) > 20  # Should have actual content
-                assert len(report_result.detailed_findings) > len(
-                    sample_search_results
-                )
+                assert (
+                    len(report_result.executive_summary) > 20
+                )  # Should have actual content
+                assert len(report_result.detailed_findings) > len(sample_search_results)
                 assert report_result.confidence_assessment["overall"] > 0.7
 
 
@@ -403,7 +406,7 @@ class TestDSPyLMConfigurationIntegration:
         """Test switching between different models via real DSPy.LM"""
         if not mock_ollama_server:
             pytest.skip("Ollama server not available")
-            
+
         with patch("src.app.agents.summarizer_agent.get_config") as mock_config:
             mock_config.return_value = dspy_config
 
@@ -442,16 +445,16 @@ class TestDSPyLMConfigurationIntegration:
         """Test agent error handling when DSPy.LM configuration fails"""
         if not mock_ollama_server:
             pytest.skip("Ollama server not available")
-            
+
         # Test agent initialization with bad DSPy config
         bad_config = {
             "llm": {
                 "model_name": "nonexistent:model",
-                "base_url": "http://localhost:11434", 
+                "base_url": "http://localhost:11434",
                 "api_key": "ollama",
             }
         }
-        
+
         with patch("src.app.agents.summarizer_agent.get_config") as mock_config:
             mock_config.return_value = bad_config
 
@@ -460,26 +463,29 @@ class TestDSPyLMConfigurationIntegration:
             # 2. Initialize but fail on first LLM call
             try:
                 agent = SummarizerAgent()
-                
+
                 # If agent initializes, LLM calls should fail gracefully
                 from src.app.agents.summarizer_agent import SummaryRequest
+
                 request = SummaryRequest(
                     query="test error handling",
                     search_results=[],
                     summary_type="brief",
                 )
-                
+
                 # This should raise an exception due to bad model config
                 result = await agent.summarize(request)
                 # If it succeeds unexpectedly, that's still valid - agent may have fallbacks
-                assert result is not None, "Agent should either fail or return valid result"
-                
+                assert (
+                    result is not None
+                ), "Agent should either fail or return valid result"
+
             except Exception as e:
                 # Should fail with meaningful error about model or connection
                 error_msg = str(e).lower()
                 assert (
                     "model" in error_msg
-                    or "not found" in error_msg 
+                    or "not found" in error_msg
                     or "connection" in error_msg
                     or "llm" in error_msg
                     or "api" in error_msg

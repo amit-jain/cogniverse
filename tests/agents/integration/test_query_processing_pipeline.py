@@ -29,8 +29,12 @@ class TestQueryProcessingPipeline:
 
         # Mock the services to avoid real connections
         with (
-            patch("src.app.routing.relationship_extraction_tools.RelationshipExtractorTool") as mock_extractor_class,
-            patch("src.app.routing.query_enhancement_engine.QueryEnhancementPipeline") as mock_pipeline_class
+            patch(
+                "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
+            ) as mock_extractor_class,
+            patch(
+                "src.app.routing.query_enhancement_engine.QueryEnhancementPipeline"
+            ) as mock_pipeline_class,
         ):
             # Create mock instances
             mock_extractor = AsyncMock()
@@ -40,8 +44,17 @@ class TestQueryProcessingPipeline:
 
             # Step 1: Relationship Extraction
             mock_extractor.extract_comprehensive_relationships.return_value = {
-                "entities": [{"text": "robots", "label": "ENTITY"}, {"text": "videos", "label": "ENTITY"}],
-                "relationships": [{"subject": "robots", "relation": "action", "object": "playing soccer"}]
+                "entities": [
+                    {"text": "robots", "label": "ENTITY"},
+                    {"text": "videos", "label": "ENTITY"},
+                ],
+                "relationships": [
+                    {
+                        "subject": "robots",
+                        "relation": "action",
+                        "object": "playing soccer",
+                    }
+                ],
             }
 
             extractor = RelationshipExtractorTool()
@@ -61,7 +74,11 @@ class TestQueryProcessingPipeline:
             # Step 2: Query Enhancement
             mock_pipeline.enhance_query_with_relationships.return_value = {
                 "enhanced_query": "Find videos of robots playing soccer with improved context and enhanced search terms",
-                "metadata": {"method": "relationship_enhancement", "entities_count": len(entities), "relationships_count": len(relationships)}
+                "metadata": {
+                    "method": "relationship_enhancement",
+                    "entities_count": len(entities),
+                    "relationships_count": len(relationships),
+                },
             }
 
             pipeline = QueryEnhancementPipeline()
@@ -84,7 +101,9 @@ class TestQueryProcessingPipeline:
 
             # Step 3: Verify pipeline results
             assert enhanced_query is not None
-            assert len(enhanced_query) >= len(query)  # Enhanced should be same or longer
+            assert len(enhanced_query) >= len(
+                query
+            )  # Enhanced should be same or longer
             assert isinstance(enhancement_metadata, dict)
 
     def test_complex_research_query_processing(self):
@@ -103,16 +122,22 @@ class TestQueryProcessingPipeline:
                 )
                 entities = extraction_result.get("entities", [])
                 relationships = extraction_result.get("relationships", [])
-                print(f"Extraction succeeded: {len(entities)} entities, {len(relationships)} relationships")
+                print(
+                    f"Extraction succeeded: {len(entities)} entities, {len(relationships)} relationships"
+                )
             except Exception as e:
                 print(f"Extraction failed as expected: {e}")
                 # Use fallback entities/relationships
                 entities = [
                     {"text": "machine learning", "label": "TECHNOLOGY"},
-                    {"text": "autonomous robotics", "label": "FIELD"}
+                    {"text": "autonomous robotics", "label": "FIELD"},
                 ]
                 relationships = [
-                    {"subject": "machine learning", "relation": "applied_to", "object": "autonomous robotics"}
+                    {
+                        "subject": "machine learning",
+                        "relation": "applied_to",
+                        "object": "autonomous robotics",
+                    }
                 ]
 
             # Try enhancement - may also fail with model issues
@@ -233,30 +258,58 @@ class TestQueryProcessingPipeline:
         """Test that different query types are handled appropriately"""
         from unittest.mock import AsyncMock, patch
 
-        with patch("src.app.routing.relationship_extraction_tools.RelationshipExtractorTool") as mock_extractor_class:
+        with patch(
+            "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
+        ) as mock_extractor_class:
             # Create mock instance
             mock_extractor = AsyncMock()
             mock_extractor_class.return_value = mock_extractor
-            
+
             # Mock different responses for different query types
             def mock_extract(query):
                 if "video" in query.lower():
                     return {
-                        "entities": [{"text": "videos", "label": "ENTITY"}, {"text": "robots", "label": "ENTITY"}],
-                        "relationships": [{"subject": "robots", "relation": "playing", "object": "soccer"}]
+                        "entities": [
+                            {"text": "videos", "label": "ENTITY"},
+                            {"text": "robots", "label": "ENTITY"},
+                        ],
+                        "relationships": [
+                            {
+                                "subject": "robots",
+                                "relation": "playing",
+                                "object": "soccer",
+                            }
+                        ],
                     }
                 elif "research" in query.lower() or "summarize" in query.lower():
                     return {
-                        "entities": [{"text": "machine learning", "label": "TECHNOLOGY"}, {"text": "robotics", "label": "FIELD"}],
-                        "relationships": [{"subject": "machine learning", "relation": "applied_to", "object": "robotics"}]
+                        "entities": [
+                            {"text": "machine learning", "label": "TECHNOLOGY"},
+                            {"text": "robotics", "label": "FIELD"},
+                        ],
+                        "relationships": [
+                            {
+                                "subject": "machine learning",
+                                "relation": "applied_to",
+                                "object": "robotics",
+                            }
+                        ],
                     }
                 else:
                     return {
                         "entities": [{"text": "concept", "label": "ENTITY"}],
-                        "relationships": [{"subject": "query", "relation": "asks_about", "object": "concept"}]
+                        "relationships": [
+                            {
+                                "subject": "query",
+                                "relation": "asks_about",
+                                "object": "concept",
+                            }
+                        ],
                     }
-            
-            mock_extractor.extract_comprehensive_relationships.side_effect = mock_extract
+
+            mock_extractor.extract_comprehensive_relationships.side_effect = (
+                mock_extract
+            )
 
             extractor = RelationshipExtractorTool()
 
@@ -295,23 +348,29 @@ class TestQueryProcessingPipeline:
 
         # Mock the tools to avoid real service connections
         with (
-            patch("src.app.routing.relationship_extraction_tools.RelationshipExtractorTool") as mock_extractor_class,
-            patch("src.app.routing.query_enhancement_engine.QueryEnhancementPipeline") as mock_pipeline_class
+            patch(
+                "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
+            ) as mock_extractor_class,
+            patch(
+                "src.app.routing.query_enhancement_engine.QueryEnhancementPipeline"
+            ) as mock_pipeline_class,
         ):
             # Create mock instances
             mock_extractor = AsyncMock()
             mock_pipeline = AsyncMock()
             mock_extractor_class.return_value = mock_extractor
             mock_pipeline_class.return_value = mock_pipeline
-            
+
             # Mock return values for edge cases
             mock_extractor.extract_comprehensive_relationships.return_value = {
                 "entities": [{"text": "test", "label": "ENTITY"}],
-                "relationships": [{"subject": "test", "relation": "handles", "object": "gracefully"}]
+                "relationships": [
+                    {"subject": "test", "relation": "handles", "object": "gracefully"}
+                ],
             }
             mock_pipeline.enhance_query_with_relationships.return_value = {
                 "enhanced_query": "enhanced test query",
-                "metadata": {"method": "mock_enhancement"}
+                "metadata": {"method": "mock_enhancement"},
             }
 
             extractor = RelationshipExtractorTool()

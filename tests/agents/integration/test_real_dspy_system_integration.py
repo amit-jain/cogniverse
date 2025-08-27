@@ -216,8 +216,12 @@ class TestMultiAgentSystem:
 
         # Mock config to provide required LLM configuration
         with (
-            patch("src.app.agents.summarizer_agent.get_config") as mock_summarizer_config,
-            patch("src.app.agents.detailed_report_agent.get_config") as mock_reporter_config
+            patch(
+                "src.app.agents.summarizer_agent.get_config"
+            ) as mock_summarizer_config,
+            patch(
+                "src.app.agents.detailed_report_agent.get_config"
+            ) as mock_reporter_config,
         ):
             config = {
                 "llm": {
