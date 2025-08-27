@@ -15,13 +15,12 @@ from google.adk.tools import BaseTool
 logger = logging.getLogger(__name__)
 
 # Import our custom utilities
-from src.common.config import get_config, setup_environment
+from src.common.config import get_config
 from src.tools.a2a_utils import A2AClient, format_search_results
 from src.tools.video_player_tool import VideoPlayerTool
 
 # Initialize configuration
 config = get_config()
-setup_environment()
 
 
 # --- Enhanced A2A Tool for Specialist Agents ---

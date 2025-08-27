@@ -234,7 +234,9 @@ class TestEnhancedVideoSearchAgent:
         )
 
         video_data = b"fake_video_data"
-        results = agent.search_by_video(video_data, "test.mp4", top_k=5, ranking="binary_binary")
+        results = agent.search_by_video(
+            video_data, "test.mp4", top_k=5, ranking="binary_binary"
+        )
 
         assert len(results) == 2
         assert results[0]["video_id"] == "video1"
