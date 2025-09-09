@@ -276,6 +276,7 @@ class LLMRoutingStrategy(RoutingStrategy):
     """
     Routing strategy using Large Language Models.
     More sophisticated but slower than other methods.
+    Integrates with DSPy optimization system for improved prompts.
     """
 
     def __init__(self, config: dict[str, Any] | None = None):
@@ -285,14 +286,57 @@ class LLMRoutingStrategy(RoutingStrategy):
         self.endpoint = config.get("endpoint", "http://localhost:11434")
         self.temperature = config.get("temperature", 0.1)
         self.max_tokens = config.get("max_tokens", 150)
+        
+        # DSPy optimization support
+        self.dspy_enabled = config.get("enable_dspy_optimization", False)
+        self.optimized_prompts = {}
+        self._load_optimized_prompts()
+        
+        # Fallback to base prompt if no optimization available
         self.system_prompt = self._get_system_prompt()
 
+    def _load_optimized_prompts(self):
+        """Load DSPy-optimized prompts if available."""
+        if not self.dspy_enabled:
+            return
+            
+        try:
+            import json
+            from pathlib import Path
+            
+            # Look for optimized prompts in standard locations
+            search_paths = [
+                Path("optimized_prompts/routing_prompts.json"),
+                Path("src/app/routing/optimized_prompts/routing_prompts.json"), 
+                Path("routing_prompts.json"),
+            ]
+            
+            for prompt_file in search_paths:
+                if prompt_file.exists():
+                    with open(prompt_file, "r") as f:
+                        self.optimized_prompts = json.load(f)
+                    
+                    logger.info(f"Loaded DSPy optimized prompts from {prompt_file}")
+                    return
+                    
+            logger.info("No DSPy optimized routing prompts found, using default prompt")
+            
+        except Exception as e:
+            logger.warning(f"Failed to load DSPy optimized prompts: {e}")
+
     def _get_system_prompt(self) -> str:
-        """Get the system prompt for routing."""
+        """Get the system prompt for routing, using DSPy optimization if available."""
+        # Use optimized prompt if available
+        if self.dspy_enabled and "system_prompt" in self.optimized_prompts:
+            optimized_prompt = self.optimized_prompts["system_prompt"]
+            logger.debug("Using DSPy-optimized routing prompt")
+            return optimized_prompt
+            
+        # Fallback to manually improved prompt (better than the original)
         return """You are a precise routing agent for a multi-modal search system.
 Analyze the user query and determine:
-1. search_modality: "video", "text", or "both"
-2. generation_type: "raw_results", "summary", or "detailed_report"
+1. search_modality: Choose ONE of: "video", "text", or "both"
+2. generation_type: Choose ONE of: "raw_results", "summary", or "detailed_report"
 
 Rules:
 - Use "video" for visual content, demonstrations, tutorials, presentations
@@ -302,12 +346,12 @@ Rules:
 - Use "summary" for brief overviews
 - Use "detailed_report" for comprehensive analysis
 
-Respond ONLY with a JSON object in this format:
-{
-  "search_modality": "video|text|both",
-  "generation_type": "raw_results|summary|detailed_report",
-  "reasoning": "brief explanation"
-}"""
+Examples:
+Query: "show me videos about cats" → {"search_modality": "video", "generation_type": "raw_results", "reasoning": "looking for video content"}
+Query: "summarize the document" → {"search_modality": "text", "generation_type": "summary", "reasoning": "text summary requested"}
+Query: "detailed analysis of both video and text" → {"search_modality": "both", "generation_type": "detailed_report", "reasoning": "comprehensive analysis needed"}
+
+Respond ONLY with a valid JSON object like the examples above."""
 
     async def route(
         self, query: str, context: dict[str, Any] | None = None
@@ -351,13 +395,26 @@ Respond ONLY with a JSON object in this format:
             return fallback_decision
 
     def _build_prompt(self, query: str, context: dict[str, Any] | None) -> str:
-        """Build the prompt for the LLM."""
+        """Build the prompt for the LLM, applying DSPy optimization if available."""
         conversation_history = ""
         if context and "conversation_history" in context:
             conversation_history = (
                 f"\nConversation history:\n{context['conversation_history']}\n"
             )
 
+        # Use DSPy-optimized prompt building if available
+        if self.dspy_enabled and "prompt_template" in self.optimized_prompts:
+            try:
+                template = self.optimized_prompts["prompt_template"]
+                return template.format(
+                    system_prompt=self.system_prompt,
+                    conversation_history=conversation_history,
+                    query=query
+                )
+            except Exception as e:
+                logger.warning(f"Failed to apply DSPy optimized prompt template: {e}")
+
+        # Fallback to standard prompt building
         return f"{self.system_prompt}\n{conversation_history}\nUser query: {query}\n\nResponse:"
 
     async def _call_llm(self, prompt: str) -> str:
@@ -397,57 +454,41 @@ Respond ONLY with a JSON object in this format:
 
     def _parse_llm_response(self, response: str, query: str) -> RoutingDecision:
         """Parse the LLM response to extract routing decision."""
+        # Extract JSON from response
+        json_match = re.search(r"\{.*\}", response, re.DOTALL)
+        if not json_match:
+            raise ValueError(f"No JSON found in LLM response: {response}")
+
         try:
-            # Extract JSON from response
-            json_match = re.search(r"\{.*\}", response, re.DOTALL)
-            if not json_match:
-                raise ValueError("No JSON found in response")
-
             routing_data = json.loads(json_match.group())
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in LLM response: {json_match.group()}") from e
 
-            # Map to enums
-            search_modality = SearchModality(
-                routing_data.get("search_modality", "both")
-            )
-            generation_type = GenerationType(
-                routing_data.get("generation_type", "raw_results")
-            )
-            reasoning = routing_data.get("reasoning", "")
+        # Validate required fields
+        if "search_modality" not in routing_data:
+            raise ValueError(f"Missing 'search_modality' in LLM response: {routing_data}")
+        if "generation_type" not in routing_data:
+            raise ValueError(f"Missing 'generation_type' in LLM response: {routing_data}")
 
-            return RoutingDecision(
-                search_modality=search_modality,
-                generation_type=generation_type,
-                routing_method="llm",
-                reasoning=reasoning,
-            )
+        # Map to enums with strict validation
+        try:
+            search_modality = SearchModality(routing_data["search_modality"])
+        except ValueError as e:
+            raise ValueError(f"Invalid search_modality '{routing_data['search_modality']}' in LLM response") from e
 
-        except Exception as e:
-            logger.warning(f"Failed to parse LLM response: {e}")
-            # Fallback parsing based on keywords in response
-            response_lower = response.lower()
+        try:
+            generation_type = GenerationType(routing_data["generation_type"])
+        except ValueError as e:
+            raise ValueError(f"Invalid generation_type '{routing_data['generation_type']}' in LLM response") from e
 
-            if "video" in response_lower and "text" in response_lower:
-                search_modality = SearchModality.BOTH
-            elif "video" in response_lower:
-                search_modality = SearchModality.VIDEO
-            elif "text" in response_lower:
-                search_modality = SearchModality.TEXT
-            else:
-                search_modality = SearchModality.BOTH
+        reasoning = routing_data.get("reasoning", "LLM routing decision")
 
-            if "detailed" in response_lower or "report" in response_lower:
-                generation_type = GenerationType.DETAILED_REPORT
-            elif "summary" in response_lower:
-                generation_type = GenerationType.SUMMARY
-            else:
-                generation_type = GenerationType.RAW_RESULTS
-
-            return RoutingDecision(
-                search_modality=search_modality,
-                generation_type=generation_type,
-                routing_method="llm_parsed",
-                reasoning="Parsed from non-JSON response",
-            )
+        return RoutingDecision(
+            search_modality=search_modality,
+            generation_type=generation_type,
+            routing_method="llm",
+            reasoning=reasoning,
+        )
 
     def get_confidence(self, query: str, decision: RoutingDecision) -> float:
         """Calculate confidence for LLM decisions."""
@@ -471,15 +512,41 @@ Respond ONLY with a JSON object in this format:
             "validate against",
         ]
 
+        base_confidence = 0.6
         if any(indicator in query_lower for indicator in low_confidence_indicators):
             # Lower confidence for structured/technical queries that need Tier 3
-            return 0.55  # Below 0.6 threshold, will escalate to LangExtract
+            base_confidence = 0.55  # Below 0.6 threshold, will escalate to LangExtract
         elif decision.reasoning and len(decision.reasoning) > 20:
-            return 0.85
+            base_confidence = 0.85
         elif decision.reasoning:
-            return 0.75
+            base_confidence = 0.75
+
+        # Boost confidence if using DSPy-optimized prompts
+        if self.dspy_enabled and self.optimized_prompts:
+            base_confidence = min(base_confidence * 1.1, 1.0)  # 10% confidence boost
+
+        return base_confidence
+
+    def enable_dspy_optimization(self, enabled: bool = True):
+        """Enable or disable DSPy optimization at runtime."""
+        self.dspy_enabled = enabled
+        if enabled:
+            self._load_optimized_prompts()
+            self.system_prompt = self._get_system_prompt()
+            logger.info("DSPy optimization enabled for LLM routing strategy")
         else:
-            return 0.6
+            self.optimized_prompts = {}
+            self.system_prompt = self._get_system_prompt()
+            logger.info("DSPy optimization disabled for LLM routing strategy")
+
+    def get_optimization_status(self) -> dict[str, Any]:
+        """Get the current DSPy optimization status."""
+        return {
+            "dspy_enabled": self.dspy_enabled,
+            "optimized_prompts_loaded": len(self.optimized_prompts) > 0,
+            "available_optimizations": list(self.optimized_prompts.keys()),
+            "using_optimized_system_prompt": self.dspy_enabled and "system_prompt" in self.optimized_prompts,
+        }
 
 
 class KeywordRoutingStrategy(RoutingStrategy):
