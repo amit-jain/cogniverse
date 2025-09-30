@@ -413,8 +413,9 @@ class TestPhoenixQuery:
 
         evaluator.query_routing_spans(start_time=start, end_time=end)
 
-        # Verify get_spans_dataframe was called with time range
+        # Verify get_spans_dataframe was called with time range and project name
         mock_client.get_spans_dataframe.assert_called_once_with(
+            project_name="cogniverse-default-routing-optimization",
             start_time=start,
             end_time=end
         )

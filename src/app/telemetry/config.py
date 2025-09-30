@@ -23,11 +23,14 @@ class BatchExportConfig:
     max_export_batch_size: int = 512
     export_timeout_millis: int = 30_000
     schedule_delay_millis: int = 500
-    
+
     # Queue behavior when full
     drop_on_queue_full: bool = True  # Drop spans instead of blocking
     log_dropped_spans: bool = True
     max_drop_log_rate_per_minute: int = 10
+
+    # Test mode - use synchronous export for immediate flush
+    use_sync_export: bool = field(default_factory=lambda: os.getenv("TELEMETRY_SYNC_EXPORT", "false").lower() == "true")
 
 
 @dataclass

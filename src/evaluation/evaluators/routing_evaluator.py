@@ -48,14 +48,25 @@ class RoutingEvaluator:
     routing-specific metrics like accuracy, confidence calibration, and latency.
     """
 
-    def __init__(self, phoenix_client: Optional[px.Client] = None):
+    def __init__(
+        self,
+        phoenix_client: Optional[px.Client] = None,
+        project_name: str = "cogniverse-default-routing-optimization",
+    ):
         """
         Initialize routing evaluator.
 
         Args:
-            phoenix_client: Phoenix client for querying spans. If None, creates new client.
+            phoenix_client: Phoenix client for querying spans. If None, creates new client for routing project.
+            project_name: Phoenix project name for routing optimization (default: cogniverse-default-routing-optimization)
         """
-        self.client = phoenix_client or px.Client()
+        # Create client for specific routing optimization project
+        if phoenix_client is None:
+            self.client = px.Client(endpoint="http://localhost:6006")
+            self.project_name = project_name
+        else:
+            self.client = phoenix_client
+            self.project_name = project_name
         self.logger = logging.getLogger(__name__)
 
     def evaluate_routing_decision(
@@ -78,18 +89,38 @@ class RoutingEvaluator:
         Raises:
             ValueError: If span_data doesn't contain required routing information
         """
-        # Extract routing span attributes
-        attributes = span_data.get("attributes", {})
-
         # Validate this is a routing span
         span_name = span_data.get("name", "")
         if span_name != "cogniverse.routing":
             raise ValueError(f"Expected cogniverse.routing span, got: {span_name}")
 
-        # Extract routing decision details
-        chosen_agent = attributes.get("routing.chosen_agent")
-        confidence = attributes.get("routing.confidence")
-        latency_ms = attributes.get("routing.processing_time", 0.0)
+        # Extract routing decision details - handle both Phoenix flattened and nested formats
+        # Phoenix format: attributes.routing = {"chosen_agent": ..., "confidence": ...}
+        # Unit test format: attributes = {"routing.chosen_agent": ..., "routing.confidence": ...}
+
+        chosen_agent = None
+        confidence = None
+        latency_ms = 0.0
+
+        # Try Phoenix flattened format first (attributes.routing.*)
+        if "attributes.routing" in span_data and isinstance(
+            span_data["attributes.routing"], dict
+        ):
+            routing_attrs = span_data["attributes.routing"]
+            chosen_agent = routing_attrs.get("chosen_agent")
+            confidence = routing_attrs.get("confidence")
+            latency_ms = routing_attrs.get("processing_time", 0.0)
+
+        # Try nested format (attributes with routing.* keys)
+        if not chosen_agent or confidence is None:
+            attributes = span_data.get("attributes", {})
+            chosen_agent = chosen_agent or attributes.get("routing.chosen_agent")
+            confidence = (
+                confidence
+                if confidence is not None
+                else attributes.get("routing.confidence")
+            )
+            latency_ms = latency_ms or attributes.get("routing.processing_time", 0.0)
 
         if not chosen_agent or confidence is None:
             raise ValueError(
@@ -293,16 +324,14 @@ class RoutingEvaluator:
 
     def query_routing_spans(
         self,
-        project_name: str = "cogniverse",
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
         """
-        Query Phoenix for routing spans within a time range.
+        Query Phoenix for routing spans within a time range from the routing optimization project.
 
         Args:
-            project_name: Phoenix project name (not currently used, for future multi-project support)
             start_time: Start of time range (None for no limit)
             end_time: End of time range (None for no limit)
             limit: Maximum number of spans to return
@@ -314,27 +343,30 @@ class RoutingEvaluator:
             RuntimeError: If Phoenix query fails
         """
         try:
-            # Get all spans using Phoenix client API
+            # Query spans from the specific routing optimization project
+            # Use Phoenix's get_spans_dataframe with project_name parameter
             spans_df = self.client.get_spans_dataframe(
-                start_time=start_time,
-                end_time=end_time
+                project_name=self.project_name, start_time=start_time, end_time=end_time
             )
 
             if spans_df is None or spans_df.empty:
                 return []
 
-            # Filter to only routing spans
-            routing_spans_df = spans_df[spans_df['name'] == 'cogniverse.routing']
+            # Filter to only routing spans (by name)
+            routing_spans_df = spans_df[spans_df["name"] == "cogniverse.routing"]
 
             if routing_spans_df.empty:
                 return []
 
             # Sort by start time (most recent first) and limit
-            routing_spans_df = routing_spans_df.sort_values('start_time', ascending=False)
+            routing_spans_df = routing_spans_df.sort_values(
+                "start_time", ascending=False
+            )
             if limit:
                 routing_spans_df = routing_spans_df.head(limit)
 
-            # Convert DataFrame to list of dicts
+            # Convert DataFrame to list of dicts - keep Phoenix's flattened format
+            # evaluate_routing_decision() will handle both flattened and nested formats
             return routing_spans_df.to_dict("records")
 
         except Exception as e:

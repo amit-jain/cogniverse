@@ -6,6 +6,8 @@ These tests require:
 - Actual routing spans in the Phoenix database
 """
 
+import logging
+import os
 from datetime import datetime, timedelta
 
 import phoenix as px
@@ -16,6 +18,11 @@ from src.evaluation.evaluators.routing_evaluator import (
     RoutingMetrics,
     RoutingOutcome,
 )
+
+logger = logging.getLogger(__name__)
+
+# Enable synchronous export for integration tests
+os.environ["TELEMETRY_SYNC_EXPORT"] = "true"
 
 
 @pytest.mark.integration
@@ -36,34 +43,121 @@ class TestRoutingEvaluatorIntegration:
         """Create RoutingEvaluator with real Phoenix client"""
         return RoutingEvaluator(phoenix_client=phoenix_client)
 
-    def test_query_real_routing_spans(self, routing_evaluator):
+    @pytest.fixture
+    async def routing_agent_with_spans(self):
+        """Create routing agent and generate real spans"""
+        import asyncio
+
+        from src.app.agents.routing_agent import RoutingAgent
+
+        try:
+            # Initialize routing agent
+            agent = RoutingAgent()
+
+            # Generate some real routing spans by processing test queries
+            test_queries = [
+                "show me videos of basketball",
+                "summarize the game highlights",
+                "detailed analysis of the match",
+            ]
+
+            for query in test_queries:
+                try:
+                    result = await agent.analyze_and_route(query)
+                    logger.info(f"Processed query: '{query}', agent: {result.get('agent', 'unknown')}")
+                except Exception as e:
+                    # Some queries might fail, that's okay for testing
+                    logger.warning(f"Query '{query}' failed: {e}")
+
+            # Force flush telemetry spans
+            if hasattr(agent, 'telemetry_manager'):
+                success = agent.telemetry_manager.force_flush(timeout_millis=10000)
+                if not success:
+                    logger.error("Failed to flush telemetry spans")
+                else:
+                    logger.info("Successfully flushed all telemetry spans")
+
+            # Give Phoenix time to process flushed spans
+            await asyncio.sleep(2)
+
+            return agent
+        except Exception as e:
+            pytest.skip(f"Could not initialize routing agent: {e}")
+
+    @pytest.mark.asyncio
+    async def test_query_real_routing_spans(self, routing_evaluator, routing_agent_with_spans):
         """Test querying actual routing spans from Phoenix"""
-        # Query recent routing spans
-        spans = routing_evaluator.query_routing_spans(
-            project_name="cogniverse",
-            limit=10
-        )
+        # Generate spans
+        await routing_agent_with_spans
 
-        # If we have spans, verify their structure
-        if spans:
-            for span in spans:
-                assert "name" in span
-                assert span["name"] == "cogniverse.routing"
-                assert "attributes" in span
+        # Debug: Query ALL spans to see what we have
+        client = routing_evaluator.client
+        all_spans = client.get_spans_dataframe()
+        if all_spans is not None and not all_spans.empty:
+            logger.info(f"DEBUG: Found {len(all_spans)} total spans")
+            logger.info(f"DEBUG: Span names: {all_spans['name'].unique()}")
+            logger.info(f"DEBUG: Routing spans: {len(all_spans[all_spans['name'] == 'cogniverse.routing'])}")
+            logger.info(f"DEBUG: DataFrame columns (first 20): {all_spans.columns.tolist()[:20]}")
+            # Check for openinference columns
+            openinference_cols = [col for col in all_spans.columns if 'openinference' in col.lower()]
+            logger.info(f"DEBUG: OpenInference columns: {openinference_cols}")
 
-                # Verify required attributes exist
-                attributes = span["attributes"]
-                assert "routing.chosen_agent" in attributes or isinstance(attributes, dict)
-        else:
-            pytest.skip("No routing spans found in Phoenix - need to run routing agent first")
+            # Check if we have routing spans and what their project info looks like
+            routing_df = all_spans[all_spans['name'] == 'cogniverse.routing'].sort_values('start_time', ascending=False)
+            if not routing_df.empty:
+                # Check the NEWEST span (just created by this test)
+                newest_routing = routing_df.iloc[0].to_dict()
+                logger.info(f"DEBUG: NEWEST routing span keys: {list(newest_routing.keys())[:30]}")
+                logger.info(f"DEBUG: NEWEST attributes.service: {newest_routing.get('attributes.service')}")
+                logger.info(f"DEBUG: NEWEST openinference.project.name: {newest_routing.get('attributes.openinference.project.name')}")
 
-    def test_evaluate_real_routing_decisions(self, routing_evaluator):
+                # Check ALL columns for project
+                project_cols = [col for col in routing_df.columns if 'project' in col.lower()]
+                logger.info(f"DEBUG: Columns with 'project': {project_cols}")
+
+                # Check if attributes.openinference exists and what it contains
+                if 'attributes.openinference' in routing_df.columns:
+                    openinf = newest_routing.get('attributes.openinference')
+                    logger.info(f"DEBUG: attributes.openinference exists: {openinf}")
+                else:
+                    logger.info("DEBUG: NO attributes.openinference column")
+
+        # Query recent routing spans from routing optimization project
+        # RoutingEvaluator is already bound to routing project
+        spans = routing_evaluator.query_routing_spans(limit=10)
+
+        # Should have spans now
+        assert len(spans) > 0, f"No routing spans found after generating them. Total spans in Phoenix: {len(all_spans) if all_spans is not None else 0}"
+
+        # Verify proper span structure with parent-child relationships
+        for span in spans:
+            assert "name" in span
+            assert span["name"] == "cogniverse.routing"
+
+            # Verify parent-child relationship exists
+            assert "parent_id" in span, "Routing span should have parent_id"
+            assert span["parent_id"] is not None, "Routing span should be child of request span"
+
+            # Phoenix returns flattened attributes (attributes.routing, attributes.tenant, etc.)
+            assert "attributes.routing" in span, f"Span missing attributes.routing: {span.keys()}"
+
+            # Verify routing attributes exist in Phoenix's flattened format
+            routing_attrs = span["attributes.routing"]
+            assert isinstance(routing_attrs, dict), "attributes.routing should be a dict"
+            assert "chosen_agent" in routing_attrs, "Missing chosen_agent"
+            assert "confidence" in routing_attrs, "Missing confidence"
+            assert "processing_time" in routing_attrs, "Missing processing_time"
+
+    @pytest.mark.asyncio
+    async def test_evaluate_real_routing_decisions(self, routing_evaluator, routing_agent_with_spans):
         """Test evaluating actual routing decisions from Phoenix"""
+        # Generate spans
+        await routing_agent_with_spans
+
         # Query recent spans
         spans = routing_evaluator.query_routing_spans(limit=20)
 
-        if not spans:
-            pytest.skip("No routing spans found in Phoenix")
+        assert len(spans) > 0, "No routing spans found after generating them"
 
         # Evaluate each span
         valid_evaluations = 0
@@ -94,27 +188,31 @@ class TestRoutingEvaluatorIntegration:
         # We should have evaluated at least some spans
         assert valid_evaluations > 0, "No valid spans were evaluated"
 
-    def test_calculate_metrics_from_real_spans(self, routing_evaluator):
+    @pytest.mark.asyncio
+    async def test_calculate_metrics_from_real_spans(self, routing_evaluator, routing_agent_with_spans):
         """Test calculating metrics from actual Phoenix spans"""
+        # Generate spans
+        await routing_agent_with_spans
+
         # Query recent spans
         spans = routing_evaluator.query_routing_spans(limit=50)
 
-        if not spans:
-            pytest.skip("No routing spans found in Phoenix")
+        assert len(spans) > 0, "No routing spans found after generating them"
 
         # Filter to only valid routing spans
+        # Phoenix returns flattened format: attributes.routing = {chosen_agent, confidence, ...}
         valid_spans = []
         for span in spans:
             try:
-                # Quick validation
-                attrs = span.get("attributes", {})
-                if "routing.chosen_agent" in attrs and "routing.confidence" in attrs:
-                    valid_spans.append(span)
+                # Check Phoenix flattened format
+                if "attributes.routing" in span and isinstance(span["attributes.routing"], dict):
+                    routing_attrs = span["attributes.routing"]
+                    if "chosen_agent" in routing_attrs and "confidence" in routing_attrs:
+                        valid_spans.append(span)
             except Exception:
                 continue
 
-        if len(valid_spans) < 2:
-            pytest.skip(f"Not enough valid routing spans (found {len(valid_spans)})")
+        assert len(valid_spans) >= 2, f"Not enough valid routing spans (found {len(valid_spans)})"
 
         # Calculate metrics
         metrics = routing_evaluator.calculate_metrics(valid_spans)
@@ -171,17 +269,20 @@ class TestRoutingEvaluatorIntegration:
                         span_time = datetime.fromisoformat(span_time.replace('Z', '+00:00'))
                     # Note: Timezone handling might vary, so we're lenient here
 
-    def test_end_to_end_evaluation_workflow(self, routing_evaluator):
+    @pytest.mark.asyncio
+    async def test_end_to_end_evaluation_workflow(self, routing_evaluator, routing_agent_with_spans):
         """Test complete evaluation workflow from query to metrics"""
-        # Step 1: Query spans
+        # Step 1: Generate spans
+        await routing_agent_with_spans
+
+        # Step 2: Query spans
         spans = routing_evaluator.query_routing_spans(limit=30)
 
-        if not spans:
-            pytest.skip("No routing spans available for end-to-end test")
+        assert len(spans) > 0, "No routing spans available for end-to-end test"
 
         print(f"\nStep 1: Queried {len(spans)} spans")
 
-        # Step 2: Filter valid spans
+        # Step 3: Filter valid spans
         valid_spans = []
         for span in spans:
             try:
@@ -190,12 +291,11 @@ class TestRoutingEvaluatorIntegration:
             except ValueError:
                 continue
 
-        if len(valid_spans) < 2:
-            pytest.skip("Not enough valid spans for metrics calculation")
+        assert len(valid_spans) >= 2, "Not enough valid spans for metrics calculation"
 
         print(f"Step 2: Found {len(valid_spans)} valid spans")
 
-        # Step 3: Calculate metrics
+        # Step 4: Calculate metrics
         metrics = routing_evaluator.calculate_metrics(valid_spans)
 
         print("Step 3: Calculated metrics")
@@ -203,7 +303,7 @@ class TestRoutingEvaluatorIntegration:
         print(f"  Calibration: {metrics.confidence_calibration:.3f}")
         print(f"  Avg Latency: {metrics.avg_routing_latency:.2f}ms")
 
-        # Step 4: Verify metrics make sense
+        # Step 5: Verify metrics make sense
         assert metrics.total_decisions == len(valid_spans)
         assert metrics.routing_accuracy >= 0.0
         assert metrics.avg_routing_latency >= 0.0

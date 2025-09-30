@@ -169,10 +169,17 @@ class RoutingAgent(DSPyRoutingMixin):
         start_time = time.time()
         logger.info(f"Analyzing query for routing: '{query}'")
 
+        # Extract tenant_id from context or use default
+        tenant_id = (
+            context.get("tenant_id", self.telemetry_manager.config.default_tenant_id)
+            if context
+            else self.telemetry_manager.config.default_tenant_id
+        )
+
         # Create Phoenix span for the overall user request
         with self.telemetry_manager.span(
             name="cogniverse.request",
-            tenant_id="default",  # TODO: Extract from context if available
+            tenant_id=tenant_id,
             service_name="cogniverse.orchestration",
             attributes={
                 "openinference.span.kind": "WORKFLOW",
@@ -197,16 +204,24 @@ class RoutingAgent(DSPyRoutingMixin):
                 )
 
                 # Create child span for routing decision process
+                # Use routing optimization project to separate routing telemetry
+                routing_project_name = (
+                    self.telemetry_manager.config.get_routing_optimization_project_name(
+                        tenant_id
+                    )
+                )
                 with self.telemetry_manager.span(
                     name="cogniverse.routing",
-                    tenant_id="default",
+                    tenant_id=tenant_id,
                     service_name="cogniverse.routing.agent",
                     attributes={
                         "openinference.span.kind": "AGENT",
+                        "openinference.project.name": routing_project_name,  # Project name as span attribute
                         "operation.name": "route_query",
                         "routing.query": query,
                         "routing.context": str(context) if context else None,
                     },
+                    use_routing_project=True,  # Store in routing optimization project
                 ) as routing_span:
                     # Add routing decision details to routing span
                     routing_span.set_attribute("routing.chosen_agent", primary_agent)
