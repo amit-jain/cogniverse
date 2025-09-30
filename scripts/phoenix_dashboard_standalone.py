@@ -89,6 +89,13 @@ except ImportError as e:
     embedding_atlas_available = False
     embedding_atlas_error = str(e)
 
+try:
+    from routing_evaluation_tab import render_routing_evaluation_tab
+    routing_evaluation_tab_available = True
+except ImportError as e:
+    routing_evaluation_tab_available = False
+    routing_evaluation_tab_error = str(e)
+
 # Page configuration
 st.set_page_config(
     page_title="Analytics Dashboard",
@@ -463,7 +470,7 @@ async def call_agent_async(agent_url: str, task_data: dict) -> dict:
         return {"status": "error", "message": str(e)}
 
 # Create main tabs
-main_tabs = st.tabs(["📊 Analytics", "🧪 Evaluation", "🗺️ Embedding Atlas", "🔧 Optimization", "📥 Ingestion Testing", "🔍 Interactive Search"])
+main_tabs = st.tabs(["📊 Analytics", "🧪 Evaluation", "🗺️ Embedding Atlas", "🎯 Routing Evaluation", "🔧 Optimization", "📥 Ingestion Testing", "🔍 Interactive Search"])
 
 # Show agent connectivity status in sidebar
 agent_status = show_agent_status()
@@ -1507,8 +1514,21 @@ with main_tabs[2]:
         st.error(f"Failed to import embedding atlas tab: {embedding_atlas_error}")
         st.info("Please ensure all dependencies are installed: uv pip install umap-learn pyarrow scikit-learn")
 
-# Optimization Tab
+# Routing Evaluation Tab
 with main_tabs[3]:
+    if routing_evaluation_tab_available:
+        try:
+            render_routing_evaluation_tab()
+        except Exception as e:
+            st.error(f"Error loading Routing Evaluation tab: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+    else:
+        st.error(f"Failed to import routing evaluation tab: {routing_evaluation_tab_error}")
+        st.info("The routing evaluation tab displays metrics from the RoutingEvaluator.")
+
+# Optimization Tab
+with main_tabs[4]:
     st.header("🔧 System Optimization")
     st.markdown("Trigger and monitor optimization of routing, ingestion, and agent systems using your existing DSPy infrastructure.")
     
@@ -1720,7 +1740,7 @@ with main_tabs[3]:
     st.info("System status is displayed in the sidebar based on real agent connectivity checks. No services are assumed to be running.")
 
 # Ingestion Testing Tab
-with main_tabs[4]:
+with main_tabs[5]:
     st.header("📥 Ingestion Pipeline Testing")
     st.markdown("Interactive testing and configuration of video ingestion pipelines with different processing profiles.")
     
@@ -1923,8 +1943,8 @@ with main_tabs[4]:
     else:
         st.info("📊 Upload a video and process it to see detailed analysis")
 
-# Interactive Search Tab  
-with main_tabs[5]:
+# Interactive Search Tab
+with main_tabs[6]:
     st.header("🔍 Interactive Search Interface")
     st.markdown("Live search testing and evaluation with multiple ranking strategies and real-time results.")
     

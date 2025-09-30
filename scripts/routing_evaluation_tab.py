@@ -1,0 +1,391 @@
+#!/usr/bin/env python3
+"""
+Routing Evaluation Tab for Phoenix Dashboard
+
+Displays routing-specific metrics from RoutingEvaluator including:
+- Routing accuracy and confidence calibration
+- Per-agent performance metrics
+- Temporal analysis of routing decisions
+- Confidence distribution and analysis
+"""
+
+import logging
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import pandas as pd
+import plotly.express as px_express
+import plotly.graph_objects as go
+import streamlit as st
+
+# Add project root to path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from src.app.telemetry.config import SERVICE_NAME_ORCHESTRATION
+from src.evaluation.evaluators.routing_evaluator import RoutingEvaluator
+
+logger = logging.getLogger(__name__)
+
+
+def render_routing_evaluation_tab():
+    """Render the routing evaluation tab with metrics and visualizations"""
+    st.subheader("🎯 Routing Evaluation Dashboard")
+
+    # Configuration section
+    with st.expander("⚙️ Configuration", expanded=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            tenant_id = st.text_input("Tenant ID", value="default", help="Tenant to analyze")
+        with col2:
+            lookback_hours = st.number_input(
+                "Lookback Period (hours)", min_value=1, max_value=168, value=24
+            )
+
+        # Project name - using unified orchestration project
+        project_name = f"cogniverse-{tenant_id}-{SERVICE_NAME_ORCHESTRATION}"
+        st.info(f"📊 Querying spans from project: `{project_name}`")
+
+    # Initialize evaluator
+    try:
+        evaluator = RoutingEvaluator(project_name=project_name)
+    except Exception as e:
+        st.error(f"❌ Failed to initialize RoutingEvaluator: {e}")
+        return
+
+    # Time range for query
+    end_time = datetime.now()
+    start_time = end_time - timedelta(hours=lookback_hours)
+
+    # Fetch and evaluate routing spans
+    with st.spinner("Fetching routing spans from Phoenix..."):
+        try:
+            metrics = evaluator.evaluate_all_routing_decisions(
+                start_time=start_time, end_time=end_time
+            )
+        except Exception as e:
+            st.error(f"❌ Failed to evaluate routing decisions: {e}")
+            st.exception(e)
+            return
+
+    # Check if we have data
+    if metrics.total_decisions == 0:
+        st.warning(
+            f"📭 No routing decisions found in the last {lookback_hours} hours. "
+            "Generate some routing spans by making requests to the routing agent."
+        )
+        return
+
+    # Display metrics
+    _render_summary_metrics(metrics)
+    _render_per_agent_metrics(metrics)
+    _render_confidence_analysis(evaluator, start_time, end_time)
+    _render_temporal_analysis(evaluator, start_time, end_time)
+
+
+def _render_summary_metrics(metrics):
+    """Render summary metrics cards"""
+    st.subheader("📊 Summary Metrics")
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric(
+            label="Routing Accuracy",
+            value=f"{metrics.routing_accuracy:.1%}",
+            help="Percentage of routing decisions that led to successful outcomes",
+        )
+
+    with col2:
+        st.metric(
+            label="Confidence Calibration",
+            value=f"{metrics.confidence_calibration:.3f}",
+            help="Correlation between routing confidence and actual success rate",
+        )
+
+    with col3:
+        st.metric(
+            label="Avg Routing Latency",
+            value=f"{metrics.avg_routing_latency:.0f}ms",
+            help="Average time to make a routing decision",
+        )
+
+    with col4:
+        st.metric(
+            label="Total Decisions",
+            value=f"{metrics.total_decisions}",
+            delta=f"{metrics.ambiguous_count} ambiguous" if metrics.ambiguous_count > 0 else None,
+            help="Total routing decisions evaluated",
+        )
+
+
+def _render_per_agent_metrics(metrics):
+    """Render per-agent performance metrics"""
+    st.subheader("🤖 Per-Agent Performance")
+
+    # Create DataFrame for per-agent metrics
+    agent_data = []
+    for agent in metrics.per_agent_precision.keys():
+        agent_data.append(
+            {
+                "Agent": agent,
+                "Precision": metrics.per_agent_precision.get(agent, 0.0),
+                "Recall": metrics.per_agent_recall.get(agent, 0.0),
+                "F1 Score": metrics.per_agent_f1.get(agent, 0.0),
+            }
+        )
+
+    if not agent_data:
+        st.info("No per-agent metrics available yet.")
+        return
+
+    df = pd.DataFrame(agent_data)
+
+    # Display table
+    st.dataframe(
+        df.style.format(
+            {"Precision": "{:.2%}", "Recall": "{:.2%}", "F1 Score": "{:.2%}"}
+        ).background_gradient(cmap="RdYlGn", subset=["Precision", "Recall", "F1 Score"]),
+        use_container_width=True,
+    )
+
+    # Visualize as bar chart
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Bar(name="Precision", x=df["Agent"], y=df["Precision"], marker_color="lightblue")
+    )
+    fig.add_trace(
+        go.Bar(name="Recall", x=df["Agent"], y=df["Recall"], marker_color="lightgreen")
+    )
+    fig.add_trace(
+        go.Bar(name="F1 Score", x=df["Agent"], y=df["F1 Score"], marker_color="orange")
+    )
+
+    fig.update_layout(
+        title="Per-Agent Performance Metrics",
+        xaxis_title="Agent",
+        yaxis_title="Score",
+        barmode="group",
+        yaxis=dict(range=[0, 1]),
+        height=400,
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def _render_confidence_analysis(evaluator, start_time, end_time):
+    """Render confidence distribution and calibration analysis"""
+    st.subheader("📈 Confidence Analysis")
+
+    # Get detailed span data for confidence analysis
+    try:
+        import phoenix as px
+        client = px.Client()
+        spans_df = client.get_spans_dataframe(
+            project_name=evaluator.project_name, start_time=start_time, end_time=end_time
+        )
+
+        if spans_df.empty:
+            st.info("No span data available for confidence analysis.")
+            return
+
+        # Filter for routing spans
+        from src.app.telemetry.config import SPAN_NAME_ROUTING
+        routing_spans = spans_df[spans_df["name"] == SPAN_NAME_ROUTING]
+
+        if routing_spans.empty:
+            st.info("No routing spans found for confidence analysis.")
+            return
+
+        # Extract confidence values
+        confidences = []
+        successes = []
+
+        for _, span_row in routing_spans.iterrows():
+            try:
+                # Extract routing attributes
+                routing_attrs = span_row.get("attributes.routing")
+                if routing_attrs and isinstance(routing_attrs, dict):
+                    confidence = routing_attrs.get("confidence")
+                    if confidence is not None:
+                        confidences.append(float(confidence))
+                        # Determine success from span status
+                        success = span_row.get("status") == "OK"
+                        successes.append(success)
+            except Exception:
+                continue
+
+        if not confidences:
+            st.info("No confidence data available in routing spans.")
+            return
+
+        # Create two columns for visualizations
+        col1, col2 = st.columns(2)
+
+        with col1:
+            # Confidence distribution histogram
+            fig_hist = px_express.histogram(
+                x=confidences,
+                nbins=20,
+                title="Confidence Score Distribution",
+                labels={"x": "Confidence", "y": "Count"},
+            )
+            fig_hist.update_layout(showlegend=False, height=350)
+            st.plotly_chart(fig_hist, use_container_width=True)
+
+        with col2:
+            # Confidence vs success rate
+            confidence_df = pd.DataFrame({"confidence": confidences, "success": successes})
+
+            # Bin confidences into groups
+            confidence_df["confidence_bin"] = pd.cut(
+                confidence_df["confidence"], bins=10, labels=False
+            )
+            binned = (
+                confidence_df.groupby("confidence_bin")
+                .agg({"success": ["mean", "count"], "confidence": "mean"})
+                .reset_index()
+            )
+            binned.columns = ["bin", "success_rate", "count", "avg_confidence"]
+
+            fig_calib = go.Figure()
+            fig_calib.add_trace(
+                go.Scatter(
+                    x=binned["avg_confidence"],
+                    y=binned["success_rate"],
+                    mode="lines+markers",
+                    name="Actual Success Rate",
+                    marker=dict(size=binned["count"] * 2, sizemode="area", sizemin=4),
+                )
+            )
+            # Add diagonal line for perfect calibration
+            fig_calib.add_trace(
+                go.Scatter(
+                    x=[0, 1],
+                    y=[0, 1],
+                    mode="lines",
+                    name="Perfect Calibration",
+                    line=dict(dash="dash", color="gray"),
+                )
+            )
+
+            fig_calib.update_layout(
+                title="Confidence Calibration",
+                xaxis_title="Routing Confidence",
+                yaxis_title="Actual Success Rate",
+                height=350,
+                xaxis=dict(range=[0, 1]),
+                yaxis=dict(range=[0, 1]),
+            )
+            st.plotly_chart(fig_calib, use_container_width=True)
+
+    except Exception as e:
+        st.error(f"Error rendering confidence analysis: {e}")
+        logger.exception("Confidence analysis error")
+
+
+def _render_temporal_analysis(evaluator, start_time, end_time):
+    """Render temporal analysis of routing decisions"""
+    st.subheader("📅 Temporal Analysis")
+
+    try:
+        import phoenix as px
+        client = px.Client()
+        spans_df = client.get_spans_dataframe(
+            project_name=evaluator.project_name, start_time=start_time, end_time=end_time
+        )
+
+        if spans_df.empty:
+            st.info("No span data available for temporal analysis.")
+            return
+
+        # Filter for routing spans
+        from src.app.telemetry.config import SPAN_NAME_ROUTING
+        routing_spans = spans_df[spans_df["name"] == SPAN_NAME_ROUTING]
+
+        if routing_spans.empty:
+            st.info("No routing spans found for temporal analysis.")
+            return
+
+        # Extract temporal data
+        temporal_data = []
+        for _, span_row in routing_spans.iterrows():
+            try:
+                routing_attrs = span_row.get("attributes.routing")
+                if routing_attrs and isinstance(routing_attrs, dict):
+                    chosen_agent = routing_attrs.get("chosen_agent")
+                    confidence = routing_attrs.get("confidence")
+                    timestamp = span_row.get("start_time")
+                    success = span_row.get("status") == "OK"
+
+                    if chosen_agent and confidence is not None and timestamp:
+                        temporal_data.append(
+                            {
+                                "timestamp": timestamp,
+                                "agent": chosen_agent,
+                                "confidence": float(confidence),
+                                "success": success,
+                            }
+                        )
+            except Exception:
+                continue
+
+        if not temporal_data:
+            st.info("No temporal data available.")
+            return
+
+        df = pd.DataFrame(temporal_data)
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+
+        # Time series of routing decisions
+        col1, col2 = st.columns(2)
+
+        with col1:
+            # Decisions over time by agent
+            decisions_over_time = (
+                df.groupby([pd.Grouper(key="timestamp", freq="1H"), "agent"])
+                .size()
+                .reset_index(name="count")
+            )
+
+            fig_time = px_express.line(
+                decisions_over_time,
+                x="timestamp",
+                y="count",
+                color="agent",
+                title="Routing Decisions Over Time",
+                labels={"timestamp": "Time", "count": "Decisions", "agent": "Agent"},
+            )
+            fig_time.update_layout(height=350)
+            st.plotly_chart(fig_time, use_container_width=True)
+
+        with col2:
+            # Success rate over time
+            success_over_time = (
+                df.groupby(pd.Grouper(key="timestamp", freq="1H"))["success"]
+                .mean()
+                .reset_index()
+            )
+
+            fig_success = px_express.line(
+                success_over_time,
+                x="timestamp",
+                y="success",
+                title="Success Rate Over Time",
+                labels={"timestamp": "Time", "success": "Success Rate"},
+            )
+            fig_success.update_layout(height=350, yaxis=dict(range=[0, 1]))
+            st.plotly_chart(fig_success, use_container_width=True)
+
+    except Exception as e:
+        st.error(f"Error rendering temporal analysis: {e}")
+        logger.exception("Temporal analysis error")
+
+
+if __name__ == "__main__":
+    # For standalone testing
+    st.set_page_config(page_title="Routing Evaluation", page_icon="🎯", layout="wide")
+    render_routing_evaluation_tab()
