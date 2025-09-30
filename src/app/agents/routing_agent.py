@@ -231,6 +231,13 @@ class RoutingAgent(DSPyRoutingMixin):
                     routing_span.set_attribute(
                         "routing.processing_time", execution_time
                     )
+                    routing_span.set_attribute(
+                        "routing.search_modality", routing_decision.search_modality.value
+                    )
+                    if routing_decision.detected_modalities:
+                        routing_span.set_attribute(
+                            "routing.detected_modalities", ",".join(routing_decision.detected_modalities)
+                        )
 
                     # Add routing decision event to routing span
                     routing_span.add_event(
@@ -243,6 +250,7 @@ class RoutingAgent(DSPyRoutingMixin):
                                 if routing_decision.reasoning
                                 else ""
                             ),
+                            "detected_modalities": ",".join(routing_decision.detected_modalities) if routing_decision.detected_modalities else "",
                         },
                     )
 

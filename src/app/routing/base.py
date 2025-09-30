@@ -16,6 +16,9 @@ class SearchModality(Enum):
 
     VIDEO = "video"
     TEXT = "text"
+    AUDIO = "audio"
+    IMAGE = "image"
+    DOCUMENT = "document"
     BOTH = "both"
     NONE = "none"
 
@@ -42,6 +45,7 @@ class RoutingDecision:
     entities_detected: list[dict[str, Any]] | None = None
     reasoning: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    detected_modalities: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary format."""
@@ -54,6 +58,7 @@ class RoutingDecision:
             "entities_detected": self.entities_detected,
             "reasoning": self.reasoning,
             "metadata": self.metadata,
+            "detected_modalities": self.detected_modalities,
             "needs_video_search": self.search_modality
             in [SearchModality.VIDEO, SearchModality.BOTH],
             "needs_text_search": self.search_modality
@@ -72,6 +77,7 @@ class RoutingDecision:
             entities_detected=data.get("entities_detected"),
             reasoning=data.get("reasoning"),
             metadata=data.get("metadata", {}),
+            detected_modalities=data.get("detected_modalities", []),
         )
 
 

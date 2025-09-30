@@ -30,7 +30,7 @@ class GLiNERRoutingStrategy(RoutingStrategy):
     def __init__(self, config: dict[str, Any] | None = None):
         super().__init__(config)
         self.model = None
-        self.labels = config.get(
+        self.labels = (config or {}).get(
             "gliner_labels",
             [
                 "video_content",
@@ -39,6 +39,18 @@ class GLiNERRoutingStrategy(RoutingStrategy):
                 "document_content",
                 "text_information",
                 "written_content",
+                "audio_content",
+                "sound_content",
+                "music_content",
+                "podcast_content",
+                "image_content",
+                "photo_content",
+                "picture_content",
+                "diagram_content",
+                "chart_content",
+                "pdf_content",
+                "spreadsheet_content",
+                "presentation_content",
                 "summary_request",
                 "detailed_analysis",
                 "report_request",
@@ -47,8 +59,10 @@ class GLiNERRoutingStrategy(RoutingStrategy):
                 "temporal_context",
             ],
         )
-        self.threshold = config.get("gliner_threshold", 0.3)
-        self.model_name = config.get("gliner_model", "urchade/gliner_large-v2.1")
+        self.threshold = (config or {}).get("gliner_threshold", 0.3)
+        self.model_name = (config or {}).get(
+            "gliner_model", "urchade/gliner_large-v2.1"
+        )
         self._initialize_model()
 
     def _initialize_model(self):
@@ -131,32 +145,106 @@ class GLiNERRoutingStrategy(RoutingStrategy):
         """Analyze extracted entities to make routing decision."""
         video_score = 0
         text_score = 0
+        audio_score = 0
+        image_score = 0
+        document_score = 0
         generation_type = GenerationType.RAW_RESULTS
+        detected_modalities = []
 
         entity_types = [e["label"] for e in entities]
 
-        # Count entity types
+        # Count entity types and track modalities
         for entity in entities:
             label = entity["label"]
             if label in ["video_content", "visual_content", "media_content"]:
                 video_score += entity.get("score", 1.0)
+                if "video" not in detected_modalities:
+                    detected_modalities.append("video")
             elif label in ["document_content", "text_information", "written_content"]:
                 text_score += entity.get("score", 1.0)
+                if "text" not in detected_modalities:
+                    detected_modalities.append("text")
+            elif label in [
+                "audio_content",
+                "sound_content",
+                "music_content",
+                "podcast_content",
+            ]:
+                audio_score += entity.get("score", 1.0)
+                if "audio" not in detected_modalities:
+                    detected_modalities.append("audio")
+            elif label in [
+                "image_content",
+                "photo_content",
+                "picture_content",
+                "diagram_content",
+                "chart_content",
+            ]:
+                image_score += entity.get("score", 1.0)
+                if "image" not in detected_modalities:
+                    detected_modalities.append("image")
+            elif label in [
+                "pdf_content",
+                "spreadsheet_content",
+                "presentation_content",
+            ]:
+                document_score += entity.get("score", 1.0)
+                if "document" not in detected_modalities:
+                    detected_modalities.append("document")
             elif label in ["summary_request"]:
                 generation_type = GenerationType.SUMMARY
             elif label in ["detailed_analysis", "report_request"]:
                 generation_type = GenerationType.DETAILED_REPORT
 
-        # Determine search modality
-        if video_score > 0 and text_score > 0:
+        # Determine primary search modality based on highest score
+        scores = {
+            "video": video_score,
+            "text": text_score,
+            "audio": audio_score,
+            "image": image_score,
+            "document": document_score,
+        }
+
+        # Filter to only non-zero scores
+        non_zero_scores = {k: v for k, v in scores.items() if v > 0}
+
+        if not non_zero_scores:
+            # No clear modalities detected - this means GLiNER failed to detect entities
+            # Return BOTH as the most conservative choice, but with low confidence
+            # so the tiered router can escalate to LLM/LangExtract
             search_modality = SearchModality.BOTH
-        elif video_score > text_score:
-            search_modality = SearchModality.VIDEO
-        elif text_score > video_score:
-            search_modality = SearchModality.TEXT
+        elif len(non_zero_scores) > 1:
+            # Multiple modalities detected
+            # For backward compatibility with existing system, map to VIDEO/TEXT/BOTH
+            if video_score > 0 and text_score > 0:
+                search_modality = SearchModality.BOTH
+            elif video_score > 0:
+                search_modality = SearchModality.VIDEO
+            elif text_score > 0:
+                search_modality = SearchModality.TEXT
+            elif audio_score > 0:
+                search_modality = SearchModality.AUDIO
+            elif image_score > 0:
+                search_modality = SearchModality.IMAGE
+            elif document_score > 0:
+                search_modality = SearchModality.DOCUMENT
+            else:
+                search_modality = SearchModality.BOTH
         else:
-            # Default based on query keywords if no clear entities
-            search_modality = self._fallback_modality_detection(query)
+            # Single modality detected
+            primary_modality = max(non_zero_scores, key=non_zero_scores.get)
+            if primary_modality == "video":
+                search_modality = SearchModality.VIDEO
+            elif primary_modality == "text":
+                search_modality = SearchModality.TEXT
+            elif primary_modality == "audio":
+                search_modality = SearchModality.AUDIO
+            elif primary_modality == "image":
+                search_modality = SearchModality.IMAGE
+            elif primary_modality == "document":
+                search_modality = SearchModality.DOCUMENT
+            else:
+                search_modality = SearchModality.BOTH
 
         # Check for relationship indicators that GLiNER cannot handle well
         relationship_indicators = [
@@ -196,7 +284,9 @@ class GLiNERRoutingStrategy(RoutingStrategy):
         )
 
         # Calculate confidence based on entity scores
-        total_score = video_score + text_score
+        total_score = (
+            video_score + text_score + audio_score + image_score + document_score
+        )
 
         # Base confidence from entity detection
         if len(entities) > 0:
@@ -206,7 +296,16 @@ class GLiNERRoutingStrategy(RoutingStrategy):
                 confidence = 0.4 + (
                     0.2 * min(total_score, 1.0)
                 )  # 0.4-0.6 range - below threshold
-            elif video_score > 0 or text_score > 0:
+            elif any(
+                score > 0
+                for score in [
+                    video_score,
+                    text_score,
+                    audio_score,
+                    image_score,
+                    document_score,
+                ]
+            ):
                 # Simple entity queries - GLiNER handles these well
                 confidence = 0.7 + (0.3 * min(total_score, 1.0))  # 0.7-1.0 range
             elif any(
@@ -234,6 +333,7 @@ class GLiNERRoutingStrategy(RoutingStrategy):
             routing_method="gliner",
             entities_detected=entities,
             reasoning=f"Detected entities: {entity_types}",
+            detected_modalities=detected_modalities,
         )
 
     def _fallback_modality_detection(self, query: str) -> SearchModality:
@@ -281,14 +381,15 @@ class LLMRoutingStrategy(RoutingStrategy):
 
     def __init__(self, config: dict[str, Any] | None = None):
         super().__init__(config)
-        self.provider = config.get("provider", "local")
-        self.model = config.get("model", "gemma2:2b")
-        self.endpoint = config.get("endpoint", "http://localhost:11434")
-        self.temperature = config.get("temperature", 0.1)
-        self.max_tokens = config.get("max_tokens", 150)
+        cfg = config or {}
+        self.provider = cfg.get("provider", "local")
+        self.model = cfg.get("model", "gemma2:2b")
+        self.endpoint = cfg.get("endpoint", "http://localhost:11434")
+        self.temperature = cfg.get("temperature", 0.1)
+        self.max_tokens = cfg.get("max_tokens", 150)
 
         # DSPy optimization support
-        self.dspy_enabled = config.get("enable_dspy_optimization", False)
+        self.dspy_enabled = cfg.get("enable_dspy_optimization", False)
         self.optimized_prompts = {}
         self._load_optimized_prompts()
 
@@ -568,7 +669,8 @@ class KeywordRoutingStrategy(RoutingStrategy):
 
     def __init__(self, config: dict[str, Any] | None = None):
         super().__init__(config)
-        self.video_keywords = config.get(
+        cfg = config or {}
+        self.video_keywords = cfg.get(
             "video_keywords",
             [
                 "video",
@@ -589,7 +691,7 @@ class KeywordRoutingStrategy(RoutingStrategy):
                 "webinar",
             ],
         )
-        self.text_keywords = config.get(
+        self.text_keywords = cfg.get(
             "text_keywords",
             [
                 "document",
@@ -615,7 +717,7 @@ class KeywordRoutingStrategy(RoutingStrategy):
                 "read",
             ],
         )
-        self.summary_keywords = config.get(
+        self.summary_keywords = cfg.get(
             "summary_keywords",
             [
                 "summary",
@@ -629,7 +731,7 @@ class KeywordRoutingStrategy(RoutingStrategy):
                 "essence",
             ],
         )
-        self.report_keywords = config.get(
+        self.report_keywords = cfg.get(
             "report_keywords",
             [
                 "detailed report",
@@ -724,11 +826,12 @@ class HybridRoutingStrategy(RoutingStrategy):
 
     def __init__(self, config: dict[str, Any] | None = None):
         super().__init__(config)
+        cfg = config or {}
         self.gliner_strategy = GLiNERRoutingStrategy(config)
         self.llm_strategy = LLMRoutingStrategy(config)
         self.keyword_strategy = KeywordRoutingStrategy(config)
-        self.confidence_threshold = config.get("confidence_threshold", 0.6)
-        self.use_llm_fallback = config.get("use_llm_fallback", True)
+        self.confidence_threshold = cfg.get("confidence_threshold", 0.6)
+        self.use_llm_fallback = cfg.get("use_llm_fallback", True)
 
     async def route(
         self, query: str, context: dict[str, Any] | None = None
@@ -780,16 +883,18 @@ class EnsembleRoutingStrategy(RoutingStrategy):
 
     def __init__(self, config: dict[str, Any] | None = None):
         super().__init__(config)
+        cfg = config or {}
         self.strategies = []
-        self.weights = config.get("weights", {})
-        self.voting_method = config.get(
+        self.weights = cfg.get("weights", {})
+        self.voting_method = cfg.get(
             "voting_method", "weighted"
         )  # "weighted" or "majority"
         self._initialize_strategies(config)
 
     def _initialize_strategies(self, config: dict[str, Any]):
         """Initialize the ensemble strategies."""
-        enabled_strategies = config.get("enabled_strategies", ["gliner", "keyword"])
+        cfg = config or {}
+        enabled_strategies = cfg.get("enabled_strategies", ["gliner", "keyword"])
 
         if "gliner" in enabled_strategies:
             self.strategies.append(("gliner", GLiNERRoutingStrategy(config)))
@@ -949,9 +1054,10 @@ class LangExtractRoutingStrategy(RoutingStrategy):
 
     def __init__(self, config: dict[str, Any] | None = None):
         super().__init__(config)
+        cfg = config or {}
         # Use local Ollama model instead of Gemini
-        self.model_name = config.get("langextract_model", "smollm2:1.7b")
-        self.ollama_url = config.get("ollama_url", "http://localhost:11434")
+        self.model_name = cfg.get("langextract_model", "smollm2:1.7b")
+        self.ollama_url = cfg.get("ollama_url", "http://localhost:11434")
         self.extractor = None
         self.schema_prompt = """
         Classify query generation type by looking for EXACT keywords:

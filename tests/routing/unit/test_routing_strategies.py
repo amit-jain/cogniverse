@@ -414,5 +414,162 @@ class TestGenerationTypeClassification:
         ]
 
 
+class TestEnhancedModalityDetection:
+    """Unit tests for Phase 6: Enhanced multi-modal detection."""
+
+    @pytest.fixture
+    def gliner_config(self):
+        return {
+            "gliner_model": "urchade/gliner_multi-v2.1",
+            "gliner_threshold": 0.3,
+        }
+
+    @pytest.fixture
+    def strategy(self, gliner_config):
+        with patch("gliner.GLiNER") as mock_gliner:
+            mock_model = Mock()
+            mock_gliner.from_pretrained.return_value = mock_model
+            strategy = GLiNERRoutingStrategy(gliner_config)
+            strategy.model = mock_model
+            return strategy
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_audio_modality_detection(self, strategy):
+        """Test detection of audio content."""
+        strategy.model.predict_entities.return_value = [
+            {"label": "audio_content", "score": 0.85},
+            {"label": "podcast_content", "score": 0.75},
+        ]
+
+        decision = await strategy.route("find podcasts about machine learning")
+
+        assert decision.search_modality == SearchModality.AUDIO
+        assert "audio" in decision.detected_modalities
+        assert decision.confidence_score >= 0.7
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_image_modality_detection(self, strategy):
+        """Test detection of image content."""
+        strategy.model.predict_entities.return_value = [
+            {"label": "image_content", "score": 0.9},
+            {"label": "photo_content", "score": 0.85},
+        ]
+
+        decision = await strategy.route("show me photos of Paris")
+
+        assert decision.search_modality == SearchModality.IMAGE
+        assert "image" in decision.detected_modalities
+        assert decision.confidence_score >= 0.7
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_document_modality_detection(self, strategy):
+        """Test detection of document content."""
+        strategy.model.predict_entities.return_value = [
+            {"label": "pdf_content", "score": 0.88},
+            {"label": "spreadsheet_content", "score": 0.82},
+        ]
+
+        decision = await strategy.route("find PDF reports and Excel spreadsheets")
+
+        assert decision.search_modality == SearchModality.DOCUMENT
+        assert "document" in decision.detected_modalities
+        assert decision.confidence_score >= 0.7
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_multi_modal_detection(self, strategy):
+        """Test detection of multiple modalities."""
+        strategy.model.predict_entities.return_value = [
+            {"label": "video_content", "score": 0.8},
+            {"label": "audio_content", "score": 0.75},
+            {"label": "image_content", "score": 0.7},
+        ]
+
+        decision = await strategy.route("find videos, podcasts, and images about AI")
+
+        # Should detect all three modalities
+        assert len(decision.detected_modalities) >= 2
+        assert (
+            "video" in decision.detected_modalities
+            or "audio" in decision.detected_modalities
+        )
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_detected_modalities_in_decision(self, strategy):
+        """Test that detected_modalities is populated in RoutingDecision."""
+        strategy.model.predict_entities.return_value = [
+            {"label": "video_content", "score": 0.8},
+            {"label": "text_information", "score": 0.7},
+        ]
+
+        decision = await strategy.route("show me videos and articles")
+
+        assert isinstance(decision.detected_modalities, list)
+        assert len(decision.detected_modalities) == 2
+        assert "video" in decision.detected_modalities
+        assert "text" in decision.detected_modalities
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_chart_and_diagram_detection(self, strategy):
+        """Test detection of charts and diagrams as image content."""
+        strategy.model.predict_entities.return_value = [
+            {"label": "chart_content", "score": 0.85},
+            {"label": "diagram_content", "score": 0.8},
+        ]
+
+        decision = await strategy.route("show me charts and diagrams")
+
+        assert decision.search_modality == SearchModality.IMAGE
+        assert "image" in decision.detected_modalities
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_music_detection(self, strategy):
+        """Test detection of music as audio content."""
+        strategy.model.predict_entities.return_value = [
+            {"label": "music_content", "score": 0.9},
+            {"label": "sound_content", "score": 0.85},
+        ]
+
+        decision = await strategy.route("find music tracks about nature")
+
+        assert decision.search_modality == SearchModality.AUDIO
+        assert "audio" in decision.detected_modalities
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_presentation_detection(self, strategy):
+        """Test detection of presentations as document content."""
+        strategy.model.predict_entities.return_value = [
+            {"label": "presentation_content", "score": 0.88},
+        ]
+
+        decision = await strategy.route("find PowerPoint presentations")
+
+        assert decision.search_modality == SearchModality.DOCUMENT
+        assert "document" in decision.detected_modalities
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_backward_compatibility_video_text(self, strategy):
+        """Test backward compatibility: video+text should map to BOTH."""
+        strategy.model.predict_entities.return_value = [
+            {"label": "video_content", "score": 0.8},
+            {"label": "text_information", "score": 0.75},
+        ]
+
+        decision = await strategy.route("find videos and documents")
+
+        # Should map to BOTH for backward compatibility
+        assert decision.search_modality == SearchModality.BOTH
+        assert "video" in decision.detected_modalities
+        assert "text" in decision.detected_modalities
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
