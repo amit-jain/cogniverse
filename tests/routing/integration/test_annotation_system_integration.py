@@ -13,22 +13,24 @@ This test validates the COMPLETE annotation workflow end-to-end:
 NO MOCKS - tests against actual Phoenix server.
 """
 
-import asyncio
 import logging
 import os
 import time
 from datetime import datetime, timedelta
 
-import pandas as pd
-import pytest
 import phoenix as px
+import pytest
 
 from src.app.routing.advanced_optimizer import AdvancedRoutingOptimizer
 from src.app.routing.annotation_agent import AnnotationAgent, AnnotationPriority
 from src.app.routing.annotation_feedback_loop import AnnotationFeedbackLoop
 from src.app.routing.annotation_storage import AnnotationStorage
 from src.app.routing.llm_auto_annotator import AnnotationLabel, LLMAutoAnnotator
-from src.app.telemetry.config import SERVICE_NAME_ORCHESTRATION, SPAN_NAME_ROUTING, TelemetryConfig
+from src.app.telemetry.config import (
+    SERVICE_NAME_ORCHESTRATION,
+    SPAN_NAME_ROUTING,
+    TelemetryConfig,
+)
 from src.app.telemetry.manager import TelemetryManager
 
 logger = logging.getLogger(__name__)
@@ -447,7 +449,7 @@ class TestAnnotationSystemIntegration:
                 "routing.confidence": 0.3,
                 "routing.context": '{"entities": [], "relationships": []}'
             }
-        ) as span:
+        ):
             pass
 
         telemetry_manager.force_flush(timeout_millis=5000)
