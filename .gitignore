@@ -81,3 +81,6 @@ configs/schemas/ranking_strategies.json
 ideas/
 docs/internal/
 coverage_*.xml
+
+# Strategy documents (internal only)
+OPTIMIZATION_STRATEGY*.md

@@ -46,6 +46,7 @@ class TelemetryConfig:
     
     # Multi-tenant settings
     tenant_project_template: str = "cogniverse-{tenant_id}-{service}"
+    routing_optimization_template: str = "cogniverse-{tenant_id}-routing-optimization"
     default_tenant_id: str = "default"
     max_cached_tenants: int = 100  # LRU cache size
     tenant_cache_ttl_seconds: int = 3600  # 1 hour
@@ -67,6 +68,10 @@ class TelemetryConfig:
             tenant_id=tenant_id,
             service=service
         )
+
+    def get_routing_optimization_project_name(self, tenant_id: str) -> str:
+        """Generate routing optimization project name for a tenant."""
+        return self.routing_optimization_template.format(tenant_id=tenant_id)
     
     def should_instrument_level(self, component: str) -> bool:
         """Check if a component should be instrumented based on level."""

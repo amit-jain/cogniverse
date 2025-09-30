@@ -13,7 +13,7 @@
   
   "vespa_url": "http://localhost",
   "vespa_port": 8080,
-  "vespa_schema": "video_content",
+  "schema_name": "video_content",
   
   "byaldi_index_name": ".byaldi/my_video_index",
   

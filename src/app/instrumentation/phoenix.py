@@ -38,6 +38,7 @@ class CogniverseInstrumentor(BaseInstrumentor):
         self._instrument_backend_search()
         self._instrument_query_encoders()
         self._instrument_agents()
+        self._instrument_routing_agent()
         
         logger.info("Cogniverse instrumentation completed")
     
@@ -394,6 +395,147 @@ class CogniverseInstrumentor(BaseInstrumentor):
             
         except ImportError as e:
             logger.warning(f"Could not instrument backend search: {e}")
+
+    def _instrument_routing_agent(self):
+        """Add tracing to routing agent operations"""
+        try:
+            from src.app.agents.routing_agent import RoutingAgent
+
+            # Store original method for routing decisions
+            if hasattr(RoutingAgent, 'route_query'):
+                original_route = RoutingAgent.route_query
+                self._original_methods['src.app.agents.routing_agent.RoutingAgent.route_query'] = original_route
+
+                # Capture tracer in closure
+                tracer = self.tracer
+
+                @wraps(original_route)
+                async def traced_route(agent_self, query: str, *args, **kwargs):
+                    with tracer.start_as_current_span(
+                        "routing_agent.route_query",
+                        kind=SpanKind.SERVER,
+                        attributes={
+                            "openinference.span.kind": "AGENT",
+                            "operation.name": "route_query",
+                            "agent_type": "routing",
+                            "query": query,
+                            "input.value": json.dumps({
+                                "query": query,
+                                "args": str(args) if args else "",
+                                "kwargs": {k: str(v) for k, v in (kwargs or {}).items()}
+                            })
+                        }
+                    ) as span:
+                        try:
+                            start_time = time.time()
+
+                            # Execute routing
+                            result = await original_route(agent_self, query, *args, **kwargs)
+
+                            # Extract routing decision details
+                            if isinstance(result, dict):
+                                # Record routing decision
+                                chosen_agent = result.get("chosen_agent", "unknown")
+                                confidence = result.get("confidence", 0.0)
+                                reasoning = result.get("reasoning", "")
+                                workflow_steps = result.get("workflow_steps", [])
+
+                                span.set_attribute("routing.chosen_agent", chosen_agent)
+                                span.set_attribute("routing.confidence", confidence)
+                                span.set_attribute("routing.num_workflow_steps", len(workflow_steps))
+                                span.set_attribute("routing.reasoning", reasoning[:500])  # Truncate long reasoning
+
+                                # Add workflow details as event
+                                if workflow_steps:
+                                    workflow_summary = []
+                                    for step in workflow_steps:
+                                        workflow_summary.append({
+                                            "step": step.get("step", 0),
+                                            "agent": step.get("agent", "unknown"),
+                                            "action": step.get("action", "unknown")
+                                        })
+                                    span.add_event("routing_workflow", {"steps": str(workflow_summary)})
+
+                                # Set output value for Phoenix
+                                span.set_attribute("output.value", json.dumps({
+                                    "chosen_agent": chosen_agent,
+                                    "confidence": confidence,
+                                    "workflow_steps": len(workflow_steps)
+                                }))
+
+                            span.set_attribute("routing.latency_ms", (time.time() - start_time) * 1000)
+                            span.set_status(Status(StatusCode.OK))
+
+                            return result
+                        except Exception as e:
+                            span.record_exception(e)
+                            span.set_status(Status(StatusCode.ERROR, str(e)))
+                            raise
+
+                RoutingAgent.route_query = traced_route
+                logger.info("Instrumented RoutingAgent.route_query")
+
+            # Also instrument agent communication
+            if hasattr(RoutingAgent, '_call_agent'):
+                original_call = RoutingAgent._call_agent
+                self._original_methods['src.app.agents.routing_agent.RoutingAgent._call_agent'] = original_call
+
+                @wraps(original_call)
+                async def traced_call_agent(agent_self, agent_url: str, payload: dict, *args, **kwargs):
+                    with tracer.start_as_current_span(
+                        "routing_agent.call_agent",
+                        kind=SpanKind.CLIENT,
+                        attributes={
+                            "openinference.span.kind": "AGENT",
+                            "operation.name": "call_agent",
+                            "agent_url": agent_url,
+                            "agent_type": agent_url.split('/')[-1] if '/' in agent_url else "unknown",
+                            "payload_size": len(str(payload)),
+                            "input.value": json.dumps(payload, default=str)[:1000]  # Truncate large payloads
+                        }
+                    ) as span:
+                        try:
+                            start_time = time.time()
+
+                            # Execute agent call
+                            result = await original_call(agent_self, agent_url, payload, *args, **kwargs)
+
+                            # Record agent response details
+                            if isinstance(result, dict):
+                                span.set_attribute("agent.response_size", len(str(result)))
+                                if "status" in result:
+                                    span.set_attribute("agent.status", result["status"])
+                                if "error" in result:
+                                    span.set_attribute("agent.error", result["error"][:500])
+
+                                # Record success/failure for optimization
+                                agent_success = result.get("status") == "success" or "error" not in result
+                                span.set_attribute("agent.success", agent_success)
+
+                                # Set output value
+                                span.set_attribute("output.value", json.dumps({
+                                    "status": result.get("status", "unknown"),
+                                    "response_size": len(str(result)),
+                                    "success": agent_success
+                                }, default=str))
+
+                            span.set_attribute("agent.call_latency_ms", (time.time() - start_time) * 1000)
+                            span.set_status(Status(StatusCode.OK))
+
+                            return result
+                        except Exception as e:
+                            span.record_exception(e)
+                            span.set_status(Status(StatusCode.ERROR, str(e)))
+                            # Record failure for optimization
+                            span.set_attribute("agent.success", False)
+                            span.set_attribute("agent.error", str(e)[:500])
+                            raise
+
+                RoutingAgent._call_agent = traced_call_agent
+                logger.info("Instrumented RoutingAgent._call_agent")
+
+        except ImportError as e:
+            logger.warning(f"Could not instrument routing agent: {e}")
 
 
 def instrument_cogniverse():

@@ -39,7 +39,6 @@ class Config:
         self.config_data = {
             "vespa_url": os.getenv("VESPA_URL", None),
             "vespa_port": int(os.getenv("VESPA_PORT", "8080")) if os.getenv("VESPA_PORT") else None,
-            "vespa_schema": os.getenv("VESPA_SCHEMA", None),
             "phoenix_url": os.getenv("PHOENIX_URL", None),
             "search_backend": os.getenv("SEARCH_BACKEND", None),
         }

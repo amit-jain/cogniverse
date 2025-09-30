@@ -1,0 +1,33 @@
+{
+  "good_routes": [
+    {
+      "query": "show me basketball videos",
+      "expected_agent": "video_search_agent",
+      "reasoning": "clear video intent"
+    },
+    {
+      "query": "find highlights of the game",
+      "expected_agent": "video_search_agent",
+      "reasoning": "visual content request"
+    },
+    {
+      "query": "summarize the game results",
+      "expected_agent": "summarizer_agent",
+      "reasoning": "summary request"
+    }
+  ],
+  "bad_routes": [
+    {
+      "query": "what happened in the match",
+      "wrong_agent": "detailed_report_agent",
+      "should_be": "video_search_agent",
+      "reasoning": "user wants to see, not read"
+    },
+    {
+      "query": "show me soccer highlights",
+      "wrong_agent": "text_search_agent",
+      "should_be": "video_search_agent",
+      "reasoning": "clear video intent"
+    }
+  ]
+}

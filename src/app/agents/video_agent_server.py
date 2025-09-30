@@ -55,7 +55,7 @@ class VideoSearchAgent:
         config = get_config()
 
         # Get model from active profile or use default
-        active_profile = config.get_active_profile()
+        active_profile = os.getenv("VIDEO_PROFILE", "frame_based_colpali")
         profiles = config.get("video_processing_profiles", {})
         if active_profile and active_profile in profiles:
             model_name = profiles[active_profile].get(
@@ -298,16 +298,11 @@ if __name__ == "__main__":
     # Set profile if specified
     if args.profile:
         os.environ["VIDEO_PROFILE"] = args.profile
-        # Reload config with the new profile
-        from src.common.config import get_config
-
-        app_config = get_config()
-        app_config.reload()
         print(f"--- Using video processing profile: {args.profile} ---")
 
     # Get active profile for display
     config = get_config()
-    active_profile = config.get_active_profile()
+    active_profile = os.getenv("VIDEO_PROFILE", "frame_based_colpali")
 
     print("--- Starting Video Search Agent Server ---")
     print(f"--- Port: {args.port} ---")

@@ -35,7 +35,7 @@ config = {
     "backend": "vespa",
     "vespa_url": "http://localhost",
     "vespa_port": 8080,
-    "vespa_schema": "video_frame"
+    "schema_name": "video_frame"
 }
 
 # Create generator

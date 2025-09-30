@@ -1,7 +1,10 @@
 {
   "comment": "Multi-Agent RAG System Configuration - Copy this file to config.json and modify the values as needed",
+  "routing_agent_url": "http://localhost:8001",
   "text_agent_url": "http://localhost:8002",
-  "video_agent_url": "http://localhost:8001",
+  "video_agent_url": "http://localhost:8002",
+  "detailed_report_agent_url": "http://localhost:8003",
+  "summarizer_agent_url": "http://localhost:8004",
   "composing_agent_port": 8000,
   "search_backend": "vespa",
   "elastic_cloud_id": "your_elastic_cloud_id",
@@ -9,7 +12,7 @@
   "elastic_index": "your-text-index",
   "vespa_url": "http://localhost",
   "vespa_port": 8080,
-  "vespa_schema": "video_frame",
+  "schema_name": "video_colpali_smol500_mv_frame",
   "byaldi_index_name": ".byaldi/my_video_index",
   "vlm_endpoint_url": "https://amit-jain--cogniverse-vlm-vlmmodel-generate-description.modal.run/",
   "auto_start_vlm_service": true,
@@ -17,6 +20,11 @@
   "embedding_model": "all-MiniLM-L6-v2",
   "local_llm_model": "deepseek-r1:7b",
   "base_url": "http://localhost:11434",
+  "llm": {
+    "model_name": "deepseek-r1:7b",
+    "base_url": "http://localhost:11434",
+    "api_key": null
+  },
   "remote_inference_url": null,
   "evaluation_datasets": {
     "default": "visual_test_queries",

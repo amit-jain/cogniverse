@@ -1,7 +1,7 @@
 {
   "vespa_url": "http://localhost",
   "vespa_port": 8081,
-  "vespa_schema": "video_colpali_smol500_mv_frame",
+  "schema_name": "video_colpali_smol500_mv_frame",
   "search_backend": "vespa",
   "embedding_backend": "vespa",
   "phoenix_url": "http://localhost:6006",

@@ -44,7 +44,7 @@ def get_available_videos() -> Dict[str, Dict]:
         backend = SearchBackend(
             url=config.get("vespa_url", "http://localhost"),
             port=config.get("vespa_port", 8080),
-            schema=config.get("vespa_schema", "video_frame")
+            schema=config.get("schema_name", "video_frame")
         )
         
         # Query to get unique videos with aggregation

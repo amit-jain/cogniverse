@@ -223,7 +223,7 @@ def mock_get_config():
         mock_config.return_value = {
             "vespa_url": "http://localhost",
             "vespa_port": 8080,
-            "vespa_schema": "video_frame",
+            "schema_name": "video_frame",
         }
         yield mock_config
 

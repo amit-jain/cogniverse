@@ -22,7 +22,7 @@ class TestSchemaGeneration(unittest.TestCase):
         """Set up test fixtures"""
         self.test_profiles = {
             "test_colpali": {
-                "vespa_schema": "video_colpali",
+                "schema_name": "video_colpali",
                 "embedding_model": "vidore/colsmol-500m",
                 "embedding_type": "frame_based",
                 "schema_config": {
@@ -34,7 +34,7 @@ class TestSchemaGeneration(unittest.TestCase):
                 }
             },
             "test_videoprism_base": {
-                "vespa_schema": "video_videoprism_base",
+                "schema_name": "video_videoprism_base",
                 "embedding_model": "videoprism_public_v1_base_hf",
                 "embedding_type": "direct_video_frame",
                 "schema_config": {
@@ -46,7 +46,7 @@ class TestSchemaGeneration(unittest.TestCase):
                 }
             },
             "test_videoprism_large": {
-                "vespa_schema": "video_videoprism_large",
+                "schema_name": "video_videoprism_large",
                 "embedding_model": "videoprism_public_v1_large_hf",
                 "embedding_type": "direct_video_frame",
                 "schema_config": {
@@ -136,7 +136,7 @@ class TestSchemaGeneration(unittest.TestCase):
     def test_missing_schema_config(self):
         """Test handling of profile without schema_config"""
         profile = {
-            "vespa_schema": "video_frame",
+            "schema_name": "video_frame",
             "embedding_model": "some-model",
             "embedding_type": "frame_based"
             # No schema_config
