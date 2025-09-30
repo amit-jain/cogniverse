@@ -26,6 +26,9 @@ sys.path.insert(0, str(project_root))
 
 from src.app.telemetry.config import SERVICE_NAME_ORCHESTRATION
 from src.evaluation.evaluators.routing_evaluator import RoutingEvaluator
+from src.app.routing.annotation_agent import AnnotationAgent, AnnotationPriority
+from src.app.routing.llm_auto_annotator import LLMAutoAnnotator, AnnotationLabel
+from src.app.routing.annotation_storage import AnnotationStorage
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +86,10 @@ def render_routing_evaluation_tab():
     _render_per_agent_metrics(metrics)
     _render_confidence_analysis(evaluator, start_time, end_time)
     _render_temporal_analysis(evaluator, start_time, end_time)
+
+    # Annotation section
+    st.divider()
+    _render_annotation_section(tenant_id, project_name, lookback_hours)
 
 
 def _render_summary_metrics(metrics):
@@ -383,6 +390,232 @@ def _render_temporal_analysis(evaluator, start_time, end_time):
     except Exception as e:
         st.error(f"Error rendering temporal analysis: {e}")
         logger.exception("Temporal analysis error")
+
+
+def _render_annotation_section(tenant_id: str, project_name: str, lookback_hours: int):
+    """Render annotation interface for human review"""
+    st.subheader("📝 Routing Decision Annotations")
+
+    # Initialize agents
+    try:
+        annotation_agent = AnnotationAgent(
+            tenant_id=tenant_id,
+            confidence_threshold=0.6
+        )
+        llm_annotator = LLMAutoAnnotator()
+        annotation_storage = AnnotationStorage(tenant_id=tenant_id)
+    except Exception as e:
+        st.error(f"❌ Failed to initialize annotation agents: {e}")
+        return
+
+    # Configuration
+    with st.expander("⚙️ Annotation Settings", expanded=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            confidence_threshold = st.slider(
+                "Confidence Threshold",
+                min_value=0.0,
+                max_value=1.0,
+                value=0.6,
+                step=0.05,
+                help="Spans below this confidence need review"
+            )
+        with col2:
+            max_annotations = st.number_input(
+                "Max Annotations to Show",
+                min_value=1,
+                max_value=100,
+                value=20,
+                help="Maximum number of annotation requests to display"
+            )
+
+    # Action buttons
+    col1, col2, col3 = st.columns([1, 1, 2])
+
+    with col1:
+        if st.button("🔍 Find Spans Needing Annotation", use_container_width=True):
+            with st.spinner("Identifying spans..."):
+                try:
+                    annotation_agent.confidence_threshold = confidence_threshold
+                    annotation_agent.max_annotations_per_run = max_annotations
+                    requests = annotation_agent.identify_spans_needing_annotation(
+                        lookback_hours=lookback_hours
+                    )
+                    st.session_state["annotation_requests"] = requests
+                    st.success(f"✅ Found {len(requests)} spans needing annotation")
+                except Exception as e:
+                    st.error(f"❌ Error identifying spans: {e}")
+
+    with col2:
+        if st.button("🤖 Generate LLM Annotations", use_container_width=True):
+            if "annotation_requests" not in st.session_state:
+                st.warning("⚠️ First find spans needing annotation")
+            else:
+                requests = st.session_state["annotation_requests"]
+                with st.spinner(f"Generating annotations for {len(requests)} spans..."):
+                    try:
+                        auto_annotations = llm_annotator.batch_annotate(requests)
+                        st.session_state["auto_annotations"] = auto_annotations
+                        st.success(f"✅ Generated {len(auto_annotations)} LLM annotations")
+                    except Exception as e:
+                        st.error(f"❌ Error generating annotations: {e}")
+
+    with col3:
+        stats = annotation_storage.get_annotation_statistics()
+        st.metric(
+            label="Total Annotations",
+            value=stats.get("total", 0),
+            delta=f"{stats.get('pending_review', 0)} pending review"
+        )
+
+    # Display annotation requests and allow human review
+    if "annotation_requests" in st.session_state and st.session_state["annotation_requests"]:
+        st.subheader("📋 Annotation Queue")
+
+        requests = st.session_state["annotation_requests"]
+        auto_annotations = st.session_state.get("auto_annotations", [])
+
+        # Create mapping of span_id to auto_annotation
+        auto_annotation_map = {
+            ann.span_id: ann for ann in auto_annotations
+        }
+
+        # Filter controls
+        col1, col2 = st.columns(2)
+        with col1:
+            priority_filter = st.multiselect(
+                "Filter by Priority",
+                options=[p.value for p in AnnotationPriority],
+                default=[p.value for p in AnnotationPriority]
+            )
+        with col2:
+            show_annotated = st.checkbox("Show LLM-Annotated", value=True)
+
+        # Filter requests
+        filtered_requests = [
+            r for r in requests
+            if r.priority.value in priority_filter
+            and (show_annotated or r.span_id not in auto_annotation_map)
+        ]
+
+        st.info(f"Showing {len(filtered_requests)} of {len(requests)} annotation requests")
+
+        # Display each request
+        for idx, request in enumerate(filtered_requests):
+            with st.expander(
+                f"{'🔴' if request.priority == AnnotationPriority.HIGH else '🟡' if request.priority == AnnotationPriority.MEDIUM else '🟢'} "
+                f"{request.query[:80]}... "
+                f"({request.chosen_agent}, conf: {request.routing_confidence:.2f})"
+            ):
+                # Request details
+                col1, col2 = st.columns([2, 1])
+
+                with col1:
+                    st.markdown("**Query:**")
+                    st.text(request.query)
+
+                    st.markdown("**Routing Decision:**")
+                    st.write(f"- Agent: `{request.chosen_agent}`")
+                    st.write(f"- Confidence: `{request.routing_confidence:.2f}`")
+                    st.write(f"- Outcome: `{request.outcome.value}`")
+
+                    st.markdown("**Reason for Annotation:**")
+                    st.write(request.reason)
+
+                with col2:
+                    st.markdown("**Metadata:**")
+                    st.write(f"Priority: {request.priority.value}")
+                    st.write(f"Timestamp: {request.timestamp.strftime('%Y-%m-%d %H:%M')}")
+                    st.write(f"Span ID: `{request.span_id[:16]}...`")
+
+                # Show LLM annotation if available
+                auto_annotation = auto_annotation_map.get(request.span_id)
+                if auto_annotation:
+                    st.markdown("---")
+                    st.markdown("**🤖 LLM Annotation:**")
+
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.write(f"Label: `{auto_annotation.label.value}`")
+                    with col2:
+                        st.write(f"Confidence: `{auto_annotation.confidence:.2f}`")
+                    with col3:
+                        st.write(f"Review Needed: {'Yes' if auto_annotation.requires_human_review else 'No'}")
+
+                    st.markdown("**Reasoning:**")
+                    st.info(auto_annotation.reasoning)
+
+                    if auto_annotation.suggested_correct_agent:
+                        st.write(f"Suggested Agent: `{auto_annotation.suggested_correct_agent}`")
+
+                # Human review interface
+                st.markdown("---")
+                st.markdown("**👤 Human Review:**")
+
+                form_key = f"annotation_form_{idx}_{request.span_id}"
+                with st.form(form_key):
+                    col1, col2 = st.columns([2, 1])
+
+                    with col1:
+                        human_label = st.selectbox(
+                            "Your Annotation",
+                            options=[label.value for label in AnnotationLabel],
+                            index=0 if not auto_annotation else [label.value for label in AnnotationLabel].index(auto_annotation.label.value),
+                            key=f"label_{idx}"
+                        )
+
+                    with col2:
+                        suggested_agent = st.text_input(
+                            "Suggested Agent (if wrong)",
+                            value=auto_annotation.suggested_correct_agent if auto_annotation and auto_annotation.suggested_correct_agent else "",
+                            key=f"agent_{idx}"
+                        )
+
+                    reasoning = st.text_area(
+                        "Reasoning",
+                        value=auto_annotation.reasoning if auto_annotation else "",
+                        height=100,
+                        key=f"reasoning_{idx}"
+                    )
+
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        submit_button = st.form_submit_button("✅ Submit Annotation", use_container_width=True)
+                    with col2:
+                        if auto_annotation and not auto_annotation.requires_human_review:
+                            approve_button = st.form_submit_button("👍 Approve LLM Annotation", use_container_width=True)
+                        else:
+                            approve_button = False
+
+                    if submit_button:
+                        try:
+                            success = annotation_storage.store_human_annotation(
+                                span_id=request.span_id,
+                                label=AnnotationLabel(human_label),
+                                reasoning=reasoning,
+                                suggested_agent=suggested_agent if suggested_agent else None
+                            )
+                            if success:
+                                st.success("✅ Annotation saved!")
+                            else:
+                                st.error("❌ Failed to save annotation")
+                        except Exception as e:
+                            st.error(f"❌ Error saving annotation: {e}")
+
+                    if approve_button:
+                        try:
+                            success = annotation_storage.approve_llm_annotation(
+                                span_id=request.span_id
+                            )
+                            if success:
+                                st.success("✅ LLM annotation approved!")
+                            else:
+                                st.error("❌ Failed to approve annotation")
+                        except Exception as e:
+                            st.error(f"❌ Error approving annotation: {e}")
+
+    else:
+        st.info("👆 Click 'Find Spans Needing Annotation' to start")
 
 
 if __name__ == "__main__":
