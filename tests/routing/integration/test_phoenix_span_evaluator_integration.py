@@ -144,7 +144,9 @@ class TestPhoenixSpanEvaluatorIntegration:
         logger.info("🔄 Generating unique routing spans for optimizer test...")
         for query, _ in unique_queries:
             result = await agent.analyze_and_route(query)
-            logger.info(f"✅ Processed query: '{query}', agent: {result.get('agent', 'unknown')}")
+            logger.info(
+                f"✅ Processed query: '{query}', agent: {result.get('agent', 'unknown')}"
+            )
 
         # Force flush telemetry spans
         success = agent.telemetry_manager.force_flush(timeout_millis=10000)
@@ -161,7 +163,9 @@ class TestPhoenixSpanEvaluatorIntegration:
             # Verify optimizer starts empty (no loaded data)
             initial_count = len(optimizer.experience_replay)
             logger.info(f"📊 Initial experience count: {initial_count}")
-            assert initial_count == 0, f"Expected empty optimizer, got {initial_count} experiences"
+            assert (
+                initial_count == 0
+            ), f"Expected empty optimizer, got {initial_count} experiences"
 
             # Create span evaluator with our optimizer
             evaluator = PhoenixSpanEvaluator(optimizer=optimizer, tenant_id="default")

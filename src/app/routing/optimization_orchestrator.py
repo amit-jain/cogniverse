@@ -268,7 +268,9 @@ class OptimizationOrchestrator:
 
             # Trigger optimization (AdvancedRoutingOptimizer handles this automatically)
             # When enough experiences are recorded, it will optimize
-            logger.info("🔄 Optimization triggered - optimizer will process experiences")
+            logger.info(
+                "🔄 Optimization triggered - optimizer will process experiences"
+            )
 
             # Update metrics
             self.metrics["optimizations_triggered"] += 1
@@ -344,20 +346,16 @@ class OptimizationOrchestrator:
         results = {}
 
         # 1. Evaluate spans
-        span_result = await self.span_evaluator.evaluate_routing_spans(
-            lookback_hours=2
-        )
+        span_result = await self.span_evaluator.evaluate_routing_spans(lookback_hours=2)
         results["span_evaluation"] = span_result
 
         # Update metrics from span evaluation
         self.metrics["spans_evaluated"] += span_result.get("spans_processed", 0)
-        self.metrics["experiences_created"] += span_result.get(
-            "experiences_created", 0
-        )
+        self.metrics["experiences_created"] += span_result.get("experiences_created", 0)
 
         # 2. Identify spans for annotation
-        annotation_requests = (
-            self.annotation_agent.identify_spans_needing_annotation(lookback_hours=24)
+        annotation_requests = self.annotation_agent.identify_spans_needing_annotation(
+            lookback_hours=24
         )
         results["annotation_requests"] = len(annotation_requests)
 
@@ -367,9 +365,7 @@ class OptimizationOrchestrator:
         # 3. Generate annotations (if available)
         if annotation_requests:
             try:
-                annotations = self.llm_annotator.batch_annotate(
-                    annotation_requests[:5]
-                )
+                annotations = self.llm_annotator.batch_annotate(annotation_requests[:5])
                 for i, annotation in enumerate(annotations):
                     success = self.annotation_storage.store_llm_annotation(
                         span_id=annotation_requests[i].span_id, annotation=annotation
@@ -392,7 +388,9 @@ class OptimizationOrchestrator:
         """Get current orchestrator metrics"""
         return {
             **self.metrics,
-            "uptime_seconds": (datetime.now() - self.metrics["started_at"]).total_seconds(),
+            "uptime_seconds": (
+                datetime.now() - self.metrics["started_at"]
+            ).total_seconds(),
         }
 
 

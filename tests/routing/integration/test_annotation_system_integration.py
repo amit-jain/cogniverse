@@ -42,7 +42,9 @@ def phoenix_client():
     try:
         client = px.Client()
         # Test connection
-        client.get_spans_dataframe(start_time=datetime.now() - timedelta(hours=1), end_time=datetime.now())
+        client.get_spans_dataframe(
+            start_time=datetime.now() - timedelta(hours=1), end_time=datetime.now()
+        )
         return client
     except Exception as e:
         pytest.skip(f"Phoenix server not available: {e}")
@@ -65,10 +67,7 @@ class TestAnnotationSystemIntegration:
 
     @pytest.mark.asyncio
     async def test_complete_annotation_workflow_with_real_phoenix(
-        self,
-        phoenix_client,
-        test_tenant_id,
-        telemetry_manager
+        self, phoenix_client, test_tenant_id, telemetry_manager
     ):
         """
         Test complete annotation workflow end-to-end with real Phoenix
@@ -87,9 +86,17 @@ class TestAnnotationSystemIntegration:
 
         span_ids = []
         queries = [
-            ("What are the best restaurants in Paris?", "video_search", 0.3),  # Low confidence
-            ("Show me nature documentaries", "detailed_report", 0.45),  # Medium confidence
-            ("Explain quantum computing", "summarizer", 0.9)  # High confidence
+            (
+                "What are the best restaurants in Paris?",
+                "video_search",
+                0.3,
+            ),  # Low confidence
+            (
+                "Show me nature documentaries",
+                "detailed_report",
+                0.45,
+            ),  # Medium confidence
+            ("Explain quantum computing", "summarizer", 0.9),  # High confidence
         ]
 
         for query, agent, confidence in queries:
@@ -103,8 +110,8 @@ class TestAnnotationSystemIntegration:
                     "routing.chosen_agent": agent,
                     "routing.confidence": confidence,
                     "routing.context": "{}",
-                    "routing.processing_time": 0.1
-                }
+                    "routing.processing_time": 0.1,
+                },
             ) as span:
                 span_id = getattr(span, "context", None)
                 if span_id and hasattr(span_id, "span_id"):
@@ -122,22 +129,23 @@ class TestAnnotationSystemIntegration:
         logger.info("\n=== STEP 2: Verifying spans in Phoenix ===")
 
         config = TelemetryConfig.from_env()
-        project_name = config.get_project_name(test_tenant_id, SERVICE_NAME_ORCHESTRATION)
+        project_name = config.get_project_name(
+            test_tenant_id, SERVICE_NAME_ORCHESTRATION
+        )
 
         end_time = datetime.now()
         start_time = end_time - timedelta(minutes=5)
 
         spans_df = phoenix_client.get_spans_dataframe(
-            project_name=project_name,
-            start_time=start_time,
-            end_time=end_time
+            project_name=project_name, start_time=start_time, end_time=end_time
         )
 
         assert not spans_df.empty, "No spans found in Phoenix"
 
         routing_spans = spans_df[spans_df["name"] == SPAN_NAME_ROUTING]
-        assert len(routing_spans) >= len(queries), \
-            f"Expected at least {len(queries)} routing spans, found {len(routing_spans)}"
+        assert len(routing_spans) >= len(
+            queries
+        ), f"Expected at least {len(queries)} routing spans, found {len(routing_spans)}"
 
         logger.info(f"Verified {len(routing_spans)} routing spans in Phoenix")
 
@@ -147,33 +155,41 @@ class TestAnnotationSystemIntegration:
         annotation_agent = AnnotationAgent(
             tenant_id=test_tenant_id,
             confidence_threshold=0.6,  # Should catch first two queries
-            max_annotations_per_run=10
+            max_annotations_per_run=10,
         )
 
         annotation_requests = annotation_agent.identify_spans_needing_annotation(
             lookback_hours=1
         )
 
-        assert len(annotation_requests) >= 2, \
-            f"Expected at least 2 annotation requests, got {len(annotation_requests)}"
+        assert (
+            len(annotation_requests) >= 2
+        ), f"Expected at least 2 annotation requests, got {len(annotation_requests)}"
 
         # Verify prioritization - we should get annotations for low confidence spans
         priorities = [r.priority for r in annotation_requests]
         logger.info(f"Identified {len(annotation_requests)} spans needing annotation")
         logger.info(f"  - Priorities: {[p.value for p in priorities]}")
-        logger.info(f"  - Confidences: {[r.routing_confidence for r in annotation_requests]}")
+        logger.info(
+            f"  - Confidences: {[r.routing_confidence for r in annotation_requests]}"
+        )
         logger.info(f"  - Outcomes: {[r.outcome.value for r in annotation_requests]}")
 
         # At minimum, we should have annotations for the low confidence spans (< 0.6)
-        low_conf_requests = [r for r in annotation_requests if r.routing_confidence < 0.6]
-        assert len(low_conf_requests) >= 2, \
-            f"Expected at least 2 low confidence requests, got {len(low_conf_requests)}"
+        low_conf_requests = [
+            r for r in annotation_requests if r.routing_confidence < 0.6
+        ]
+        assert (
+            len(low_conf_requests) >= 2
+        ), f"Expected at least 2 low confidence requests, got {len(low_conf_requests)}"
 
         # Very low confidence (< 0.3) should be HIGH priority or MEDIUM if outcome is SUCCESS
         very_low_conf = [r for r in annotation_requests if r.routing_confidence < 0.35]
         if very_low_conf:
-            assert very_low_conf[0].priority in [AnnotationPriority.HIGH, AnnotationPriority.MEDIUM], \
-                f"Very low confidence should be HIGH or MEDIUM priority, got {very_low_conf[0].priority.value}"
+            assert very_low_conf[0].priority in [
+                AnnotationPriority.HIGH,
+                AnnotationPriority.MEDIUM,
+            ], f"Very low confidence should be HIGH or MEDIUM priority, got {very_low_conf[0].priority.value}"
 
         # STEP 4: Generate LLM annotations (skip if no API key)
         logger.info("\n=== STEP 4: Generating LLM annotations ===")
@@ -191,26 +207,30 @@ class TestAnnotationSystemIntegration:
                 AnnotationLabel.CORRECT_ROUTING,
                 AnnotationLabel.WRONG_ROUTING,
                 AnnotationLabel.AMBIGUOUS,
-                AnnotationLabel.INSUFFICIENT_INFO
+                AnnotationLabel.INSUFFICIENT_INFO,
             ], f"Invalid annotation label: {auto_annotation.label}"
 
-            assert 0.0 <= auto_annotation.confidence <= 1.0, \
-                f"Invalid confidence: {auto_annotation.confidence}"
+            assert (
+                0.0 <= auto_annotation.confidence <= 1.0
+            ), f"Invalid confidence: {auto_annotation.confidence}"
 
             assert len(auto_annotation.reasoning) > 0, "Missing reasoning"
 
-            logger.info(f"Generated LLM annotation: {auto_annotation.label.value} (confidence: {auto_annotation.confidence:.2f})")
+            logger.info(
+                f"Generated LLM annotation: {auto_annotation.label.value} (confidence: {auto_annotation.confidence:.2f})"
+            )
         else:
             logger.info("Skipping LLM annotation (no API key available)")
             # Create mock annotation for testing storage
             from src.app.routing.llm_auto_annotator import AutoAnnotation
+
             auto_annotation = AutoAnnotation(
                 span_id=annotation_requests[0].span_id,
                 label=AnnotationLabel.WRONG_ROUTING,
                 confidence=0.8,
                 reasoning="Test annotation for integration test",
                 suggested_correct_agent="web_search",
-                requires_human_review=False
+                requires_human_review=False,
             )
 
         # STEP 5: Store annotation in Phoenix
@@ -219,8 +239,7 @@ class TestAnnotationSystemIntegration:
         annotation_storage = AnnotationStorage(tenant_id=test_tenant_id)
 
         success = annotation_storage.store_llm_annotation(
-            span_id=annotation_requests[0].span_id,
-            annotation=auto_annotation
+            span_id=annotation_requests[0].span_id, annotation=auto_annotation
         )
 
         assert success, "Failed to store annotation in Phoenix"
@@ -248,7 +267,7 @@ class TestAnnotationSystemIntegration:
             annotated_spans = annotation_storage.query_annotated_spans(
                 start_time=eval_start_time,
                 end_time=eval_end_time,
-                only_human_reviewed=False  # Include LLM annotations
+                only_human_reviewed=False,  # Include LLM annotations
             )
 
             # This might be empty if Phoenix hasn't indexed yet, but should not error
@@ -263,9 +282,7 @@ class TestAnnotationSystemIntegration:
 
         optimizer = AdvancedRoutingOptimizer()
         feedback_loop = AnnotationFeedbackLoop(
-            optimizer=optimizer,
-            tenant_id=test_tenant_id,
-            min_annotations_for_update=1
+            optimizer=optimizer, tenant_id=test_tenant_id, min_annotations_for_update=1
         )
 
         # Process annotations
@@ -282,8 +299,9 @@ class TestAnnotationSystemIntegration:
 
         # If we created experiences, optimizer should have them
         if result["experiences_created"] > 0:
-            assert len(optimizer.experiences) >= result["experiences_created"], \
-                "Optimizer did not receive all experiences"
+            assert (
+                len(optimizer.experiences) >= result["experiences_created"]
+            ), "Optimizer did not receive all experiences"
             logger.info(f"Optimizer received {len(optimizer.experiences)} experiences")
         else:
             logger.info("No experiences created (annotations may not be indexed yet)")
@@ -292,10 +310,7 @@ class TestAnnotationSystemIntegration:
 
     @pytest.mark.asyncio
     async def test_annotation_storage_persistence(
-        self,
-        phoenix_client,
-        test_tenant_id,
-        telemetry_manager
+        self, phoenix_client, test_tenant_id, telemetry_manager
     ):
         """
         Test that annotations are actually persisted and retrievable from Phoenix
@@ -311,8 +326,8 @@ class TestAnnotationSystemIntegration:
                 "routing.query": "Test persistence query",
                 "routing.chosen_agent": "video_search",
                 "routing.confidence": 0.4,
-                "routing.context": "{}"
-            }
+                "routing.context": "{}",
+            },
         ) as span:
             span_context = getattr(span, "context", None)
             if span_context and hasattr(span_context, "span_id"):
@@ -327,18 +342,18 @@ class TestAnnotationSystemIntegration:
         annotation_storage = AnnotationStorage(tenant_id=test_tenant_id)
 
         from src.app.routing.llm_auto_annotator import AutoAnnotation
+
         test_annotation = AutoAnnotation(
             span_id=test_span_id,
             label=AnnotationLabel.CORRECT_ROUTING,
             confidence=0.95,
             reasoning="Test persistence annotation",
             suggested_correct_agent=None,
-            requires_human_review=False
+            requires_human_review=False,
         )
 
         success = annotation_storage.store_llm_annotation(
-            span_id=test_span_id,
-            annotation=test_annotation
+            span_id=test_span_id, annotation=test_annotation
         )
 
         assert success, "Failed to store annotation"
@@ -347,24 +362,25 @@ class TestAnnotationSystemIntegration:
 
         # Try to retrieve
         config = TelemetryConfig.from_env()
-        project_name = config.get_project_name(test_tenant_id, SERVICE_NAME_ORCHESTRATION)
+        project_name = config.get_project_name(
+            test_tenant_id, SERVICE_NAME_ORCHESTRATION
+        )
 
         # Verify the span exists
         spans_df = phoenix_client.get_spans_dataframe(
             project_name=project_name,
             start_time=datetime.now() - timedelta(minutes=5),
-            end_time=datetime.now()
+            end_time=datetime.now(),
         )
 
         assert not spans_df.empty, "No spans found after storage"
 
-        logger.info(f"✅ Annotation persistence verified ({len(spans_df)} spans in project)")
+        logger.info(
+            f"✅ Annotation persistence verified ({len(spans_df)} spans in project)"
+        )
 
     def test_annotation_agent_with_real_data(
-        self,
-        phoenix_client,
-        test_tenant_id,
-        telemetry_manager
+        self, phoenix_client, test_tenant_id, telemetry_manager
     ):
         """
         Test AnnotationAgent against real Phoenix data
@@ -387,8 +403,8 @@ class TestAnnotationSystemIntegration:
                     "routing.query": query,
                     "routing.chosen_agent": agent,
                     "routing.confidence": confidence,
-                    "routing.context": "{}"
-                }
+                    "routing.context": "{}",
+                },
             ) as span:
                 if status == "ERROR":
                     # Simulate error
@@ -404,7 +420,7 @@ class TestAnnotationSystemIntegration:
         annotation_agent = AnnotationAgent(
             tenant_id=test_tenant_id,
             confidence_threshold=0.6,
-            max_annotations_per_run=10
+            max_annotations_per_run=10,
         )
 
         requests = annotation_agent.identify_spans_needing_annotation(lookback_hours=1)
@@ -414,24 +430,24 @@ class TestAnnotationSystemIntegration:
 
         # Verify prioritization logic
         priorities = {r.priority for r in requests}
-        assert AnnotationPriority.HIGH in priorities or AnnotationPriority.MEDIUM in priorities, \
-            "Expected HIGH or MEDIUM priority requests"
+        assert (
+            AnnotationPriority.HIGH in priorities
+            or AnnotationPriority.MEDIUM in priorities
+        ), "Expected HIGH or MEDIUM priority requests"
 
         # Verify low confidence span got high priority
         low_conf_requests = [r for r in requests if r.routing_confidence < 0.3]
         if low_conf_requests:
-            assert low_conf_requests[0].priority == AnnotationPriority.HIGH, \
-                "Low confidence should be HIGH priority"
+            assert (
+                low_conf_requests[0].priority == AnnotationPriority.HIGH
+            ), "Low confidence should be HIGH priority"
 
         logger.info(f"✅ AnnotationAgent correctly identified {len(requests)} spans")
         logger.info(f"   Priorities: {[r.priority.value for r in requests]}")
 
     @pytest.mark.asyncio
     async def test_feedback_loop_end_to_end(
-        self,
-        phoenix_client,
-        test_tenant_id,
-        telemetry_manager
+        self, phoenix_client, test_tenant_id, telemetry_manager
     ):
         """
         Test complete feedback loop: span -> annotation -> storage -> optimizer
@@ -447,8 +463,8 @@ class TestAnnotationSystemIntegration:
                 "routing.query": "Feedback loop test query",
                 "routing.chosen_agent": "video_search",
                 "routing.confidence": 0.3,
-                "routing.context": '{"entities": [], "relationships": []}'
-            }
+                "routing.context": '{"entities": [], "relationships": []}',
+            },
         ):
             pass
 
@@ -456,7 +472,9 @@ class TestAnnotationSystemIntegration:
         time.sleep(2)
 
         # Identify and annotate
-        annotation_agent = AnnotationAgent(tenant_id=test_tenant_id, confidence_threshold=0.6)
+        annotation_agent = AnnotationAgent(
+            tenant_id=test_tenant_id, confidence_threshold=0.6
+        )
         requests = annotation_agent.identify_spans_needing_annotation(lookback_hours=1)
 
         assert len(requests) > 0, "No annotation requests found"
@@ -469,7 +487,7 @@ class TestAnnotationSystemIntegration:
             label=AnnotationLabel.WRONG_ROUTING,
             reasoning="Human identified wrong routing",
             suggested_agent="detailed_report",
-            annotator_id="test_user"
+            annotator_id="test_user",
         )
 
         assert success, "Failed to store human annotation"
@@ -481,9 +499,7 @@ class TestAnnotationSystemIntegration:
         initial_experience_count = len(optimizer.experiences)
 
         feedback_loop = AnnotationFeedbackLoop(
-            optimizer=optimizer,
-            tenant_id=test_tenant_id,
-            min_annotations_for_update=1
+            optimizer=optimizer, tenant_id=test_tenant_id, min_annotations_for_update=1
         )
 
         result = await feedback_loop.process_new_annotations()
@@ -497,8 +513,13 @@ class TestAnnotationSystemIntegration:
 
         # If annotations were found and processed, optimizer should have new experiences
         if result["experiences_created"] > 0:
-            assert len(optimizer.experiences) > initial_experience_count, \
-                "Optimizer did not receive new experiences"
-            logger.info(f"✅ Optimizer received {result['experiences_created']} new experiences")
+            assert (
+                len(optimizer.experiences) > initial_experience_count
+            ), "Optimizer did not receive new experiences"
+            logger.info(
+                f"✅ Optimizer received {result['experiences_created']} new experiences"
+            )
         else:
-            logger.info("Note: No experiences created (annotations may need more time to index)")
+            logger.info(
+                "Note: No experiences created (annotations may need more time to index)"
+            )

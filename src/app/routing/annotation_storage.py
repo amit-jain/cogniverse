@@ -48,13 +48,11 @@ class AnnotationStorage:
             tenant_id, service=SERVICE_NAME_ORCHESTRATION
         )
 
-        logger.info(f"💾 Initialized AnnotationStorage for tenant '{tenant_id}' (project: {self.project_name})")
+        logger.info(
+            f"💾 Initialized AnnotationStorage for tenant '{tenant_id}' (project: {self.project_name})"
+        )
 
-    def store_llm_annotation(
-        self,
-        span_id: str,
-        annotation: AutoAnnotation
-    ) -> bool:
+    def store_llm_annotation(self, span_id: str, annotation: AutoAnnotation) -> bool:
         """
         Store LLM-generated annotation for a span
 
@@ -74,11 +72,13 @@ class AnnotationStorage:
             "annotation.annotator": "llm",
             "annotation.timestamp": datetime.now().isoformat(),
             "annotation.human_reviewed": False,
-            "annotation.requires_review": annotation.requires_human_review
+            "annotation.requires_review": annotation.requires_human_review,
         }
 
         if annotation.suggested_correct_agent:
-            annotation_data["annotation.suggested_agent"] = annotation.suggested_correct_agent
+            annotation_data["annotation.suggested_agent"] = (
+                annotation.suggested_correct_agent
+            )
 
         return self._update_span_attributes(span_id, annotation_data)
 
@@ -88,7 +88,7 @@ class AnnotationStorage:
         label: AnnotationLabel,
         reasoning: str,
         suggested_agent: Optional[str] = None,
-        annotator_id: str = "human"
+        annotator_id: str = "human",
     ) -> bool:
         """
         Store human annotation for a span
@@ -112,7 +112,7 @@ class AnnotationStorage:
             "annotation.annotator": annotator_id,
             "annotation.timestamp": datetime.now().isoformat(),
             "annotation.human_reviewed": True,
-            "annotation.requires_review": False
+            "annotation.requires_review": False,
         }
 
         if suggested_agent:
@@ -120,11 +120,7 @@ class AnnotationStorage:
 
         return self._update_span_attributes(span_id, annotation_data)
 
-    def approve_llm_annotation(
-        self,
-        span_id: str,
-        annotator_id: str = "human"
-    ) -> bool:
+    def approve_llm_annotation(self, span_id: str, annotator_id: str = "human") -> bool:
         """
         Mark LLM annotation as reviewed and approved by human
 
@@ -141,7 +137,7 @@ class AnnotationStorage:
             "annotation.human_reviewed": True,
             "annotation.requires_review": False,
             "annotation.approved_by": annotator_id,
-            "annotation.approval_timestamp": datetime.now().isoformat()
+            "annotation.approval_timestamp": datetime.now().isoformat(),
         }
 
         return self._update_span_attributes(span_id, update_data)
@@ -182,8 +178,7 @@ class AnnotationStorage:
 
             # Log using SpanEvaluations with eval_name (like span_evaluator does)
             span_evals = SpanEvaluations(
-                eval_name="routing_annotation",
-                dataframe=eval_df
+                eval_name="routing_annotation", dataframe=eval_df
             )
             self.phoenix_client.log_evaluations(span_evals)
 
@@ -195,10 +190,7 @@ class AnnotationStorage:
             raise
 
     def query_annotated_spans(
-        self,
-        start_time: datetime,
-        end_time: datetime,
-        only_human_reviewed: bool = True
+        self, start_time: datetime, end_time: datetime, only_human_reviewed: bool = True
     ) -> List[Dict]:
         """
         Query annotated spans for feedback loop
@@ -220,9 +212,7 @@ class AnnotationStorage:
         try:
             # Get all spans in time range
             spans_df = self.phoenix_client.get_spans_dataframe(
-                project_name=self.project_name,
-                start_time=start_time,
-                end_time=end_time
+                project_name=self.project_name, start_time=start_time, end_time=end_time
             )
 
             if spans_df.empty:
@@ -241,7 +231,9 @@ class AnnotationStorage:
 
                 # Filter by human_reviewed if requested
                 if only_human_reviewed:
-                    human_reviewed = span_row.get("attributes.annotation.human_reviewed", False)
+                    human_reviewed = span_row.get(
+                        "attributes.annotation.human_reviewed", False
+                    )
                     if not human_reviewed:
                         continue
 
@@ -252,11 +244,19 @@ class AnnotationStorage:
                     "chosen_agent": span_row.get("attributes.routing.chosen_agent"),
                     "routing_confidence": span_row.get("attributes.routing.confidence"),
                     "annotation_label": annotation_label,
-                    "annotation_confidence": span_row.get("attributes.annotation.confidence", 1.0),
-                    "annotation_reasoning": span_row.get("attributes.annotation.reasoning", ""),
-                    "annotation_timestamp": span_row.get("attributes.annotation.timestamp"),
-                    "suggested_agent": span_row.get("attributes.annotation.suggested_agent"),
-                    "context": span_row.get("attributes.routing.context", {})
+                    "annotation_confidence": span_row.get(
+                        "attributes.annotation.confidence", 1.0
+                    ),
+                    "annotation_reasoning": span_row.get(
+                        "attributes.annotation.reasoning", ""
+                    ),
+                    "annotation_timestamp": span_row.get(
+                        "attributes.annotation.timestamp"
+                    ),
+                    "suggested_agent": span_row.get(
+                        "attributes.annotation.suggested_agent"
+                    ),
+                    "context": span_row.get("attributes.routing.context", {}),
                 }
 
                 annotated_spans.append(annotation_data)
@@ -278,13 +278,12 @@ class AnnotationStorage:
         try:
             # Query recent annotations (last 30 days)
             from datetime import timedelta
+
             end_time = datetime.now()
             start_time = end_time - timedelta(days=30)
 
             annotated_spans = self.query_annotated_spans(
-                start_time=start_time,
-                end_time=end_time,
-                only_human_reviewed=False
+                start_time=start_time, end_time=end_time, only_human_reviewed=False
             )
 
             if not annotated_spans:
@@ -292,11 +291,12 @@ class AnnotationStorage:
                     "total": 0,
                     "human_reviewed": 0,
                     "pending_review": 0,
-                    "by_label": {}
+                    "by_label": {},
                 }
 
             human_reviewed = sum(
-                1 for span in annotated_spans
+                1
+                for span in annotated_spans
                 if span.get("annotation_label") and span.get("human_reviewed", False)
             )
 
@@ -309,7 +309,7 @@ class AnnotationStorage:
                 "total": len(annotated_spans),
                 "human_reviewed": human_reviewed,
                 "pending_review": len(annotated_spans) - human_reviewed,
-                "by_label": by_label
+                "by_label": by_label,
             }
 
         except Exception as e:
@@ -319,5 +319,5 @@ class AnnotationStorage:
                 "human_reviewed": 0,
                 "pending_review": 0,
                 "by_label": {},
-                "error": str(e)
+                "error": str(e),
             }

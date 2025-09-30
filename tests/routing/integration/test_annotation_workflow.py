@@ -32,7 +32,7 @@ def mock_phoenix_client():
         "context.span_id": ["span_001", "span_002"],
         "start_time": [
             datetime.now() - timedelta(hours=1),
-            datetime.now() - timedelta(hours=2)
+            datetime.now() - timedelta(hours=2),
         ],
         "status": ["ERROR", "OK"],
         "attributes.routing": [
@@ -40,15 +40,15 @@ def mock_phoenix_client():
                 "query": "What are the best restaurants in Paris?",
                 "chosen_agent": "video_search",
                 "confidence": 0.4,
-                "context": {}
+                "context": {},
             },
             {
                 "query": "Show me nature documentaries",
                 "chosen_agent": "detailed_report",
                 "confidence": 0.55,
-                "context": {}
-            }
-        ]
+                "context": {},
+            },
+        ],
     }
 
     client.get_spans_dataframe.return_value = pd.DataFrame(spans_data)
@@ -73,7 +73,9 @@ def mock_litellm_response():
     response = Mock()
     response.choices = [Mock()]
     response.choices[0].message = Mock()
-    response.choices[0].message.content = '{"label": "wrong_routing", "confidence": 0.8, "reasoning": "Query is about restaurants, not videos", "suggested_correct_agent": "web_search", "requires_human_review": false}'
+    response.choices[0].message.content = (
+        '{"label": "wrong_routing", "confidence": 0.8, "reasoning": "Query is about restaurants, not videos", "suggested_correct_agent": "web_search", "requires_human_review": false}'
+    )
     return response
 
 
@@ -83,7 +85,11 @@ class TestAnnotationAgent:
     @patch("src.app.routing.annotation_agent.px.Client")
     @patch("src.app.routing.annotation_agent.RoutingEvaluator")
     def test_identify_spans_needing_annotation(
-        self, mock_evaluator_class, mock_client_class, mock_phoenix_client, mock_routing_evaluator
+        self,
+        mock_evaluator_class,
+        mock_client_class,
+        mock_phoenix_client,
+        mock_routing_evaluator,
     ):
         """Test that AnnotationAgent identifies low-quality spans"""
         # Setup mocks
@@ -92,9 +98,7 @@ class TestAnnotationAgent:
 
         # Initialize agent
         agent = AnnotationAgent(
-            tenant_id="test",
-            confidence_threshold=0.6,
-            max_annotations_per_run=10
+            tenant_id="test", confidence_threshold=0.6, max_annotations_per_run=10
         )
 
         # Identify spans
@@ -110,13 +114,17 @@ class TestAnnotationAgent:
         assert low_conf_request is not None, "Should identify low confidence span"
         assert low_conf_request.priority in [
             AnnotationPriority.HIGH,
-            AnnotationPriority.MEDIUM
+            AnnotationPriority.MEDIUM,
         ], "Low confidence should be high/medium priority"
 
     @patch("src.app.routing.annotation_agent.px.Client")
     @patch("src.app.routing.annotation_agent.RoutingEvaluator")
     def test_prioritization(
-        self, mock_evaluator_class, mock_client_class, mock_phoenix_client, mock_routing_evaluator
+        self,
+        mock_evaluator_class,
+        mock_client_class,
+        mock_phoenix_client,
+        mock_routing_evaluator,
     ):
         """Test that requests are properly prioritized"""
         from src.evaluation.evaluators.routing_evaluator import RoutingOutcome
@@ -181,7 +189,7 @@ class TestLLMAutoAnnotator:
             outcome=RoutingOutcome.FAILURE,
             priority=AnnotationPriority.HIGH,
             reason="Failure with low confidence",
-            context={}
+            context={},
         )
 
         # Generate annotation
@@ -217,7 +225,7 @@ class TestLLMAutoAnnotator:
                 outcome=RoutingOutcome.FAILURE,
                 priority=AnnotationPriority.HIGH,
                 reason="Test",
-                context={}
+                context={},
             )
             for i in range(3)
         ]
@@ -252,7 +260,7 @@ class TestAnnotationStorage:
             confidence=0.8,
             reasoning="Test reasoning",
             suggested_correct_agent="web_search",
-            requires_human_review=False
+            requires_human_review=False,
         )
 
         # Store annotation
@@ -277,7 +285,7 @@ class TestAnnotationStorage:
             label=AnnotationLabel.CORRECT_ROUTING,
             reasoning="Human verified this is correct",
             suggested_agent=None,
-            annotator_id="user123"
+            annotator_id="user123",
         )
 
         # Assertions
@@ -304,7 +312,7 @@ class TestAnnotationFeedbackLoop:
                 "annotation_reasoning": "Wrong agent chosen",
                 "annotation_timestamp": datetime.now().isoformat(),
                 "suggested_agent": "web_search",
-                "context": {}
+                "context": {},
             }
         ]
         mock_storage_class.return_value = mock_storage
@@ -317,7 +325,7 @@ class TestAnnotationFeedbackLoop:
             optimizer=optimizer,
             tenant_id="test",
             poll_interval_minutes=15,
-            min_annotations_for_update=1
+            min_annotations_for_update=1,
         )
 
         # Process annotations
@@ -344,7 +352,7 @@ class TestAnnotationFeedbackLoop:
                 "annotation_reasoning": "Correct choice",
                 "annotation_timestamp": datetime.now().isoformat(),
                 "suggested_agent": None,
-                "context": {}
+                "context": {},
             }
         ]
         mock_storage_class.return_value = mock_storage
@@ -353,10 +361,7 @@ class TestAnnotationFeedbackLoop:
         optimizer = AdvancedRoutingOptimizer()
 
         # Initialize feedback loop
-        feedback_loop = AnnotationFeedbackLoop(
-            optimizer=optimizer,
-            tenant_id="test"
-        )
+        feedback_loop = AnnotationFeedbackLoop(optimizer=optimizer, tenant_id="test")
 
         # Process annotations
         result = await feedback_loop.process_new_annotations()
@@ -386,7 +391,7 @@ class TestEndToEndAnnotationWorkflow:
         mock_agent_client_class,
         mock_phoenix_client,
         mock_routing_evaluator,
-        mock_litellm_response
+        mock_litellm_response,
     ):
         """Test complete annotation workflow from identification to optimizer"""
         # Setup all mocks
@@ -428,20 +433,20 @@ class TestEndToEndAnnotationWorkflow:
                 "annotation_reasoning": annotations[0].reasoning,
                 "annotation_timestamp": datetime.now().isoformat(),
                 "suggested_agent": annotations[0].suggested_correct_agent,
-                "context": {}
+                "context": {},
             }
         ]
         mock_feedback_storage_class.return_value = mock_feedback_storage
 
         optimizer = AdvancedRoutingOptimizer()
         feedback_loop = AnnotationFeedbackLoop(
-            optimizer=optimizer,
-            tenant_id="test",
-            min_annotations_for_update=1
+            optimizer=optimizer, tenant_id="test", min_annotations_for_update=1
         )
 
         result = await feedback_loop.process_new_annotations()
 
         # Assertions
         assert result["annotations_found"] == 1, "Should find stored annotation"
-        assert result["experiences_created"] == 1, "Should create experience from annotation"
+        assert (
+            result["experiences_created"] == 1
+        ), "Should create experience from annotation"

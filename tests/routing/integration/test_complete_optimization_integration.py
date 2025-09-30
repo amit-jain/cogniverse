@@ -148,12 +148,16 @@ class TestCompleteOptimizationIntegration:
 
         assert not spans_df.empty, "No spans found in Phoenix"
         routing_spans = spans_df[spans_df["name"] == SPAN_NAME_ROUTING]
-        assert len(routing_spans) >= 6, f"Expected 6 routing spans, got {len(routing_spans)}"
+        assert (
+            len(routing_spans) >= 6
+        ), f"Expected 6 routing spans, got {len(routing_spans)}"
 
         logger.info(f"✅ Found {len(routing_spans)} routing spans in Phoenix")
 
         # STEP 3: Initialize orchestrator and run single cycle
-        logger.info("\n=== STEP 3: Running optimization orchestrator (single cycle) ===")
+        logger.info(
+            "\n=== STEP 3: Running optimization orchestrator (single cycle) ==="
+        )
 
         orchestrator = OptimizationOrchestrator(
             tenant_id=test_tenant_id,
@@ -170,9 +174,9 @@ class TestCompleteOptimizationIntegration:
         logger.info("\n=== STEP 4: Validating span evaluation ===")
 
         span_eval_result = result.get("span_evaluation", {})
-        assert span_eval_result.get("spans_processed", 0) >= 6, (
-            f"Expected at least 6 spans processed, got {span_eval_result.get('spans_processed', 0)}"
-        )
+        assert (
+            span_eval_result.get("spans_processed", 0) >= 6
+        ), f"Expected at least 6 spans processed, got {span_eval_result.get('spans_processed', 0)}"
 
         experiences_created = span_eval_result.get("experiences_created", 0)
         assert experiences_created > 0, "No experiences created from spans"
@@ -209,9 +213,9 @@ class TestCompleteOptimizationIntegration:
         total_experiences = len(optimizer.experiences)
 
         logger.info(f"✅ Optimizer has {total_experiences} total experiences")
-        assert total_experiences >= experiences_created, (
-            "Optimizer should have experiences from span evaluation"
-        )
+        assert (
+            total_experiences >= experiences_created
+        ), "Optimizer should have experiences from span evaluation"
 
         # STEP 8: Validate orchestrator metrics
         logger.info("\n=== STEP 8: Validating orchestrator metrics ===")
@@ -220,9 +224,9 @@ class TestCompleteOptimizationIntegration:
         logger.info(f"📊 Orchestrator metrics: {metrics}")
 
         assert metrics["spans_evaluated"] >= 6, "Metrics should track spans evaluated"
-        assert metrics["experiences_created"] >= experiences_created, (
-            "Metrics should track experiences created"
-        )
+        assert (
+            metrics["experiences_created"] >= experiences_created
+        ), "Metrics should track experiences created"
 
         logger.info("\n" + "=" * 80)
         logger.info("✅ TEST PASSED: Single optimization cycle completed successfully")
@@ -295,9 +299,9 @@ class TestCompleteOptimizationIntegration:
         logger.info("\n=== STEP 4: Validating annotation identification ===")
 
         annotation_requests = result.get("annotation_requests", 0)
-        assert annotation_requests >= 3, (
-            f"Expected all 3 low-quality spans identified, got {annotation_requests}"
-        )
+        assert (
+            annotation_requests >= 3
+        ), f"Expected all 3 low-quality spans identified, got {annotation_requests}"
 
         logger.info(f"✅ All {annotation_requests} low-quality spans identified")
 
@@ -324,9 +328,9 @@ class TestCompleteOptimizationIntegration:
         logger.info("\n=== STEP 7: Validating metrics tracking ===")
 
         metrics = orchestrator.get_metrics()
-        assert metrics["annotations_requested"] >= 3, (
-            "Metrics should track annotation requests"
-        )
+        assert (
+            metrics["annotations_requested"] >= 3
+        ), "Metrics should track annotation requests"
 
         logger.info(f"📊 Final metrics: {metrics}")
 
@@ -403,9 +407,9 @@ class TestCompleteOptimizationIntegration:
         total_experiences = len(optimizer.experiences)
 
         logger.info(f"📊 Total experiences accumulated: {total_experiences}")
-        assert total_experiences >= 10, (
-            f"Expected at least 10 experiences, got {total_experiences}"
-        )
+        assert (
+            total_experiences >= 10
+        ), f"Expected at least 10 experiences, got {total_experiences}"
 
         # STEP 5: Validate metrics
         logger.info("\n=== STEP 5: Validating final metrics ===")
@@ -417,9 +421,9 @@ class TestCompleteOptimizationIntegration:
         logger.info(f"  Annotations Requested: {metrics['annotations_requested']}")
 
         assert metrics["spans_evaluated"] >= 20, "Should have evaluated all spans"
-        assert metrics["experiences_created"] >= 10, (
-            "Should have created experiences from spans"
-        )
+        assert (
+            metrics["experiences_created"] >= 10
+        ), "Should have created experiences from spans"
 
         logger.info("\n" + "=" * 80)
         logger.info("✅ TEST PASSED: Automatic optimization trigger validated")
@@ -488,9 +492,9 @@ class TestCompleteOptimizationIntegration:
         logger.info(f"📊 Updated metrics: {updated_metrics}")
 
         assert updated_metrics["spans_evaluated"] >= 5, "Should track spans evaluated"
-        assert updated_metrics["experiences_created"] > 0, (
-            "Should track experiences created"
-        )
+        assert (
+            updated_metrics["experiences_created"] > 0
+        ), "Should track experiences created"
         assert updated_metrics["uptime_seconds"] > 0, "Should track uptime"
 
         logger.info("\n" + "=" * 80)

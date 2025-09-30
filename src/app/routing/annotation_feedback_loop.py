@@ -36,7 +36,7 @@ class AnnotationFeedbackLoop:
         optimizer: AdvancedRoutingOptimizer,
         tenant_id: str = "default",
         poll_interval_minutes: int = 15,
-        min_annotations_for_update: int = 10
+        min_annotations_for_update: int = 10,
     ):
         """
         Initialize feedback loop
@@ -100,7 +100,7 @@ class AnnotationFeedbackLoop:
             annotated_spans = self.annotation_storage.query_annotated_spans(
                 start_time=start_time,
                 end_time=end_time,
-                only_human_reviewed=True  # Only use human-reviewed annotations
+                only_human_reviewed=True,  # Only use human-reviewed annotations
             )
         except Exception as e:
             logger.error(f"❌ Error querying annotated spans: {e}")
@@ -108,7 +108,7 @@ class AnnotationFeedbackLoop:
                 "annotations_found": 0,
                 "experiences_created": 0,
                 "optimizer_updated": False,
-                "error": str(e)
+                "error": str(e),
             }
 
         if not annotated_spans:
@@ -116,7 +116,7 @@ class AnnotationFeedbackLoop:
             return {
                 "annotations_found": 0,
                 "experiences_created": 0,
-                "optimizer_updated": False
+                "optimizer_updated": False,
             }
 
         logger.info(f"📊 Found {len(annotated_spans)} new annotations")
@@ -148,7 +148,7 @@ class AnnotationFeedbackLoop:
                     search_quality=experience.search_quality,
                     agent_success=experience.agent_success,
                     processing_time=experience.processing_time,
-                    user_satisfaction=experience.user_satisfaction
+                    user_satisfaction=experience.user_satisfaction,
                 )
 
                 experiences_created += 1
@@ -190,7 +190,7 @@ class AnnotationFeedbackLoop:
             "optimizer_updated": optimizer_updated,
             "total_annotations_processed": self._total_annotations_processed,
             "total_experiences_created": self._total_experiences_created,
-            "optimizer_updates_triggered": self._optimizer_updates_triggered
+            "optimizer_updates_triggered": self._optimizer_updates_triggered,
         }
 
         logger.info(
@@ -217,7 +217,9 @@ class AnnotationFeedbackLoop:
             routing_confidence = span_data.get("routing_confidence")
             annotation_label = span_data.get("annotation_label")
 
-            if not all([query, chosen_agent, routing_confidence is not None, annotation_label]):
+            if not all(
+                [query, chosen_agent, routing_confidence is not None, annotation_label]
+            ):
                 logger.warning("⚠️ Missing required fields in span data")
                 return None
 
@@ -231,8 +233,14 @@ class AnnotationFeedbackLoop:
             # Extract context if available
             context = span_data.get("context", {})
             entities = context.get("entities", []) if isinstance(context, dict) else []
-            relationships = context.get("relationships", []) if isinstance(context, dict) else []
-            enhanced_query = context.get("enhanced_query", query) if isinstance(context, dict) else query
+            relationships = (
+                context.get("relationships", []) if isinstance(context, dict) else []
+            )
+            enhanced_query = (
+                context.get("enhanced_query", query)
+                if isinstance(context, dict)
+                else query
+            )
 
             # Create experience
             experience = RoutingExperience(
@@ -246,7 +254,7 @@ class AnnotationFeedbackLoop:
                 agent_success=agent_success,
                 processing_time=0.0,  # Not available from annotations
                 user_satisfaction=1.0 if agent_success else 0.0,  # Derive from success
-                timestamp=datetime.now()
+                timestamp=datetime.now(),
             )
 
             return experience
@@ -289,7 +297,7 @@ class AnnotationFeedbackLoop:
                 AnnotationLabel.CORRECT_ROUTING: 0.9,  # High quality
                 AnnotationLabel.WRONG_ROUTING: 0.3,  # Low quality
                 AnnotationLabel.AMBIGUOUS: 0.6,  # Medium quality
-                AnnotationLabel.INSUFFICIENT_INFO: 0.5  # Neutral
+                AnnotationLabel.INSUFFICIENT_INFO: 0.5,  # Neutral
             }
 
             return quality_map.get(label_enum, 0.5)
@@ -311,5 +319,5 @@ class AnnotationFeedbackLoop:
             "optimizer_updates_triggered": self._optimizer_updates_triggered,
             "last_processed_time": self._last_processed_time.isoformat(),
             "poll_interval_minutes": self.poll_interval_minutes,
-            "min_annotations_for_update": self.min_annotations_for_update
+            "min_annotations_for_update": self.min_annotations_for_update,
         }
