@@ -10,15 +10,11 @@ Handles:
 
 import logging
 import threading
-import time
-from typing import Dict, Optional, Any
-from functools import lru_cache
 from contextlib import contextmanager
+from typing import Any, Dict, Optional
 
-from opentelemetry import trace
-from opentelemetry.trace import Tracer, Span
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.trace import Status, StatusCode, Tracer
 
 from .config import TelemetryConfig
 
@@ -140,23 +136,25 @@ class TelemetryManager:
             yield NoOpSpan()
             return
         
-        try:
-            with tracer.start_as_current_span(name) as span:
-                # Add tenant context to all spans
-                span.set_attribute("tenant.id", tenant_id)
-                span.set_attribute("service.name", service_name or self.config.service_name)
-                span.set_attribute("environment", self.config.environment)
-                
-                # Add user-provided attributes
-                if attributes:
-                    for key, value in attributes.items():
-                        span.set_attribute(key, value)
-                
+        with tracer.start_as_current_span(name) as span:
+            # Add tenant context to all spans
+            span.set_attribute("tenant.id", tenant_id)
+            span.set_attribute("service.name", service_name or self.config.service_name)
+            span.set_attribute("environment", self.config.environment)
+
+            # Add user-provided attributes
+            if attributes:
+                for key, value in attributes.items():
+                    span.set_attribute(key, value)
+
+            try:
                 yield span
-                
-        except Exception as e:
-            logger.warning(f"Error in span {name} for tenant {tenant_id}: {e}")
-            yield NoOpSpan()
+            except Exception as e:
+                # Record exception in span and re-raise
+                logger.warning(f"Error in span {name} for tenant {tenant_id}: {e}")
+                span.record_exception(e)
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                raise
     
     def _create_tenant_provider(self, tenant_id: str) -> TracerProvider:
         """Create and configure TracerProvider for a tenant."""
@@ -166,7 +164,7 @@ class TelemetryManager:
         try:
             # Use Phoenix register for project creation with batch export config
             from phoenix.otel import register
-            from .exporter import QueueManagedBatchExporter
+
             
             project_name = self.config.get_project_name(tenant_id)
             

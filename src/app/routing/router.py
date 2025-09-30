@@ -94,11 +94,11 @@ class ComprehensiveRouter:
             config: Router configuration
         """
         self.config = config or RouterConfig()
-        
+
         # Validate ensemble configuration if present
         ensemble_config = self._get_ensemble_config()
         RouterConfigValidator.validate_ensemble_config(ensemble_config)
-        
+
         self.strategies: dict[RoutingTier, RoutingStrategy] = {}
         self._initialize_strategies()
         self.cache: dict[str, tuple[RoutingDecision, float]] = {}
@@ -188,7 +188,7 @@ class ComprehensiveRouter:
         if ensemble_config and ensemble_config.get("enabled", False):
             logger.debug(f"Using ensemble routing for: {query[:50]}...")
             return await self._ensemble_route(query, context, start_time)
-        
+
         # Fall back to tiered routing
         return await self._tiered_route(query, context, start_time)
 
@@ -204,23 +204,25 @@ class ComprehensiveRouter:
     ) -> RoutingDecision:
         """
         Route using ensemble method - run multiple strategies in parallel and vote.
-        
+
         Args:
             query: The user query
             context: Optional context
             start_time: Start time for metrics
-            
+
         Returns:
             RoutingDecision from ensemble voting
-        """        
+        """
         ensemble_config = self._get_ensemble_config()
         enabled_strategies = ensemble_config.get("enabled_strategies", [])
         voting_method = ensemble_config.get("voting_method", "weighted")
         min_agreement = ensemble_config.get("min_agreement", 0.5)
         strategy_weights = ensemble_config.get("strategy_weights", {})
-        
-        logger.debug(f"Ensemble routing with {len(enabled_strategies)} strategies: {enabled_strategies}")
-        
+
+        logger.debug(
+            f"Ensemble routing with {len(enabled_strategies)} strategies: {enabled_strategies}"
+        )
+
         # Map strategy names to tiers
         strategy_tier_map = {
             "gliner": RoutingTier.FAST_PATH,
@@ -228,32 +230,36 @@ class ComprehensiveRouter:
             "langextract": RoutingTier.LANGEXTRACT,
             "keyword": RoutingTier.FALLBACK,
         }
-        
+
         # Create async tasks for enabled strategies
         tasks = []
         for strategy_name in enabled_strategies:
             tier = strategy_tier_map.get(strategy_name)
             if tier and tier in self.strategies:
                 task = asyncio.create_task(
-                    self._safe_strategy_call(self.strategies[tier], query, context, strategy_name)
+                    self._safe_strategy_call(
+                        self.strategies[tier], query, context, strategy_name
+                    )
                 )
                 tasks.append((strategy_name, task))
-        
+
         if not tasks:
-            logger.warning(f"No valid strategies found for ensemble routing. Enabled: {enabled_strategies}")
+            logger.warning(
+                f"No valid strategies found for ensemble routing. Enabled: {enabled_strategies}"
+            )
             return await self._tiered_route(query, context, start_time)
-        
+
         # Wait for all strategies to complete (with timeout)
         timeout = ensemble_config.get("timeout_seconds", 10.0)
         try:
             completed_tasks = await asyncio.wait_for(
                 asyncio.gather(*[task for _, task in tasks], return_exceptions=True),
-                timeout=timeout
+                timeout=timeout,
             )
         except asyncio.TimeoutError:
             logger.warning(f"Ensemble routing timeout after {timeout}s")
             return await self._tiered_route(query, context, start_time)
-        
+
         # Collect successful decisions
         decisions = []
         for i, (strategy_name, _) in enumerate(tasks):
@@ -262,26 +268,32 @@ class ComprehensiveRouter:
                 decisions.append((strategy_name, result))
             elif isinstance(result, Exception):
                 logger.warning(f"Strategy {strategy_name} failed: {result}")
-        
+
         if not decisions:
             logger.warning("All ensemble strategies failed, falling back to tiered")
             return await self._tiered_route(query, context, start_time)
-        
+
         # Vote on decisions
-        final_decision = self._vote_on_decisions(decisions, voting_method, strategy_weights, min_agreement)
-        
+        final_decision = self._vote_on_decisions(
+            decisions, voting_method, strategy_weights, min_agreement
+        )
+
         # Update cache and metrics
         self._update_cache(query, final_decision)
-        self._record_routing_metrics(query, final_decision, time.time() - start_time, None)
-        
+        self._record_routing_metrics(
+            query, final_decision, time.time() - start_time, None
+        )
+
         # Add ensemble metadata
-        final_decision.metadata.update({
-            "routing_method": "ensemble",
-            "voting_method": voting_method,
-            "strategies_used": [name for name, _ in decisions],
-            "num_strategies": len(decisions),
-        })
-        
+        final_decision.metadata.update(
+            {
+                "routing_method": "ensemble",
+                "voting_method": voting_method,
+                "strategies_used": [name for name, _ in decisions],
+                "num_strategies": len(decisions),
+            }
+        )
+
         return final_decision
 
     async def _safe_strategy_call(
@@ -297,84 +309,98 @@ class ComprehensiveRouter:
             raise e
 
     def _vote_on_decisions(
-        self, 
-        decisions: list[tuple[str, RoutingDecision]], 
+        self,
+        decisions: list[tuple[str, RoutingDecision]],
         voting_method: str,
         strategy_weights: dict[str, float],
-        min_agreement: float
+        min_agreement: float,
     ) -> RoutingDecision:
         """
         Vote on routing decisions from multiple strategies.
-        
+
         Args:
             decisions: List of (strategy_name, decision) tuples
             voting_method: "majority", "weighted", or "confidence_weighted"
             strategy_weights: Manual weights per strategy
             min_agreement: Minimum agreement threshold
-            
+
         Returns:
             Final RoutingDecision
         """
         if not decisions:
             raise ValueError("No decisions to vote on")
-        
+
         if len(decisions) == 1:
             # Even with one decision, mark it as ensemble
             single_decision = decisions[0][1]
             original_method = single_decision.routing_method
             single_decision.routing_method = "ensemble"
-            single_decision.metadata.update({
-                "original_routing_method": original_method,
-                "ensemble_size": 1,
-            })
+            single_decision.metadata.update(
+                {
+                    "original_routing_method": original_method,
+                    "ensemble_size": 1,
+                }
+            )
             return single_decision
-        
+
         # Extract decision components
         search_modalities = []
         generation_types = []
         confidence_scores = []
         reasonings = []
-        
+
         for strategy_name, decision in decisions:
             weight = strategy_weights.get(strategy_name, 1.0)
-            
+
             # Weight the votes
             for _ in range(int(weight * 10)):  # Scale weights to integers
                 search_modalities.append(decision.search_modality)
                 generation_types.append(decision.generation_type)
-            
+
             confidence_scores.append(decision.confidence_score * weight)
             reasonings.append(f"{strategy_name}: {decision.reasoning}")
-        
+
         # Vote on search modality
         modality_votes = Counter(search_modalities)
         final_modality = modality_votes.most_common(1)[0][0]
-        
+
         # Check agreement threshold
-        modality_agreement = modality_votes.most_common(1)[0][1] / len(search_modalities)
+        modality_agreement = modality_votes.most_common(1)[0][1] / len(
+            search_modalities
+        )
         if modality_agreement < min_agreement:
-            logger.warning(f"Low agreement on search modality: {modality_agreement:.2f}")
+            logger.warning(
+                f"Low agreement on search modality: {modality_agreement:.2f}"
+            )
             final_modality = SearchModality.BOTH  # Default to both when uncertain
-        
+
         # Vote on generation type
         generation_votes = Counter(generation_types)
         final_generation = generation_votes.most_common(1)[0][0]
-        
+
         # Calculate confidence score
         if voting_method == "confidence_weighted":
             # Weight by individual confidence scores
             total_weight = sum(d.confidence_score for _, d in decisions)
-            final_confidence = sum(d.confidence_score ** 2 for _, d in decisions) / total_weight if total_weight > 0 else 0.0
+            final_confidence = (
+                sum(d.confidence_score**2 for _, d in decisions) / total_weight
+                if total_weight > 0
+                else 0.0
+            )
         elif voting_method == "weighted":
             # Use manual weights
             total_weight = sum(strategy_weights.get(name, 1.0) for name, _ in decisions)
-            final_confidence = sum(confidence_scores) / total_weight if total_weight > 0 else 0.0
+            final_confidence = (
+                sum(confidence_scores) / total_weight if total_weight > 0 else 0.0
+            )
         else:  # majority
-            final_confidence = sum(d.confidence_score for _, d in decisions) / len(decisions)
-        
+            final_confidence = sum(d.confidence_score for _, d in decisions) / len(
+                decisions
+            )
+
         # Combine reasoning
         final_reasoning = f"Ensemble ({voting_method}): " + "; ".join(reasonings)
-        
+
         return RoutingDecision(
             search_modality=final_modality,
             generation_type=final_generation,
@@ -384,7 +410,7 @@ class ComprehensiveRouter:
             metadata={
                 "agreement_score": modality_agreement,
                 "strategies_count": len(decisions),
-            }
+            },
         )
 
     async def _tiered_route(

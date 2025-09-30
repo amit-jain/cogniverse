@@ -362,7 +362,10 @@ class TestComprehensiveRouterUnit:
                 assert decision.routing_method == "ensemble"
                 assert decision.search_modality == SearchModality.VIDEO  # Both agreed
                 assert decision.metadata["voting_method"] == "majority"
-                assert set(decision.metadata["strategies_used"]) == {"gliner", "keyword"}
+                assert set(decision.metadata["strategies_used"]) == {
+                    "gliner",
+                    "keyword",
+                }
                 assert decision.metadata["num_strategies"] == 2
                 assert decision.metadata["agreement_score"] >= 0.6
 
@@ -401,7 +404,9 @@ class TestComprehensiveRouterUnit:
             with patch("src.app.routing.router.KeywordRoutingStrategy") as mock_keyword:
                 # GLiNER fails
                 mock_gliner_instance = Mock()
-                mock_gliner_instance.route = AsyncMock(side_effect=Exception("GLiNER model error"))
+                mock_gliner_instance.route = AsyncMock(
+                    side_effect=Exception("GLiNER model error")
+                )
                 mock_gliner.return_value = mock_gliner_instance
 
                 # Keyword succeeds
@@ -444,6 +449,7 @@ class TestComprehensiveRouterUnit:
 
         with patch("src.app.routing.router.KeywordRoutingStrategy") as mock_strategy:
             mock_instance = Mock()
+
             # Simulate slow response that will timeout
             async def slow_route(query, context):
                 await asyncio.sleep(1.0)  # Longer than timeout
@@ -460,7 +466,7 @@ class TestComprehensiveRouterUnit:
             assert isinstance(decision, RoutingDecision)
 
     @pytest.mark.unit
-    @pytest.mark.asyncio 
+    @pytest.mark.asyncio
     async def test_ensemble_routing_weighted_voting(self):
         """Test ensemble routing with weighted voting method."""
         config = {
@@ -596,24 +602,30 @@ class TestEnsembleConfigValidation:
     def test_missing_enabled_strategies(self):
         """Test that missing enabled_strategies raises ValueError."""
         config = {"enabled": True}
-        
-        with pytest.raises(ValueError, match="ensemble_config must include 'enabled_strategies' list"):
+
+        with pytest.raises(
+            ValueError, match="ensemble_config must include 'enabled_strategies' list"
+        ):
             RouterConfigValidator.validate_ensemble_config(config)
 
     @pytest.mark.unit
     def test_empty_enabled_strategies(self):
         """Test that empty enabled_strategies raises ValueError."""
         config = {"enabled_strategies": []}
-        
-        with pytest.raises(ValueError, match="ensemble_config.enabled_strategies cannot be empty"):
+
+        with pytest.raises(
+            ValueError, match="ensemble_config.enabled_strategies cannot be empty"
+        ):
             RouterConfigValidator.validate_ensemble_config(config)
 
     @pytest.mark.unit
     def test_invalid_enabled_strategies_type(self):
         """Test that non-list enabled_strategies raises ValueError."""
         config = {"enabled_strategies": "keyword"}
-        
-        with pytest.raises(ValueError, match="ensemble_config.enabled_strategies must be a list"):
+
+        with pytest.raises(
+            ValueError, match="ensemble_config.enabled_strategies must be a list"
+        ):
             RouterConfigValidator.validate_ensemble_config(config)
 
     @pytest.mark.unit
@@ -626,29 +638,27 @@ class TestEnsembleConfigValidation:
         ]
 
         for config in invalid_configs:
-            with pytest.raises(ValueError, match="Invalid strategy|Strategy name must be a string"):
+            with pytest.raises(
+                ValueError, match="Invalid strategy|Strategy name must be a string"
+            ):
                 RouterConfigValidator.validate_ensemble_config(config)
 
     @pytest.mark.unit
     def test_invalid_voting_method(self):
         """Test that invalid voting methods raise ValueError."""
-        config = {
-            "enabled_strategies": ["keyword"],
-            "voting_method": "invalid_method"
-        }
-        
+        config = {"enabled_strategies": ["keyword"], "voting_method": "invalid_method"}
+
         with pytest.raises(ValueError, match="Invalid voting_method 'invalid_method'"):
             RouterConfigValidator.validate_ensemble_config(config)
 
     @pytest.mark.unit
     def test_invalid_voting_method_type(self):
         """Test that non-string voting method raises ValueError."""
-        config = {
-            "enabled_strategies": ["keyword"],
-            "voting_method": 123
-        }
-        
-        with pytest.raises(ValueError, match="ensemble_config.voting_method must be a string"):
+        config = {"enabled_strategies": ["keyword"], "voting_method": 123}
+
+        with pytest.raises(
+            ValueError, match="ensemble_config.voting_method must be a string"
+        ):
             RouterConfigValidator.validate_ensemble_config(config)
 
     @pytest.mark.unit
@@ -658,26 +668,28 @@ class TestEnsembleConfigValidation:
             {
                 "ensemble_config": {
                     "enabled_strategies": ["keyword"],
-                    "min_agreement": -0.1  # Below 0.0
+                    "min_agreement": -0.1,  # Below 0.0
                 }
             },
             {
                 "ensemble_config": {
                     "enabled_strategies": ["keyword"],
-                    "min_agreement": 1.1  # Above 1.0
+                    "min_agreement": 1.1,  # Above 1.0
                 }
             },
             {
                 "ensemble_config": {
                     "enabled_strategies": ["keyword"],
-                    "min_agreement": "0.5"  # String instead of number
+                    "min_agreement": "0.5",  # String instead of number
                 }
             },
         ]
 
         for config in invalid_configs:
             with pytest.raises(ValueError, match="ensemble_config.min_agreement"):
-                RouterConfigValidator.validate_ensemble_config(config["ensemble_config"])
+                RouterConfigValidator.validate_ensemble_config(
+                    config["ensemble_config"]
+                )
 
     @pytest.mark.unit
     def test_invalid_strategy_weights(self):
@@ -686,32 +698,39 @@ class TestEnsembleConfigValidation:
             {
                 "ensemble_config": {
                     "enabled_strategies": ["keyword"],
-                    "strategy_weights": "not_dict"  # Not a dictionary
+                    "strategy_weights": "not_dict",  # Not a dictionary
                 }
             },
             {
                 "ensemble_config": {
                     "enabled_strategies": ["keyword"],
-                    "strategy_weights": {"invalid_strategy": 1.0}  # Invalid strategy name
+                    "strategy_weights": {
+                        "invalid_strategy": 1.0
+                    },  # Invalid strategy name
                 }
             },
             {
                 "ensemble_config": {
                     "enabled_strategies": ["keyword"],
-                    "strategy_weights": {"keyword": -1.0}  # Negative weight
+                    "strategy_weights": {"keyword": -1.0},  # Negative weight
                 }
             },
             {
                 "ensemble_config": {
                     "enabled_strategies": ["keyword"],
-                    "strategy_weights": {"keyword": "1.0"}  # String weight
+                    "strategy_weights": {"keyword": "1.0"},  # String weight
                 }
             },
         ]
 
         for config in invalid_configs:
-            with pytest.raises(ValueError, match="Strategy weight|ensemble_config.strategy_weights|Invalid strategy"):
-                RouterConfigValidator.validate_ensemble_config(config["ensemble_config"])
+            with pytest.raises(
+                ValueError,
+                match="Strategy weight|ensemble_config.strategy_weights|Invalid strategy",
+            ):
+                RouterConfigValidator.validate_ensemble_config(
+                    config["ensemble_config"]
+                )
 
     @pytest.mark.unit
     def test_invalid_timeout_seconds(self):
@@ -720,26 +739,28 @@ class TestEnsembleConfigValidation:
             {
                 "ensemble_config": {
                     "enabled_strategies": ["keyword"],
-                    "timeout_seconds": -1.0  # Negative timeout
+                    "timeout_seconds": -1.0,  # Negative timeout
                 }
             },
             {
                 "ensemble_config": {
                     "enabled_strategies": ["keyword"],
-                    "timeout_seconds": 0  # Zero timeout
+                    "timeout_seconds": 0,  # Zero timeout
                 }
             },
             {
                 "ensemble_config": {
                     "enabled_strategies": ["keyword"],
-                    "timeout_seconds": "10"  # String timeout
+                    "timeout_seconds": "10",  # String timeout
                 }
             },
         ]
 
         for config in invalid_configs:
             with pytest.raises(ValueError, match="ensemble_config.timeout_seconds"):
-                RouterConfigValidator.validate_ensemble_config(config["ensemble_config"])
+                RouterConfigValidator.validate_ensemble_config(
+                    config["ensemble_config"]
+                )
 
     @pytest.mark.unit
     def test_invalid_enabled_flag(self):
@@ -747,11 +768,13 @@ class TestEnsembleConfigValidation:
         config = {
             "ensemble_config": {
                 "enabled": "yes",  # String instead of boolean
-                "enabled_strategies": ["keyword"]
+                "enabled_strategies": ["keyword"],
             }
         }
-        
-        with pytest.raises(ValueError, match="ensemble_config.enabled must be a boolean"):
+
+        with pytest.raises(
+            ValueError, match="ensemble_config.enabled must be a boolean"
+        ):
             RouterConfigValidator.validate_ensemble_config(config["ensemble_config"])
 
     @pytest.mark.unit
@@ -770,7 +793,7 @@ class TestEnsembleConfigValidation:
                 "enabled_strategies": ["keyword"],
             }
         }
-        
+
         with patch("src.app.routing.router.KeywordRoutingStrategy"):
             # Should not raise any exceptions - validation should pass
             router = ComprehensiveRouter(config)
@@ -787,7 +810,7 @@ class TestEnsembleConfigValidation:
                 "enable_fallback": True,
             }
         }
-        
+
         with patch("src.app.routing.router.KeywordRoutingStrategy"):
             # Should not raise any exceptions - router initializes without ensemble config
             router = ComprehensiveRouter(config)

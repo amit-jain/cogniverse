@@ -286,12 +286,12 @@ class LLMRoutingStrategy(RoutingStrategy):
         self.endpoint = config.get("endpoint", "http://localhost:11434")
         self.temperature = config.get("temperature", 0.1)
         self.max_tokens = config.get("max_tokens", 150)
-        
+
         # DSPy optimization support
         self.dspy_enabled = config.get("enable_dspy_optimization", False)
         self.optimized_prompts = {}
         self._load_optimized_prompts()
-        
+
         # Fallback to base prompt if no optimization available
         self.system_prompt = self._get_system_prompt()
 
@@ -299,28 +299,28 @@ class LLMRoutingStrategy(RoutingStrategy):
         """Load DSPy-optimized prompts if available."""
         if not self.dspy_enabled:
             return
-            
+
         try:
             import json
             from pathlib import Path
-            
+
             # Look for optimized prompts in standard locations
             search_paths = [
                 Path("optimized_prompts/routing_prompts.json"),
-                Path("src/app/routing/optimized_prompts/routing_prompts.json"), 
+                Path("src/app/routing/optimized_prompts/routing_prompts.json"),
                 Path("routing_prompts.json"),
             ]
-            
+
             for prompt_file in search_paths:
                 if prompt_file.exists():
                     with open(prompt_file, "r") as f:
                         self.optimized_prompts = json.load(f)
-                    
+
                     logger.info(f"Loaded DSPy optimized prompts from {prompt_file}")
                     return
-                    
+
             logger.info("No DSPy optimized routing prompts found, using default prompt")
-            
+
         except Exception as e:
             logger.warning(f"Failed to load DSPy optimized prompts: {e}")
 
@@ -331,7 +331,7 @@ class LLMRoutingStrategy(RoutingStrategy):
             optimized_prompt = self.optimized_prompts["system_prompt"]
             logger.debug("Using DSPy-optimized routing prompt")
             return optimized_prompt
-            
+
         # Fallback to manually improved prompt (better than the original)
         return """You are a precise routing agent for a multi-modal search system.
 Analyze the user query and determine:
@@ -409,7 +409,7 @@ Respond ONLY with a valid JSON object like the examples above."""
                 return template.format(
                     system_prompt=self.system_prompt,
                     conversation_history=conversation_history,
-                    query=query
+                    query=query,
                 )
             except Exception as e:
                 logger.warning(f"Failed to apply DSPy optimized prompt template: {e}")
@@ -462,24 +462,34 @@ Respond ONLY with a valid JSON object like the examples above."""
         try:
             routing_data = json.loads(json_match.group())
         except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in LLM response: {json_match.group()}") from e
+            raise ValueError(
+                f"Invalid JSON in LLM response: {json_match.group()}"
+            ) from e
 
         # Validate required fields
         if "search_modality" not in routing_data:
-            raise ValueError(f"Missing 'search_modality' in LLM response: {routing_data}")
+            raise ValueError(
+                f"Missing 'search_modality' in LLM response: {routing_data}"
+            )
         if "generation_type" not in routing_data:
-            raise ValueError(f"Missing 'generation_type' in LLM response: {routing_data}")
+            raise ValueError(
+                f"Missing 'generation_type' in LLM response: {routing_data}"
+            )
 
         # Map to enums with strict validation
         try:
             search_modality = SearchModality(routing_data["search_modality"])
         except ValueError as e:
-            raise ValueError(f"Invalid search_modality '{routing_data['search_modality']}' in LLM response") from e
+            raise ValueError(
+                f"Invalid search_modality '{routing_data['search_modality']}' in LLM response"
+            ) from e
 
         try:
             generation_type = GenerationType(routing_data["generation_type"])
         except ValueError as e:
-            raise ValueError(f"Invalid generation_type '{routing_data['generation_type']}' in LLM response") from e
+            raise ValueError(
+                f"Invalid generation_type '{routing_data['generation_type']}' in LLM response"
+            ) from e
 
         reasoning = routing_data.get("reasoning", "LLM routing decision")
 
@@ -545,7 +555,8 @@ Respond ONLY with a valid JSON object like the examples above."""
             "dspy_enabled": self.dspy_enabled,
             "optimized_prompts_loaded": len(self.optimized_prompts) > 0,
             "available_optimizations": list(self.optimized_prompts.keys()),
-            "using_optimized_system_prompt": self.dspy_enabled and "system_prompt" in self.optimized_prompts,
+            "using_optimized_system_prompt": self.dspy_enabled
+            and "system_prompt" in self.optimized_prompts,
         }
 
 

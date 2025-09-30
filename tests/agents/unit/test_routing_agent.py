@@ -2,7 +2,7 @@
 Unit tests for RoutingAgent
 """
 
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -57,7 +57,7 @@ class TestRoutingAgent:
         """Test RoutingAgent initialization fails when video agent URL missing"""
         mock_get_config.return_value = {"text_agent_url": "http://localhost:8003"}
 
-        with pytest.raises(ValueError, match="video_agent_url not configured"):
+        with pytest.raises(ValueError, match="video_agent_url must be configured"):
             RoutingAgent()
 
     @patch("src.app.agents.routing_agent.ComprehensiveRouter")
@@ -362,3 +362,131 @@ class TestWorkflowStepGeneration:
         # Should have 2 steps numbered 1 and 2
         step_numbers = [step["step"] for step in workflow["steps"]]
         assert step_numbers == [1, 2]
+
+
+@pytest.mark.unit
+class TestPhoenixSpanHierarchy:
+    """Test Phoenix span hierarchy implementation (Phase 1 validation)"""
+
+    @patch("src.app.agents.routing_agent.ComprehensiveRouter")
+    @patch("src.app.agents.routing_agent.get_config")
+    @patch("src.app.agents.routing_agent.TelemetryManager")
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_phoenix_span_hierarchy_structure(
+        self, mock_telemetry_manager, mock_get_config, mock_router_class
+    ):
+        """Test that Phoenix spans are created with correct hierarchy:
+        - Parent span: cogniverse.request
+        - Child span: cogniverse.routing
+        """
+        # Setup mocks
+        mock_get_config.return_value = {"video_agent_url": "http://localhost:8002"}
+
+        mock_routing_decision = RoutingDecision(
+            search_modality=SearchModality.VIDEO,
+            generation_type=GenerationType.RAW_RESULTS,
+            confidence_score=0.85,
+            routing_method="test",
+            reasoning="Test routing decision",
+        )
+
+        mock_router_instance = Mock()
+        mock_router_instance.route = AsyncMock(return_value=mock_routing_decision)
+        mock_router_class.return_value = mock_router_instance
+
+        # Mock TelemetryManager and spans
+        mock_parent_span = MagicMock()
+        mock_routing_span = MagicMock()
+
+        # Create a context manager that tracks calls
+        span_calls = []
+
+        def mock_span_context(*args, **kwargs):
+            span_calls.append((args, kwargs))
+            mock_ctx = MagicMock()
+            if "cogniverse.request" in str(kwargs.get("name", "")):
+                mock_ctx.__enter__.return_value = mock_parent_span
+                return mock_ctx
+            elif "cogniverse.routing" in str(kwargs.get("name", "")):
+                mock_ctx.__enter__.return_value = mock_routing_span
+                return mock_ctx
+            mock_ctx.__enter__.return_value = MagicMock()
+            return mock_ctx
+
+        mock_telemetry_instance = MagicMock()
+        mock_telemetry_instance.span.side_effect = mock_span_context
+        mock_telemetry_manager.return_value = mock_telemetry_instance
+
+        # Test the routing agent
+        agent = RoutingAgent()
+        result = await agent.analyze_and_route("find test videos")
+
+        # Verify span creation calls
+        assert len(span_calls) == 2, f"Expected 2 span calls, got {len(span_calls)}"
+
+        # Verify parent span (cogniverse.request)
+        parent_call = span_calls[0]
+        assert parent_call[1]["name"] == "cogniverse.request"
+        assert parent_call[1]["service_name"] == "cogniverse.orchestration"
+        assert parent_call[1]["attributes"]["openinference.span.kind"] == "WORKFLOW"
+        assert parent_call[1]["attributes"]["operation.name"] == "process_user_request"
+
+        # Verify child span (cogniverse.routing)
+        child_call = span_calls[1]
+        assert child_call[1]["name"] == "cogniverse.routing"
+        assert child_call[1]["service_name"] == "cogniverse.routing.agent"
+        assert child_call[1]["attributes"]["openinference.span.kind"] == "AGENT"
+        assert child_call[1]["attributes"]["operation.name"] == "route_query"
+
+        # Verify span attributes were set
+        mock_parent_span.set_attribute.assert_called()
+        mock_routing_span.set_attribute.assert_called()
+
+        # Verify events were added
+        mock_routing_span.add_event.assert_called_with(
+            "routing_decision_made",
+            {
+                "chosen_agent": "video_search",
+                "confidence": 0.85,
+                "reasoning": "Test routing decision",
+            },
+        )
+
+        # Verify result structure
+        assert result["query"] == "find test videos"
+        assert result["confidence"] == 0.85
+
+    @patch("src.app.agents.routing_agent.ComprehensiveRouter")
+    @patch("src.app.agents.routing_agent.get_config")
+    @patch("src.app.agents.routing_agent.TelemetryManager")
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_phoenix_span_error_handling(
+        self, mock_telemetry_manager, mock_get_config, mock_router_class
+    ):
+        """Test that span error handling works correctly"""
+        # Setup mocks to trigger an error
+        mock_get_config.return_value = {"video_agent_url": "http://localhost:8002"}
+
+        mock_router_instance = Mock()
+        mock_router_instance.route = AsyncMock(side_effect=Exception("Test error"))
+        mock_router_class.return_value = mock_router_instance
+
+        # Mock spans
+        mock_parent_span = MagicMock()
+        mock_telemetry_instance = MagicMock()
+        mock_telemetry_instance.span.return_value.__enter__.return_value = (
+            mock_parent_span
+        )
+        mock_telemetry_manager.return_value = mock_telemetry_instance
+
+        agent = RoutingAgent()
+
+        # Should raise the exception
+        with pytest.raises(Exception, match="Test error"):
+            await agent.analyze_and_route("test query")
+
+        # Verify error was recorded on parent span
+        mock_parent_span.set_status.assert_called()
+        mock_parent_span.record_exception.assert_called()

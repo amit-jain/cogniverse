@@ -73,6 +73,7 @@ htmlcov/
 
 # Claude configuration
 CLAUDE.md
+.claude/
 
 # Generated files
 configs/schemas/ranking_strategies.json
