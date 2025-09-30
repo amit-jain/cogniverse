@@ -126,9 +126,9 @@ class TestPhoenixSpanEvaluatorIntegration:
     @pytest.mark.asyncio
     async def test_feed_experiences_to_optimizer(self):
         """Test feeding extracted experiences to AdvancedRoutingOptimizer"""
-        from src.app.agents.routing_agent import RoutingAgent
         import tempfile
-        import os
+
+        from src.app.agents.routing_agent import RoutingAgent
 
         # Create fresh routing agent and generate unique spans
         agent = RoutingAgent()

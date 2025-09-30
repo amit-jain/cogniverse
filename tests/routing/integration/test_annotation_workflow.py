@@ -8,9 +8,8 @@ Tests the complete flow:
 4. AnnotationFeedbackLoop feeds to optimizer
 """
 
-import asyncio
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pandas as pd
 import pytest
@@ -163,8 +162,8 @@ class TestLLMAutoAnnotator:
     @patch("src.app.routing.llm_auto_annotator.completion")
     def test_annotate(self, mock_completion, mock_litellm_response):
         """Test LLM annotation generation"""
-        from src.evaluation.evaluators.routing_evaluator import RoutingOutcome
         from src.app.routing.annotation_agent import AnnotationRequest
+        from src.evaluation.evaluators.routing_evaluator import RoutingOutcome
 
         # Setup mock
         mock_completion.return_value = mock_litellm_response
@@ -198,8 +197,8 @@ class TestLLMAutoAnnotator:
     @patch("src.app.routing.llm_auto_annotator.completion")
     def test_batch_annotate(self, mock_completion, mock_litellm_response):
         """Test batch annotation"""
-        from src.evaluation.evaluators.routing_evaluator import RoutingOutcome
         from src.app.routing.annotation_agent import AnnotationRequest
+        from src.evaluation.evaluators.routing_evaluator import RoutingOutcome
 
         # Setup mock
         mock_completion.return_value = mock_litellm_response
