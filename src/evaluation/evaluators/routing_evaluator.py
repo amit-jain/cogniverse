@@ -302,7 +302,7 @@ class RoutingEvaluator:
         Query Phoenix for routing spans within a time range.
 
         Args:
-            project_name: Phoenix project name
+            project_name: Phoenix project name (not currently used, for future multi-project support)
             start_time: Start of time range (None for no limit)
             end_time: End of time range (None for no limit)
             limit: Maximum number of spans to return
@@ -314,28 +314,28 @@ class RoutingEvaluator:
             RuntimeError: If Phoenix query fails
         """
         try:
-            # Query spans with name="cogniverse.routing"
-            query = """
-            SELECT *
-            FROM spans
-            WHERE name = 'cogniverse.routing'
-            """
+            # Get all spans using Phoenix client API
+            spans_df = self.client.get_spans_dataframe(
+                start_time=start_time,
+                end_time=end_time
+            )
 
-            if start_time:
-                query += f" AND start_time >= '{start_time.isoformat()}'"
-            if end_time:
-                query += f" AND start_time <= '{end_time.isoformat()}'"
-
-            query += f" ORDER BY start_time DESC LIMIT {limit}"
-
-            # Execute query through Phoenix client
-            spans_df = self.client.query_spans(query)
-
-            if spans_df.empty:
+            if spans_df is None or spans_df.empty:
                 return []
 
+            # Filter to only routing spans
+            routing_spans_df = spans_df[spans_df['name'] == 'cogniverse.routing']
+
+            if routing_spans_df.empty:
+                return []
+
+            # Sort by start time (most recent first) and limit
+            routing_spans_df = routing_spans_df.sort_values('start_time', ascending=False)
+            if limit:
+                routing_spans_df = routing_spans_df.head(limit)
+
             # Convert DataFrame to list of dicts
-            return spans_df.to_dict("records")
+            return routing_spans_df.to_dict("records")
 
         except Exception as e:
             raise RuntimeError(

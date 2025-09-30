@@ -371,11 +371,12 @@ class TestPhoenixQuery:
                     "name": "cogniverse.routing",
                     "parent_id": "p1",
                     "status_code": "OK",
+                    "start_time": pd.Timestamp("2024-01-01 10:00:00"),
                     "attributes": {"routing.chosen_agent": "video_search"},
                 }
             ]
         )
-        mock_client.query_spans.return_value = mock_df
+        mock_client.get_spans_dataframe.return_value = mock_df
 
         evaluator = RoutingEvaluator()
         spans = evaluator.query_routing_spans(limit=10)
@@ -390,7 +391,7 @@ class TestPhoenixQuery:
 
         mock_client = MagicMock()
         mock_client_class.return_value = mock_client
-        mock_client.query_spans.return_value = pd.DataFrame()
+        mock_client.get_spans_dataframe.return_value = pd.DataFrame()
 
         evaluator = RoutingEvaluator()
         spans = evaluator.query_routing_spans()
@@ -404,7 +405,7 @@ class TestPhoenixQuery:
 
         mock_client = MagicMock()
         mock_client_class.return_value = mock_client
-        mock_client.query_spans.return_value = pd.DataFrame()
+        mock_client.get_spans_dataframe.return_value = pd.DataFrame()
 
         evaluator = RoutingEvaluator()
         start = datetime(2024, 1, 1)
@@ -412,18 +413,18 @@ class TestPhoenixQuery:
 
         evaluator.query_routing_spans(start_time=start, end_time=end)
 
-        # Verify query was called
-        mock_client.query_spans.assert_called_once()
-        query_arg = mock_client.query_spans.call_args[0][0]
-        assert "2024-01-01" in query_arg
-        assert "2024-01-31" in query_arg
+        # Verify get_spans_dataframe was called with time range
+        mock_client.get_spans_dataframe.assert_called_once_with(
+            start_time=start,
+            end_time=end
+        )
 
     @patch("src.evaluation.evaluators.routing_evaluator.px.Client")
     def test_query_routing_spans_failure_raises_error(self, mock_client_class):
         """Test that query failure raises RuntimeError"""
         mock_client = MagicMock()
         mock_client_class.return_value = mock_client
-        mock_client.query_spans.side_effect = Exception("Phoenix connection failed")
+        mock_client.get_spans_dataframe.side_effect = Exception("Phoenix connection failed")
 
         evaluator = RoutingEvaluator()
 
