@@ -18,6 +18,11 @@ from src.app.routing.advanced_optimizer import (
 from src.app.routing.config import RoutingConfig
 from src.app.routing.phoenix_span_evaluator import PhoenixSpanEvaluator
 from src.app.routing.router import ComprehensiveRouter
+from src.app.telemetry.config import (
+    SERVICE_NAME_ORCHESTRATION,
+    SPAN_NAME_REQUEST,
+    SPAN_NAME_ROUTING,
+)
 from src.app.telemetry.manager import TelemetryManager
 from src.common.config import get_config
 
@@ -178,9 +183,9 @@ class RoutingAgent(DSPyRoutingMixin):
 
         # Create Phoenix span for the overall user request
         with self.telemetry_manager.span(
-            name="cogniverse.request",
+            name=SPAN_NAME_REQUEST,
             tenant_id=tenant_id,
-            service_name="cogniverse.orchestration",
+            service_name=SERVICE_NAME_ORCHESTRATION,
             attributes={
                 "openinference.span.kind": "WORKFLOW",
                 "operation.name": "process_user_request",
@@ -204,24 +209,16 @@ class RoutingAgent(DSPyRoutingMixin):
                 )
 
                 # Create child span for routing decision process
-                # Use routing optimization project to separate routing telemetry
-                routing_project_name = (
-                    self.telemetry_manager.config.get_routing_optimization_project_name(
-                        tenant_id
-                    )
-                )
                 with self.telemetry_manager.span(
-                    name="cogniverse.routing",
+                    name=SPAN_NAME_ROUTING,
                     tenant_id=tenant_id,
-                    service_name="cogniverse.routing.agent",
+                    service_name=SERVICE_NAME_ORCHESTRATION,
                     attributes={
                         "openinference.span.kind": "AGENT",
-                        "openinference.project.name": routing_project_name,  # Project name as span attribute
                         "operation.name": "route_query",
                         "routing.query": query,
                         "routing.context": str(context) if context else None,
                     },
-                    use_routing_project=True,  # Store in routing optimization project
                 ) as routing_span:
                     # Add routing decision details to routing span
                     routing_span.set_attribute("routing.chosen_agent", primary_agent)

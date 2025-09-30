@@ -115,8 +115,7 @@ class TelemetryManager:
              name: str,
              tenant_id: str,
              service_name: Optional[str] = None,
-             attributes: Optional[Dict[str, Any]] = None,
-             use_routing_project: bool = False):
+             attributes: Optional[Dict[str, Any]] = None):
         """
         Context manager for creating tenant-specific spans.
 
@@ -125,26 +124,18 @@ class TelemetryManager:
             tenant_id: Tenant identifier
             service_name: Optional service name
             attributes: Optional span attributes
-            use_routing_project: If True, create span in routing optimization project
 
         Usage:
-            # Regular service span
+            # Service span
             tenant_id = context.get("tenant_id", config.default_tenant_id)
             with telemetry.span("search", tenant_id=tenant_id) as span:
                 span.set_attribute("query", "test")
 
-            # For routing optimization spans
-            with telemetry.span("cogniverse.routing", tenant_id=tenant_id, use_routing_project=True) as span:
+            # Routing span (child of cogniverse.request)
+            with telemetry.span("cogniverse.routing", tenant_id=tenant_id) as span:
                 span.set_attribute("routing.chosen_agent", "video_search")
         """
-        # Determine which project to use
-        if use_routing_project:
-            # Use special routing optimization project
-            project_key = f"{tenant_id}:routing-optimization"
-        else:
-            project_key = f"{tenant_id}:{service_name or self.config.service_name}"
-
-        tracer = self._get_tracer_for_project(tenant_id, service_name, use_routing_project)
+        tracer = self._get_tracer_for_project(tenant_id, service_name)
 
         if tracer is None:
             # Graceful degradation - yield no-op span
@@ -175,19 +166,15 @@ class TelemetryManager:
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 raise
 
-    def _get_tracer_for_project(self, tenant_id: str, service_name: Optional[str], use_routing_project: bool) -> Optional[Tracer]:
-        """Get tracer for specific project (routing optimization or regular service)."""
+    def _get_tracer_for_project(self, tenant_id: str, service_name: Optional[str]) -> Optional[Tracer]:
+        """Get tracer for specific project."""
         if not self.config.enabled:
             return None
 
         # Determine project key and name
-        if use_routing_project:
-            cache_key = f"{tenant_id}:routing-optimization"
-            project_suffix = "routing-optimization"
-        else:
-            service_name = service_name or self.config.service_name
-            cache_key = f"{tenant_id}:{service_name}"
-            project_suffix = service_name
+        service_name = service_name or self.config.service_name
+        cache_key = f"{tenant_id}:{service_name}"
+        project_suffix = service_name
 
         # Check cache first
         with self._lock:
@@ -202,7 +189,7 @@ class TelemetryManager:
                 provider_key = f"{tenant_id}:{project_suffix}"
                 if provider_key not in self._tenant_providers:
                     self._tenant_providers[provider_key] = self._create_tenant_provider_for_project(
-                        tenant_id, project_suffix, use_routing_project
+                        tenant_id, project_suffix
                     )
 
                 tracer_provider = self._tenant_providers[provider_key]
@@ -221,25 +208,24 @@ class TelemetryManager:
     
     def _create_tenant_provider(self, tenant_id: str) -> TracerProvider:
         """Create and configure TracerProvider for a tenant (legacy method)."""
-        return self._create_tenant_provider_for_project(tenant_id, self.config.service_name, use_routing_project=False)
+        return self._create_tenant_provider_for_project(tenant_id, self.config.service_name)
 
-    def _create_tenant_provider_for_project(self, tenant_id: str, project_suffix: str, use_routing_project: bool) -> TracerProvider:
+    def _create_tenant_provider_for_project(self, tenant_id: str, project_suffix: str) -> TracerProvider:
         """Create and configure TracerProvider for a specific tenant project."""
         if not self.config.phoenix_enabled:
             raise RuntimeError("Phoenix not enabled")
 
         try:
-            # Determine project name based on type
-            if use_routing_project:
-                project_name = self.config.get_routing_optimization_project_name(tenant_id)
-            else:
-                project_name = self.config.get_project_name(tenant_id, project_suffix)
+            # Determine project name
+            project_name = self.config.get_project_name(tenant_id, project_suffix)
 
             # For test mode with synchronous export, create provider manually
             if self.config.batch_config.use_sync_export:
-                from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-                from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+                from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+                    OTLPSpanExporter,
+                )
                 from opentelemetry.sdk.resources import Resource
+                from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
                 # Create OTLP exporter pointing to Phoenix
                 endpoint = self.config.phoenix_endpoint

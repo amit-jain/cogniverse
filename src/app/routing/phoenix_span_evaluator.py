@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 import phoenix as px
 from opentelemetry.trace import Span as ReadableSpan
 
-from src.app.telemetry.config import TelemetryConfig
+from src.app.telemetry.config import SERVICE_NAME_ORCHESTRATION, SPAN_NAME_ROUTING, TelemetryConfig
 from src.evaluation.span_evaluator import SpanEvaluator
 
 from .advanced_optimizer import AdvancedRoutingOptimizer, RoutingExperience
@@ -43,10 +43,21 @@ class PhoenixSpanEvaluator:
         self._last_evaluation_time = datetime.now()
         self._processed_span_ids = set()
 
-        # Initialize Phoenix client for the routing optimization project
-        self.routing_client = px.Client()
+        # Initialize Phoenix client
+        self.phoenix_client = px.Client()
 
-        logger.info(f"🔧 Initialized PhoenixSpanEvaluator for tenant '{tenant_id}'")
+        # Get the project name where routing spans are stored
+        # Routing spans are created with SERVICE_NAME_ORCHESTRATION
+        # This ensures parent (cogniverse.request) and child (cogniverse.routing) spans
+        # are in the same Phoenix project, maintaining proper span hierarchy
+        self.project_name = self.telemetry_config.get_project_name(
+            tenant_id, service=SERVICE_NAME_ORCHESTRATION
+        )
+
+        logger.info(
+            f"🔧 Initialized PhoenixSpanEvaluator for tenant '{tenant_id}' "
+            f"(project: {self.project_name})"
+        )
 
     async def evaluate_routing_spans(
         self, lookback_hours: int = 1, batch_size: int = 50
@@ -61,32 +72,54 @@ class PhoenixSpanEvaluator:
         Returns:
             Evaluation results and metrics
         """
-        logger.info(f"🔍 Evaluating routing spans from last {lookback_hours} hours")
-
-        # Use existing SpanEvaluator to get recent spans
-        # Look for routing-related spans instead of search spans
-        spans_df = self.span_evaluator.get_recent_spans(
-            hours=lookback_hours,
-            operation_name="routing_agent.route_query",  # Look for routing operations
-            limit=batch_size,
+        logger.info(
+            f"🔍 Evaluating routing spans from last {lookback_hours} hours "
+            f"(project: {self.project_name})"
         )
 
-        if spans_df.empty:
-            logger.info("📭 No routing spans found, trying broader search")
-            # Fallback to any spans that might contain routing data
-            spans_df = self.span_evaluator.get_recent_spans(
-                hours=lookback_hours,
-                operation_name=None,  # Get all spans
-                limit=batch_size,
+        # Query cogniverse.routing spans from main project using Phoenix client
+        from datetime import timedelta
+
+        end_time = datetime.now()
+        start_time = end_time - timedelta(hours=lookback_hours)
+
+        try:
+            spans_df = self.phoenix_client.get_spans_dataframe(
+                project_name=self.project_name,
+                start_time=start_time,
+                end_time=end_time,
             )
+        except Exception as e:
+            logger.error(f"❌ Error querying Phoenix spans: {e}")
+            return {"spans_processed": 0, "experiences_created": 0, "errors": [str(e)]}
 
         if spans_df.empty:
-            logger.info("📭 No spans found at all")
+            logger.info(f"📭 No spans found in project {self.project_name}")
             return {"spans_processed": 0, "experiences_created": 0}
+
+        # Filter for cogniverse.routing child spans
+        routing_spans_df = spans_df[spans_df["name"] == SPAN_NAME_ROUTING]
+
+        if routing_spans_df.empty:
+            logger.info(
+                f"📭 No cogniverse.routing spans found "
+                f"(total spans: {len(spans_df)})"
+            )
+            return {"spans_processed": 0, "experiences_created": 0}
+
+        # Sort by start_time and limit
+        routing_spans_df = routing_spans_df.sort_values("start_time", ascending=False)
+        if batch_size and len(routing_spans_df) > batch_size:
+            routing_spans_df = routing_spans_df.head(batch_size)
+
+        logger.info(
+            f"📊 Found {len(routing_spans_df)} cogniverse.routing spans "
+            f"(from {len(spans_df)} total spans)"
+        )
 
         experiences_created = 0
         evaluation_results = {
-            "spans_processed": len(spans_df),
+            "spans_processed": len(routing_spans_df),
             "experiences_created": 0,
             "success_rate": 0.0,
             "avg_confidence": 0.0,
@@ -94,10 +127,11 @@ class PhoenixSpanEvaluator:
             "errors": [],
         }
 
-        for _, span_row in spans_df.iterrows():
+        for _, span_row in routing_spans_df.iterrows():
             try:
                 # Skip if already processed
-                span_id = span_row.get("span_id", "")
+                # Phoenix uses "context.span_id" not "span_id"
+                span_id = span_row.get("context.span_id", "")
                 if span_id in self._processed_span_ids:
                     continue
 
@@ -137,7 +171,7 @@ class PhoenixSpanEvaluator:
 
         logger.info(
             f"🎯 Span evaluation complete: {experiences_created} experiences "
-            f"from {len(spans_df)} spans"
+            f"from {len(routing_spans_df)} routing spans"
         )
 
         return evaluation_results
@@ -149,47 +183,81 @@ class PhoenixSpanEvaluator:
         Extract routing experience from a DataFrame row
 
         Args:
-            span_row: Pandas Series containing span data
+            span_row: Pandas Series containing span data from cogniverse.routing span
 
         Returns:
             RoutingExperience if span contains routing data, None otherwise
         """
         try:
-            # Extract span attributes
-            attributes = span_row.get("attributes", {})
-
-            # Check if this looks like a routing span
-            if not self._is_routing_span_df(span_row):
+            # Validate this is a cogniverse.routing span
+            span_name = span_row.get("name", "")
+            if span_name != SPAN_NAME_ROUTING:
+                logger.warning(f"⚠️ Expected {SPAN_NAME_ROUTING} span, got: {span_name}")
                 return None
 
-            # Extract routing data from span attributes or try to infer from outputs
-            query = attributes.get("query", "")
-            if not query:
-                # Try to get query from outputs if it's a search result
-                outputs = span_row.get("outputs", {})
-                if "results" in outputs and outputs["results"]:
-                    # This might be search results, skip for now as we want routing spans
-                    return None
+            # Extract routing attributes from Phoenix flattened format
+            # Phoenix stores nested attributes as: attributes.routing = {...}
+            routing_attrs = span_row.get("attributes.routing")
+            if routing_attrs and isinstance(routing_attrs, dict):
+                # Phoenix flattened format
+                chosen_agent = routing_attrs.get("chosen_agent")
+                routing_confidence = routing_attrs.get("confidence")
+                processing_time = routing_attrs.get("processing_time", 0.0)
+                query = routing_attrs.get("query")
+                context = routing_attrs.get("context")
+            else:
+                # Fallback to nested format (for unit tests or older spans)
+                attributes = span_row.get("attributes", {})
+                chosen_agent = attributes.get("routing.chosen_agent")
+                routing_confidence = attributes.get("routing.confidence")
+                processing_time = attributes.get("routing.processing_time", 0.0)
+                query = attributes.get("routing.query")
+                context = attributes.get("routing.context")
 
-            # Try to infer routing information from available data
-            chosen_agent = attributes.get(
-                "chosen_agent", "video_search"
-            )  # Default fallback
-            routing_confidence = float(
-                attributes.get("confidence", 0.5)
-            )  # Default confidence
+            # Validate required fields (note: confidence can be 0.0, which is valid)
+            if not chosen_agent or routing_confidence is None or not query:
+                logger.warning(
+                    f"⚠️ Missing required routing attributes: "
+                    f"chosen_agent={chosen_agent}, "
+                    f"confidence={routing_confidence}, query={query}"
+                )
+                return None
 
-            # Extract entities and relationships (if available)
-            entities = self._parse_json_attribute(attributes.get("entities", "[]"))
-            relationships = self._parse_json_attribute(
-                attributes.get("relationships", "[]")
-            )
-            enhanced_query = attributes.get("enhanced_query", query)
+            # Additional validation: query and chosen_agent should be non-empty strings
+            if not isinstance(chosen_agent, str) or not isinstance(query, str):
+                logger.warning(
+                    f"⚠️ Invalid attribute types: "
+                    f"chosen_agent type={type(chosen_agent)}, query type={type(query)}"
+                )
+                return None
 
-            # Derive quality metrics from span data
+            # Convert types
+            routing_confidence = float(routing_confidence)
+            processing_time = float(processing_time) if processing_time else 0.0
+
+            # Parse context to extract entities/relationships if available
+            entities = []
+            relationships = []
+            enhanced_query = query
+
+            if context:
+                try:
+                    import json
+
+                    if isinstance(context, str):
+                        context_dict = json.loads(context)
+                    else:
+                        context_dict = context
+
+                    entities = context_dict.get("entities", [])
+                    relationships = context_dict.get("relationships", [])
+                    enhanced_query = context_dict.get("enhanced_query", query)
+                except (json.JSONDecodeError, TypeError, AttributeError) as e:
+                    logger.warning(f"⚠️ Error parsing context: {e}")
+
+            # Derive quality metrics from span status and downstream spans
             search_quality = self._compute_search_quality_df(span_row)
             agent_success = self._determine_agent_success_df(span_row)
-            processing_time = 0.0  # Would need timing data from span
 
             # Create routing experience
             experience = RoutingExperience(
@@ -214,18 +282,11 @@ class PhoenixSpanEvaluator:
 
     def _is_routing_span_df(self, span_row) -> bool:
         """Check if span represents a routing operation"""
-        operation_name = span_row.get("operation_name", "")
-        attributes = span_row.get("attributes", {})
-
-        return (
-            "routing" in operation_name.lower()
-            or "route_query" in operation_name.lower()
-            or "chosen_agent" in attributes
-            or "confidence" in attributes
-            or
-            # For now, accept any span with a query as potentially routing-related
-            "query" in attributes
-        )
+        # We already filter for cogniverse.routing spans in evaluate_routing_spans,
+        # but this method is still called from _extract_routing_experience_from_df_row
+        # for validation
+        span_name = span_row.get("name", "")
+        return span_name == SPAN_NAME_ROUTING
 
     def _compute_search_quality_df(self, span_row) -> float:
         """
