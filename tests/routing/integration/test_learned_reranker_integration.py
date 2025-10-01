@@ -213,6 +213,46 @@ class TestHybridRerankingIntegration:
 
 
 @pytest.mark.integration
+class TestOllamaReranking:
+    """Test Ollama reranking via OpenAI-compatible API"""
+
+    @pytest.mark.asyncio
+    async def test_ollama_reranker_with_mock_api(self, sample_results):
+        """Test Ollama reranking using LiteLLM OpenAI compatibility"""
+        from unittest.mock import Mock, patch
+
+        with patch("src.app.search.learned_reranker.arerank") as mock_arerank:
+            # Mock LiteLLM response with Ollama model
+            mock_response = Mock()
+            mock_items = [
+                Mock(index=1, relevance_score=0.92),  # doc-2 first
+                Mock(index=0, relevance_score=0.88),  # doc-1 second
+            ]
+            mock_response.results = mock_items
+            mock_arerank.return_value = mock_response
+
+            # Initialize with Ollama model using OpenAI compatibility
+            reranker = LearnedReranker(model="openai/bge-reranker-v2-m3")
+            reranker.api_base = "http://localhost:11434/v1"
+
+            query = "machine learning tutorial"
+            reranked = await reranker.rerank(query, sample_results, top_n=2)
+
+            # Verify LiteLLM was called with api_base for Ollama
+            mock_arerank.assert_called_once()
+            call_kwargs = mock_arerank.call_args.kwargs
+            assert call_kwargs["model"] == "openai/bge-reranker-v2-m3"
+            assert call_kwargs["api_base"] == "http://localhost:11434/v1"
+            assert call_kwargs["query"] == query
+
+            # Verify reranking
+            assert len(reranked) == 2
+            assert reranked[0].id == "doc-2"
+            assert reranked[1].id == "doc-1"
+            assert reranked[0].metadata["reranking_score"] == 0.92
+
+
+@pytest.mark.integration
 class TestConfigurableMultiModalReranker:
     """Test ConfigurableMultiModalReranker with real components"""
 

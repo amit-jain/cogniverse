@@ -461,11 +461,18 @@
     "heuristic_weight": 0.3,
     "max_results_to_rerank": 100,
     "top_n": null,
+    "api_base": null,
     "supported_models": {
       "cohere": "cohere/rerank-english-v3.0",
       "together_ai": "together_ai/Salesforce/Llama-Rank-V1",
       "jina": "jina/jina-reranker-v2-base-multilingual",
+      "ollama_bge": "openai/bge-reranker-v2-m3",
+      "ollama_mxbai": "openai/mxbai-rerank-large-v2",
       "heuristic": "heuristic"
+    },
+    "ollama_config": {
+      "api_base": "http://localhost:11434/v1",
+      "comment": "For Ollama models, set 'model' to 'ollama_bge' or 'ollama_mxbai' and 'api_base' to this value"
     }
   },
   "routing": {

@@ -1,12 +1,14 @@
 """
 Learned Reranking using LiteLLM
 
-Provides unified interface for learned reranking models through LiteLLM:
-- Supports Cohere, Together AI, Jina AI, Azure AI, AWS Bedrock, HuggingFace, etc.
+Provides unified interface for learned reranking models:
+- LiteLLM: Cohere, Together AI, Jina AI, Azure AI, AWS Bedrock, HuggingFace, etc.
+- Ollama: Local reranking models via OpenAI-compatible API (bge-reranker-v2-m3, mxbai-rerank-large-v2, etc.)
 - Model-agnostic: works with both cross-encoder and ColBERT style models
 - Simple configuration through config.json
 
-LiteLLM handles all model-specific details, providing a unified API.
+LiteLLM handles all models through unified API.
+For Ollama models, use "openai/<model_name>" with api_base set to Ollama endpoint.
 """
 
 import logging
@@ -37,7 +39,8 @@ class LearnedReranker:
         Initialize learned reranker
 
         Args:
-            model: Model name (e.g., "cohere/rerank-english-v3.0")
+            model: Model name (e.g., "cohere/rerank-english-v3.0", "openai/bge-reranker-v2-m3")
+                   For Ollama models, use "openai/<model_name>" with api_base set
                    If None, loads from config.json
         """
         # Load config
@@ -55,7 +58,7 @@ class LearnedReranker:
                 raise ValueError(
                     "LearnedReranker requires a learned model. "
                     "Set reranking.model in config.json to a supported model "
-                    "(cohere, together_ai, jina, etc.)"
+                    "(cohere, together_ai, jina, ollama, etc.)"
                 )
 
             self.model = supported_models.get(model_key)
@@ -68,6 +71,9 @@ class LearnedReranker:
         # Get top_n from config
         self.default_top_n = rerank_config.get("top_n")
         self.max_results_to_rerank = rerank_config.get("max_results_to_rerank", 100)
+
+        # Get api_base for OpenAI-compatible endpoints (Ollama)
+        self.api_base = rerank_config.get("api_base", None)
 
         logger.info(f"Initialized LearnedReranker with model: {self.model}")
 
@@ -104,27 +110,27 @@ class LearnedReranker:
 
         try:
             # Call LiteLLM rerank
-            response = await arerank(
-                model=self.model,
-                query=query,
-                documents=documents,
-                top_n=effective_top_n,
-            )
+            # For Ollama models, LiteLLM uses OpenAI-compatible API with custom api_base
+            kwargs = {
+                "model": self.model,
+                "query": query,
+                "documents": documents,
+                "top_n": effective_top_n,
+            }
+
+            # Add api_base for OpenAI-compatible endpoints (Ollama)
+            if self.api_base:
+                kwargs["api_base"] = self.api_base
+
+            response = await arerank(**kwargs)
 
             # Map LiteLLM response back to SearchResult objects
-            # LiteLLM returns results in order of relevance with index and relevance_score
             reranked = []
             for result_item in response.results:
-                # Get original result by index
                 original_result = results[result_item.index]
-
-                # Update metadata with reranking info
-                original_result.metadata["reranking_score"] = (
-                    result_item.relevance_score
-                )
+                original_result.metadata["reranking_score"] = result_item.relevance_score
                 original_result.metadata["reranker_model"] = self.model
                 original_result.metadata["original_rank"] = result_item.index
-
                 reranked.append(original_result)
 
             return reranked
@@ -166,24 +172,26 @@ class LearnedReranker:
 
         try:
             # Call LiteLLM rerank (synchronous)
-            response = rerank(
-                model=self.model,
-                query=query,
-                documents=documents,
-                top_n=effective_top_n,
-            )
+            kwargs = {
+                "model": self.model,
+                "query": query,
+                "documents": documents,
+                "top_n": effective_top_n,
+            }
+
+            # Add api_base for OpenAI-compatible endpoints (Ollama)
+            if self.api_base:
+                kwargs["api_base"] = self.api_base
+
+            response = rerank(**kwargs)
 
             # Map response back to SearchResult objects
             reranked = []
             for result_item in response.results:
                 original_result = results[result_item.index]
-
-                original_result.metadata["reranking_score"] = (
-                    result_item.relevance_score
-                )
+                original_result.metadata["reranking_score"] = result_item.relevance_score
                 original_result.metadata["reranker_model"] = self.model
                 original_result.metadata["original_rank"] = result_item.index
-
                 reranked.append(original_result)
 
             return reranked
