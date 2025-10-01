@@ -4,9 +4,17 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from vespa.application import Vespa
-from vespa.package import ApplicationPackage, Document, Field, RankProfile, Schema
-from vespa.package import FirstPhaseRanking, SecondPhaseRanking, Function
+from vespa.package import (
+    ApplicationPackage,
+    Document,
+    Field,
+    FirstPhaseRanking,
+    Function,
+    RankProfile,
+    Schema,
+    SecondPhaseRanking,
+)
+
 from src.common.config import get_config
 
 
@@ -62,10 +70,7 @@ class VespaSchemaManager:
         
         # Parse document fields
         document_fields = self._parse_document_fields(sd_content)
-        
-        # Parse structs
-        structs = self._parse_structs(sd_content)
-        
+
         # Create document with fields
         document = Document(fields=document_fields)
         
@@ -308,15 +313,302 @@ class VespaSchemaManager:
         self._logger.info(f"Created application package: {app_name}")
         return app_package
     
-    def upload_frame_schema(self, app_name: str = "videosearch") -> None:
+    def upload_image_content_schema(self, app_name: str = "imagesearch") -> None:
         """
-        Create and upload document-per-frame schema using PyVespa directly.
-        
+        Create and upload image_content schema with ColPali multi-vector embeddings.
+
+        Uses ColPali for image similarity search (same approach as video frames).
+
         Args:
             app_name: Name of the application
         """
         try:
-            from vespa.package import ApplicationPackage, Schema, Document, Field, RankProfile, Function, SecondPhaseRanking
+            from vespa.package import (
+                ApplicationPackage,
+                Document,
+                Field,
+                RankProfile,
+                Schema,
+                SecondPhaseRanking,
+            )
+
+            image_content_schema = Schema(
+                name='image_content',
+                document=Document(
+                    fields=[
+                        Field(name='image_id', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
+                        Field(name='image_title', type='string', indexing=['summary', 'index'], index='enable-bm25'),
+                        Field(name='source_url', type='string', indexing=['summary', 'attribute']),
+                        Field(name='creation_timestamp', type='long', indexing=['summary', 'attribute']),
+                        Field(name='image_description', type='string', indexing=['summary', 'index'], index='enable-bm25'),
+                        Field(name='detected_objects', type='array<string>', indexing=['summary', 'attribute']),
+                        Field(name='detected_scenes', type='array<string>', indexing=['summary', 'attribute']),
+                        # ColPali multi-vector embedding (same as video frames)
+                        Field(
+                            name='colpali_embedding',
+                            type='tensor<float>(x[1024],d[128])',
+                            indexing=['attribute'],
+                            attribute=['distance-metric:prenormalized-angular']
+                        ),
+                    ]
+                ),
+                rank_profiles=[
+                    RankProfile(
+                        name='colpali_similarity',
+                        inputs=[('query(q)', 'tensor<float>(x[1024],d[128])')],
+                        first_phase='sum(reduce(sum(query(q) * attribute(colpali_embedding), d), max, x))'
+                    ),
+                    RankProfile(
+                        name='hybrid_image',
+                        inputs=[('query(q)', 'tensor<float>(x[1024],d[128])')],
+                        first_phase='bm25(image_description)',
+                        second_phase=SecondPhaseRanking(
+                            expression='sum(reduce(sum(query(q) * attribute(colpali_embedding), d), max, x))',
+                            rerank_count=100
+                        )
+                    ),
+                ]
+            )
+
+            app_package = ApplicationPackage(name=app_name, schema=[image_content_schema])
+            self._deploy_package(app_package)
+
+            self._logger.info("Successfully uploaded image_content schema with ColPali")
+
+        except Exception as e:
+            self._logger.error(f"Failed to upload image_content schema: {str(e)}")
+            raise
+
+    def upload_audio_content_schema(self, app_name: str = "audiosearch") -> None:
+        """
+        Create and upload audio_content schema for Phase 8.
+
+        Supports acoustic + transcript-based search.
+
+        Args:
+            app_name: Name of the application
+        """
+        try:
+            from vespa.package import (
+                ApplicationPackage,
+                Document,
+                Field,
+                RankProfile,
+                Schema,
+                SecondPhaseRanking,
+            )
+
+            audio_content_schema = Schema(
+                name='audio_content',
+                document=Document(
+                    fields=[
+                        Field(name='audio_id', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
+                        Field(name='audio_title', type='string', indexing=['summary', 'index'], index='enable-bm25'),
+                        Field(name='source_url', type='string', indexing=['summary', 'attribute']),
+                        Field(name='duration', type='double', indexing=['summary', 'attribute']),
+                        Field(name='transcript', type='string', indexing=['summary', 'index'], index='enable-bm25'),
+                        Field(name='speaker_labels', type='array<string>', indexing=['summary', 'attribute']),
+                        Field(name='detected_events', type='array<string>', indexing=['summary', 'attribute']),
+                        Field(name='language', type='string', indexing=['summary', 'attribute']),
+                        # Acoustic embeddings (512 dims)
+                        Field(
+                            name='audio_embedding',
+                            type='tensor<float>(d[512])',
+                            indexing=['attribute', 'index'],
+                            attribute=['distance-metric:angular']
+                        ),
+                        # Transcript semantic embeddings (768 dims)
+                        Field(
+                            name='semantic_embedding',
+                            type='tensor<float>(d[768])',
+                            indexing=['attribute', 'index'],
+                            attribute=['distance-metric:angular']
+                        ),
+                    ]
+                ),
+                rank_profiles=[
+                    # Acoustic similarity
+                    RankProfile(
+                        name='acoustic_similarity',
+                        inputs=[('query(q)', 'tensor<float>(d[512])')],
+                        first_phase='closeness(field, audio_embedding)'
+                    ),
+                    # Transcript BM25 search
+                    RankProfile(
+                        name='transcript_search',
+                        first_phase='bm25(transcript)'
+                    ),
+                    # Hybrid: BM25 recall -> semantic reranking
+                    RankProfile(
+                        name='hybrid_audio',
+                        inputs=[('query(q)', 'tensor<float>(d[768])')],
+                        first_phase='bm25(transcript)',
+                        second_phase=SecondPhaseRanking(
+                            expression='closeness(field, semantic_embedding)',
+                            rerank_count=100
+                        )
+                    ),
+                ]
+            )
+
+            app_package = ApplicationPackage(name=app_name, schema=[audio_content_schema])
+            self._deploy_package(app_package)
+
+            self._logger.info("Successfully uploaded audio_content schema")
+
+        except Exception as e:
+            self._logger.error(f"Failed to upload audio_content schema: {str(e)}")
+            raise
+
+    def upload_content_type_schemas(self, app_name: str = "contenttypes", schemas: list = None) -> None:
+        """
+        Upload multiple content type schemas together in one application package.
+
+        This avoids schema removal errors when deploying multiple schemas.
+
+        Args:
+            app_name: Name of the application
+            schemas: List of schema names to deploy. Defaults to ['image_content', 'audio_content']
+        """
+        if schemas is None:
+            schemas = ['image_content', 'audio_content']
+
+        try:
+            from vespa.package import (
+                ApplicationPackage,
+                Document,
+                Field,
+                RankProfile,
+                Schema,
+                SecondPhaseRanking,
+            )
+
+            schema_objects = []
+
+            # Build image_content schema
+            if 'image_content' in schemas:
+                image_content_schema = Schema(
+                    name='image_content',
+                    document=Document(
+                        fields=[
+                            Field(name='image_id', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
+                            Field(name='image_title', type='string', indexing=['summary', 'index'], index='enable-bm25'),
+                            Field(name='source_url', type='string', indexing=['summary', 'attribute']),
+                            Field(name='creation_timestamp', type='long', indexing=['summary', 'attribute']),
+                            Field(name='image_description', type='string', indexing=['summary', 'index'], index='enable-bm25'),
+                            Field(name='detected_objects', type='array<string>', indexing=['summary', 'attribute']),
+                            Field(name='detected_scenes', type='array<string>', indexing=['summary', 'attribute']),
+                            # ColPali multi-vector embedding (same as video frames)
+                            Field(
+                                name='colpali_embedding',
+                                type='tensor<float>(x[1024],d[128])',
+                                indexing=['attribute'],
+                                attribute=['distance-metric:prenormalized-angular']
+                            ),
+                        ]
+                    ),
+                    rank_profiles=[
+                        RankProfile(
+                            name='colpali_similarity',
+                            inputs=[('query(q)', 'tensor<float>(x[1024],d[128])')],
+                            first_phase='sum(reduce(sum(query(q) * attribute(colpali_embedding), d), max, x))'
+                        ),
+                        RankProfile(
+                            name='hybrid_image',
+                            inputs=[('query(q)', 'tensor<float>(x[1024],d[128])')],
+                            first_phase='bm25(image_description)',
+                            second_phase=SecondPhaseRanking(
+                                expression='sum(reduce(sum(query(q) * attribute(colpali_embedding), d), max, x))',
+                                rerank_count=100
+                            )
+                        ),
+                    ]
+                )
+                schema_objects.append(image_content_schema)
+
+            # Build audio_content schema
+            if 'audio_content' in schemas:
+                audio_content_schema = Schema(
+                    name='audio_content',
+                    document=Document(
+                        fields=[
+                            Field(name='audio_id', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
+                            Field(name='audio_title', type='string', indexing=['summary', 'index'], index='enable-bm25'),
+                            Field(name='source_url', type='string', indexing=['summary', 'attribute']),
+                            Field(name='duration', type='double', indexing=['summary', 'attribute']),
+                            Field(name='transcript', type='string', indexing=['summary', 'index'], index='enable-bm25'),
+                            Field(name='speaker_labels', type='array<string>', indexing=['summary', 'attribute']),
+                            Field(name='detected_events', type='array<string>', indexing=['summary', 'attribute']),
+                            Field(name='language', type='string', indexing=['summary', 'attribute']),
+                            # Acoustic embeddings (512 dims)
+                            Field(
+                                name='audio_embedding',
+                                type='tensor<float>(d[512])',
+                                indexing=['attribute', 'index'],
+                                attribute=['distance-metric:angular']
+                            ),
+                            # Transcript semantic embeddings (768 dims)
+                            Field(
+                                name='semantic_embedding',
+                                type='tensor<float>(d[768])',
+                                indexing=['attribute', 'index'],
+                                attribute=['distance-metric:angular']
+                            ),
+                        ]
+                    ),
+                    rank_profiles=[
+                        # Acoustic similarity search
+                        RankProfile(
+                            name='acoustic_similarity',
+                            inputs=[('query(q)', 'tensor<float>(d[512])')],
+                            first_phase='closeness(field, audio_embedding)'
+                        ),
+                        # Transcript BM25 search
+                        RankProfile(
+                            name='transcript_search',
+                            first_phase='bm25(transcript)'
+                        ),
+                        # Hybrid: BM25 + semantic embeddings
+                        RankProfile(
+                            name='hybrid_audio',
+                            inputs=[('query(q)', 'tensor<float>(d[768])')],
+                            first_phase='bm25(transcript)',
+                            second_phase=SecondPhaseRanking(
+                                expression='closeness(field, semantic_embedding)',
+                                rerank_count=100
+                            )
+                        ),
+                    ]
+                )
+                schema_objects.append(audio_content_schema)
+
+            # Deploy all schemas together
+            app_package = ApplicationPackage(name=app_name, schema=schema_objects)
+            self._deploy_package(app_package)
+
+            self._logger.info(f"Successfully uploaded content type schemas: {schemas}")
+
+        except Exception as e:
+            self._logger.error(f"Failed to upload content type schemas: {str(e)}")
+            raise
+
+    def upload_frame_schema(self, app_name: str = "videosearch") -> None:
+        """
+        Create and upload document-per-frame schema using PyVespa directly.
+
+        Args:
+            app_name: Name of the application
+        """
+        try:
+            from vespa.package import (
+                ApplicationPackage,
+                Document,
+                Field,
+                Function,
+                RankProfile,
+                Schema,
+                SecondPhaseRanking,
+            )
             
             # Create document-per-frame schema with ranking profiles
             video_frame_schema = Schema(
@@ -416,7 +708,7 @@ class VespaSchemaManager:
             # Deploy to Vespa
             self._deploy_package(app_package)
             
-            self._logger.info(f"Successfully uploaded document-per-frame schema")
+            self._logger.info("Successfully uploaded document-per-frame schema")
             
         except Exception as e:
             self._logger.error(f"Failed to upload schema: {str(e)}")
@@ -431,8 +723,9 @@ class VespaSchemaManager:
             app_name: Name of the application
         """
         try:
-            from .json_schema_parser import JsonSchemaParser
             from vespa.package import ApplicationPackage
+
+            from .json_schema_parser import JsonSchemaParser
             
             # Parse JSON schema to PyVespa objects
             parser = JsonSchemaParser()
@@ -529,8 +822,9 @@ class VespaSchemaManager:
             app_package: The ApplicationPackage to deploy
             allow_field_type_change: If True, adds validation override for field type changes
         """
-        import requests
         import json
+
+        import requests
         from vespa.package import Validation, ValidationID
         
         # Add validation override if requested
@@ -569,7 +863,7 @@ class VespaSchemaManager:
                 try:
                     error_detail = json.loads(response.content.decode('utf-8'))
                     error_msg += f": {error_detail}"
-                except:
+                except Exception:
                     error_msg += f": {response.content.decode('utf-8')}"
                 
                 raise RuntimeError(error_msg)

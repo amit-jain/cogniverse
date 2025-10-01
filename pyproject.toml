@@ -48,6 +48,9 @@ dependencies = [
     "mlflow>=3.0.0",
     # spaCy for dependency parsing in relationships
     "spacy>=3.7.0",
+    "faster-whisper>=1.2.0",
+    "librosa>=0.11.0",
+    "sentence-transformers>=5.1.0",
 ]
 
 [project.optional-dependencies]
