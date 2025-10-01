@@ -180,7 +180,9 @@ class PhoenixOrchestrationEvaluator:
             agent_sequence = agents_str.split(",") if agents_str else []
 
             execution_order_str = attributes.get("orchestration.execution_order", "")
-            execution_order = execution_order_str.split(",") if execution_order_str else []
+            execution_order = (
+                execution_order_str.split(",") if execution_order_str else []
+            )
 
             # Extract timing
             execution_time = float(attributes.get("orchestration.execution_time", 0.0))

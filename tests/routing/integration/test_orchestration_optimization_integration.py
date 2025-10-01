@@ -316,9 +316,7 @@ class TestOrchestrationOptimizationIntegration:
 
         # Verify integration results
         assert result["workflows_processed"] == 3
-        assert (
-            result["routing_experiences_created"] == 2
-        )  # Only high-quality workflows
+        assert result["routing_experiences_created"] == 2  # Only high-quality workflows
         assert result["patterns_learned"]["parallel"] == 1
         assert result["patterns_learned"]["sequential"] == 1
 

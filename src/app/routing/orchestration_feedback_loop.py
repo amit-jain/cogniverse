@@ -191,7 +191,9 @@ class OrchestrationFeedbackLoop:
 
         return result
 
-    def _annotation_to_ground_truth(self, span_data: Dict) -> Optional[WorkflowExecution]:
+    def _annotation_to_ground_truth(
+        self, span_data: Dict
+    ) -> Optional[WorkflowExecution]:
         """
         Convert human annotation to ground truth WorkflowExecution
 
@@ -234,7 +236,9 @@ class OrchestrationFeedbackLoop:
                 )
             else:
                 actual_agents_str = metadata.get("actual_agents", "")
-                agent_sequence = actual_agents_str.split(",") if actual_agents_str else []
+                agent_sequence = (
+                    actual_agents_str.split(",") if actual_agents_str else []
+                )
 
             # Execution order: Use suggested if provided, otherwise actual
             if not metadata.get("execution_order_is_optimal"):
@@ -244,7 +248,9 @@ class OrchestrationFeedbackLoop:
                 )
             else:
                 actual_order_str = metadata.get("actual_execution_order", "")
-                execution_order = actual_order_str.split(",") if actual_order_str else []
+                execution_order = (
+                    actual_order_str.split(",") if actual_order_str else []
+                )
 
             # Quality: Use human quality score
             quality_label = annotation.get("result", {}).get("label", "acceptable")

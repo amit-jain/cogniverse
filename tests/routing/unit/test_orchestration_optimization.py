@@ -454,7 +454,9 @@ class TestUnifiedOptimizer:
             ),
         ]
 
-        result = await self.unified_optimizer.integrate_orchestration_outcomes(workflows)
+        result = await self.unified_optimizer.integrate_orchestration_outcomes(
+            workflows
+        )
 
         assert result["workflows_processed"] == 2
         assert result["routing_experiences_created"] == 1  # Only the good one

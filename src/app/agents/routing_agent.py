@@ -17,13 +17,16 @@ from src.app.routing.advanced_optimizer import (
     AdvancedRoutingOptimizer,
 )
 from src.app.routing.config import RoutingConfig
+from src.app.routing.contextual_analyzer import ContextualAnalyzer
 from src.app.routing.orchestration_feedback_loop import OrchestrationFeedbackLoop
 from src.app.routing.phoenix_orchestration_evaluator import (
     PhoenixOrchestrationEvaluator,
 )
 from src.app.routing.phoenix_span_evaluator import PhoenixSpanEvaluator
+from src.app.routing.query_expansion import QueryExpander
 from src.app.routing.router import ComprehensiveRouter
 from src.app.routing.unified_optimizer import UnifiedOptimizer
+from src.app.search.multi_modal_reranker import MultiModalReranker
 from src.app.telemetry.config import (
     SERVICE_NAME_ORCHESTRATION,
     SPAN_NAME_ORCHESTRATION,
@@ -120,6 +123,16 @@ class RoutingAgent(DSPyRoutingMixin):
         )
 
         logger.info("🔗 Phase 7.5 orchestration optimization components initialized")
+
+        # Phase 10: Initialize advanced multi-modal features
+        self.query_expander = QueryExpander()
+        self.multi_modal_reranker = MultiModalReranker()
+        self.contextual_analyzer = ContextualAnalyzer(
+            max_history_size=50,
+            context_window_minutes=30,
+            min_preference_count=3
+        )
+        logger.info("🎯 Phase 10 advanced multi-modal features initialized")
 
         # Agent registry - maps agent types to their endpoints
         # Only include agents that are actually configured
@@ -251,8 +264,27 @@ class RoutingAgent(DSPyRoutingMixin):
             },
         ) as parent_span:
             try:
-                # Step 1: Get routing decision from comprehensive router
-                routing_decision = await self.router.route(query, context)
+                # Phase 10 Step 1: Expand query for multi-modal search
+                query_expansion = await self.query_expander.expand_query(query)
+                modality_intent = query_expansion["modality_intent"]
+                temporal_context = query_expansion.get("temporal", {})
+
+                # Add expansion info to parent span
+                parent_span.set_attribute(
+                    "query.modality_intent", ",".join(modality_intent)
+                )
+                if temporal_context.get("requires_temporal_search"):
+                    parent_span.set_attribute(
+                        "query.temporal_type", temporal_context.get("temporal_type", "")
+                    )
+
+                # Step 2: Get routing decision from comprehensive router
+                # Enrich context with expanded query information
+                enriched_context = context.copy() if context else {}
+                enriched_context["query_expansion"] = query_expansion
+                enriched_context["modality_intent"] = modality_intent
+
+                routing_decision = await self.router.route(query, enriched_context)
 
                 # Step 2: Check if orchestration is required (Phase 7)
                 if routing_decision.requires_orchestration:
@@ -341,6 +373,13 @@ class RoutingAgent(DSPyRoutingMixin):
                 # Mark parent span as successful
                 parent_span.set_status(Status(StatusCode.OK))
 
+                # Phase 10: Update contextual analyzer with query and routing decision
+                self.contextual_analyzer.update_context(
+                    query=query,
+                    detected_modalities=modality_intent,
+                    result_count=len(workflow_plan["agents"]),  # Number of agents called
+                )
+
                 logger.info(f"Query analysis completed in {execution_time:.3f}s")
 
                 return {
@@ -352,6 +391,8 @@ class RoutingAgent(DSPyRoutingMixin):
                     "confidence": routing_decision.confidence_score,
                     "routing_method": routing_decision.routing_method,
                     "execution_time": execution_time,
+                    "query_expansion": query_expansion,  # Include expansion info
+                    "contextual_hints": self.contextual_analyzer.get_contextual_hints(query),
                 }
 
             except Exception as e:
@@ -642,6 +683,99 @@ class RoutingAgent(DSPyRoutingMixin):
                 f"Unknown search modality: {modality_value}. "
                 f"Expected one of: video, text, image, audio, document, both"
             )
+
+    async def rerank_search_results(
+        self,
+        query: str,
+        results: List[Dict[str, Any]],
+        modality_intent: Optional[List[str]] = None,
+        temporal_context: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Apply multi-modal reranking to search results (Phase 10).
+
+        This method should be called by downstream agents after retrieving
+        initial search results to apply intelligent cross-modal reranking.
+
+        Args:
+            query: Original user query
+            results: List of search results (dict format)
+            modality_intent: Detected modality intents from query expansion
+            temporal_context: Temporal context from query expansion
+
+        Returns:
+            Reranked list of search results
+        """
+        from src.app.search.multi_modal_reranker import QueryModality, SearchResult
+
+        if not results:
+            return results
+
+        # Convert dict results to SearchResult objects
+        search_results = []
+        for r in results:
+            search_results.append(
+                SearchResult(
+                    id=r.get("id", r.get("video_id", "")),
+                    title=r.get("title", ""),
+                    content=r.get("description", r.get("content", "")),
+                    modality=r.get("modality", "unknown"),
+                    score=r.get("relevance_score", r.get("score", 0.0)),
+                    metadata=r.get("metadata", {}),
+                    timestamp=r.get("timestamp"),
+                )
+            )
+
+        # Convert modality intent to QueryModality enums
+        query_modalities = []
+        if modality_intent:
+            for intent in modality_intent:
+                try:
+                    if intent == "visual":
+                        query_modalities.extend([QueryModality.VIDEO, QueryModality.IMAGE])
+                    else:
+                        query_modalities.append(QueryModality(intent.upper()))
+                except ValueError:
+                    logger.warning(f"Unknown modality intent: {intent}")
+
+        if not query_modalities:
+            query_modalities = [QueryModality.MIXED]
+
+        # Prepare reranking context
+        context = {}
+        if temporal_context:
+            context["temporal"] = temporal_context
+
+        # Apply reranking
+        reranked_results = await self.multi_modal_reranker.rerank_results(
+            search_results, query, query_modalities, context
+        )
+
+        # Convert back to dict format
+        reranked_dicts = []
+        for r in reranked_results:
+            result_dict = {
+                "id": r.id,
+                "title": r.title,
+                "description": r.content,
+                "modality": r.modality,
+                "relevance_score": r.metadata.get("reranking_score", r.score),
+                "original_score": r.score,
+                "reranking_metadata": {
+                    "score_components": r.metadata.get("score_components", {}),
+                },
+                "metadata": r.metadata,
+            }
+            if r.timestamp:
+                result_dict["timestamp"] = r.timestamp
+            reranked_dicts.append(result_dict)
+
+        logger.info(
+            f"Reranked {len(results)} results using multi-modal reranker "
+            f"(modalities: {[m.value for m in query_modalities]})"
+        )
+
+        return reranked_dicts
 
 
 # Global routing agent instance

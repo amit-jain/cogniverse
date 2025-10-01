@@ -116,7 +116,9 @@ class UnifiedOptimizer:
                         routing_experiences_created += 1
 
                         # Track pattern learning
-                        pattern = workflow.metadata.get("orchestration_pattern", "unknown")
+                        pattern = workflow.metadata.get(
+                            "orchestration_pattern", "unknown"
+                        )
                         patterns_learned[pattern] = patterns_learned.get(pattern, 0) + 1
 
             except Exception as e:
@@ -179,7 +181,9 @@ class UnifiedOptimizer:
                 processing_time=workflow.execution_time,
                 metadata={
                     "source": "orchestration_workflow",
-                    "orchestration_pattern": workflow.metadata.get("orchestration_pattern"),
+                    "orchestration_pattern": workflow.metadata.get(
+                        "orchestration_pattern"
+                    ),
                     "agent_sequence": ",".join(workflow.agent_sequence),
                     "query_type": workflow.query_type,
                     "parallel_efficiency": workflow.parallel_efficiency,
@@ -218,7 +222,9 @@ class UnifiedOptimizer:
 
         # 1. Optimize orchestration workflows
         try:
-            workflow_results = await self.workflow_intelligence.optimize_from_ground_truth()
+            workflow_results = (
+                await self.workflow_intelligence.optimize_from_ground_truth()
+            )
             results["workflow_optimization"] = workflow_results
         except Exception as e:
             logger.error(f"Workflow optimization failed: {e}")

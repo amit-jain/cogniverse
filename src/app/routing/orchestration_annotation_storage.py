@@ -192,9 +192,7 @@ class OrchestrationAnnotationStorage:
                 # Filter by annotation source
                 if only_human_reviewed:
                     evaluations = [
-                        e
-                        for e in evaluations
-                        if e.get("annotator_kind") == "human"
+                        e for e in evaluations if e.get("annotator_kind") == "human"
                     ]
 
                 # Filter by quality score
@@ -214,7 +212,9 @@ class OrchestrationAnnotationStorage:
                         }
                     )
 
-            logger.info(f"📊 Found {len(annotated_spans)} annotated orchestration spans")
+            logger.info(
+                f"📊 Found {len(annotated_spans)} annotated orchestration spans"
+            )
             return annotated_spans
 
         except Exception as e:
