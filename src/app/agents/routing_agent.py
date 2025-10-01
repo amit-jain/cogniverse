@@ -18,6 +18,8 @@ from src.app.routing.advanced_optimizer import (
 )
 from src.app.routing.config import RoutingConfig
 from src.app.routing.contextual_analyzer import ContextualAnalyzer
+from src.app.routing.cross_modal_optimizer import CrossModalOptimizer
+from src.app.routing.modality_optimizer import ModalityOptimizer
 from src.app.routing.orchestration_feedback_loop import OrchestrationFeedbackLoop
 from src.app.routing.phoenix_orchestration_evaluator import (
     PhoenixOrchestrationEvaluator,
@@ -26,7 +28,7 @@ from src.app.routing.phoenix_span_evaluator import PhoenixSpanEvaluator
 from src.app.routing.query_expansion import QueryExpander
 from src.app.routing.router import ComprehensiveRouter
 from src.app.routing.unified_optimizer import UnifiedOptimizer
-from src.app.search.multi_modal_reranker import MultiModalReranker
+from src.app.search.multi_modal_reranker import MultiModalReranker, QueryModality
 from src.app.telemetry.config import (
     SERVICE_NAME_ORCHESTRATION,
     SPAN_NAME_ORCHESTRATION,
@@ -133,6 +135,17 @@ class RoutingAgent(DSPyRoutingMixin):
             min_preference_count=3
         )
         logger.info("🎯 Phase 10 advanced multi-modal features initialized")
+
+        # Phase 11: Initialize per-modality optimization
+        self.modality_optimizer = ModalityOptimizer(
+            tenant_id=tenant_id,
+            model_dir=None,  # Use default
+            vespa_client=None,  # TODO: Wire in Vespa client when available
+        )
+        self.cross_modal_optimizer = CrossModalOptimizer(
+            model_dir=None,  # Use default
+        )
+        logger.info("🎯 Phase 11 per-modality optimization initialized")
 
         # Agent registry - maps agent types to their endpoints
         # Only include agents that are actually configured
@@ -278,11 +291,32 @@ class RoutingAgent(DSPyRoutingMixin):
                         "query.temporal_type", temporal_context.get("temporal_type", "")
                     )
 
+                # Phase 11: Check if cross-modal fusion would be beneficial
+                fusion_recommendation = None
+                if len(modality_intent) >= 2:
+                    # Convert modality strings to QueryModality enum with confidences
+                    detected_modalities = self._convert_to_modality_tuples(
+                        modality_intent, query_expansion
+                    )
+                    fusion_recommendation = self.cross_modal_optimizer.get_fusion_recommendations(
+                        query_text=query,
+                        detected_modalities=detected_modalities,
+                        fusion_threshold=0.5,
+                    )
+                    parent_span.set_attribute(
+                        "fusion.should_fuse", fusion_recommendation.get("should_fuse", False)
+                    )
+                    parent_span.set_attribute(
+                        "fusion.benefit", fusion_recommendation.get("fusion_benefit", 0.0)
+                    )
+
                 # Step 2: Get routing decision from comprehensive router
                 # Enrich context with expanded query information
                 enriched_context = context.copy() if context else {}
                 enriched_context["query_expansion"] = query_expansion
                 enriched_context["modality_intent"] = modality_intent
+                if fusion_recommendation:
+                    enriched_context["fusion_recommendation"] = fusion_recommendation
 
                 routing_decision = await self.router.route(query, enriched_context)
 
@@ -683,6 +717,39 @@ class RoutingAgent(DSPyRoutingMixin):
                 f"Unknown search modality: {modality_value}. "
                 f"Expected one of: video, text, image, audio, document, both"
             )
+
+    def _convert_to_modality_tuples(
+        self, modality_intent: List[str], query_expansion: Dict[str, Any]
+    ) -> List[tuple]:
+        """
+        Convert modality intent strings to (QueryModality, confidence) tuples
+
+        Args:
+            modality_intent: List of modality strings
+            query_expansion: Query expansion dict with confidence scores
+
+        Returns:
+            List of (QueryModality, confidence) tuples
+        """
+        modality_map = {
+            "video": QueryModality.VIDEO,
+            "document": QueryModality.DOCUMENT,
+            "image": QueryModality.IMAGE,
+            "audio": QueryModality.AUDIO,
+            "text": QueryModality.TEXT,
+        }
+
+        result = []
+        modality_scores = query_expansion.get("modality_scores", {})
+
+        for modality_str in modality_intent:
+            if modality_str in modality_map:
+                query_modality = modality_map[modality_str]
+                # Get confidence from modality_scores or default to 0.7
+                confidence = modality_scores.get(modality_str, 0.7)
+                result.append((query_modality, confidence))
+
+        return result
 
     async def rerank_search_results(
         self,
