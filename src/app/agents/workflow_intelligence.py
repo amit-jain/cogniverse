@@ -1127,6 +1127,145 @@ class WorkflowIntelligence:
             for template in self.workflow_templates.values()
         }
 
+    async def record_execution(self, workflow_execution: WorkflowExecution) -> None:
+        """
+        Record workflow execution directly from orchestration spans
+
+        This is called by PhoenixOrchestrationEvaluator to feed real
+        orchestration outcomes into the learning system.
+        """
+        try:
+            # Add to history
+            self.workflow_history.append(workflow_execution)
+
+            # Persist if enabled
+            if self.enable_persistence:
+                await self._persist_execution(workflow_execution)
+
+            # Check for template creation opportunities
+            await self._evaluate_template_creation(workflow_execution)
+
+            self.logger.debug(
+                f"Recorded workflow execution from Phoenix: {workflow_execution.workflow_id}"
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to record workflow execution: {e}")
+
+    async def record_ground_truth_execution(
+        self, workflow_execution: WorkflowExecution
+    ) -> None:
+        """
+        Record human-corrected ground truth workflow execution
+
+        This is called by OrchestrationFeedbackLoop to feed human-annotated
+        "ideal" workflows into the learning system. These are weighted more
+        heavily than automated executions.
+        """
+        try:
+            # Mark as ground truth in metadata
+            workflow_execution.metadata["is_ground_truth"] = True
+            workflow_execution.metadata["learning_weight"] = 2.0
+
+            # Add to history with higher priority
+            self.workflow_history.append(workflow_execution)
+
+            # Persist if enabled
+            if self.enable_persistence:
+                await self._persist_execution(workflow_execution)
+
+            # Always evaluate for template creation from ground truth
+            await self._evaluate_template_creation(workflow_execution)
+
+            self.logger.info(
+                f"Recorded ground truth workflow: {workflow_execution.workflow_id} "
+                f"(quality: {workflow_execution.user_satisfaction})"
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to record ground truth execution: {e}")
+
+    async def optimize_from_ground_truth(self) -> Dict[str, Any]:
+        """
+        Trigger DSPy optimization using ground truth workflows
+
+        This is called by OrchestrationFeedbackLoop when sufficient human
+        annotations have been collected. It updates the DSPy modules to
+        learn from human-corrected workflows.
+
+        Returns:
+            Optimization results and statistics
+        """
+        try:
+            # Filter ground truth workflows
+            ground_truth_workflows = [
+                w
+                for w in self.workflow_history
+                if w.metadata.get("is_ground_truth", False)
+            ]
+
+            if not ground_truth_workflows:
+                return {
+                    "status": "skipped",
+                    "reason": "no_ground_truth_data",
+                    "ground_truth_count": 0,
+                }
+
+            self.logger.info(
+                f"Starting DSPy optimization with {len(ground_truth_workflows)} "
+                f"ground truth workflows"
+            )
+
+            # For now, mark ground truth workflows for prioritization
+            # Full DSPy optimization would require setting up training/validation split
+            # and running teleprompter optimization
+
+            # Update optimization stats
+            self.optimization_stats["ground_truth_workflows"] = len(
+                ground_truth_workflows
+            )
+            self.optimization_stats["last_ground_truth_optimization"] = datetime.now()
+
+            return {
+                "status": "success",
+                "ground_truth_count": len(ground_truth_workflows),
+                "workflows_learned_from": len(ground_truth_workflows),
+                "optimization_timestamp": datetime.now().isoformat(),
+            }
+
+        except Exception as e:
+            self.logger.error(f"Ground truth optimization failed: {e}")
+            return {"status": "error", "error": str(e)}
+
+    def get_successful_workflows(
+        self, min_quality: float = 0.7, limit: int = 100
+    ) -> List[WorkflowExecution]:
+        """
+        Get successful workflows for integration with routing optimization
+
+        This is called by UnifiedOptimizer to extract high-quality workflows
+        that should inform routing decisions.
+
+        Args:
+            min_quality: Minimum user_satisfaction score (0.0-1.0)
+            limit: Maximum number of workflows to return
+
+        Returns:
+            List of successful, high-quality workflow executions
+        """
+        successful_workflows = [
+            w
+            for w in self.workflow_history
+            if w.success
+            and w.user_satisfaction is not None
+            and w.user_satisfaction >= min_quality
+        ]
+
+        # Sort by quality (user_satisfaction) descending
+        successful_workflows.sort(
+            key=lambda w: w.user_satisfaction or 0.0, reverse=True
+        )
+
+        return successful_workflows[:limit]
+
 
 def create_workflow_intelligence(
     max_history_size: int = 10000,

@@ -17,8 +17,13 @@ from src.app.routing.advanced_optimizer import (
     AdvancedRoutingOptimizer,
 )
 from src.app.routing.config import RoutingConfig
+from src.app.routing.orchestration_feedback_loop import OrchestrationFeedbackLoop
+from src.app.routing.phoenix_orchestration_evaluator import (
+    PhoenixOrchestrationEvaluator,
+)
 from src.app.routing.phoenix_span_evaluator import PhoenixSpanEvaluator
 from src.app.routing.router import ComprehensiveRouter
+from src.app.routing.unified_optimizer import UnifiedOptimizer
 from src.app.telemetry.config import (
     SERVICE_NAME_ORCHESTRATION,
     SPAN_NAME_ORCHESTRATION,
@@ -90,6 +95,31 @@ class RoutingAgent(DSPyRoutingMixin):
             workflow_timeout_minutes=15,
             enable_workflow_intelligence=True,
         )
+
+        # Phase 7.5: Initialize orchestration optimization components
+        tenant_id = self.system_config.get("tenant_id", "default")
+
+        # Initialize orchestration evaluator
+        self.orchestration_evaluator = PhoenixOrchestrationEvaluator(
+            workflow_intelligence=self.orchestrator.workflow_intelligence,
+            tenant_id=tenant_id,
+        )
+
+        # Initialize unified optimizer
+        self.unified_optimizer = UnifiedOptimizer(
+            routing_optimizer=self.optimizer,
+            workflow_intelligence=self.orchestrator.workflow_intelligence,
+        )
+
+        # Initialize orchestration feedback loop
+        self.orchestration_feedback_loop = OrchestrationFeedbackLoop(
+            workflow_intelligence=self.orchestrator.workflow_intelligence,
+            tenant_id=tenant_id,
+            poll_interval_minutes=15,
+            min_annotations_for_update=10,
+        )
+
+        logger.info("🔗 Phase 7.5 orchestration optimization components initialized")
 
         # Agent registry - maps agent types to their endpoints
         # Only include agents that are actually configured
@@ -874,6 +904,101 @@ async def evaluate_phoenix_spans(lookback_hours: int = 1, batch_size: int = 50):
     except Exception as e:
         logger.error(f"❌ Span evaluation failed: {e}")
         raise HTTPException(status_code=500, detail=f"Span evaluation failed: {str(e)}")
+
+
+@app.post("/optimization/evaluate-orchestration-spans")
+async def evaluate_orchestration_spans(lookback_hours: int = 1, batch_size: int = 50):
+    """Evaluate orchestration spans and feed to WorkflowIntelligence"""
+    if not routing_agent:
+        raise HTTPException(status_code=503, detail="Routing agent not initialized")
+
+    try:
+        logger.info(
+            f"🔍 Starting orchestration span evaluation "
+            f"(lookback: {lookback_hours}h, batch: {batch_size})"
+        )
+
+        results = await routing_agent.orchestration_evaluator.evaluate_orchestration_spans(
+            lookback_hours=lookback_hours,
+            batch_size=batch_size
+        )
+
+        logger.info(
+            f"✅ Orchestration evaluation complete: "
+            f"{results.get('workflows_extracted', 0)} workflows extracted"
+        )
+
+        return {
+            "status": "completed",
+            "evaluation_results": results,
+            "message": f"Processed {results.get('spans_processed', 0)} spans, "
+            f"extracted {results.get('workflows_extracted', 0)} workflows",
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Orchestration evaluation failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Orchestration evaluation failed: {str(e)}"
+        )
+
+
+@app.post("/optimization/trigger-unified-optimization")
+async def trigger_unified_optimization():
+    """Trigger unified optimization across routing and orchestration"""
+    if not routing_agent:
+        raise HTTPException(status_code=503, detail="Routing agent not initialized")
+
+    try:
+        logger.info("🎯 Triggering unified optimization")
+
+        results = await routing_agent.unified_optimizer.optimize_unified_policy()
+
+        logger.info("✅ Unified optimization complete")
+
+        return {
+            "status": "completed",
+            "optimization_results": results,
+            "message": "Unified optimization completed successfully",
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Unified optimization failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unified optimization failed: {str(e)}"
+        )
+
+
+@app.post("/optimization/process-orchestration-annotations")
+async def process_orchestration_annotations():
+    """Process new orchestration annotations and feed to WorkflowIntelligence"""
+    if not routing_agent:
+        raise HTTPException(status_code=503, detail="Routing agent not initialized")
+
+    try:
+        logger.info("🔍 Processing new orchestration annotations")
+
+        results = await routing_agent.orchestration_feedback_loop.process_new_annotations()
+
+        logger.info(
+            f"✅ Annotation processing complete: "
+            f"{results.get('workflows_learned', 0)} workflows learned"
+        )
+
+        return {
+            "status": "completed",
+            "processing_results": results,
+            "message": f"Found {results.get('annotations_found', 0)} annotations, "
+            f"learned {results.get('workflows_learned', 0)} workflows",
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Annotation processing failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Annotation processing failed: {str(e)}"
+        )
 
 
 if __name__ == "__main__":

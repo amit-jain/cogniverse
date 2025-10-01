@@ -15,18 +15,20 @@ Implementation follows OPTIMIZATION_STRATEGY.md Phase 1 requirements.
 
 # Fix protobuf issue - must be before other imports
 import os
+
 os.environ['PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION'] = 'python'
 
-import streamlit as st
-import pandas as pd
-import plotly.graph_objects as go
-import plotly.express as px
-from datetime import datetime, timedelta
-import time
-import json
-from pathlib import Path
-import sys
 import importlib.util
+import json
+import sys
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -49,10 +51,13 @@ RootCauseAnalyzer = rca_module.RootCauseAnalyzer
 
 # Import A2A client for agent communication
 import asyncio
+
 import httpx
+
 sys.path.append(str(project_root / "src"))
-from tools.a2a_utils import A2AClient
 from common.config import get_config
+from tools.a2a_utils import A2AClient
+
 
 def run_async_in_streamlit(coro):
     """
@@ -96,6 +101,13 @@ except ImportError as e:
     routing_evaluation_tab_available = False
     routing_evaluation_tab_error = str(e)
 
+try:
+    from orchestration_annotation_tab import render_orchestration_annotation_tab
+    orchestration_annotation_tab_available = True
+except ImportError as e:
+    orchestration_annotation_tab_available = False
+    orchestration_annotation_tab_error = str(e)
+
 # Page configuration
 st.set_page_config(
     page_title="Analytics Dashboard",
@@ -116,7 +128,7 @@ def format_timestamp(ts_str):
             return ts_str.strftime("%b %d, %Y %I:%M:%S %p")
         else:
             return str(ts_str)
-    except:
+    except Exception:
         return str(ts_str)
 
 def format_time_range(start_str, end_str):
@@ -130,7 +142,7 @@ def format_time_range(start_str, end_str):
             return f"{start} - {end.split(' ', 2)[2]}"
         else:
             return f"{start} - {end}"
-    except:
+    except Exception:
         return f"{start_str} to {end_str}"
 
 # Custom CSS
@@ -319,6 +331,7 @@ agent_config = get_agent_config()
 def check_agent_connectivity():
     """Check if agents are reachable and return status"""
     import asyncio
+
     import httpx
 
     async def check_agent(name, url):
@@ -470,7 +483,7 @@ async def call_agent_async(agent_url: str, task_data: dict) -> dict:
         return {"status": "error", "message": str(e)}
 
 # Create main tabs
-main_tabs = st.tabs(["📊 Analytics", "🧪 Evaluation", "🗺️ Embedding Atlas", "🎯 Routing Evaluation", "🔧 Optimization", "📥 Ingestion Testing", "🔍 Interactive Search"])
+main_tabs = st.tabs(["📊 Analytics", "🧪 Evaluation", "🗺️ Embedding Atlas", "🎯 Routing Evaluation", "🔄 Orchestration Annotation", "🔧 Optimization", "📥 Ingestion Testing", "🔍 Interactive Search"])
 
 # Show agent connectivity status in sidebar
 agent_status = show_agent_status()
@@ -929,7 +942,7 @@ with tabs[4]:
                 outliers_df = pd.DataFrame()
             
             if not outliers_df.empty:
-                st.subheader(f"Outlier Details")
+                st.subheader("Outlier Details")
                 st.caption(f"Showing traces outside bounds: [{lower_bound:.1f}, {upper_bound:.1f}] ms")
                 st.dataframe(
                     outliers_df[['timestamp', 'operation', 'duration_ms', 'profile', 'strategy', 'error']]
@@ -1527,8 +1540,21 @@ with main_tabs[3]:
         st.error(f"Failed to import routing evaluation tab: {routing_evaluation_tab_error}")
         st.info("The routing evaluation tab displays metrics from the RoutingEvaluator.")
 
-# Optimization Tab
+# Orchestration Annotation Tab
 with main_tabs[4]:
+    if orchestration_annotation_tab_available:
+        try:
+            render_orchestration_annotation_tab()
+        except Exception as e:
+            st.error(f"Error rendering orchestration annotation tab: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+    else:
+        st.error(f"Orchestration annotation tab not available: {orchestration_annotation_tab_error}")
+        st.info("The orchestration annotation tab provides UI for human annotation of orchestration workflows.")
+
+# Optimization Tab
+with main_tabs[5]:
     st.header("🔧 System Optimization")
     st.markdown("Trigger and monitor optimization of routing, ingestion, and agent systems using your existing DSPy infrastructure.")
     
@@ -1740,7 +1766,7 @@ with main_tabs[4]:
     st.info("System status is displayed in the sidebar based on real agent connectivity checks. No services are assumed to be running.")
 
 # Ingestion Testing Tab
-with main_tabs[5]:
+with main_tabs[6]:
     st.header("📥 Ingestion Pipeline Testing")
     st.markdown("Interactive testing and configuration of video ingestion pipelines with different processing profiles.")
     
@@ -1944,7 +1970,7 @@ with main_tabs[5]:
         st.info("📊 Upload a video and process it to see detailed analysis")
 
 # Interactive Search Tab
-with main_tabs[6]:
+with main_tabs[7]:
     st.header("🔍 Interactive Search Interface")
     st.markdown("Live search testing and evaluation with multiple ranking strategies and real-time results.")
     

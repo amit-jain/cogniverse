@@ -52,6 +52,9 @@ class RoutingExperience:
     reward: Optional[float] = None
     timestamp: datetime = field(default_factory=datetime.now)
 
+    # Additional metadata for orchestration integration
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
 
 @dataclass
 class PolicyOptimizationResult:
@@ -469,6 +472,7 @@ class AdvancedRoutingOptimizer:
         agent_success: bool,
         processing_time: float = 0.0,
         user_satisfaction: Optional[float] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> float:
         """
         Record a routing experience and compute reward
@@ -484,6 +488,7 @@ class AdvancedRoutingOptimizer:
             agent_success: Whether agent completed successfully
             processing_time: Time taken for processing
             user_satisfaction: Optional explicit user feedback (0-1)
+            metadata: Optional additional metadata (e.g., from orchestration)
 
         Returns:
             Computed reward for this experience
@@ -509,6 +514,7 @@ class AdvancedRoutingOptimizer:
             user_satisfaction=user_satisfaction,
             processing_time=processing_time,
             reward=reward,
+            metadata=metadata or {},
         )
 
         # Store experience
@@ -1123,6 +1129,34 @@ class AdvancedRoutingOptimizer:
                 "min_experiences_for_training": self.config.min_experiences_for_training,
             },
         }
+
+    async def optimize_routing_policy(self) -> Dict[str, Any]:
+        """
+        Trigger routing policy optimization
+
+        This is called by UnifiedOptimizer to run routing optimization
+        as part of the unified optimization cycle.
+
+        Returns:
+            Optimization results
+        """
+        try:
+            # Run optimization step
+            await self._run_optimization_step()
+
+            return {
+                "status": "success",
+                "total_experiences": len(self.experiences),
+                "training_step": self.training_step,
+                "metrics": {
+                    "avg_reward": self.metrics.avg_reward,
+                    "successful_routes": self.metrics.successful_routes,
+                    "failed_routes": self.metrics.failed_routes,
+                },
+            }
+        except Exception as e:
+            logger.error(f"Routing policy optimization failed: {e}")
+            return {"status": "error", "error": str(e)}
 
     async def reset_optimization(self):
         """Reset optimization state (useful for testing or fresh start)"""
