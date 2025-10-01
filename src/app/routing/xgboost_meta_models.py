@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 class TrainingStrategy(Enum):
     """Training strategy options"""
+
     PURE_REAL = "pure_real"  # Train on real data only
     HYBRID = "hybrid"  # Train on mix of real + synthetic
     SYNTHETIC = "synthetic"  # Train on synthetic only (cold start)
@@ -46,6 +47,7 @@ class ModelingContext:
         data_quality_score: Quality score of available data (0-1)
         feature_diversity: Diversity of features in data (0-1)
     """
+
     modality: QueryModality
     real_sample_count: int
     synthetic_sample_count: int
@@ -87,13 +89,15 @@ class TrainingDecisionModel:
         self.model: Optional[xgb.XGBClassifier] = None
         self.is_trained = False
 
-        logger.info(f"🧠 Initialized TrainingDecisionModel (model_dir: {self.model_dir})")
+        logger.info(
+            f"🧠 Initialized TrainingDecisionModel (model_dir: {self.model_dir})"
+        )
 
     def train(
         self,
         training_contexts: List[ModelingContext],
         training_outcomes: List[float],
-        **xgb_params
+        **xgb_params,
     ) -> Dict[str, Any]:
         """
         Train model on historical training contexts and outcomes
@@ -148,9 +152,7 @@ class TrainingDecisionModel:
             "positive_rate": float(y.mean()),
         }
 
-    def should_train(
-        self, context: ModelingContext
-    ) -> Tuple[bool, float]:
+    def should_train(self, context: ModelingContext) -> Tuple[bool, float]:
         """
         Predict if training will be beneficial
 
@@ -169,7 +171,9 @@ class TrainingDecisionModel:
         prob = self.model.predict_proba(X)[0, 1]  # Probability of beneficial training
 
         should_train = bool(prob > 0.5)
-        expected_improvement = float(prob * 0.1)  # Scale to reasonable improvement estimate
+        expected_improvement = float(
+            prob * 0.1
+        )  # Scale to reasonable improvement estimate
 
         logger.info(
             f"🤔 Training decision for {context.modality.value}: "
@@ -185,9 +189,8 @@ class TrainingDecisionModel:
         # - Success rate below 0.85 (room for improvement)
         # - At least 7 days since last training
 
-        has_enough_data = (
-            context.real_sample_count >= 50
-            or (context.synthetic_sample_count >= 100 and context.data_quality_score > 0.7)
+        has_enough_data = context.real_sample_count >= 50 or (
+            context.synthetic_sample_count >= 100 and context.data_quality_score > 0.7
         )
 
         has_room_for_improvement = context.success_rate < 0.85
@@ -196,7 +199,9 @@ class TrainingDecisionModel:
         should_train = has_enough_data and (has_room_for_improvement or stale_model)
 
         # Estimate improvement based on current performance gap
-        expected_improvement = max(0, 0.85 - context.success_rate) * 0.5 if should_train else 0.0
+        expected_improvement = (
+            max(0, 0.85 - context.success_rate) * 0.5 if should_train else 0.0
+        )
 
         return should_train, expected_improvement
 
@@ -204,16 +209,18 @@ class TrainingDecisionModel:
         """Convert contexts to feature matrix"""
         features = []
         for ctx in contexts:
-            features.append([
-                ctx.real_sample_count,
-                ctx.synthetic_sample_count,
-                ctx.success_rate,
-                ctx.avg_confidence,
-                ctx.days_since_last_training,
-                ctx.current_performance_score,
-                ctx.data_quality_score,
-                ctx.feature_diversity,
-            ])
+            features.append(
+                [
+                    ctx.real_sample_count,
+                    ctx.synthetic_sample_count,
+                    ctx.success_rate,
+                    ctx.avg_confidence,
+                    ctx.days_since_last_training,
+                    ctx.current_performance_score,
+                    ctx.data_quality_score,
+                    ctx.feature_diversity,
+                ]
+            )
         return np.array(features)
 
     def save(self, filename: str = "training_decision_model.pkl"):
@@ -263,13 +270,15 @@ class TrainingStrategyModel:
         self.model: Optional[xgb.XGBClassifier] = None
         self.is_trained = False
 
-        logger.info(f"🧠 Initialized TrainingStrategyModel (model_dir: {self.model_dir})")
+        logger.info(
+            f"🧠 Initialized TrainingStrategyModel (model_dir: {self.model_dir})"
+        )
 
     def train(
         self,
         training_contexts: List[ModelingContext],
         best_strategies: List[TrainingStrategy],
-        **xgb_params
+        **xgb_params,
     ) -> Dict[str, Any]:
         """
         Train model on historical contexts and their best strategies
@@ -377,17 +386,19 @@ class TrainingStrategyModel:
         features = []
         for ctx in contexts:
             is_cold_start = 1 if ctx.real_sample_count < 10 else 0
-            features.append([
-                ctx.real_sample_count,
-                ctx.synthetic_sample_count,
-                ctx.success_rate,
-                ctx.avg_confidence,
-                ctx.days_since_last_training,
-                ctx.current_performance_score,
-                ctx.data_quality_score,
-                ctx.feature_diversity,
-                is_cold_start,
-            ])
+            features.append(
+                [
+                    ctx.real_sample_count,
+                    ctx.synthetic_sample_count,
+                    ctx.success_rate,
+                    ctx.avg_confidence,
+                    ctx.days_since_last_training,
+                    ctx.current_performance_score,
+                    ctx.data_quality_score,
+                    ctx.feature_diversity,
+                    is_cold_start,
+                ]
+            )
         return np.array(features)
 
     def _strategy_to_label(self, strategy: TrainingStrategy) -> int:
@@ -466,7 +477,7 @@ class FusionBenefitModel:
         self,
         fusion_contexts: List[Dict[str, float]],
         fusion_benefits: List[float],
-        **xgb_params
+        **xgb_params,
     ) -> Dict[str, Any]:
         """
         Train model on historical fusion contexts and benefits
@@ -569,13 +580,15 @@ class FusionBenefitModel:
         """Convert fusion contexts to feature matrix"""
         features = []
         for ctx in contexts:
-            features.append([
-                ctx.get("primary_modality_confidence", 0.5),
-                ctx.get("secondary_modality_confidence", 0.3),
-                ctx.get("modality_agreement", 0.0),
-                ctx.get("query_ambiguity_score", 0.5),
-                ctx.get("historical_fusion_success_rate", 0.7),
-            ])
+            features.append(
+                [
+                    ctx.get("primary_modality_confidence", 0.5),
+                    ctx.get("secondary_modality_confidence", 0.3),
+                    ctx.get("modality_agreement", 0.0),
+                    ctx.get("query_ambiguity_score", 0.5),
+                    ctx.get("historical_fusion_success_rate", 0.7),
+                ]
+            )
         return np.array(features)
 
     def save(self, filename: str = "fusion_benefit_model.pkl"):

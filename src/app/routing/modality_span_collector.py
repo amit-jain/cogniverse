@@ -189,12 +189,20 @@ class ModalitySpanCollector:
             if isinstance(query_attrs, dict):
                 modality_intent = query_attrs.get("modality_intent")
                 if modality_intent:
-                    return modality_intent if isinstance(modality_intent, list) else [modality_intent]
+                    return (
+                        modality_intent
+                        if isinstance(modality_intent, list)
+                        else [modality_intent]
+                    )
 
         # Try direct attribute access (Phoenix dot notation)
         modality_intent_attr = attributes.get("query.modality_intent")
         if modality_intent_attr:
-            return modality_intent_attr if isinstance(modality_intent_attr, list) else [modality_intent_attr]
+            return (
+                modality_intent_attr
+                if isinstance(modality_intent_attr, list)
+                else [modality_intent_attr]
+            )
 
         # Fallback: try to infer from routing attributes
         routing_attrs = attributes.get("routing", {})
@@ -295,9 +303,7 @@ class ModalitySpanCollector:
             "name": span_row.get("name", ""),
         }
 
-    async def get_modality_statistics(
-        self, lookback_hours: int = 24
-    ) -> Dict[str, Any]:
+    async def get_modality_statistics(self, lookback_hours: int = 24) -> Dict[str, Any]:
         """
         Get statistics about modality distribution
 

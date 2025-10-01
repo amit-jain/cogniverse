@@ -2,12 +2,13 @@
 Unit tests for ModalityOptimizer
 """
 
-import pytest
+import shutil
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-import tempfile
-import shutil
+
+import pytest
 
 from src.app.routing.modality_optimizer import ModalityOptimizer
 from src.app.routing.synthetic_data_generator import ModalityExample
@@ -31,17 +32,23 @@ class TestModalityOptimizer:
     @pytest.fixture
     def mock_components(self):
         """Create mocked components"""
-        with patch(
-            "src.app.routing.modality_optimizer.ModalitySpanCollector"
-        ) as mock_collector, patch(
-            "src.app.routing.modality_optimizer.ModalityEvaluator"
-        ) as mock_evaluator, patch(
-            "src.app.routing.modality_optimizer.SyntheticDataGenerator"
-        ) as mock_generator, patch(
-            "src.app.routing.modality_optimizer.TrainingDecisionModel"
-        ) as mock_decision, patch(
-            "src.app.routing.modality_optimizer.TrainingStrategyModel"
-        ) as mock_strategy:
+        with (
+            patch(
+                "src.app.routing.modality_optimizer.ModalitySpanCollector"
+            ) as mock_collector,
+            patch(
+                "src.app.routing.modality_optimizer.ModalityEvaluator"
+            ) as mock_evaluator,
+            patch(
+                "src.app.routing.modality_optimizer.SyntheticDataGenerator"
+            ) as mock_generator,
+            patch(
+                "src.app.routing.modality_optimizer.TrainingDecisionModel"
+            ) as mock_decision,
+            patch(
+                "src.app.routing.modality_optimizer.TrainingStrategyModel"
+            ) as mock_strategy,
+        ):
 
             collector = MagicMock()
             evaluator = MagicMock()

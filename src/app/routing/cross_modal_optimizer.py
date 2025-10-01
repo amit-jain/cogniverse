@@ -61,9 +61,7 @@ class CrossModalOptimizer:
         self.fusion_history: List[Dict[str, Any]] = []
         self.fusion_success_rates: Dict[Tuple[QueryModality, QueryModality], float] = {}
 
-        logger.info(
-            f"🔧 Initialized CrossModalOptimizer (model_dir: {self.model_dir})"
-        )
+        logger.info(f"🔧 Initialized CrossModalOptimizer (model_dir: {self.model_dir})")
 
     def predict_fusion_benefit(
         self,
@@ -128,7 +126,10 @@ class CrossModalOptimizer:
         """
         # Calculate modality agreement
         modality_agreement = self._calculate_modality_agreement(
-            primary_modality, secondary_modality, primary_confidence, secondary_confidence
+            primary_modality,
+            secondary_modality,
+            primary_confidence,
+            secondary_confidence,
         )
 
         # Calculate query ambiguity
@@ -219,8 +220,15 @@ class CrossModalOptimizer:
             text_lower = query_text.lower()
             # Keywords that indicate ambiguity
             ambiguous_keywords = [
-                "or", "and", "both", "either", "also", "plus",
-                "including", "as well as", "together with"
+                "or",
+                "and",
+                "both",
+                "either",
+                "also",
+                "plus",
+                "including",
+                "as well as",
+                "together with",
             ]
             if any(kw in text_lower for kw in ambiguous_keywords):
                 text_ambiguity = 0.8
@@ -275,14 +283,16 @@ class CrossModalOptimizer:
             improvement: Performance improvement from fusion (0-1)
         """
         # Record in history
-        self.fusion_history.append({
-            "timestamp": datetime.now(),
-            "primary_modality": primary_modality.value,
-            "secondary_modality": secondary_modality.value,
-            "fusion_context": fusion_context,
-            "success": success,
-            "improvement": improvement,
-        })
+        self.fusion_history.append(
+            {
+                "timestamp": datetime.now(),
+                "primary_modality": primary_modality.value,
+                "secondary_modality": secondary_modality.value,
+                "fusion_context": fusion_context,
+                "success": success,
+                "improvement": improvement,
+            }
+        )
 
         # Update success rates for this modality pair
         pair = (primary_modality, secondary_modality)
@@ -360,7 +370,9 @@ class CrossModalOptimizer:
             return {
                 "should_fuse": False,
                 "reason": "only_one_modality",
-                "primary_modality": detected_modalities[0][0].value if detected_modalities else None,
+                "primary_modality": (
+                    detected_modalities[0][0].value if detected_modalities else None
+                ),
             }
 
         # Sort by confidence
@@ -467,11 +479,13 @@ class CrossModalOptimizer:
 
         top_pairs = []
         for pair_name, metrics in sorted_pairs[:top_k]:
-            top_pairs.append({
-                "pair": pair_name,
-                "count": metrics["count"],
-                "success_rate": metrics["success_rate"],
-            })
+            top_pairs.append(
+                {
+                    "pair": pair_name,
+                    "count": metrics["count"],
+                    "success_rate": metrics["success_rate"],
+                }
+            )
 
         return top_pairs
 

@@ -2,9 +2,9 @@
 Unit tests for ModalityEvaluator
 """
 
-import pytest
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from src.app.routing.modality_evaluator import ModalityEvaluator
 from src.app.routing.synthetic_data_generator import ModalityExample
@@ -25,7 +25,9 @@ class TestModalityEvaluator:
     @pytest.fixture
     def evaluator(self, mock_span_collector):
         """Create evaluator instance with mocked collector"""
-        return ModalityEvaluator(span_collector=mock_span_collector, tenant_id="test-tenant")
+        return ModalityEvaluator(
+            span_collector=mock_span_collector, tenant_id="test-tenant"
+        )
 
     def test_initialization(self, evaluator):
         """Test evaluator initialization"""
@@ -45,31 +47,21 @@ class TestModalityEvaluator:
 
     def test_extract_query_nested_format(self, evaluator):
         """Test query extraction from nested attributes"""
-        attributes = {
-            "query": {
-                "text": "show me machine learning videos"
-            }
-        }
+        attributes = {"query": {"text": "show me machine learning videos"}}
 
         query = evaluator._extract_query(attributes)
         assert query == "show me machine learning videos"
 
     def test_extract_query_dot_notation(self, evaluator):
         """Test query extraction from dot notation"""
-        attributes = {
-            "query.text": "research papers on neural networks"
-        }
+        attributes = {"query.text": "research papers on neural networks"}
 
         query = evaluator._extract_query(attributes)
         assert query == "research papers on neural networks"
 
     def test_extract_query_input_format(self, evaluator):
         """Test query extraction from input attributes"""
-        attributes = {
-            "input": {
-                "value": "diagram of CNN architecture"
-            }
-        }
+        attributes = {"input": {"value": "diagram of CNN architecture"}}
 
         query = evaluator._extract_query(attributes)
         assert query == "diagram of CNN architecture"
@@ -82,31 +74,21 @@ class TestModalityEvaluator:
 
     def test_extract_agent_nested_format(self, evaluator):
         """Test agent extraction from nested attributes"""
-        attributes = {
-            "routing": {
-                "selected_agent": "video_search_agent"
-            }
-        }
+        attributes = {"routing": {"selected_agent": "video_search_agent"}}
 
         agent = evaluator._extract_agent(attributes)
         assert agent == "video_search_agent"
 
     def test_extract_agent_dot_notation(self, evaluator):
         """Test agent extraction from dot notation"""
-        attributes = {
-            "routing.selected_agent": "document_agent"
-        }
+        attributes = {"routing.selected_agent": "document_agent"}
 
         agent = evaluator._extract_agent(attributes)
         assert agent == "document_agent"
 
     def test_extract_agent_output_format(self, evaluator):
         """Test agent extraction from output attributes"""
-        attributes = {
-            "output": {
-                "agent": "image_search_agent"
-            }
-        }
+        attributes = {"output": {"agent": "image_search_agent"}}
 
         agent = evaluator._extract_agent(attributes)
         assert agent == "image_search_agent"
@@ -114,14 +96,11 @@ class TestModalityEvaluator:
     def test_extract_modality_features_video(self, evaluator):
         """Test feature extraction for video queries"""
         query = "show me a tutorial on machine learning"
-        attributes = {
-            "routing": {
-                "confidence": 0.9,
-                "detected_modalities": ["video"]
-            }
-        }
+        attributes = {"routing": {"confidence": 0.9, "detected_modalities": ["video"]}}
 
-        features = evaluator._extract_modality_features(query, QueryModality.VIDEO, attributes)
+        features = evaluator._extract_modality_features(
+            query, QueryModality.VIDEO, attributes
+        )
 
         assert "keywords_keywords" in features
         assert "has_keywords" in features
@@ -133,13 +112,11 @@ class TestModalityEvaluator:
     def test_extract_modality_features_document(self, evaluator):
         """Test feature extraction for document queries"""
         query = "read research papers on TensorFlow"
-        attributes = {
-            "routing": {
-                "confidence": 0.85
-            }
-        }
+        attributes = {"routing": {"confidence": 0.85}}
 
-        features = evaluator._extract_modality_features(query, QueryModality.DOCUMENT, attributes)
+        features = evaluator._extract_modality_features(
+            query, QueryModality.DOCUMENT, attributes
+        )
 
         assert features["has_keywords"] is True  # Contains "read" and "research"
         assert features["has_research"] is True  # Contains "research"
@@ -151,7 +128,9 @@ class TestModalityEvaluator:
         query = "diagram of neural network architecture?"
         attributes = {}
 
-        features = evaluator._extract_modality_features(query, QueryModality.IMAGE, attributes)
+        features = evaluator._extract_modality_features(
+            query, QueryModality.IMAGE, attributes
+        )
 
         assert features["has_keywords"] is True  # Contains "diagram"
         assert features["has_visual"] is True  # Contains "architecture"
@@ -162,7 +141,9 @@ class TestModalityEvaluator:
         query = "listen to podcast about AI"
         attributes = {}
 
-        features = evaluator._extract_modality_features(query, QueryModality.AUDIO, attributes)
+        features = evaluator._extract_modality_features(
+            query, QueryModality.AUDIO, attributes
+        )
 
         assert features["has_keywords"] is True  # Contains "listen" and "podcast"
 
@@ -173,27 +154,23 @@ class TestModalityEvaluator:
         assert evaluator._has_capitalized_entity("tutorial on PyTorch") is True
 
         # No entity (first word doesn't count)
-        assert evaluator._has_capitalized_entity("tutorial on machine learning") is False
+        assert (
+            evaluator._has_capitalized_entity("tutorial on machine learning") is False
+        )
         assert evaluator._has_capitalized_entity("show me videos") is False
         # First word is capitalized but doesn't count as entity
         assert evaluator._has_capitalized_entity("PyTorch tutorial") is False
 
     def test_extract_result_count_from_output(self, evaluator):
         """Test result count extraction from output attributes"""
-        attributes = {
-            "output": {
-                "result_count": 42
-            }
-        }
+        attributes = {"output": {"result_count": 42}}
 
         count = evaluator._extract_result_count(attributes)
         assert count == 42
 
     def test_extract_result_count_from_results_array(self, evaluator):
         """Test result count extraction from results array"""
-        attributes = {
-            "results": [{"id": 1}, {"id": 2}, {"id": 3}]
-        }
+        attributes = {"results": [{"id": 1}, {"id": 2}, {"id": 3}]}
 
         count = evaluator._extract_result_count(attributes)
         assert count == 3
@@ -214,10 +191,10 @@ class TestModalityEvaluator:
                 "routing": {
                     "selected_agent": "video_search_agent",
                     "confidence": 0.9,
-                    "detected_modalities": ["video"]
+                    "detected_modalities": ["video"],
                 },
-                "output": {"result_count": 10}
-            }
+                "output": {"result_count": 10},
+            },
         }
 
         example = evaluator._span_to_example(span_data, QueryModality.VIDEO)
@@ -239,8 +216,8 @@ class TestModalityEvaluator:
             "status_code": "ERROR",
             "attributes": {
                 "query": {"text": "test query"},
-                "routing": {"selected_agent": "video_search_agent"}
-            }
+                "routing": {"selected_agent": "video_search_agent"},
+            },
         }
 
         example = evaluator._span_to_example(span_data, QueryModality.VIDEO)
@@ -253,9 +230,7 @@ class TestModalityEvaluator:
         span_data = {
             "span_id": "span-789",
             "status_code": "OK",
-            "attributes": {
-                "routing": {"selected_agent": "video_search_agent"}
-            }
+            "attributes": {"routing": {"selected_agent": "video_search_agent"}},
         }
 
         example = evaluator._span_to_example(span_data, QueryModality.VIDEO)
@@ -266,9 +241,7 @@ class TestModalityEvaluator:
         span_data = {
             "span_id": "span-789",
             "status_code": "OK",
-            "attributes": {
-                "query": {"text": "test query"}
-            }
+            "attributes": {"query": {"text": "test query"}},
         }
 
         example = evaluator._span_to_example(span_data, QueryModality.VIDEO)
@@ -285,17 +258,23 @@ class TestModalityEvaluator:
                     "status_code": "OK",
                     "attributes": {
                         "query": {"text": "show me machine learning tutorial"},
-                        "routing": {"selected_agent": "video_search_agent", "confidence": 0.9}
-                    }
+                        "routing": {
+                            "selected_agent": "video_search_agent",
+                            "confidence": 0.9,
+                        },
+                    },
                 },
                 {
                     "span_id": "span-2",
                     "status_code": "OK",
                     "attributes": {
                         "query": {"text": "watch neural networks explained"},
-                        "routing": {"selected_agent": "video_search_agent", "confidence": 0.85}
-                    }
-                }
+                        "routing": {
+                            "selected_agent": "video_search_agent",
+                            "confidence": 0.85,
+                        },
+                    },
+                },
             ],
             QueryModality.DOCUMENT: [
                 {
@@ -303,18 +282,21 @@ class TestModalityEvaluator:
                     "status_code": "OK",
                     "attributes": {
                         "query": {"text": "research papers on deep learning"},
-                        "routing": {"selected_agent": "document_agent", "confidence": 0.88}
-                    }
+                        "routing": {
+                            "selected_agent": "document_agent",
+                            "confidence": 0.88,
+                        },
+                    },
                 }
-            ]
+            ],
         }
 
-        mock_span_collector.collect_spans_by_modality = AsyncMock(return_value=mock_spans)
+        mock_span_collector.collect_spans_by_modality = AsyncMock(
+            return_value=mock_spans
+        )
 
         examples = await evaluator.create_training_examples(
-            lookback_hours=24,
-            min_confidence=0.7,
-            augment_with_synthetic=False
+            lookback_hours=24, min_confidence=0.7, augment_with_synthetic=False
         )
 
         assert QueryModality.VIDEO in examples
@@ -339,7 +321,9 @@ class TestModalityEvaluator:
         assert examples == {}
 
     @pytest.mark.asyncio
-    async def test_create_training_examples_with_synthetic(self, evaluator, mock_span_collector):
+    async def test_create_training_examples_with_synthetic(
+        self, evaluator, mock_span_collector
+    ):
         """Test creating training examples with synthetic augmentation"""
         mock_spans = {
             QueryModality.VIDEO: [
@@ -348,17 +332,21 @@ class TestModalityEvaluator:
                     "status_code": "OK",
                     "attributes": {
                         "query": {"text": "show me tutorial"},
-                        "routing": {"selected_agent": "video_search_agent", "confidence": 0.9}
-                    }
+                        "routing": {
+                            "selected_agent": "video_search_agent",
+                            "confidence": 0.9,
+                        },
+                    },
                 }
             ]
         }
 
-        mock_span_collector.collect_spans_by_modality = AsyncMock(return_value=mock_spans)
+        mock_span_collector.collect_spans_by_modality = AsyncMock(
+            return_value=mock_spans
+        )
 
         examples = await evaluator.create_training_examples(
-            augment_with_synthetic=True,
-            synthetic_ratio=0.5  # Add 50% synthetic
+            augment_with_synthetic=True, synthetic_ratio=0.5  # Add 50% synthetic
         )
 
         assert QueryModality.VIDEO in examples
@@ -374,14 +362,14 @@ class TestModalityEvaluator:
                     query="short",
                     modality=QueryModality.VIDEO,
                     correct_agent="video_search_agent",
-                    success=True
+                    success=True,
                 ),
                 ModalityExample(
                     query="this is a longer query",
                     modality=QueryModality.VIDEO,
                     correct_agent="video_search_agent",
-                    success=True
-                )
+                    success=True,
+                ),
             ]
         }
 
@@ -399,15 +387,15 @@ class TestModalityEvaluator:
                     modality=QueryModality.VIDEO,
                     correct_agent="video_search_agent",
                     success=True,
-                    modality_features={"routing_confidence": 0.9}
+                    modality_features={"routing_confidence": 0.9},
                 ),
                 ModalityExample(
                     query="low confidence query",
                     modality=QueryModality.VIDEO,
                     correct_agent="video_search_agent",
                     success=True,
-                    modality_features={"routing_confidence": 0.5}
-                )
+                    modality_features={"routing_confidence": 0.5},
+                ),
             ]
         }
 
@@ -424,21 +412,19 @@ class TestModalityEvaluator:
                     query="successful query test",
                     modality=QueryModality.VIDEO,
                     correct_agent="video_search_agent",
-                    success=True
+                    success=True,
                 ),
                 ModalityExample(
                     query="failed query test",
                     modality=QueryModality.VIDEO,
                     correct_agent="video_search_agent",
-                    success=False
-                )
+                    success=False,
+                ),
             ]
         }
 
         filtered = evaluator.filter_by_quality(
-            examples,
-            min_query_length=3,
-            require_success=True
+            examples, min_query_length=3, require_success=True
         )
 
         assert len(filtered[QueryModality.VIDEO]) == 1
@@ -452,21 +438,19 @@ class TestModalityEvaluator:
                     query="successful query test",
                     modality=QueryModality.VIDEO,
                     correct_agent="video_search_agent",
-                    success=True
+                    success=True,
                 ),
                 ModalityExample(
                     query="failed query test",
                     modality=QueryModality.VIDEO,
                     correct_agent="video_search_agent",
-                    success=False
-                )
+                    success=False,
+                ),
             ]
         }
 
         filtered = evaluator.filter_by_quality(
-            examples,
-            min_query_length=3,
-            require_success=False
+            examples, min_query_length=3, require_success=False
         )
 
         assert len(filtered[QueryModality.VIDEO]) == 2
@@ -484,8 +468,8 @@ class TestModalityEvaluator:
                         "query_length": 3,
                         "has_keywords": True,
                         "has_temporal": False,
-                        "routing_confidence": 0.9
-                    }
+                        "routing_confidence": 0.9,
+                    },
                 ),
                 ModalityExample(
                     query="watch video",
@@ -496,9 +480,9 @@ class TestModalityEvaluator:
                         "query_length": 2,
                         "has_keywords": True,
                         "has_temporal": True,
-                        "routing_confidence": 0.7
-                    }
-                )
+                        "routing_confidence": 0.7,
+                    },
+                ),
             ]
         }
 

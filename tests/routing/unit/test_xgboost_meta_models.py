@@ -2,19 +2,18 @@
 Unit tests for XGBoost Meta-Models
 """
 
-import pytest
-import numpy as np
-from pathlib import Path
-from unittest.mock import MagicMock, patch
-import tempfile
 import shutil
+import tempfile
+from pathlib import Path
+
+import pytest
 
 from src.app.routing.xgboost_meta_models import (
-    TrainingDecisionModel,
-    TrainingStrategyModel,
     FusionBenefitModel,
     ModelingContext,
+    TrainingDecisionModel,
     TrainingStrategy,
+    TrainingStrategyModel,
 )
 from src.app.search.multi_modal_reranker import QueryModality
 
@@ -438,11 +437,19 @@ class TestTrainingStrategyModel:
 
             # Assign strategy based on data availability
             if real_count < 10:
-                strategies.append(TrainingStrategy.SYNTHETIC if synthetic_count > 50 else TrainingStrategy.SKIP)
+                strategies.append(
+                    TrainingStrategy.SYNTHETIC
+                    if synthetic_count > 50
+                    else TrainingStrategy.SKIP
+                )
             elif real_count >= 100:
                 strategies.append(TrainingStrategy.PURE_REAL)
             elif real_count >= 30:
-                strategies.append(TrainingStrategy.HYBRID if synthetic_count > 50 else TrainingStrategy.PURE_REAL)
+                strategies.append(
+                    TrainingStrategy.HYBRID
+                    if synthetic_count > 50
+                    else TrainingStrategy.PURE_REAL
+                )
             else:
                 strategies.append(TrainingStrategy.SKIP)
 
@@ -601,7 +608,9 @@ class TestFusionBenefitModel:
             contexts.append(context)
 
             # Benefit correlates with disagreement and ambiguity
-            benefit = (1 - context["modality_agreement"]) * 0.5 + context["query_ambiguity_score"] * 0.3
+            benefit = (1 - context["modality_agreement"]) * 0.5 + context[
+                "query_ambiguity_score"
+            ] * 0.3
             benefits.append(min(benefit, 1.0))
 
         result = model.train(contexts, benefits)

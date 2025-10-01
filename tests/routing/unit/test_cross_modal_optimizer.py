@@ -2,12 +2,13 @@
 Unit tests for CrossModalOptimizer
 """
 
-import pytest
+import json
+import shutil
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-import tempfile
-import shutil
-import json
+
+import pytest
 
 from src.app.routing.cross_modal_optimizer import CrossModalOptimizer
 from src.app.search.multi_modal_reranker import QueryModality
@@ -52,9 +53,7 @@ class TestCrossModalOptimizer:
         )
         assert agreement == 1.0
 
-    def test_calculate_modality_agreement_different_similar_confidence(
-        self, optimizer
-    ):
+    def test_calculate_modality_agreement_different_similar_confidence(self, optimizer):
         """Test agreement with different modalities but similar confidence"""
         agreement = optimizer._calculate_modality_agreement(
             QueryModality.VIDEO, QueryModality.DOCUMENT, 0.8, 0.75
@@ -232,11 +231,13 @@ class TestCrossModalOptimizer:
         """Test training with insufficient data"""
         # Add only 5 records (need 10)
         for i in range(5):
-            optimizer.fusion_history.append({
-                "fusion_context": {},
-                "success": True,
-                "improvement": 0.1,
-            })
+            optimizer.fusion_history.append(
+                {
+                    "fusion_context": {},
+                    "success": True,
+                    "improvement": 0.1,
+                }
+            )
 
         result = optimizer.train_fusion_model()
 
@@ -247,17 +248,19 @@ class TestCrossModalOptimizer:
         """Test successful training"""
         # Add sufficient records
         for i in range(15):
-            optimizer.fusion_history.append({
-                "fusion_context": {
-                    "primary_modality_confidence": 0.8,
-                    "secondary_modality_confidence": 0.6,
-                    "modality_agreement": 0.7,
-                    "query_ambiguity_score": 0.5,
-                    "historical_fusion_success_rate": 0.7,
-                },
-                "success": i % 2 == 0,  # Alternate success/failure
-                "improvement": 0.1 if i % 2 == 0 else 0.0,
-            })
+            optimizer.fusion_history.append(
+                {
+                    "fusion_context": {
+                        "primary_modality_confidence": 0.8,
+                        "secondary_modality_confidence": 0.6,
+                        "modality_agreement": 0.7,
+                        "query_ambiguity_score": 0.5,
+                        "historical_fusion_success_rate": 0.7,
+                    },
+                    "success": i % 2 == 0,  # Alternate success/failure
+                    "improvement": 0.1 if i % 2 == 0 else 0.0,
+                }
+            )
 
         mock_fusion_model.train = MagicMock(
             return_value={"status": "success", "mae": 0.05, "rmse": 0.08}
@@ -300,9 +303,7 @@ class TestCrossModalOptimizer:
         assert recommendations["primary_modality"] == "video"
         assert recommendations["secondary_modality"] == "document"
 
-    def test_get_fusion_recommendations_low_benefit(
-        self, optimizer, mock_fusion_model
-    ):
+    def test_get_fusion_recommendations_low_benefit(self, optimizer, mock_fusion_model):
         """Test fusion recommendations with low predicted benefit"""
         mock_fusion_model.predict_benefit = MagicMock(return_value=0.3)
 
@@ -375,11 +376,31 @@ class TestCrossModalOptimizer:
         """Test getting top fusion pairs"""
         # Add fusion records
         optimizer.fusion_history = [
-            {"primary_modality": "video", "secondary_modality": "document", "success": True},
-            {"primary_modality": "video", "secondary_modality": "document", "success": True},
-            {"primary_modality": "video", "secondary_modality": "document", "success": True},
-            {"primary_modality": "image", "secondary_modality": "text", "success": True},
-            {"primary_modality": "image", "secondary_modality": "text", "success": False},
+            {
+                "primary_modality": "video",
+                "secondary_modality": "document",
+                "success": True,
+            },
+            {
+                "primary_modality": "video",
+                "secondary_modality": "document",
+                "success": True,
+            },
+            {
+                "primary_modality": "video",
+                "secondary_modality": "document",
+                "success": True,
+            },
+            {
+                "primary_modality": "image",
+                "secondary_modality": "text",
+                "success": True,
+            },
+            {
+                "primary_modality": "image",
+                "secondary_modality": "text",
+                "success": False,
+            },
         ]
 
         top_pairs = optimizer.get_top_fusion_pairs(top_k=2)
@@ -408,9 +429,11 @@ class TestCrossModalOptimizer:
         # Add some fusion history
         optimizer.fusion_history = [
             {
-                "timestamp": optimizer.fusion_history[0]["timestamp"]
-                if optimizer.fusion_history
-                else pytest.importorskip("datetime").datetime.now(),
+                "timestamp": (
+                    optimizer.fusion_history[0]["timestamp"]
+                    if optimizer.fusion_history
+                    else pytest.importorskip("datetime").datetime.now()
+                ),
                 "primary_modality": "video",
                 "secondary_modality": "document",
                 "fusion_context": {},

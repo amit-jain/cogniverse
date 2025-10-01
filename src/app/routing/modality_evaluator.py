@@ -35,19 +35,46 @@ class ModalityEvaluator:
 
     # Feature extractors for each modality
     VIDEO_FEATURES = {
-        "keywords": ["video", "watch", "show", "tutorial", "demonstration", "walkthrough"],
+        "keywords": [
+            "video",
+            "watch",
+            "show",
+            "tutorial",
+            "demonstration",
+            "walkthrough",
+        ],
         "temporal": ["how to", "learn", "explain"],
         "visual": ["visualize", "see", "display", "animate"],
     }
 
     DOCUMENT_FEATURES = {
-        "keywords": ["read", "paper", "article", "documentation", "whitepaper", "guide"],
-        "technical": ["specification", "technical", "detailed", "comprehensive", "analysis"],
+        "keywords": [
+            "read",
+            "paper",
+            "article",
+            "documentation",
+            "whitepaper",
+            "guide",
+        ],
+        "technical": [
+            "specification",
+            "technical",
+            "detailed",
+            "comprehensive",
+            "analysis",
+        ],
         "research": ["research", "study", "citation", "reference"],
     }
 
     IMAGE_FEATURES = {
-        "keywords": ["image", "picture", "diagram", "chart", "visualization", "infographic"],
+        "keywords": [
+            "image",
+            "picture",
+            "diagram",
+            "chart",
+            "visualization",
+            "infographic",
+        ],
         "visual": ["architecture", "flowchart", "screenshot", "illustration"],
         "complexity": ["detailed", "complex", "annotated", "labeled"],
     }
@@ -61,7 +88,7 @@ class ModalityEvaluator:
     def __init__(
         self,
         span_collector: Optional[ModalitySpanCollector] = None,
-        tenant_id: str = "default"
+        tenant_id: str = "default",
     ):
         """
         Initialize modality evaluator
@@ -221,12 +248,16 @@ class ModalityEvaluator:
         if "routing" in attributes:
             routing_attrs = attributes["routing"]
             if isinstance(routing_attrs, dict):
-                agent = routing_attrs.get("selected_agent") or routing_attrs.get("agent")
+                agent = routing_attrs.get("selected_agent") or routing_attrs.get(
+                    "agent"
+                )
                 if agent:
                     return str(agent)
 
         # Try dot notation
-        agent = attributes.get("routing.selected_agent") or attributes.get("routing.agent")
+        agent = attributes.get("routing.selected_agent") or attributes.get(
+            "routing.agent"
+        )
         if agent:
             return str(agent)
 
@@ -275,7 +306,9 @@ class ModalityEvaluator:
         routing_attrs = attributes.get("routing", {})
         if isinstance(routing_attrs, dict):
             features["routing_confidence"] = routing_attrs.get("confidence", 0.0)
-            features["detected_modalities"] = routing_attrs.get("detected_modalities", [])
+            features["detected_modalities"] = routing_attrs.get(
+                "detected_modalities", []
+            )
 
         # Extract result metadata (if available)
         features["result_count"] = self._extract_result_count(attributes)
@@ -397,7 +430,9 @@ class ModalityEvaluator:
 
                 # Check confidence (if features available)
                 if example.modality_features:
-                    confidence = example.modality_features.get("routing_confidence", 1.0)
+                    confidence = example.modality_features.get(
+                        "routing_confidence", 1.0
+                    )
                     if confidence < min_confidence:
                         continue
 

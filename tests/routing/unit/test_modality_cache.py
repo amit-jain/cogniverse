@@ -145,8 +145,14 @@ class TestModalityCacheManager:
         cache_manager.cache_result(query, QueryModality.DOCUMENT, doc_result)
 
         # Each modality should have its own cached result
-        assert cache_manager.get_cached_result(query, QueryModality.VIDEO, 3600) == video_result
-        assert cache_manager.get_cached_result(query, QueryModality.DOCUMENT, 3600) == doc_result
+        assert (
+            cache_manager.get_cached_result(query, QueryModality.VIDEO, 3600)
+            == video_result
+        )
+        assert (
+            cache_manager.get_cached_result(query, QueryModality.DOCUMENT, 3600)
+            == doc_result
+        )
 
     def test_ttl_expiration(self, cache_manager):
         """Test TTL expiration"""
@@ -156,13 +162,19 @@ class TestModalityCacheManager:
         cache_manager.cache_result(query, QueryModality.VIDEO, result)
 
         # Should be cached
-        assert cache_manager.get_cached_result(query, QueryModality.VIDEO, ttl_seconds=1) is not None
+        assert (
+            cache_manager.get_cached_result(query, QueryModality.VIDEO, ttl_seconds=1)
+            is not None
+        )
 
         # Wait for expiration
         time.sleep(1.1)
 
         # Should be expired
-        assert cache_manager.get_cached_result(query, QueryModality.VIDEO, ttl_seconds=1) is None
+        assert (
+            cache_manager.get_cached_result(query, QueryModality.VIDEO, ttl_seconds=1)
+            is None
+        )
 
     def test_cache_key_normalization(self, cache_manager):
         """Test cache key normalization (case-insensitive, whitespace)"""
@@ -171,8 +183,14 @@ class TestModalityCacheManager:
         cache_manager.cache_result("  Test Query  ", QueryModality.VIDEO, result)
 
         # Different formatting should hit same cache
-        assert cache_manager.get_cached_result("test query", QueryModality.VIDEO, 3600) == result
-        assert cache_manager.get_cached_result("TEST QUERY", QueryModality.VIDEO, 3600) == result
+        assert (
+            cache_manager.get_cached_result("test query", QueryModality.VIDEO, 3600)
+            == result
+        )
+        assert (
+            cache_manager.get_cached_result("TEST QUERY", QueryModality.VIDEO, 3600)
+            == result
+        )
 
     def test_cache_stats_hits_and_misses(self, cache_manager):
         """Test cache statistics tracking"""
@@ -219,7 +237,10 @@ class TestModalityCacheManager:
         assert cache_manager.get_cached_result("q1", QueryModality.VIDEO, 3600) is None
 
         # Document cache should still have data
-        assert cache_manager.get_cached_result("q2", QueryModality.DOCUMENT, 3600) is not None
+        assert (
+            cache_manager.get_cached_result("q2", QueryModality.DOCUMENT, 3600)
+            is not None
+        )
 
     def test_invalidate_all(self, cache_manager):
         """Test invalidating all caches"""
@@ -230,7 +251,9 @@ class TestModalityCacheManager:
 
         # All caches should be cleared
         assert cache_manager.get_cached_result("q1", QueryModality.VIDEO, 3600) is None
-        assert cache_manager.get_cached_result("q2", QueryModality.DOCUMENT, 3600) is None
+        assert (
+            cache_manager.get_cached_result("q2", QueryModality.DOCUMENT, 3600) is None
+        )
 
     def test_lru_eviction_per_modality(self, cache_manager):
         """Test LRU eviction works per modality"""
@@ -247,7 +270,9 @@ class TestModalityCacheManager:
 
         # q1 should be evicted
         assert small_cache.get_cached_result("q1", QueryModality.VIDEO, 3600) is None
-        assert small_cache.get_cached_result("q4", QueryModality.VIDEO, 3600) is not None
+        assert (
+            small_cache.get_cached_result("q4", QueryModality.VIDEO, 3600) is not None
+        )
 
         # Eviction count should be tracked
         stats = small_cache.get_cache_stats(QueryModality.VIDEO)

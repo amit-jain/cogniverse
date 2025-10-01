@@ -114,15 +114,11 @@ class TestModalityMetricsTracker:
 
     def test_error_breakdown(self, tracker):
         """Test error breakdown tracking"""
-        tracker.record_modality_execution(
-            QueryModality.VIDEO, 100, False, "timeout"
-        )
+        tracker.record_modality_execution(QueryModality.VIDEO, 100, False, "timeout")
         tracker.record_modality_execution(
             QueryModality.VIDEO, 100, False, "connection_error"
         )
-        tracker.record_modality_execution(
-            QueryModality.VIDEO, 100, False, "timeout"
-        )
+        tracker.record_modality_execution(QueryModality.VIDEO, 100, False, "timeout")
 
         stats = tracker.get_modality_stats(QueryModality.VIDEO)
 
@@ -251,7 +247,10 @@ class TestModalityMetricsTracker:
         tracker.record_modality_execution(QueryModality.VIDEO, 100, True)
 
         # Last request time should be updated
-        assert tracker.last_request_time[QueryModality.VIDEO] > tracker.first_request_time[QueryModality.VIDEO]
+        assert (
+            tracker.last_request_time[QueryModality.VIDEO]
+            > tracker.first_request_time[QueryModality.VIDEO]
+        )
 
 
 if __name__ == "__main__":

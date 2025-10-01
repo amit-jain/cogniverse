@@ -2,7 +2,6 @@
 Unit tests for LazyModalityExecutor
 """
 
-
 import pytest
 
 from src.app.routing.lazy_executor import LazyModalityExecutor
@@ -20,15 +19,16 @@ class TestLazyModalityExecutor:
     @pytest.fixture
     def mock_modality_executor(self):
         """Create mock modality executor"""
+
         async def executor(query, modality, context):
             # Return different results based on modality
             return {
                 "results": [
-                    {"content": f"result_{i}", "confidence": 0.9}
-                    for i in range(10)
+                    {"content": f"result_{i}", "confidence": 0.9} for i in range(10)
                 ],
                 "confidence": 0.9,
             }
+
         return executor
 
     def test_initialization(self, executor):
@@ -39,10 +39,19 @@ class TestLazyModalityExecutor:
     def test_modality_cost_ranking(self, executor):
         """Test modality cost ranking"""
         # TEXT should be cheapest
-        assert executor.MODALITY_COST[QueryModality.TEXT] < executor.MODALITY_COST[QueryModality.VIDEO]
-        assert executor.MODALITY_COST[QueryModality.DOCUMENT] < executor.MODALITY_COST[QueryModality.VIDEO]
+        assert (
+            executor.MODALITY_COST[QueryModality.TEXT]
+            < executor.MODALITY_COST[QueryModality.VIDEO]
+        )
+        assert (
+            executor.MODALITY_COST[QueryModality.DOCUMENT]
+            < executor.MODALITY_COST[QueryModality.VIDEO]
+        )
         # VIDEO should be cheaper than AUDIO
-        assert executor.MODALITY_COST[QueryModality.VIDEO] < executor.MODALITY_COST[QueryModality.AUDIO]
+        assert (
+            executor.MODALITY_COST[QueryModality.VIDEO]
+            < executor.MODALITY_COST[QueryModality.AUDIO]
+        )
 
     @pytest.mark.asyncio
     async def test_execute_single_modality(self, executor, mock_modality_executor):
@@ -60,7 +69,9 @@ class TestLazyModalityExecutor:
         assert result["early_stopped"] is False
 
     @pytest.mark.asyncio
-    async def test_execute_multiple_modalities_in_cost_order(self, executor, mock_modality_executor):
+    async def test_execute_multiple_modalities_in_cost_order(
+        self, executor, mock_modality_executor
+    ):
         """Test modalities executed in cost order"""
         # Provide modalities in wrong order
         modalities = [QueryModality.VIDEO, QueryModality.TEXT, QueryModality.AUDIO]
@@ -68,7 +79,10 @@ class TestLazyModalityExecutor:
         result = await executor.execute_with_lazy_evaluation(
             query="test",
             modalities=modalities,
-            context={"quality_threshold": 0.0, "min_results_required": 100},  # Don't stop early
+            context={
+                "quality_threshold": 0.0,
+                "min_results_required": 100,
+            },  # Don't stop early
             modality_executor=mock_modality_executor,
         )
 
@@ -82,12 +96,12 @@ class TestLazyModalityExecutor:
     @pytest.mark.asyncio
     async def test_early_stopping_with_sufficient_results(self, executor):
         """Test early stopping when results are sufficient"""
+
         async def executor_with_good_results(query, modality, context):
             # Return high-quality results
             return {
                 "results": [
-                    {"content": f"result_{i}", "confidence": 0.95}
-                    for i in range(20)
+                    {"content": f"result_{i}", "confidence": 0.95} for i in range(20)
                 ],
                 "confidence": 0.95,
             }
@@ -109,12 +123,12 @@ class TestLazyModalityExecutor:
     @pytest.mark.asyncio
     async def test_no_early_stopping_with_insufficient_results(self, executor):
         """Test no early stopping when results insufficient"""
+
         async def executor_with_poor_results(query, modality, context):
             # Return low-quality results
             return {
                 "results": [
-                    {"content": f"result_{i}", "confidence": 0.3}
-                    for i in range(2)
+                    {"content": f"result_{i}", "confidence": 0.3} for i in range(2)
                 ],
                 "confidence": 0.3,
             }
@@ -136,11 +150,15 @@ class TestLazyModalityExecutor:
     @pytest.mark.asyncio
     async def test_early_stop_after_expensive_modality(self, executor):
         """Test early stopping after executing expensive modality"""
+
         async def executor_func(query, modality, context):
             if modality in [QueryModality.VIDEO, QueryModality.TEXT]:
                 # Both return great results
                 return {
-                    "results": [{"content": f"{modality.value}_{i}", "confidence": 0.95} for i in range(15)],
+                    "results": [
+                        {"content": f"{modality.value}_{i}", "confidence": 0.95}
+                        for i in range(15)
+                    ],
                     "confidence": 0.95,
                 }
             else:
@@ -262,11 +280,17 @@ class TestLazyModalityExecutor:
         result = await executor.execute_with_lazy_evaluation(
             query="test",
             modalities=modalities,
-            context={"quality_threshold": 0.0, "min_results_required": 100},  # Execute all
+            context={
+                "quality_threshold": 0.0,
+                "min_results_required": 100,
+            },  # Execute all
             modality_executor=mock_modality_executor,
         )
 
-        expected_cost = executor.MODALITY_COST[QueryModality.TEXT] + executor.MODALITY_COST[QueryModality.VIDEO]
+        expected_cost = (
+            executor.MODALITY_COST[QueryModality.TEXT]
+            + executor.MODALITY_COST[QueryModality.VIDEO]
+        )
         assert result["total_cost"] == expected_cost
 
 

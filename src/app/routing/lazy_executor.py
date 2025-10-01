@@ -108,8 +108,7 @@ class LazyModalityExecutor:
         )
 
         logger.info(
-            f"🚀 Lazy execution order: "
-            f"{[m.value for m in sorted_modalities]}"
+            f"🚀 Lazy execution order: " f"{[m.value for m in sorted_modalities]}"
         )
 
         results = {}
@@ -122,9 +121,7 @@ class LazyModalityExecutor:
             modality_cost = self.MODALITY_COST.get(modality, 100)
 
             # Execute modality
-            logger.info(
-                f"▶️ Executing {modality.value} (cost: {modality_cost})"
-            )
+            logger.info(f"▶️ Executing {modality.value} (cost: {modality_cost})")
 
             result = await modality_executor(query, modality, context)
             results[modality] = result
@@ -134,13 +131,15 @@ class LazyModalityExecutor:
             # Check if we have sufficient results
             if self._is_sufficient(results, quality_threshold, context):
                 # Calculate remaining modalities
-                remaining = sorted_modalities[len(executed_modalities):]
+                remaining = sorted_modalities[len(executed_modalities) :]
                 skipped_modalities = remaining
 
                 if skipped_modalities:
                     early_stopped = True
                     self.execution_stats["early_stops"] += 1
-                    self.execution_stats["modalities_skipped"] += len(skipped_modalities)
+                    self.execution_stats["modalities_skipped"] += len(
+                        skipped_modalities
+                    )
 
                     logger.info(
                         f"✋ Early stop: Sufficient results after {modality.value}, "
@@ -193,9 +192,7 @@ class LazyModalityExecutor:
         )
 
         if total_result_count < min_results:
-            logger.debug(
-                f"Insufficient count: {total_result_count} < {min_results}"
-            )
+            logger.debug(f"Insufficient count: {total_result_count} < {min_results}")
             return False
 
         # Strategy 2: Check if we have high confidence results
@@ -213,7 +210,9 @@ class LazyModalityExecutor:
             logger.debug("Executed expensive modality - considering sufficient")
             return True
 
-        logger.debug(f"Results sufficient: count={total_result_count}, quality={avg_confidence:.2f}")
+        logger.debug(
+            f"Results sufficient: count={total_result_count}, quality={avg_confidence:.2f}"
+        )
         return True
 
     def _count_results(self, result: Any) -> int:
@@ -289,9 +288,7 @@ class LazyModalityExecutor:
         stats = self.execution_stats.copy()
 
         if stats["total_executions"] > 0:
-            stats["early_stop_rate"] = (
-                stats["early_stops"] / stats["total_executions"]
-            )
+            stats["early_stop_rate"] = stats["early_stops"] / stats["total_executions"]
             stats["avg_modalities_skipped"] = (
                 stats["modalities_skipped"] / stats["total_executions"]
             )

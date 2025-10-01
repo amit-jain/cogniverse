@@ -241,7 +241,9 @@ class SyntheticDataGenerator:
         """
         if self.vespa_client is None:
             # Use fallback topics
-            logger.info(f"⚠️ No Vespa client - using fallback topics for {modality.value}")
+            logger.info(
+                f"⚠️ No Vespa client - using fallback topics for {modality.value}"
+            )
             return {
                 "topics": self.fallback_topics.get(modality, []),
                 "entities": [],
@@ -254,7 +256,9 @@ class SyntheticDataGenerator:
             content_samples = await self._sample_vespa_content(modality, sample_size)
 
             if not content_samples:
-                logger.warning(f"No Vespa content found for {modality.value}, using fallback")
+                logger.warning(
+                    f"No Vespa content found for {modality.value}, using fallback"
+                )
                 return {
                     "topics": self.fallback_topics.get(modality, []),
                     "entities": [],
@@ -326,12 +330,14 @@ class SyntheticDataGenerator:
             content_samples = []
             for hit in response.get("root", {}).get("children", []):
                 fields = hit.get("fields", {})
-                content_samples.append({
-                    "title": fields.get("title", ""),
-                    "description": fields.get("description", ""),
-                    "metadata": fields.get("metadata", {}),
-                    "timestamp": fields.get("timestamp"),
-                })
+                content_samples.append(
+                    {
+                        "title": fields.get("title", ""),
+                        "description": fields.get("description", ""),
+                        "metadata": fields.get("metadata", {}),
+                        "timestamp": fields.get("timestamp"),
+                    }
+                )
 
             return content_samples
 
@@ -357,7 +363,7 @@ class SyntheticDataGenerator:
 
             # Extract meaningful phrases (2-3 words)
             # This is a simple heuristic - could use NLP for better extraction
-            words = re.findall(r'\b[a-z]+\b', title + " " + description)
+            words = re.findall(r"\b[a-z]+\b", title + " " + description)
 
             # Create bigrams and trigrams
             for i in range(len(words) - 1):
@@ -390,7 +396,9 @@ class SyntheticDataGenerator:
             description = sample.get("description", "")
 
             # Extract capitalized words (likely entities)
-            capitalized = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', title + " " + description)
+            capitalized = re.findall(
+                r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b", title + " " + description
+            )
             entities.update(capitalized)
 
         return list(entities)[:30] if entities else []
@@ -413,14 +421,16 @@ class SyntheticDataGenerator:
             # Extract years
             title = sample.get("title", "")
             description = sample.get("description", "")
-            years = re.findall(r'\b(20\d{2})\b', title + " " + description)
+            years = re.findall(r"\b(20\d{2})\b", title + " " + description)
             temporal.update(years)
 
             # Check timestamp for recency
             timestamp = sample.get("timestamp")
             if timestamp:
                 try:
-                    content_date = datetime.fromisoformat(str(timestamp).replace('Z', '+00:00'))
+                    content_date = datetime.fromisoformat(
+                        str(timestamp).replace("Z", "+00:00")
+                    )
                     days_old = (datetime.now() - content_date.replace(tzinfo=None)).days
 
                     if days_old < 30:
@@ -447,8 +457,16 @@ class SyntheticDataGenerator:
         content_types = set()
 
         type_keywords = [
-            "tutorial", "guide", "overview", "introduction", "advanced",
-            "beginner", "research", "analysis", "comparison", "review"
+            "tutorial",
+            "guide",
+            "overview",
+            "introduction",
+            "advanced",
+            "beginner",
+            "research",
+            "analysis",
+            "comparison",
+            "review",
         ]
 
         for sample in content_samples:
@@ -514,9 +532,7 @@ class SyntheticDataGenerator:
             synthetic_source="ingested_content",
         )
 
-    def _infer_agent_from_modality(
-        self, modality: QueryModality, query: str
-    ) -> str:
+    def _infer_agent_from_modality(self, modality: QueryModality, query: str) -> str:
         """
         Infer correct agent based on modality and query characteristics
 

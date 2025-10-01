@@ -20,10 +20,12 @@ class TestParallelAgentExecutor:
     @pytest.fixture
     def mock_agent_caller(self):
         """Create mock agent caller"""
+
         async def caller(agent_name, query, context):
             # Simulate agent execution
             await asyncio.sleep(0.01)
             return {"agent": agent_name, "result": f"Result for {query}"}
+
         return caller
 
     def test_initialization(self, executor):
@@ -69,11 +71,15 @@ class TestParallelAgentExecutor:
         assert result["successful_agents"] == 3
         assert result["failed_agents"] == 0
         assert len(result["results"]) == 3
-        assert all(agent in result["results"] for agent in ["video_search", "document_agent", "image_search"])
+        assert all(
+            agent in result["results"]
+            for agent in ["video_search", "document_agent", "image_search"]
+        )
 
     @pytest.mark.asyncio
     async def test_agent_timeout(self, executor):
         """Test agent timeout handling"""
+
         async def slow_caller(agent_name, query, context):
             await asyncio.sleep(2.0)  # Longer than timeout
             return {"result": "done"}
@@ -94,6 +100,7 @@ class TestParallelAgentExecutor:
     @pytest.mark.asyncio
     async def test_agent_error(self, executor):
         """Test agent error handling"""
+
         async def failing_caller(agent_name, query, context):
             raise ValueError("Agent failed")
 
@@ -113,6 +120,7 @@ class TestParallelAgentExecutor:
     @pytest.mark.asyncio
     async def test_mixed_success_and_failure(self, executor):
         """Test handling mixed success and failure"""
+
         async def mixed_caller(agent_name, query, context):
             if agent_name == "failing_agent":
                 raise ValueError("Failed")

@@ -324,7 +324,9 @@ class ModalityOptimizer:
 
         # Check feature completeness
         complete_features = sum(
-            1 for ex in examples if ex.modality_features and len(ex.modality_features) > 5
+            1
+            for ex in examples
+            if ex.modality_features and len(ex.modality_features) > 5
         )
         completeness_score = complete_features / len(examples)
 
@@ -336,7 +338,9 @@ class ModalityOptimizer:
         ]
 
         if len(confidences) > 1:
-            variance = sum((c - sum(confidences) / len(confidences)) ** 2 for c in confidences) / len(confidences)
+            variance = sum(
+                (c - sum(confidences) / len(confidences)) ** 2 for c in confidences
+            ) / len(confidences)
             variance_score = min(variance * 2, 1.0)  # Scale to 0-1
         else:
             variance_score = 0.0
@@ -467,12 +471,14 @@ class ModalityOptimizer:
         if modality not in self.training_history:
             self.training_history[modality] = []
 
-        self.training_history[modality].append({
-            "timestamp": datetime.now(),
-            "context": self._context_to_dict(context),
-            "strategy": strategy.value,
-            "result": result,
-        })
+        self.training_history[modality].append(
+            {
+                "timestamp": datetime.now(),
+                "context": self._context_to_dict(context),
+                "strategy": strategy.value,
+                "result": result,
+            }
+        )
 
         logger.info(
             f"📝 Recorded training for {modality.value} "

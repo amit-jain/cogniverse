@@ -4,21 +4,20 @@ Integration tests for Phase 11: Multi-Modal Optimization
 Tests the complete workflow from span collection through optimization.
 """
 
-import pytest
+import shutil
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-import tempfile
-import shutil
 
-from src.app.routing.modality_span_collector import ModalitySpanCollector
-from src.app.routing.modality_evaluator import ModalityEvaluator
-from src.app.routing.synthetic_data_generator import (
-    SyntheticDataGenerator,
-    ModalityExample,
-)
-from src.app.routing.modality_optimizer import ModalityOptimizer
+import pytest
+
 from src.app.routing.cross_modal_optimizer import CrossModalOptimizer
+from src.app.routing.modality_optimizer import ModalityOptimizer
+from src.app.routing.synthetic_data_generator import (
+    ModalityExample,
+    SyntheticDataGenerator,
+)
 from src.app.routing.xgboost_meta_models import TrainingStrategy
 from src.app.search.multi_modal_reranker import QueryModality
 
@@ -107,7 +106,9 @@ class TestPhase11Integration:
         assert len(synthetic_examples) == 10
         assert all(ex.is_synthetic for ex in synthetic_examples)
         assert all(ex.modality == QueryModality.VIDEO for ex in synthetic_examples)
-        assert all(ex.correct_agent == "video_search_agent" for ex in synthetic_examples)
+        assert all(
+            ex.correct_agent == "video_search_agent" for ex in synthetic_examples
+        )
 
         # Verify variety in generated queries
         unique_queries = set(ex.query for ex in synthetic_examples)

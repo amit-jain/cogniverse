@@ -32,7 +32,9 @@ class TestPhase12Integration:
             latency_ms = (time.time() - start) * 1000
 
             # Record metrics
-            modality = QueryModality.VIDEO if "video" in agent_name else QueryModality.DOCUMENT
+            modality = (
+                QueryModality.VIDEO if "video" in agent_name else QueryModality.DOCUMENT
+            )
             tracker.record_modality_execution(modality, latency_ms, True)
 
             return {"agent": agent_name, "results": ["result1", "result2"]}
@@ -82,7 +84,9 @@ class TestPhase12Integration:
             await asyncio.sleep(0.01)
 
             result = {
-                "results": [{"content": f"result_{i}", "confidence": 0.9} for i in range(10)],
+                "results": [
+                    {"content": f"result_{i}", "confidence": 0.9} for i in range(10)
+                ],
                 "confidence": 0.9,
             }
 
@@ -143,7 +147,10 @@ class TestPhase12Integration:
 
             return {
                 "agent": agent_name,
-                "results": [{"content": f"{agent_name}_result_{i}", "score": 0.9} for i in range(5)],
+                "results": [
+                    {"content": f"{agent_name}_result_{i}", "score": 0.9}
+                    for i in range(5)
+                ],
             }
 
         # Mock modality executor for lazy evaluation (with caching)
@@ -154,7 +161,10 @@ class TestPhase12Integration:
                 return cached
 
             # Execute agents for this modality
-            agent_tasks = [(f"{modality.value}_agent_{i}", query, {"modality": modality.value}) for i in range(2)]
+            agent_tasks = [
+                (f"{modality.value}_agent_{i}", query, {"modality": modality.value})
+                for i in range(2)
+            ]
 
             parallel_result = await parallel_executor.execute_agents_parallel(
                 agent_tasks,
@@ -297,14 +307,18 @@ class TestPhase12Integration:
 
         # Verify cached
         assert cache.get_cached_result("query1", QueryModality.VIDEO, 3600) is not None
-        assert cache.get_cached_result("query2", QueryModality.DOCUMENT, 3600) is not None
+        assert (
+            cache.get_cached_result("query2", QueryModality.DOCUMENT, 3600) is not None
+        )
 
         # Invalidate VIDEO cache
         cache.invalidate_modality(QueryModality.VIDEO)
 
         # Verify VIDEO invalidated, DOCUMENT still cached
         assert cache.get_cached_result("query1", QueryModality.VIDEO, 3600) is None
-        assert cache.get_cached_result("query2", QueryModality.DOCUMENT, 3600) is not None
+        assert (
+            cache.get_cached_result("query2", QueryModality.DOCUMENT, 3600) is not None
+        )
 
 
 if __name__ == "__main__":

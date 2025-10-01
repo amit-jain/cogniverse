@@ -139,22 +139,16 @@ class ModalityCacheManager:
             if time.time() - cached_entry["timestamp"] < ttl_seconds:
                 self.cache_stats[modality]["hits"] += 1
 
-                logger.debug(
-                    f"✅ Cache HIT: {modality.value} - {query[:50]}..."
-                )
+                logger.debug(f"✅ Cache HIT: {modality.value} - {query[:50]}...")
 
                 return cached_entry["result"]
             else:
                 # Expired
-                logger.debug(
-                    f"⏰ Cache EXPIRED: {modality.value} - {query[:50]}..."
-                )
+                logger.debug(f"⏰ Cache EXPIRED: {modality.value} - {query[:50]}...")
 
         self.cache_stats[modality]["misses"] += 1
 
-        logger.debug(
-            f"❌ Cache MISS: {modality.value} - {query[:50]}..."
-        )
+        logger.debug(f"❌ Cache MISS: {modality.value} - {query[:50]}...")
 
         return None
 
@@ -187,9 +181,7 @@ class ModalityCacheManager:
             },
         )
 
-        logger.debug(
-            f"💾 Cached: {modality.value} - {query[:50]}..."
-        )
+        logger.debug(f"💾 Cached: {modality.value} - {query[:50]}...")
 
     def _generate_cache_key(self, query: str, modality: QueryModality) -> str:
         """
@@ -206,7 +198,9 @@ class ModalityCacheManager:
         key_string = f"{modality.value}:{query.lower().strip()}"
         return hashlib.sha256(key_string.encode()).hexdigest()
 
-    def get_cache_stats(self, modality: Optional[QueryModality] = None) -> Dict[str, Any]:
+    def get_cache_stats(
+        self, modality: Optional[QueryModality] = None
+    ) -> Dict[str, Any]:
         """
         Get cache statistics
 

@@ -2,13 +2,14 @@
 Unit tests for SyntheticDataGenerator
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from src.app.routing.synthetic_data_generator import (
-    SyntheticDataGenerator,
     ModalityExample,
+    SyntheticDataGenerator,
 )
 from src.app.search.multi_modal_reranker import QueryModality
 
@@ -62,22 +63,34 @@ class TestSyntheticDataGenerator:
 
     def test_infer_agent_from_modality(self, generator):
         """Test agent inference from modality"""
-        assert generator._infer_agent_from_modality(QueryModality.VIDEO, "test") == "video_search_agent"
-        assert generator._infer_agent_from_modality(QueryModality.DOCUMENT, "test") == "document_agent"
-        assert generator._infer_agent_from_modality(QueryModality.IMAGE, "test") == "image_search_agent"
-        assert generator._infer_agent_from_modality(QueryModality.AUDIO, "test") == "audio_analysis_agent"
+        assert (
+            generator._infer_agent_from_modality(QueryModality.VIDEO, "test")
+            == "video_search_agent"
+        )
+        assert (
+            generator._infer_agent_from_modality(QueryModality.DOCUMENT, "test")
+            == "document_agent"
+        )
+        assert (
+            generator._infer_agent_from_modality(QueryModality.IMAGE, "test")
+            == "image_search_agent"
+        )
+        assert (
+            generator._infer_agent_from_modality(QueryModality.AUDIO, "test")
+            == "audio_analysis_agent"
+        )
 
     def test_extract_topics_from_content(self, generator):
         """Test topic extraction from content samples"""
         content_samples = [
             {
                 "title": "Machine Learning Tutorial",
-                "description": "Learn about neural networks and deep learning basics"
+                "description": "Learn about neural networks and deep learning basics",
             },
             {
                 "title": "Python Programming Guide",
-                "description": "Introduction to python programming for data science"
-            }
+                "description": "Introduction to python programming for data science",
+            },
         ]
 
         topics = generator._extract_topics(content_samples)
@@ -97,12 +110,12 @@ class TestSyntheticDataGenerator:
         content_samples = [
             {
                 "title": "TensorFlow Tutorial",
-                "description": "Using PyTorch and TensorFlow for Deep Learning"
+                "description": "Using PyTorch and TensorFlow for Deep Learning",
             },
             {
                 "title": "Python Programming",
-                "description": "Learn Python with NumPy and Pandas"
-            }
+                "description": "Learn Python with NumPy and Pandas",
+            },
         ]
 
         entities = generator._extract_entities(content_samples)
@@ -118,13 +131,13 @@ class TestSyntheticDataGenerator:
             {
                 "title": "AI in 2024",
                 "description": "Latest developments in 2023 and 2024",
-                "timestamp": datetime(2024, 9, 1)
+                "timestamp": datetime(2024, 9, 1),
             },
             {
                 "title": "Recent Advances",
                 "description": "New techniques from 2023",
-                "timestamp": datetime(2024, 10, 1)
-            }
+                "timestamp": datetime(2024, 10, 1),
+            },
         ]
 
         temporal = generator._extract_temporal_patterns(content_samples)
@@ -137,12 +150,12 @@ class TestSyntheticDataGenerator:
         content_samples = [
             {
                 "title": "Beginner's Tutorial",
-                "description": "An introduction to machine learning"
+                "description": "An introduction to machine learning",
             },
             {
                 "title": "Advanced Guide",
-                "description": "Research and analysis of neural networks"
-            }
+                "description": "Research and analysis of neural networks",
+            },
         ]
 
         content_types = generator._extract_content_types(content_samples)
@@ -163,7 +176,10 @@ class TestSyntheticDataGenerator:
 
         # Should use fallback topics
         assert len(patterns["topics"]) > 0
-        assert "machine learning" in patterns["topics"] or "neural networks" in patterns["topics"]
+        assert (
+            "machine learning" in patterns["topics"]
+            or "neural networks" in patterns["topics"]
+        )
 
     def test_generate_example_from_patterns_basic(self, generator):
         """Test generating example from patterns"""
@@ -171,10 +187,12 @@ class TestSyntheticDataGenerator:
             "topics": ["machine learning", "neural networks"],
             "entities": ["TensorFlow", "PyTorch"],
             "temporal": ["2024", "recent"],
-            "content_types": ["tutorial"]
+            "content_types": ["tutorial"],
         }
 
-        example = generator._generate_example_from_patterns(QueryModality.VIDEO, patterns)
+        example = generator._generate_example_from_patterns(
+            QueryModality.VIDEO, patterns
+        )
 
         assert isinstance(example, ModalityExample)
         assert example.modality == QueryModality.VIDEO
@@ -190,7 +208,7 @@ class TestSyntheticDataGenerator:
             "topics": ["deep learning"],
             "entities": [],
             "temporal": [],
-            "content_types": []
+            "content_types": [],
         }
 
         # Generate multiple examples to check variety
@@ -213,13 +231,21 @@ class TestSyntheticDataGenerator:
             "topics": ["machine learning"],
             "entities": [],
             "temporal": [],
-            "content_types": []
+            "content_types": [],
         }
 
-        video_ex = generator._generate_example_from_patterns(QueryModality.VIDEO, patterns)
-        doc_ex = generator._generate_example_from_patterns(QueryModality.DOCUMENT, patterns)
-        image_ex = generator._generate_example_from_patterns(QueryModality.IMAGE, patterns)
-        audio_ex = generator._generate_example_from_patterns(QueryModality.AUDIO, patterns)
+        video_ex = generator._generate_example_from_patterns(
+            QueryModality.VIDEO, patterns
+        )
+        doc_ex = generator._generate_example_from_patterns(
+            QueryModality.DOCUMENT, patterns
+        )
+        image_ex = generator._generate_example_from_patterns(
+            QueryModality.IMAGE, patterns
+        )
+        audio_ex = generator._generate_example_from_patterns(
+            QueryModality.AUDIO, patterns
+        )
 
         # Different modalities should get different agents
         assert video_ex.correct_agent == "video_search_agent"
@@ -238,8 +264,7 @@ class TestSyntheticDataGenerator:
     async def test_generate_from_ingested_data_basic(self, generator):
         """Test generating synthetic data without Vespa"""
         examples = await generator.generate_from_ingested_data(
-            QueryModality.VIDEO,
-            target_count=10
+            QueryModality.VIDEO, target_count=10
         )
 
         assert len(examples) == 10
@@ -252,8 +277,7 @@ class TestSyntheticDataGenerator:
     async def test_generate_from_ingested_data_variety(self, generator):
         """Test that generated data has variety"""
         examples = await generator.generate_from_ingested_data(
-            QueryModality.DOCUMENT,
-            target_count=20
+            QueryModality.DOCUMENT, target_count=20
         )
 
         # Should have variety in queries
@@ -284,7 +308,7 @@ class TestSyntheticDataGenerator:
                             "title": "Neural Networks Tutorial 2024",
                             "description": "Learn about deep learning with TensorFlow",
                             "metadata": {},
-                            "timestamp": datetime(2024, 9, 1).isoformat()
+                            "timestamp": datetime(2024, 9, 1).isoformat(),
                         }
                     },
                     {
@@ -292,9 +316,9 @@ class TestSyntheticDataGenerator:
                             "title": "Machine Learning Basics",
                             "description": "Introduction to ML using PyTorch",
                             "metadata": {},
-                            "timestamp": datetime(2024, 8, 1).isoformat()
+                            "timestamp": datetime(2024, 8, 1).isoformat(),
                         }
-                    }
+                    },
                 ]
             }
         }
@@ -302,8 +326,7 @@ class TestSyntheticDataGenerator:
         generator_with_vespa.vespa_client.query = AsyncMock(return_value=mock_response)
 
         examples = await generator_with_vespa.generate_from_ingested_data(
-            QueryModality.VIDEO,
-            target_count=5
+            QueryModality.VIDEO, target_count=5
         )
 
         assert len(examples) == 5
