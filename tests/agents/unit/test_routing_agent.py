@@ -435,7 +435,7 @@ class TestPhoenixSpanHierarchy:
         # Verify child span (cogniverse.routing)
         child_call = span_calls[1]
         assert child_call[1]["name"] == "cogniverse.routing"
-        assert child_call[1]["service_name"] == "cogniverse.routing.agent"
+        assert child_call[1]["service_name"] == "cogniverse.orchestration"
         assert child_call[1]["attributes"]["openinference.span.kind"] == "AGENT"
         assert child_call[1]["attributes"]["operation.name"] == "route_query"
 
@@ -450,6 +450,7 @@ class TestPhoenixSpanHierarchy:
                 "chosen_agent": "video_search",
                 "confidence": 0.85,
                 "reasoning": "Test routing decision",
+                "detected_modalities": "",
             },
         )
 
