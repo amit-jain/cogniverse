@@ -16,11 +16,15 @@ from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
 from src.app.routing.advanced_optimizer import (
     AdvancedRoutingOptimizer,
 )
+from src.app.routing.base import SearchModality
 from src.app.routing.config import RoutingConfig
 from src.app.routing.contextual_analyzer import ContextualAnalyzer
 from src.app.routing.cross_modal_optimizer import CrossModalOptimizer
+from src.app.routing.lazy_executor import LazyModalityExecutor
+from src.app.routing.modality_cache import ModalityCacheManager
 from src.app.routing.modality_optimizer import ModalityOptimizer
 from src.app.routing.orchestration_feedback_loop import OrchestrationFeedbackLoop
+from src.app.routing.parallel_executor import ParallelAgentExecutor
 from src.app.routing.phoenix_orchestration_evaluator import (
     PhoenixOrchestrationEvaluator,
 )
@@ -36,6 +40,7 @@ from src.app.telemetry.config import (
     SPAN_NAME_ROUTING,
 )
 from src.app.telemetry.manager import TelemetryManager
+from src.app.telemetry.modality_metrics import ModalityMetricsTracker
 from src.common.config import get_config
 
 logger = logging.getLogger(__name__)
@@ -146,6 +151,13 @@ class RoutingAgent(DSPyRoutingMixin):
             model_dir=None,  # Use default
         )
         logger.info("🎯 Phase 11 per-modality optimization initialized")
+
+        # Phase 12: Initialize production readiness components
+        self.parallel_executor = ParallelAgentExecutor(max_concurrent_agents=5)
+        self.cache_manager = ModalityCacheManager(cache_size_per_modality=1000)
+        self.lazy_executor = LazyModalityExecutor()
+        self.metrics_tracker = ModalityMetricsTracker(window_size=1000)
+        logger.info("🚀 Phase 12 production readiness components initialized")
 
         # Agent registry - maps agent types to their endpoints
         # Only include agents that are actually configured
@@ -277,6 +289,23 @@ class RoutingAgent(DSPyRoutingMixin):
             },
         ) as parent_span:
             try:
+                # Phase 12: Check cache first
+                primary_modality = self._detect_primary_modality_from_query(query)
+                cached_result = self.cache_manager.get_cached_result(
+                    query, primary_modality, ttl_seconds=3600
+                )
+                if cached_result:
+                    execution_time = time.time() - start_time
+                    self.metrics_tracker.record_modality_execution(
+                        primary_modality, execution_time * 1000, True, None
+                    )
+                    parent_span.set_attribute("cache.hit", True)
+                    parent_span.set_status(Status(StatusCode.OK))
+                    logger.info(f"💾 Cache hit for query: {query[:50]}...")
+                    return cached_result
+
+                parent_span.set_attribute("cache.hit", False)
+
                 # Phase 10 Step 1: Expand query for multi-modal search
                 query_expansion = await self.query_expander.expand_query(query)
                 modality_intent = query_expansion["modality_intent"]
@@ -320,6 +349,11 @@ class RoutingAgent(DSPyRoutingMixin):
 
                 routing_decision = await self.router.route(query, enriched_context)
 
+                # Use routing decision's search modality for caching (convert to QueryModality)
+                cache_modality = self._convert_search_modality_to_query_modality(
+                    routing_decision.search_modality
+                )
+
                 # Step 2: Check if orchestration is required (Phase 7)
                 if routing_decision.requires_orchestration:
                     logger.info(
@@ -330,6 +364,14 @@ class RoutingAgent(DSPyRoutingMixin):
                     orchestration_result = await self._handle_orchestration(
                         query, routing_decision, context, tenant_id, parent_span
                     )
+
+                    # Cache orchestration result and record metrics
+                    execution_time = time.time() - start_time
+                    self.cache_manager.cache_result(query, cache_modality, orchestration_result)
+                    self.metrics_tracker.record_modality_execution(
+                        cache_modality, execution_time * 1000, True, None
+                    )
+
                     return orchestration_result
 
                 # Step 3: Determine output type and agent workflow (single-agent path)
@@ -416,7 +458,7 @@ class RoutingAgent(DSPyRoutingMixin):
 
                 logger.info(f"Query analysis completed in {execution_time:.3f}s")
 
-                return {
+                result = {
                     "query": query,
                     "routing_decision": routing_decision.to_dict(),
                     "workflow_type": workflow_plan["type"],
@@ -429,7 +471,23 @@ class RoutingAgent(DSPyRoutingMixin):
                     "contextual_hints": self.contextual_analyzer.get_contextual_hints(query),
                 }
 
+                # Phase 12: Cache result and record metrics
+                self.cache_manager.cache_result(query, cache_modality, result)
+                self.metrics_tracker.record_modality_execution(
+                    cache_modality, execution_time * 1000, True, None
+                )
+
+                return result
+
             except Exception as e:
+                # Phase 12: Record failed execution metrics
+                execution_time = time.time() - start_time
+                # Use primary_modality as fallback if routing failed before decision
+                metrics_modality = cache_modality if 'cache_modality' in locals() else primary_modality
+                self.metrics_tracker.record_modality_execution(
+                    metrics_modality, execution_time * 1000, False, str(e)
+                )
+
                 # Mark parent span as failed and record exception
                 parent_span.set_status(Status(StatusCode.ERROR, str(e)))
                 parent_span.record_exception(e)
@@ -750,6 +808,60 @@ class RoutingAgent(DSPyRoutingMixin):
                 result.append((query_modality, confidence))
 
         return result
+
+    def _detect_primary_modality_from_query(self, query: str) -> QueryModality:
+        """
+        Detect primary modality from query text (Phase 12 helper)
+
+        Args:
+            query: User query
+
+        Returns:
+            Primary QueryModality
+        """
+        query_lower = query.lower()
+
+        # Video keywords
+        if any(kw in query_lower for kw in ["video", "watch", "show me", "clip", "footage"]):
+            return QueryModality.VIDEO
+
+        # Image keywords
+        if any(kw in query_lower for kw in ["image", "picture", "photo", "diagram", "screenshot"]):
+            return QueryModality.IMAGE
+
+        # Audio keywords
+        if any(kw in query_lower for kw in ["audio", "listen", "podcast", "sound", "music"]):
+            return QueryModality.AUDIO
+
+        # Document keywords
+        if any(kw in query_lower for kw in ["document", "paper", "article", "pdf", "read"]):
+            return QueryModality.DOCUMENT
+
+        # Default to TEXT
+        return QueryModality.TEXT
+
+    def _convert_search_modality_to_query_modality(
+        self, search_modality: SearchModality
+    ) -> QueryModality:
+        """
+        Convert SearchModality to QueryModality for cache/metrics
+
+        Args:
+            search_modality: SearchModality from routing decision
+
+        Returns:
+            Corresponding QueryModality
+        """
+        modality_map = {
+            SearchModality.VIDEO: QueryModality.VIDEO,
+            SearchModality.TEXT: QueryModality.TEXT,
+            SearchModality.AUDIO: QueryModality.AUDIO,
+            SearchModality.IMAGE: QueryModality.IMAGE,
+            SearchModality.DOCUMENT: QueryModality.DOCUMENT,
+            SearchModality.BOTH: QueryModality.MIXED,
+            SearchModality.NONE: QueryModality.TEXT,  # Default to TEXT
+        }
+        return modality_map.get(search_modality, QueryModality.TEXT)
 
     async def rerank_search_results(
         self,
