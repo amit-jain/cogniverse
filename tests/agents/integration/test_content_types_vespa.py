@@ -446,5 +446,358 @@ class TestContentTypeVespaSchemas:
             # This is okay - the important test is that schema works and document was ingested
 
 
+    def test_document_content_schemas_upload(self, test_vespa_manager):
+        """Test uploading document_visual and document_text schemas"""
+        print("\n" + "-"*80)
+        print("Test: Document Content Schemas Upload (Visual + Text)")
+        print("-"*80)
+
+        schema_manager = VespaSchemaManager(
+            vespa_endpoint=test_vespa_manager["config_url"],
+            vespa_port=test_vespa_manager["config_port"]
+        )
+
+        # Upload document schemas (visual and text)
+        print("\n📤 Uploading document_visual and document_text schemas...")
+        try:
+            schema_manager.upload_content_type_schemas(
+                app_name="documenttest",
+                schemas=['document_visual', 'document_text']
+            )
+            print("✅ Both document schemas uploaded successfully")
+        except Exception as e:
+            pytest.fail(f"Failed to upload document schemas: {e}")
+
+        # Wait for application to be ready
+        print("\n⏳ Waiting for application to be ready...")
+        import requests
+
+        for i in range(60):
+            try:
+                response = requests.get(
+                    f"{test_vespa_manager['base_url']}/ApplicationStatus",
+                    timeout=5
+                )
+                if response.status_code == 200:
+                    print(f"✅ Application ready (took {i*2}s)")
+                    break
+            except Exception:
+                pass
+            time.sleep(2)
+        else:
+            pytest.fail("Application not ready after 120 seconds")
+
+        # Verify both schemas are accessible
+        print("\n🔍 Verifying document schemas are accessible...")
+        try:
+            # Test document_visual schema
+            response = requests.get(
+                f"{test_vespa_manager['base_url']}/search/",
+                params={"query": "test", "restrict": "document_visual"},
+                timeout=10
+            )
+            assert response.status_code == 200, f"Visual document search failed: {response.status_code}"
+            print("✅ document_visual schema is accessible")
+
+            # Test document_text schema
+            response = requests.get(
+                f"{test_vespa_manager['base_url']}/search/",
+                params={"query": "test", "restrict": "document_text"},
+                timeout=10
+            )
+            assert response.status_code == 200, f"Text document search failed: {response.status_code}"
+            print("✅ document_text schema is accessible")
+
+        except Exception as e:
+            pytest.fail(f"Failed to verify document schemas: {e}")
+
+    def test_document_visual_ingestion(self, test_vespa_manager):
+        """Test ingesting document pages with real ColPali embeddings"""
+        print("\n" + "-"*80)
+        print("Test: Document Visual Strategy Ingestion (ColPali)")
+        print("-"*80)
+
+        import numpy as np
+        import requests
+        from PIL import Image
+
+        from src.common.models.model_loaders import get_or_load_model
+
+        # Create a test document page (simulating a PDF page)
+        print("\n📄 Creating test document page...")
+        # Create a white page with some text-like rectangles
+        test_page = Image.new("RGB", (800, 600), color=(255, 255, 255))
+        # Add some black rectangles to simulate text blocks
+        page_array = np.array(test_page)
+        page_array[50:100, 50:400] = [0, 0, 0]  # Simulate title
+        page_array[150:200, 50:700] = [0, 0, 0]  # Simulate paragraph
+        test_page = Image.fromarray(page_array)
+
+        # Load ColPali model
+        print("\n📦 Loading ColPali model...")
+        config = {"colpali_model": "vidore/colsmol-500m"}
+        model, processor = get_or_load_model("vidore/colsmol-500m", config, None)
+        print("✅ ColPali model loaded")
+
+        # Generate ColPali embedding for document page
+        print("\n🔢 Generating ColPali embedding for document page...")
+        import torch
+        batch_inputs = processor.process_images([test_page]).to(model.device)
+
+        with torch.no_grad():
+            embeddings = model(**batch_inputs)
+
+        # Convert to numpy and remove batch dimension
+        embeddings_np = embeddings.squeeze(0).cpu().numpy()
+
+        # Pad or truncate to exactly 1024 patches
+        if embeddings_np.shape[0] < 1024:
+            padding = np.zeros((1024 - embeddings_np.shape[0], embeddings_np.shape[1]))
+            embeddings_np = np.vstack([embeddings_np, padding])
+        elif embeddings_np.shape[0] > 1024:
+            embeddings_np = embeddings_np[:1024]
+
+        colpali_embedding = embeddings_np.tolist()
+        print(f"✅ Generated embedding shape: {embeddings_np.shape}")
+
+        # Sample document page matching document_visual schema
+        sample_doc_page = {
+            "fields": {
+                "document_id": "doc_test_001_p1",
+                "document_title": "Machine Learning Fundamentals.pdf",
+                "document_type": "pdf",
+                "page_number": 1,
+                "page_count": 10,
+                "source_url": "file:///test/docs/ml_fundamentals.pdf",
+                "creation_timestamp": int(time.time()),
+                "colpali_embedding": colpali_embedding,
+            }
+        }
+
+        # Ingest document page via Vespa HTTP API
+        print("\n📥 Ingesting sample document page (visual strategy)...")
+        doc_url = (
+            f"{test_vespa_manager['base_url']}/document/v1/documenttest/document_visual/docid/doc_test_001_p1"
+        )
+
+        response = requests.post(
+            doc_url,
+            json=sample_doc_page,
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+
+        assert response.status_code == 200, f"Document page ingestion failed: {response.status_code} - {response.text}"
+        print("✅ Document page ingested successfully (visual strategy)")
+
+        # Wait for document to be indexed
+        time.sleep(2)
+
+        # Verify document can be retrieved
+        print("\n🔍 Verifying document page retrieval...")
+        get_response = requests.get(doc_url, timeout=10)
+
+        assert get_response.status_code == 200, "Document page retrieval failed"
+        doc_data = get_response.json()
+        assert doc_data["fields"]["document_id"] == "doc_test_001_p1"
+        assert doc_data["fields"]["page_number"] == 1
+        print("✅ Document page retrieved successfully (visual strategy)")
+
+    def test_document_text_ingestion(self, test_vespa_manager):
+        """Test ingesting documents with text extraction and semantic embeddings"""
+        print("\n" + "-"*80)
+        print("Test: Document Text Strategy Ingestion (Extraction + Semantic)")
+        print("-"*80)
+
+        import requests
+        from sentence_transformers import SentenceTransformer
+
+        # Sample extracted text (simulating PDF text extraction)
+        sample_text = """
+        Machine Learning Fundamentals
+
+        Machine learning is a subset of artificial intelligence that focuses on
+        developing algorithms that can learn from and make predictions on data.
+        This document covers the basics of supervised learning, unsupervised learning,
+        and reinforcement learning. Key topics include regression, classification,
+        clustering, and neural networks.
+        """
+
+        # Load text embedding model
+        print("\n📦 Loading text embedding model...")
+        text_model = SentenceTransformer("sentence-transformers/all-mpnet-base-v2")
+        print("✅ Text embedding model loaded")
+
+        # Generate semantic embedding
+        print("\n🔢 Generating semantic embedding...")
+        document_embedding = text_model.encode(
+            sample_text,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+        )
+        print(f"✅ Generated embedding shape: {document_embedding.shape}")
+
+        # Sample document matching document_text schema
+        sample_doc_text = {
+            "fields": {
+                "document_id": "doc_test_001",
+                "document_title": "Machine Learning Fundamentals.pdf",
+                "document_type": "pdf",
+                "page_count": 10,
+                "source_url": "file:///test/docs/ml_fundamentals.pdf",
+                "creation_timestamp": int(time.time()),
+                "full_text": sample_text.strip(),
+                "section_headings": ["Introduction", "Supervised Learning", "Unsupervised Learning"],
+                "key_entities": ["machine learning", "artificial intelligence", "neural networks"],
+                "document_embedding": document_embedding.tolist(),
+            }
+        }
+
+        # Ingest document via Vespa HTTP API
+        print("\n📥 Ingesting sample document (text strategy)...")
+        doc_url = (
+            f"{test_vespa_manager['base_url']}/document/v1/documenttest/document_text/docid/doc_test_001"
+        )
+
+        response = requests.post(
+            doc_url,
+            json=sample_doc_text,
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+
+        assert response.status_code == 200, f"Document ingestion failed: {response.status_code} - {response.text}"
+        print("✅ Document ingested successfully (text strategy)")
+
+        # Wait for document to be indexed
+        time.sleep(2)
+
+        # Verify document can be retrieved
+        print("\n🔍 Verifying document retrieval...")
+        get_response = requests.get(doc_url, timeout=10)
+
+        assert get_response.status_code == 200, "Document retrieval failed"
+        doc_data = get_response.json()
+        assert doc_data["fields"]["document_id"] == "doc_test_001"
+        assert "document_embedding" in doc_data["fields"]
+        assert len(doc_data["fields"]["section_headings"]) == 3
+        print("✅ Document retrieved successfully (text strategy)")
+
+    def test_document_visual_search(self, test_vespa_manager):
+        """Test searching documents with visual strategy (ColPali)"""
+        print("\n" + "-"*80)
+        print("Test: Document Visual Search (ColPali)")
+        print("-"*80)
+
+        import requests
+
+        from src.app.agents.query_encoders import ColPaliQueryEncoder
+
+        # Wait for indexing to complete
+        print("\n⏳ Waiting for indexing to complete...")
+        time.sleep(3)
+
+        # Load query encoder
+        print("\n📦 Loading ColPali query encoder...")
+        query_encoder = ColPaliQueryEncoder(model_name="vidore/colsmol-500m")
+        print("✅ Query encoder loaded")
+
+        # Encode query
+        query = "machine learning fundamentals"
+        print(f"\n🔍 Encoding query: '{query}'")
+        query_embedding = query_encoder.encode(query)
+        query_embedding_flat = query_embedding.flatten().tolist()
+        print(f"✅ Query embedding generated: shape {query_embedding.shape}")
+
+        # Search with ColPali rank profile
+        print("\n🔍 Searching with ColPali visual strategy...")
+        yql = "select * from document_visual where true"
+
+        response = requests.post(
+            f"{test_vespa_manager['base_url']}/search/",
+            json={
+                "yql": yql,
+                "hits": 10,
+                "ranking.profile": "colpali",
+                "input.query(qt)": str(query_embedding_flat),
+            },
+            timeout=10
+        )
+
+        assert response.status_code == 200, f"Visual search failed: {response.status_code} - {response.text}"
+        results = response.json()
+
+        hits = results.get("root", {}).get("children", [])
+        print(f"✅ Visual search completed: {len(hits)} hits")
+
+        if len(hits) > 0:
+            first_hit = hits[0]["fields"]
+            print(f"   Top result: {first_hit.get('document_title', 'no title')}")
+            print(f"   Relevance: {hits[0].get('relevance', 0.0):.4f}")
+            assert first_hit.get("document_id") == "doc_test_001_p1"
+            print("✅ Ingested document page found in visual search results")
+        else:
+            print("⚠️  No search results found (document may not be indexed yet)")
+
+    def test_document_text_search(self, test_vespa_manager):
+        """Test searching documents with text strategy (semantic + BM25)"""
+        print("\n" + "-"*80)
+        print("Test: Document Text Search (Semantic + BM25)")
+        print("-"*80)
+
+        import requests
+        from sentence_transformers import SentenceTransformer
+
+        # Wait for indexing to complete
+        print("\n⏳ Waiting for indexing to complete...")
+        time.sleep(3)
+
+        # Load text embedding model
+        print("\n📦 Loading text embedding model...")
+        text_model = SentenceTransformer("sentence-transformers/all-mpnet-base-v2")
+        print("✅ Text embedding model loaded")
+
+        # Encode query
+        query = "machine learning algorithms"
+        print(f"\n🔍 Encoding query: '{query}'")
+        query_embedding = text_model.encode(
+            query,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+        )
+        print(f"✅ Query embedding generated: shape {query_embedding.shape}")
+
+        # Search with hybrid_bm25_semantic rank profile
+        print("\n🔍 Searching with hybrid BM25 + semantic strategy...")
+        yql = "select * from document_text where userQuery()"
+
+        response = requests.post(
+            f"{test_vespa_manager['base_url']}/search/",
+            json={
+                "yql": yql,
+                "query": query,
+                "hits": 10,
+                "ranking.profile": "hybrid_bm25_semantic",
+                "input.query(q)": query_embedding.tolist(),
+            },
+            timeout=10
+        )
+
+        assert response.status_code == 200, f"Text search failed: {response.status_code} - {response.text}"
+        results = response.json()
+
+        hits = results.get("root", {}).get("children", [])
+        print(f"✅ Text search completed: {len(hits)} hits")
+
+        if len(hits) > 0:
+            first_hit = hits[0]["fields"]
+            print(f"   Top result: {first_hit.get('document_title', 'no title')}")
+            print(f"   Relevance: {hits[0].get('relevance', 0.0):.4f}")
+            assert first_hit.get("document_id") == "doc_test_001"
+            print("✅ Ingested document found in text search results")
+        else:
+            print("⚠️  No search results found (document may not be indexed yet)")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

@@ -468,10 +468,10 @@ class VespaSchemaManager:
 
         Args:
             app_name: Name of the application
-            schemas: List of schema names to deploy. Defaults to ['image_content', 'audio_content']
+            schemas: List of schema names to deploy. Defaults to all content types
         """
         if schemas is None:
-            schemas = ['image_content', 'audio_content']
+            schemas = ['image_content', 'audio_content', 'document_visual', 'document_text']
 
         try:
             from vespa.package import (
@@ -581,6 +581,101 @@ class VespaSchemaManager:
                     ]
                 )
                 schema_objects.append(audio_content_schema)
+
+            # Build document_visual schema (ColPali page-as-image)
+            if 'document_visual' in schemas:
+
+                document_visual_schema = Schema(
+                    name='document_visual',
+                    document=Document(
+                        fields=[
+                            Field(name='document_id', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
+                            Field(name='document_title', type='string', indexing=['summary', 'index'], index='enable-bm25'),
+                            Field(name='document_type', type='string', indexing=['summary', 'attribute']),
+                            Field(name='page_number', type='int', indexing=['summary', 'attribute'], attribute=['fast-search']),
+                            Field(name='page_count', type='int', indexing=['summary', 'attribute']),
+                            Field(name='source_url', type='string', indexing=['summary', 'attribute']),
+                            Field(name='creation_timestamp', type='long', indexing=['summary', 'attribute']),
+                            # ColPali multi-vector embeddings per page (same as video frames)
+                            Field(
+                                name='colpali_embedding',
+                                type='tensor<float>(x[1024],d[128])',
+                                indexing=['attribute'],
+                                attribute=['distance-metric:prenormalized-angular']
+                            ),
+                        ]
+                    ),
+                    rank_profiles=[
+                        # Pure ColPali max similarity (identical to video frames)
+                        RankProfile(
+                            name='colpali',
+                            inputs=[('query(qt)', 'tensor<float>(x[1024],d[128])')],
+                            first_phase='sum(reduce(sum(query(qt) * attribute(colpali_embedding), d), max, x))'
+                        ),
+                        # Hybrid: visual recall -> text re-ranking
+                        RankProfile(
+                            name='hybrid_visual_text',
+                            inputs=[('query(qt)', 'tensor<float>(x[1024],d[128])')],
+                            first_phase='sum(reduce(sum(query(qt) * attribute(colpali_embedding), d), max, x))',
+                            second_phase=SecondPhaseRanking(
+                                expression='bm25(document_title)',
+                                rerank_count=100
+                            )
+                        ),
+                    ]
+                )
+                schema_objects.append(document_visual_schema)
+
+            # Build document_text schema (traditional text extraction)
+            if 'document_text' in schemas:
+                document_text_schema = Schema(
+                    name='document_text',
+                    document=Document(
+                        fields=[
+                            Field(name='document_id', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
+                            Field(name='document_title', type='string', indexing=['summary', 'index'], index='enable-bm25'),
+                            Field(name='document_type', type='string', indexing=['summary', 'attribute']),
+                            Field(name='page_count', type='int', indexing=['summary', 'attribute']),
+                            Field(name='source_url', type='string', indexing=['summary', 'attribute']),
+                            Field(name='creation_timestamp', type='long', indexing=['summary', 'attribute']),
+                            # Extracted text content
+                            Field(name='full_text', type='string', indexing=['summary', 'index'], index='enable-bm25'),
+                            Field(name='section_headings', type='array<string>', indexing=['summary', 'attribute']),
+                            Field(name='key_entities', type='array<string>', indexing=['summary', 'attribute']),
+                            # Dense semantic embeddings (768 dims from sentence-transformers)
+                            Field(
+                                name='document_embedding',
+                                type='tensor<float>(d[768])',
+                                indexing=['attribute', 'index'],
+                                attribute=['distance-metric:angular']
+                            ),
+                        ]
+                    ),
+                    rank_profiles=[
+                        # Pure BM25 keyword search
+                        RankProfile(
+                            name='bm25',
+                            first_phase='bm25(document_title) + bm25(full_text)'
+                        ),
+                        # Pure semantic search
+                        RankProfile(
+                            name='semantic',
+                            inputs=[('query(q)', 'tensor<float>(d[768])')],
+                            first_phase='closeness(field, document_embedding)'
+                        ),
+                        # Hybrid: BM25 recall -> semantic re-ranking
+                        RankProfile(
+                            name='hybrid_bm25_semantic',
+                            inputs=[('query(q)', 'tensor<float>(d[768])')],
+                            first_phase='bm25(full_text)',
+                            second_phase=SecondPhaseRanking(
+                                expression='closeness(field, document_embedding)',
+                                rerank_count=100
+                            )
+                        ),
+                    ]
+                )
+                schema_objects.append(document_text_schema)
 
             # Deploy all schemas together
             app_package = ApplicationPackage(name=app_name, schema=schema_objects)
