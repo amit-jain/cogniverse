@@ -144,6 +144,19 @@ class RoutingAgent(DSPyRoutingMixin):
         if detailed_report_url:
             self.agent_registry["detailed_report"] = detailed_report_url
 
+        # Phase 8: New content type agents
+        image_search_url = self.system_config.get("image_search_agent_url")
+        if image_search_url:
+            self.agent_registry["image_search"] = image_search_url
+
+        audio_analysis_url = self.system_config.get("audio_analysis_agent_url")
+        if audio_analysis_url:
+            self.agent_registry["audio_analysis"] = audio_analysis_url
+
+        document_agent_url = self.system_config.get("document_agent_url")
+        if document_agent_url:
+            self.agent_registry["document_agent"] = document_agent_url
+
         # Validate required agents are available
         self._validate_agent_registry()
 
@@ -169,6 +182,8 @@ class RoutingAgent(DSPyRoutingMixin):
                     "visual_content",
                     "text_information",
                     "document_content",
+                    "audio_content",
+                    "image_content",
                     "summary_request",
                     "detailed_analysis",
                     "raw_results",
@@ -584,14 +599,33 @@ class RoutingAgent(DSPyRoutingMixin):
         else:
             modality_value = str(search_modality)
 
+        # Phase 8: Multi-modal content type routing
         if modality_value in ["video", "both"]:
             return "video_search"
         elif modality_value == "text":
             return "text_search"
+        elif modality_value == "image":
+            if self.agent_registry.get("image_search"):
+                return "image_search"
+            else:
+                logger.warning("image_search agent not available, falling back to video_search")
+                return "video_search"
+        elif modality_value == "audio":
+            if self.agent_registry.get("audio_analysis"):
+                return "audio_analysis"
+            else:
+                logger.warning("audio_analysis agent not available, falling back to video_search")
+                return "video_search"
+        elif modality_value == "document":
+            if self.agent_registry.get("document_agent"):
+                return "document_agent"
+            else:
+                logger.warning("document_agent not available, falling back to text_search")
+                return "text_search"
         else:
             raise ValueError(
                 f"Unknown search modality: {modality_value}. "
-                f"Expected one of: video, text, both"
+                f"Expected one of: video, text, image, audio, document, both"
             )
 
 
