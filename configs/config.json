@@ -452,6 +452,22 @@
       "model": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
     }
   },
+  "reranking": {
+    "enabled": false,
+    "model": "heuristic",
+    "use_hybrid": false,
+    "hybrid_strategy": "weighted_ensemble",
+    "learned_weight": 0.7,
+    "heuristic_weight": 0.3,
+    "max_results_to_rerank": 100,
+    "top_n": null,
+    "supported_models": {
+      "cohere": "cohere/rerank-english-v3.0",
+      "together_ai": "together_ai/Salesforce/Llama-Rank-V1",
+      "jina": "jina/jina-reranker-v2-base-multilingual",
+      "heuristic": "heuristic"
+    }
+  },
   "routing": {
     "routing_mode": "tiered",
     "tier_config": {

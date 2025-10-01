@@ -393,3 +393,123 @@ class MultiModalReranker:
             "temporal_coverage": temporal_coverage,
             "total_results": len(results),
         }
+
+
+class ConfigurableMultiModalReranker:
+    """
+    Multi-modal reranker with configurable backend
+
+    Supports three modes based on config.json settings:
+    - Pure heuristic (default MultiModalReranker)
+    - Pure learned (LiteLLM-based neural reranker)
+    - Hybrid (combination of both)
+
+    Configuration loaded from config.json under "reranking" section.
+    """
+
+    def __init__(self):
+        """Initialize configurable reranker from config.json"""
+        import logging
+
+        from src.app.search.hybrid_reranker import HybridReranker
+        from src.app.search.learned_reranker import LearnedReranker
+        from src.common.config import get_config_value
+
+        logger = logging.getLogger(__name__)
+
+        # Load config
+        rerank_config = get_config_value("reranking", {})
+        self.enabled = rerank_config.get("enabled", False)
+        model_key = rerank_config.get("model", "heuristic")
+        use_hybrid = rerank_config.get("use_hybrid", False)
+
+        # Initialize heuristic reranker (always available)
+        self.heuristic_reranker = MultiModalReranker()
+
+        # Initialize learned reranker if enabled and not heuristic
+        self.learned_reranker: Optional[LearnedReranker] = None
+        if self.enabled and model_key != "heuristic":
+            try:
+                self.learned_reranker = LearnedReranker()
+                logger.info("Initialized learned reranker")
+            except Exception as e:
+                logger.warning(
+                    f"Failed to initialize learned reranker: {e}. "
+                    "Falling back to heuristic reranking."
+                )
+                self.learned_reranker = None
+
+        # Initialize hybrid reranker if configured
+        self.hybrid_reranker: Optional[HybridReranker] = None
+        if self.enabled and use_hybrid and self.learned_reranker:
+            try:
+                self.hybrid_reranker = HybridReranker(
+                    heuristic_reranker=self.heuristic_reranker,
+                    learned_reranker=self.learned_reranker,
+                )
+                logger.info("Initialized hybrid reranker")
+            except Exception as e:
+                logger.warning(f"Failed to initialize hybrid reranker: {e}")
+                self.hybrid_reranker = None
+
+    async def rerank(
+        self,
+        query: str,
+        results: List[SearchResult],
+        modalities: List[QueryModality],
+        context: Optional[Dict] = None,
+    ) -> List[SearchResult]:
+        """
+        Rerank using configured strategy
+
+        Args:
+            query: User query
+            results: Search results to rerank
+            modalities: Detected query modalities
+            context: Optional context
+
+        Returns:
+            Reranked results
+        """
+        if not results:
+            return []
+
+        # If reranking disabled, return original results
+        if not self.enabled:
+            return results
+
+        # Route to appropriate reranker
+        if self.hybrid_reranker:
+            # Hybrid: combine heuristic and learned
+            return await self.hybrid_reranker.rerank_hybrid(
+                query, results, modalities, context
+            )
+        elif self.learned_reranker:
+            # Pure learned: use LiteLLM neural reranker
+            return await self.learned_reranker.rerank(query, results)
+        else:
+            # Pure heuristic: use multi-modal logic
+            return await self.heuristic_reranker.rerank_results(
+                results, query, modalities, context
+            )
+
+    def get_reranker_info(self) -> Dict[str, Any]:
+        """
+        Get information about active reranker configuration
+
+        Returns:
+            Dictionary with reranker details
+        """
+        from src.common.config import get_config_value
+
+        rerank_config = get_config_value("reranking", {})
+
+        return {
+            "enabled": self.enabled,
+            "model": rerank_config.get("model", "heuristic"),
+            "use_hybrid": rerank_config.get("use_hybrid", False),
+            "hybrid_strategy": rerank_config.get("hybrid_strategy"),
+            "learned_available": self.learned_reranker is not None,
+            "hybrid_available": self.hybrid_reranker is not None,
+            "max_results_to_rerank": rerank_config.get("max_results_to_rerank", 100),
+        }
