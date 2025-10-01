@@ -35,6 +35,9 @@ class GenerationType(Enum):
 class RoutingDecision:
     """
     Represents a routing decision with full context and metadata.
+
+    Phase 6: Added detected_modalities for multi-modal query classification
+    Phase 7: Added orchestration fields for multi-agent coordination
     """
 
     search_modality: SearchModality
@@ -45,7 +48,16 @@ class RoutingDecision:
     entities_detected: list[dict[str, Any]] | None = None
     reasoning: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    # Phase 6: Multi-modal classification
     detected_modalities: list[str] = field(default_factory=list)
+
+    # Phase 7: Multi-agent orchestration
+    requires_orchestration: bool = False
+    orchestration_pattern: str | None = None  # "parallel", "sequential", "conditional"
+    primary_agent: str | None = None
+    secondary_agents: list[str] = field(default_factory=list)
+    agent_execution_order: list[str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary format."""
@@ -59,6 +71,11 @@ class RoutingDecision:
             "reasoning": self.reasoning,
             "metadata": self.metadata,
             "detected_modalities": self.detected_modalities,
+            "requires_orchestration": self.requires_orchestration,
+            "orchestration_pattern": self.orchestration_pattern,
+            "primary_agent": self.primary_agent,
+            "secondary_agents": self.secondary_agents,
+            "agent_execution_order": self.agent_execution_order,
             "needs_video_search": self.search_modality
             in [SearchModality.VIDEO, SearchModality.BOTH],
             "needs_text_search": self.search_modality
@@ -78,6 +95,11 @@ class RoutingDecision:
             reasoning=data.get("reasoning"),
             metadata=data.get("metadata", {}),
             detected_modalities=data.get("detected_modalities", []),
+            requires_orchestration=data.get("requires_orchestration", False),
+            orchestration_pattern=data.get("orchestration_pattern"),
+            primary_agent=data.get("primary_agent"),
+            secondary_agents=data.get("secondary_agents", []),
+            agent_execution_order=data.get("agent_execution_order"),
         )
 
 

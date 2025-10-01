@@ -12,6 +12,7 @@ from opentelemetry.trace import Status, StatusCode
 from pydantic import BaseModel
 
 from src.app.agents.dspy_integration_mixin import DSPyRoutingMixin
+from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
 from src.app.routing.advanced_optimizer import (
     AdvancedRoutingOptimizer,
 )
@@ -20,6 +21,7 @@ from src.app.routing.phoenix_span_evaluator import PhoenixSpanEvaluator
 from src.app.routing.router import ComprehensiveRouter
 from src.app.telemetry.config import (
     SERVICE_NAME_ORCHESTRATION,
+    SPAN_NAME_ORCHESTRATION,
     SPAN_NAME_REQUEST,
     SPAN_NAME_ROUTING,
 )
@@ -79,6 +81,15 @@ class RoutingAgent(DSPyRoutingMixin):
 
         # Initialize telemetry manager for creating routing spans
         self.telemetry_manager = TelemetryManager()
+
+        # Initialize multi-agent orchestrator for complex query workflows
+        self.orchestrator = MultiAgentOrchestrator(
+            routing_agent=None,  # Avoid circular dependency
+            available_agents=None,  # Will use agent_registry
+            max_parallel_tasks=3,
+            workflow_timeout_minutes=15,
+            enable_workflow_intelligence=True,
+        )
 
         # Agent registry - maps agent types to their endpoints
         # Only include agents that are actually configured
@@ -198,7 +209,19 @@ class RoutingAgent(DSPyRoutingMixin):
                 # Step 1: Get routing decision from comprehensive router
                 routing_decision = await self.router.route(query, context)
 
-                # Step 2: Determine output type and agent workflow
+                # Step 2: Check if orchestration is required (Phase 7)
+                if routing_decision.requires_orchestration:
+                    logger.info(
+                        f"Orchestration required: pattern={routing_decision.orchestration_pattern}, "
+                        f"primary={routing_decision.primary_agent}"
+                    )
+                    # Delegate to MultiAgentOrchestrator
+                    orchestration_result = await self._handle_orchestration(
+                        query, routing_decision, context, tenant_id, parent_span
+                    )
+                    return orchestration_result
+
+                # Step 3: Determine output type and agent workflow (single-agent path)
                 workflow_plan = self._determine_workflow(query, routing_decision)
 
                 execution_time = time.time() - start_time
@@ -286,6 +309,124 @@ class RoutingAgent(DSPyRoutingMixin):
                 parent_span.record_exception(e)
 
                 logger.error(f"Routing analysis failed: {e}")
+                raise
+
+    async def _handle_orchestration(
+        self,
+        query: str,
+        routing_decision,
+        context: Optional[Dict[str, Any]],
+        tenant_id: str,
+        parent_span,
+    ) -> Dict[str, Any]:
+        """
+        Handle multi-agent orchestration for complex queries (Phase 7).
+
+        Args:
+            query: User query
+            routing_decision: Routing decision with orchestration metadata
+            context: Optional context
+            tenant_id: Tenant identifier
+            parent_span: Parent OpenTelemetry span
+
+        Returns:
+            Orchestration result with execution summary
+        """
+        start_time = time.time()
+
+        # Create orchestration span
+        with self.telemetry_manager.span(
+            name=SPAN_NAME_ORCHESTRATION,
+            tenant_id=tenant_id,
+            service_name=SERVICE_NAME_ORCHESTRATION,
+            attributes={
+                "openinference.span.kind": "WORKFLOW",
+                "operation.name": "orchestrate_multi_agent",
+                "orchestration.pattern": routing_decision.orchestration_pattern,
+                "orchestration.primary_agent": routing_decision.primary_agent,
+                "orchestration.secondary_agents": ",".join(
+                    routing_decision.secondary_agents
+                ),
+                "orchestration.execution_order": ",".join(
+                    routing_decision.agent_execution_order or []
+                ),
+                "orchestration.query": query,
+            },
+        ) as orchestration_span:
+            try:
+                # Invoke MultiAgentOrchestrator
+                orchestration_result = await self.orchestrator.process_complex_query(
+                    query=query,
+                    context=context.get("conversation_history") if context else None,
+                    user_id=context.get("user_id") if context else None,
+                    preferences={
+                        "orchestration_pattern": routing_decision.orchestration_pattern,
+                        "primary_agent": routing_decision.primary_agent,
+                        "secondary_agents": routing_decision.secondary_agents,
+                        "agent_execution_order": routing_decision.agent_execution_order,
+                    },
+                )
+
+                execution_time = time.time() - start_time
+
+                # Add orchestration results to span
+                orchestration_span.set_attribute(
+                    "orchestration.status", orchestration_result.get("status", "unknown")
+                )
+                orchestration_span.set_attribute(
+                    "orchestration.workflow_id", orchestration_result.get("workflow_id", "")
+                )
+                orchestration_span.set_attribute(
+                    "orchestration.execution_time", execution_time
+                )
+
+                if orchestration_result.get("status") == "completed":
+                    exec_summary = orchestration_result.get("execution_summary", {})
+                    orchestration_span.set_attribute(
+                        "orchestration.tasks_completed",
+                        exec_summary.get("completed_tasks", 0),
+                    )
+                    orchestration_span.set_attribute(
+                        "orchestration.agents_used",
+                        ",".join(exec_summary.get("agents_used", [])),
+                    )
+
+                # Mark span as successful
+                orchestration_span.set_status(Status(StatusCode.OK))
+
+                # Update parent span
+                parent_span.set_attribute("request.orchestration_performed", True)
+                parent_span.set_attribute(
+                    "request.orchestration_pattern", routing_decision.orchestration_pattern
+                )
+                parent_span.set_attribute("request.processing_time", execution_time)
+                parent_span.set_status(Status(StatusCode.OK))
+
+                logger.info(f"Orchestration completed in {execution_time:.3f}s")
+
+                # Return augmented result
+                return {
+                    "query": query,
+                    "routing_decision": routing_decision.to_dict(),
+                    "orchestration_result": orchestration_result,
+                    "workflow_type": "orchestrated",
+                    "agents_to_call": routing_decision.agent_execution_order,
+                    "execution_plan": orchestration_result.get("execution_summary", {}),
+                    "confidence": routing_decision.confidence_score,
+                    "routing_method": routing_decision.routing_method,
+                    "execution_time": execution_time,
+                }
+
+            except Exception as e:
+                # Mark orchestration span as failed
+                orchestration_span.set_status(Status(StatusCode.ERROR, str(e)))
+                orchestration_span.record_exception(e)
+
+                # Mark parent span as failed
+                parent_span.set_status(Status(StatusCode.ERROR, str(e)))
+                parent_span.record_exception(e)
+
+                logger.error(f"Orchestration failed: {e}")
                 raise
 
     def _determine_workflow(self, query: str, routing_decision) -> Dict[str, Any]:

@@ -11,6 +11,7 @@ from typing import Dict, Optional
 # Span name constants
 SPAN_NAME_REQUEST = "cogniverse.request"
 SPAN_NAME_ROUTING = "cogniverse.routing"
+SPAN_NAME_ORCHESTRATION = "cogniverse.orchestration"
 
 # Service name constants
 SERVICE_NAME_ORCHESTRATION = "cogniverse.orchestration"

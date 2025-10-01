@@ -278,6 +278,9 @@ class ComprehensiveRouter:
             decisions, voting_method, strategy_weights, min_agreement
         )
 
+        # Determine orchestration strategy
+        self._determine_orchestration_strategy(final_decision, query, context)
+
         # Update cache and metrics
         self._update_cache(query, final_decision)
         self._record_routing_metrics(
@@ -413,6 +416,177 @@ class ComprehensiveRouter:
             },
         )
 
+    def _determine_orchestration_strategy(
+        self,
+        decision: RoutingDecision,
+        query: str,
+        context: dict[str, Any] | None,
+    ) -> None:
+        """
+        Determine if orchestration is needed and populate orchestration fields.
+
+        Phase 7: Multi-Agent Orchestration decision logic
+        Modifies the decision in-place to add orchestration metadata.
+
+        Args:
+            decision: The routing decision to augment with orchestration info
+            query: The user query
+            context: Optional context information
+        """
+        # Extract modality and generation requirements
+        is_multi_modal = len(decision.detected_modalities) > 1
+        needs_video = decision.search_modality in [
+            SearchModality.VIDEO,
+            SearchModality.BOTH,
+        ]
+        needs_text = decision.search_modality in [
+            SearchModality.TEXT,
+            SearchModality.BOTH,
+        ]
+        is_detailed_report = decision.generation_type == GenerationType.DETAILED_REPORT
+        is_summary = decision.generation_type == GenerationType.SUMMARY
+
+        # Explicit orchestration request from context
+        explicit_orchestration = (
+            context.get("require_orchestration", False) if context else False
+        )
+
+        # Determine if orchestration is needed
+        requires_orchestration = (
+            is_multi_modal
+            or (needs_video and needs_text)
+            or (is_detailed_report and (needs_video or is_multi_modal))
+            or (is_summary and (needs_video or needs_text or is_multi_modal))
+            or explicit_orchestration
+        )
+
+        if not requires_orchestration:
+            # Single agent can handle this
+            decision.requires_orchestration = False
+            return
+
+        # Orchestration is needed - determine pattern and agents
+        decision.requires_orchestration = True
+
+        # Determine orchestration pattern
+        if explicit_orchestration and not (
+            is_multi_modal
+            or (needs_video and needs_text)
+            or is_detailed_report
+            or is_summary
+        ):
+            # Explicit orchestration without other triggers - use fallback pattern
+            decision.orchestration_pattern = "sequential"
+            decision.primary_agent = (
+                "video_search_agent" if needs_video else "text_search_agent"
+            )
+            decision.secondary_agents = []
+            decision.agent_execution_order = [decision.primary_agent]
+            decision.metadata.update(
+                {
+                    "orchestration_determined": True,
+                    "orchestration_trigger": "explicit",
+                }
+            )
+            logger.debug(f"Explicit orchestration requested for query: {query[:50]}...")
+            return
+
+        if is_detailed_report:
+            # Detailed reports need sequential processing: search -> summarize -> detailed_report
+            decision.orchestration_pattern = "sequential"
+            decision.primary_agent = "detailed_report_agent"
+
+            if needs_video and needs_text:
+                # Need both video and text search first
+                decision.secondary_agents = [
+                    "video_search_agent",
+                    "text_search_agent",
+                    "summarizer_agent",
+                ]
+                decision.agent_execution_order = [
+                    "video_search_agent",
+                    "text_search_agent",
+                    "summarizer_agent",
+                    "detailed_report_agent",
+                ]
+            elif needs_video:
+                decision.secondary_agents = ["video_search_agent", "summarizer_agent"]
+                decision.agent_execution_order = [
+                    "video_search_agent",
+                    "summarizer_agent",
+                    "detailed_report_agent",
+                ]
+            else:  # needs_text or multi-modal
+                decision.secondary_agents = ["text_search_agent", "summarizer_agent"]
+                decision.agent_execution_order = [
+                    "text_search_agent",
+                    "summarizer_agent",
+                    "detailed_report_agent",
+                ]
+
+        elif is_summary:
+            # Summaries need search then summarize
+            decision.orchestration_pattern = "sequential"
+            decision.primary_agent = "summarizer_agent"
+
+            if needs_video and needs_text:
+                # Parallel search, then sequential summarization
+                decision.orchestration_pattern = "parallel"
+                decision.secondary_agents = ["video_search_agent", "text_search_agent"]
+                decision.agent_execution_order = [
+                    "video_search_agent",
+                    "text_search_agent",
+                    "summarizer_agent",
+                ]
+            elif needs_video:
+                decision.secondary_agents = ["video_search_agent"]
+                decision.agent_execution_order = [
+                    "video_search_agent",
+                    "summarizer_agent",
+                ]
+            else:
+                decision.secondary_agents = ["text_search_agent"]
+                decision.agent_execution_order = [
+                    "text_search_agent",
+                    "summarizer_agent",
+                ]
+
+        elif needs_video and needs_text:
+            # Multi-modal search - parallel execution
+            decision.orchestration_pattern = "parallel"
+            decision.primary_agent = "video_search_agent"
+            decision.secondary_agents = ["text_search_agent"]
+            decision.agent_execution_order = ["video_search_agent", "text_search_agent"]
+
+        else:
+            # Should not reach here, but handle gracefully
+            logger.warning(
+                f"Orchestration required but pattern unclear for query: {query[:50]}..."
+            )
+            decision.requires_orchestration = False
+            return
+
+        # Add orchestration metadata
+        decision.metadata.update(
+            {
+                "orchestration_determined": True,
+                "orchestration_trigger": (
+                    "explicit"
+                    if explicit_orchestration
+                    else (
+                        "multi_search"
+                        if (needs_video and needs_text)
+                        else "multi_modal" if is_multi_modal else "complex_generation"
+                    )
+                ),
+            }
+        )
+
+        logger.debug(
+            f"Orchestration strategy determined: pattern={decision.orchestration_pattern}, "
+            f"primary={decision.primary_agent}, secondary={decision.secondary_agents}"
+        )
+
     async def _tiered_route(
         self, query: str, context: dict[str, Any] | None, start_time: float
     ) -> RoutingDecision:
@@ -450,6 +624,7 @@ class ComprehensiveRouter:
         if RoutingTier.FAST_PATH in self.strategies:
             fast_decision = await self._try_fast_path(query, context)
             if fast_decision and fast_decision.confidence_score >= fast_threshold:
+                self._determine_orchestration_strategy(fast_decision, query, context)
                 self._update_cache(query, fast_decision)
                 self._record_routing_metrics(
                     query,
@@ -463,6 +638,7 @@ class ComprehensiveRouter:
         if RoutingTier.SLOW_PATH in self.strategies:
             slow_decision = await self._try_slow_path(query, context, fast_decision)
             if slow_decision and slow_decision.confidence_score >= slow_threshold:
+                self._determine_orchestration_strategy(slow_decision, query, context)
                 self._update_cache(query, slow_decision)
                 self._record_routing_metrics(
                     query,
@@ -479,6 +655,9 @@ class ComprehensiveRouter:
                 langextract_decision
                 and langextract_decision.confidence_score >= langextract_threshold
             ):
+                self._determine_orchestration_strategy(
+                    langextract_decision, query, context
+                )
                 self._update_cache(query, langextract_decision)
                 self._record_routing_metrics(
                     query,
@@ -491,6 +670,7 @@ class ComprehensiveRouter:
         # Ultimate Fallback (Tier 4)
         if RoutingTier.FALLBACK in self.strategies:
             fallback_decision = await self._try_fallback(query, context)
+            self._determine_orchestration_strategy(fallback_decision, query, context)
             self._update_cache(query, fallback_decision)
             self._record_routing_metrics(
                 query, fallback_decision, time.time() - start_time, RoutingTier.FALLBACK
