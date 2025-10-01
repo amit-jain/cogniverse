@@ -20,6 +20,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timedelta
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
 # DSPy 3.0 imports
@@ -48,6 +49,16 @@ from src.app.agents.workflow_types import (
 from src.tools.a2a_utils import A2AClient
 
 
+class FusionStrategy(Enum):
+    """Strategies for combining results from multiple agents across modalities"""
+
+    SCORE_BASED = "score"  # Weight by confidence scores
+    TEMPORAL = "temporal"  # Time-aligned fusion for temporal queries
+    SEMANTIC = "semantic"  # Semantic similarity-based fusion
+    HIERARCHICAL = "hierarchical"  # Structured combination with hierarchy
+    SIMPLE = "simple"  # Basic concatenation (legacy)
+
+
 class WorkflowPlannerSignature(dspy.Signature):
     """DSPy signature for workflow planning"""
 
@@ -69,14 +80,27 @@ class WorkflowPlannerSignature(dspy.Signature):
 
 
 class ResultAggregatorSignature(dspy.Signature):
-    """DSPy signature for aggregating multi-agent results"""
+    """DSPy signature for cross-modal fusion of multi-agent results"""
 
     original_query: str = dspy.InputField(desc="Original user query")
-    task_results: str = dspy.InputField(desc="JSON string of individual task results")
+    task_results: str = dspy.InputField(
+        desc="JSON string of individual task results with modalities"
+    )
+    fusion_strategy: str = dspy.InputField(
+        desc="Fusion strategy: score, temporal, semantic, hierarchical"
+    )
+    agent_modalities: str = dspy.InputField(
+        desc="Modalities of each agent result (video, image, audio, document, text)"
+    )
 
     aggregated_result: str = dspy.OutputField(desc="Synthesized final result")
     confidence_score: float = dspy.OutputField(desc="Confidence in aggregated result")
-    synthesis_strategy: str = dspy.OutputField(desc="How results were combined")
+    fusion_quality: str = dspy.OutputField(
+        desc="Fusion quality metrics: coverage, consistency, coherence"
+    )
+    cross_modal_consistency: str = dspy.OutputField(
+        desc="Consistency analysis across modalities"
+    )
 
 
 class MultiAgentOrchestrator:
@@ -615,7 +639,7 @@ class MultiAgentOrchestrator:
         return failed_count / total_tasks < 0.5
 
     async def _aggregate_results(self, workflow_plan: WorkflowPlan) -> Dict[str, Any]:
-        """Aggregate results from completed tasks"""
+        """Cross-modal fusion of results from completed tasks"""
         completed_tasks = [
             t
             for t in workflow_plan.tasks
@@ -626,30 +650,63 @@ class MultiAgentOrchestrator:
             return {"error": "No completed tasks to aggregate"}
 
         try:
-            # Prepare task results for DSPy aggregation
+            # Prepare task results with modality detection
             task_results = {}
+            agent_modalities = {}
+
             for task in completed_tasks:
+                # Detect modality from agent name
+                modality = self._detect_agent_modality(task.agent_name)
+                agent_modalities[task.task_id] = modality
+
                 task_results[task.task_id] = {
                     "agent": task.agent_name,
+                    "modality": modality,
                     "query": task.query,
                     "result": task.result,
                     "execution_time": (task.end_time - task.start_time).total_seconds(),
+                    "confidence": (
+                        task.result.get("confidence", 0.5)
+                        if isinstance(task.result, dict)
+                        else 0.5
+                    ),
                 }
 
-            # Use DSPy to intelligently aggregate results
-            aggregation_result = self.result_aggregator.forward(
-                original_query=workflow_plan.original_query,
-                task_results=str(task_results),
+            # Select fusion strategy based on query and modalities
+            fusion_strategy = self._select_fusion_strategy(
+                workflow_plan.original_query, agent_modalities
+            )
+
+            # Apply modality-aware fusion
+            if fusion_strategy == FusionStrategy.SCORE_BASED:
+                fused_result = self._fuse_by_score(task_results)
+            elif fusion_strategy == FusionStrategy.TEMPORAL:
+                fused_result = self._fuse_by_temporal_alignment(task_results)
+            elif fusion_strategy == FusionStrategy.SEMANTIC:
+                fused_result = await self._fuse_by_semantic_similarity(
+                    task_results, workflow_plan.original_query
+                )
+            elif fusion_strategy == FusionStrategy.HIERARCHICAL:
+                fused_result = self._fuse_hierarchically(task_results, agent_modalities)
+            else:
+                # Simple fallback
+                fused_result = self._fuse_simple(task_results)
+
+            # Calculate cross-modal consistency
+            consistency_metrics = self._check_cross_modal_consistency(task_results)
+
+            # Calculate fusion quality metrics
+            fusion_quality = self._calculate_fusion_quality(
+                task_results, fused_result, consistency_metrics
             )
 
             final_result = {
-                "aggregated_content": getattr(
-                    aggregation_result, "aggregated_result", ""
-                ),
-                "confidence": getattr(aggregation_result, "confidence_score", 0.5),
-                "synthesis_strategy": getattr(
-                    aggregation_result, "synthesis_strategy", "concatenation"
-                ),
+                "aggregated_content": fused_result["content"],
+                "confidence": fused_result["confidence"],
+                "fusion_strategy": fusion_strategy.value,
+                "fusion_quality": fusion_quality,
+                "cross_modal_consistency": consistency_metrics,
+                "modality_coverage": list(set(agent_modalities.values())),
                 "individual_results": task_results,
                 "workflow_metadata": {
                     "total_tasks": len(workflow_plan.tasks),
@@ -668,6 +725,398 @@ class MultiAgentOrchestrator:
             self.logger.error(f"Result aggregation failed: {e}")
             # Fallback aggregation
             return self._create_fallback_aggregation(completed_tasks, workflow_plan)
+
+    def _detect_agent_modality(self, agent_name: str) -> str:
+        """Detect modality from agent name"""
+        agent_name_lower = agent_name.lower()
+
+        if "video" in agent_name_lower:
+            return "video"
+        elif "image" in agent_name_lower:
+            return "image"
+        elif "audio" in agent_name_lower:
+            return "audio"
+        elif "document" in agent_name_lower:
+            return "document"
+        elif "text" in agent_name_lower:
+            return "text"
+        else:
+            return "text"  # Default
+
+    def _select_fusion_strategy(
+        self, query: str, agent_modalities: Dict[str, str]
+    ) -> FusionStrategy:
+        """Select fusion strategy based on query and modalities"""
+        modalities = set(agent_modalities.values())
+        query_lower = query.lower()
+
+        # Temporal fusion for time-related queries with multiple modalities
+        temporal_keywords = [
+            "timeline",
+            "sequence",
+            "chronological",
+            "when",
+            "time",
+            "duration",
+        ]
+        if (
+            any(keyword in query_lower for keyword in temporal_keywords)
+            and len(modalities) > 1
+        ):
+            return FusionStrategy.TEMPORAL
+
+        # Hierarchical fusion for structured comparison queries
+        hierarchical_keywords = [
+            "compare",
+            "contrast",
+            "difference",
+            "similarity",
+            "versus",
+            "vs",
+        ]
+        if any(keyword in query_lower for keyword in hierarchical_keywords):
+            return FusionStrategy.HIERARCHICAL
+
+        # Semantic fusion for meaning-focused queries across modalities
+        semantic_keywords = ["explain", "describe", "understand", "mean", "concept"]
+        if (
+            any(keyword in query_lower for keyword in semantic_keywords)
+            and len(modalities) > 1
+        ):
+            return FusionStrategy.SEMANTIC
+
+        # Score-based fusion for multi-modality queries
+        if len(modalities) > 1:
+            return FusionStrategy.SCORE_BASED
+
+        # Simple fusion for single modality
+        return FusionStrategy.SIMPLE
+
+    def _fuse_by_score(self, task_results: Dict[str, Dict]) -> Dict[str, Any]:
+        """Score-based fusion: weight results by confidence scores"""
+        if not task_results:
+            return {"content": "", "confidence": 0.0}
+
+        total_confidence = sum(tr["confidence"] for tr in task_results.values())
+
+        if total_confidence == 0:
+            # Equal weights if no confidence scores
+            weights = {task_id: 1.0 / len(task_results) for task_id in task_results}
+        else:
+            # Normalize confidence scores to weights
+            weights = {
+                task_id: tr["confidence"] / total_confidence
+                for task_id, tr in task_results.items()
+            }
+
+        # Build weighted content
+        content_parts = []
+        for task_id, task_result in sorted(
+            task_results.items(), key=lambda x: weights[x[0]], reverse=True
+        ):
+            weight = weights[task_id]
+            modality = task_result["modality"]
+            result_str = str(task_result["result"])
+
+            content_parts.append(
+                f"[{modality.upper()} - confidence: {weight:.2f}]\n{result_str}"
+            )
+
+        aggregated_confidence = sum(
+            tr["confidence"] * weights[task_id] for task_id, tr in task_results.items()
+        )
+
+        return {
+            "content": "\n\n".join(content_parts),
+            "confidence": aggregated_confidence,
+        }
+
+    def _fuse_by_temporal_alignment(
+        self, task_results: Dict[str, Dict]
+    ) -> Dict[str, Any]:
+        """Temporal fusion: time-aligned combination of results"""
+        if not task_results:
+            return {"content": "", "confidence": 0.0}
+
+        # Sort by execution time (chronological order)
+        sorted_tasks = sorted(
+            task_results.items(), key=lambda x: x[1]["execution_time"]
+        )
+
+        # Build chronologically ordered content
+        content_parts = []
+        total_confidence = 0.0
+
+        for task_id, task_result in sorted_tasks:
+            modality = task_result["modality"]
+            result_str = str(task_result["result"])
+            confidence = task_result["confidence"]
+            total_confidence += confidence
+
+            content_parts.append(
+                f"[{modality.upper()} @ {task_result['execution_time']:.2f}s]\n{result_str}"
+            )
+
+        avg_confidence = total_confidence / len(sorted_tasks)
+
+        return {
+            "content": "\n\n".join(content_parts),
+            "confidence": avg_confidence,
+        }
+
+    async def _fuse_by_semantic_similarity(
+        self, task_results: Dict[str, Dict], query: str
+    ) -> Dict[str, Any]:
+        """Semantic fusion: combine based on semantic relevance to query"""
+        if not task_results:
+            return {"content": "", "confidence": 0.0}
+
+        # For now, use simple heuristic based on query keywords
+        # In production, would use embedding similarity
+        query_lower = query.lower()
+        query_keywords = set(query_lower.split())
+
+        # Calculate relevance score for each result
+        relevance_scores = {}
+        for task_id, task_result in task_results.items():
+            result_str = str(task_result["result"]).lower()
+            result_keywords = set(result_str.split())
+
+            # Simple keyword overlap
+            overlap = len(query_keywords & result_keywords)
+            relevance_scores[task_id] = overlap / max(len(query_keywords), 1)
+
+        # Normalize relevance scores
+        total_relevance = sum(relevance_scores.values())
+        if total_relevance == 0:
+            relevance_scores = {
+                task_id: 1.0 / len(task_results) for task_id in task_results
+            }
+        else:
+            relevance_scores = {
+                task_id: score / total_relevance
+                for task_id, score in relevance_scores.items()
+            }
+
+        # Build content ordered by relevance
+        content_parts = []
+        total_confidence = 0.0
+
+        for task_id, task_result in sorted(
+            task_results.items(), key=lambda x: relevance_scores[x[0]], reverse=True
+        ):
+            modality = task_result["modality"]
+            result_str = str(task_result["result"])
+            confidence = task_result["confidence"]
+            relevance = relevance_scores[task_id]
+
+            total_confidence += confidence * relevance
+
+            content_parts.append(
+                f"[{modality.upper()} - relevance: {relevance:.2f}]\n{result_str}"
+            )
+
+        return {
+            "content": "\n\n".join(content_parts),
+            "confidence": total_confidence,
+        }
+
+    def _fuse_hierarchically(
+        self, task_results: Dict[str, Dict], agent_modalities: Dict[str, str]
+    ) -> Dict[str, Any]:
+        """Hierarchical fusion: structured combination by modality groups"""
+        if not task_results:
+            return {"content": "", "confidence": 0.0}
+
+        # Group results by modality
+        modality_groups = {}
+        for task_id, task_result in task_results.items():
+            modality = task_result["modality"]
+            if modality not in modality_groups:
+                modality_groups[modality] = []
+            modality_groups[modality].append((task_id, task_result))
+
+        # Build hierarchical structure
+        content_parts = []
+        total_confidence = 0.0
+        modality_count = 0
+
+        # Define modality ordering preference (can be customized)
+        modality_order = ["video", "image", "audio", "document", "text"]
+
+        for modality in modality_order:
+            if modality not in modality_groups:
+                continue
+
+            modality_count += 1
+            modality_tasks = modality_groups[modality]
+
+            # Header for modality group
+            content_parts.append(
+                f"## {modality.upper()} RESULTS ({len(modality_tasks)} sources)"
+            )
+
+            # Add each result in the group
+            modality_confidence = 0.0
+            for task_id, task_result in modality_tasks:
+                result_str = str(task_result["result"])
+                confidence = task_result["confidence"]
+                modality_confidence += confidence
+
+                content_parts.append(f"- {result_str}")
+
+            # Average confidence for this modality
+            avg_modality_confidence = modality_confidence / len(modality_tasks)
+            total_confidence += avg_modality_confidence
+            content_parts.append(f"  (Confidence: {avg_modality_confidence:.2f})")
+            content_parts.append("")  # Blank line
+
+        avg_confidence = (
+            total_confidence / modality_count if modality_count > 0 else 0.0
+        )
+
+        return {
+            "content": "\n".join(content_parts),
+            "confidence": avg_confidence,
+        }
+
+    def _fuse_simple(self, task_results: Dict[str, Dict]) -> Dict[str, Any]:
+        """Simple fusion: basic concatenation"""
+        if not task_results:
+            return {"content": "", "confidence": 0.0}
+
+        content_parts = []
+        total_confidence = 0.0
+
+        for task_id, task_result in task_results.items():
+            result_str = str(task_result["result"])
+            confidence = task_result["confidence"]
+            total_confidence += confidence
+
+            content_parts.append(result_str)
+
+        avg_confidence = total_confidence / len(task_results)
+
+        return {
+            "content": "\n\n".join(content_parts),
+            "confidence": avg_confidence,
+        }
+
+    def _check_cross_modal_consistency(
+        self, task_results: Dict[str, Dict]
+    ) -> Dict[str, Any]:
+        """Check consistency across different modalities"""
+        if len(task_results) <= 1:
+            return {
+                "consistency_score": 1.0,
+                "conflicts": [],
+                "agreements": [],
+                "note": "Single modality, no cross-modal comparison needed",
+            }
+
+        # Group by modality
+        modality_results = {}
+        for task_id, task_result in task_results.items():
+            modality = task_result["modality"]
+            if modality not in modality_results:
+                modality_results[modality] = []
+            modality_results[modality].append(task_result)
+
+        # Simple keyword-based consistency check
+        conflicts = []
+        agreements = []
+
+        # Extract all result texts
+        all_texts = [str(tr["result"]).lower() for tr in task_results.values()]
+
+        # Check for common keywords (agreement indicators)
+        common_keywords = set()
+        for text in all_texts:
+            keywords = set(text.split())
+            if not common_keywords:
+                common_keywords = keywords
+            else:
+                common_keywords &= keywords
+
+        # Calculate consistency score based on keyword overlap
+        total_keywords = sum(len(text.split()) for text in all_texts)
+        consistency_score = (len(common_keywords) * len(all_texts)) / max(
+            total_keywords, 1
+        )
+
+        # Identify potential conflicts (different confidence levels for similar content)
+        confidences = [tr["confidence"] for tr in task_results.values()]
+        confidence_variance = sum(
+            (c - sum(confidences) / len(confidences)) ** 2 for c in confidences
+        ) / len(confidences)
+
+        if confidence_variance > 0.1:
+            conflicts.append(
+                f"High confidence variance across modalities: {confidence_variance:.3f}"
+            )
+
+        if common_keywords:
+            agreements.append(
+                f"Common concepts across modalities: {', '.join(list(common_keywords)[:5])}"
+            )
+
+        return {
+            "consistency_score": min(consistency_score, 1.0),
+            "confidence_variance": confidence_variance,
+            "conflicts": conflicts,
+            "agreements": agreements,
+            "modality_count": len(modality_results),
+        }
+
+    def _calculate_fusion_quality(
+        self,
+        task_results: Dict[str, Dict],
+        fused_result: Dict[str, Any],
+        consistency_metrics: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Calculate fusion quality metrics: coverage, consistency, coherence"""
+        # Coverage: how many modalities contributed
+        modalities = set(tr["modality"] for tr in task_results.values())
+        coverage_score = len(modalities) / 5.0  # Normalize by max modalities (5)
+
+        # Consistency: from cross-modal consistency check
+        consistency_score = consistency_metrics.get("consistency_score", 0.0)
+
+        # Coherence: based on confidence and variance
+        coherence_score = fused_result["confidence"]
+
+        # Redundancy: measure of duplicate information
+        result_texts = [str(tr["result"]) for tr in task_results.values()]
+        unique_words = set()
+        total_words = 0
+        for text in result_texts:
+            words = text.lower().split()
+            total_words += len(words)
+            unique_words.update(words)
+
+        redundancy_score = 1.0 - (len(unique_words) / max(total_words, 1))
+
+        # Complementarity: how well results complement each other
+        complementarity_score = 1.0 - redundancy_score
+
+        # Overall quality score
+        overall_quality = (
+            coverage_score * 0.3
+            + consistency_score * 0.3
+            + coherence_score * 0.2
+            + complementarity_score * 0.2
+        )
+
+        return {
+            "overall_quality": overall_quality,
+            "coverage": coverage_score,
+            "consistency": consistency_score,
+            "coherence": coherence_score,
+            "redundancy": redundancy_score,
+            "complementarity": complementarity_score,
+            "modality_count": len(modalities),
+            "modalities": list(modalities),
+        }
 
     def _create_fallback_workflow_plan(
         self,

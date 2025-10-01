@@ -8,11 +8,12 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from src.app.agents.multi_agent_orchestrator import (
+    FusionStrategy,
     MultiAgentOrchestrator,
     ResultAggregatorSignature,
     WorkflowPlannerSignature,
 )
-from src.app.agents.workflow_types import WorkflowStatus
+from src.app.agents.workflow_types import TaskStatus, WorkflowStatus, WorkflowTask
 
 
 @pytest.mark.unit
@@ -49,7 +50,7 @@ class TestResultAggregatorSignature:
         # Check that signature exists and has proper docstring (used by DSPy)
         assert signature is not None
         assert hasattr(signature, "__doc__")
-        assert "DSPy signature for aggregating multi-agent results" in signature.__doc__
+        assert "DSPy signature for cross-modal fusion" in signature.__doc__
 
         # Test that we can reference the signature (validates DSPy structure)
         try:
@@ -315,6 +316,353 @@ class TestMultiAgentOrchestratorEdgeCases:
         stats = orchestrator.orchestration_stats["agent_utilization"]
         assert isinstance(stats, dict)
         assert len(stats) == 0
+
+
+@pytest.mark.unit
+class TestCrossModalFusion:
+    """Test cross-modal fusion functionality"""
+
+    @pytest.fixture
+    def orchestrator(self):
+        """Create orchestrator for testing fusion"""
+        with (
+            patch("src.app.agents.multi_agent_orchestrator.EnhancedRoutingAgent"),
+            patch("src.app.agents.multi_agent_orchestrator.A2AClient"),
+        ):
+            return MultiAgentOrchestrator(enable_workflow_intelligence=False)
+
+    @pytest.fixture
+    def sample_task_results(self):
+        """Sample task results from different modalities"""
+        return {
+            "task_video": {
+                "agent": "video_search_agent",
+                "modality": "video",
+                "query": "Find videos about machine learning",
+                "result": {"videos": [{"title": "ML Basics", "score": 0.9}]},
+                "execution_time": 1.5,
+                "confidence": 0.9,
+            },
+            "task_image": {
+                "agent": "image_search_agent",
+                "modality": "image",
+                "query": "Find images about machine learning",
+                "result": {
+                    "images": [{"title": "Neural Network Diagram", "score": 0.85}]
+                },
+                "execution_time": 1.2,
+                "confidence": 0.85,
+            },
+            "task_text": {
+                "agent": "text_search_agent",
+                "modality": "text",
+                "query": "Find documents about machine learning",
+                "result": {
+                    "documents": [{"title": "Introduction to ML", "score": 0.8}]
+                },
+                "execution_time": 0.9,
+                "confidence": 0.8,
+            },
+        }
+
+    @pytest.mark.ci_fast
+    def test_detect_agent_modality(self, orchestrator):
+        """Test modality detection from agent names"""
+        assert orchestrator._detect_agent_modality("video_search_agent") == "video"
+        assert orchestrator._detect_agent_modality("image_search_agent") == "image"
+        assert orchestrator._detect_agent_modality("audio_analysis_agent") == "audio"
+        assert orchestrator._detect_agent_modality("document_agent") == "document"
+        assert orchestrator._detect_agent_modality("text_search_agent") == "text"
+        assert orchestrator._detect_agent_modality("unknown_agent") == "text"  # Default
+
+    @pytest.mark.ci_fast
+    def test_select_fusion_strategy_temporal(self, orchestrator):
+        """Test temporal fusion strategy selection"""
+        query = "Show me the timeline of events in this sequence"
+        agent_modalities = {
+            "task1": "video",
+            "task2": "image",
+        }
+
+        strategy = orchestrator._select_fusion_strategy(query, agent_modalities)
+        assert strategy == FusionStrategy.TEMPORAL
+
+    @pytest.mark.ci_fast
+    def test_select_fusion_strategy_hierarchical(self, orchestrator):
+        """Test hierarchical fusion strategy selection"""
+        query = "Compare video results versus image results"
+        agent_modalities = {
+            "task1": "video",
+            "task2": "image",
+        }
+
+        strategy = orchestrator._select_fusion_strategy(query, agent_modalities)
+        assert strategy == FusionStrategy.HIERARCHICAL
+
+    @pytest.mark.ci_fast
+    def test_select_fusion_strategy_semantic(self, orchestrator):
+        """Test semantic fusion strategy selection"""
+        query = "Explain the concept of machine learning across different sources"
+        agent_modalities = {
+            "task1": "video",
+            "task2": "document",
+        }
+
+        strategy = orchestrator._select_fusion_strategy(query, agent_modalities)
+        assert strategy == FusionStrategy.SEMANTIC
+
+    @pytest.mark.ci_fast
+    def test_select_fusion_strategy_score_based(self, orchestrator):
+        """Test score-based fusion strategy selection"""
+        query = "Find all content about robotics"
+        agent_modalities = {
+            "task1": "video",
+            "task2": "image",
+            "task3": "document",
+        }
+
+        strategy = orchestrator._select_fusion_strategy(query, agent_modalities)
+        assert strategy == FusionStrategy.SCORE_BASED
+
+    @pytest.mark.ci_fast
+    def test_select_fusion_strategy_simple(self, orchestrator):
+        """Test simple fusion for single modality"""
+        query = "Find videos about robotics"
+        agent_modalities = {
+            "task1": "video",
+        }
+
+        strategy = orchestrator._select_fusion_strategy(query, agent_modalities)
+        assert strategy == FusionStrategy.SIMPLE
+
+    @pytest.mark.ci_fast
+    def test_fuse_by_score(self, orchestrator, sample_task_results):
+        """Test score-based fusion"""
+        result = orchestrator._fuse_by_score(sample_task_results)
+
+        assert "content" in result
+        assert "confidence" in result
+        assert result["confidence"] > 0
+        # Should be weighted by confidence scores
+        assert "VIDEO" in result["content"]  # Highest confidence
+        assert "IMAGE" in result["content"]
+        assert "TEXT" in result["content"]
+
+    @pytest.mark.ci_fast
+    def test_fuse_by_score_empty_results(self, orchestrator):
+        """Test score-based fusion with empty results"""
+        result = orchestrator._fuse_by_score({})
+
+        assert result["content"] == ""
+        assert result["confidence"] == 0.0
+
+    @pytest.mark.ci_fast
+    def test_fuse_by_temporal_alignment(self, orchestrator, sample_task_results):
+        """Test temporal fusion"""
+        result = orchestrator._fuse_by_temporal_alignment(sample_task_results)
+
+        assert "content" in result
+        assert "confidence" in result
+        # Should be ordered by execution time
+        content = result["content"]
+        text_pos = content.find("TEXT")
+        image_pos = content.find("IMAGE")
+        video_pos = content.find("VIDEO")
+        # TEXT (0.9s) < IMAGE (1.2s) < VIDEO (1.5s)
+        assert text_pos < image_pos < video_pos
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_fuse_by_semantic_similarity(self, orchestrator, sample_task_results):
+        """Test semantic fusion"""
+        query = "machine learning"
+        result = await orchestrator._fuse_by_semantic_similarity(
+            sample_task_results, query
+        )
+
+        assert "content" in result
+        assert "confidence" in result
+        # Should contain relevance scores
+        assert "relevance:" in result["content"]
+
+    @pytest.mark.ci_fast
+    def test_fuse_hierarchically(self, orchestrator, sample_task_results):
+        """Test hierarchical fusion"""
+        agent_modalities = {
+            "task_video": "video",
+            "task_image": "image",
+            "task_text": "text",
+        }
+
+        result = orchestrator._fuse_hierarchically(
+            sample_task_results, agent_modalities
+        )
+
+        assert "content" in result
+        assert "confidence" in result
+        # Should have modality headers
+        assert "## VIDEO RESULTS" in result["content"]
+        assert "## IMAGE RESULTS" in result["content"]
+        assert "## TEXT RESULTS" in result["content"]
+        # Should show confidence per modality
+        assert "Confidence:" in result["content"]
+
+    @pytest.mark.ci_fast
+    def test_fuse_simple(self, orchestrator, sample_task_results):
+        """Test simple fusion"""
+        result = orchestrator._fuse_simple(sample_task_results)
+
+        assert "content" in result
+        assert "confidence" in result
+        # Simple concatenation
+        assert len(result["content"]) > 0
+
+    @pytest.mark.ci_fast
+    def test_check_cross_modal_consistency_single_modality(self, orchestrator):
+        """Test cross-modal consistency with single modality"""
+        task_results = {
+            "task1": {
+                "modality": "video",
+                "result": "test result",
+                "confidence": 0.9,
+            }
+        }
+
+        consistency = orchestrator._check_cross_modal_consistency(task_results)
+
+        assert consistency["consistency_score"] == 1.0
+        assert "Single modality" in consistency["note"]
+
+    @pytest.mark.ci_fast
+    def test_check_cross_modal_consistency_multiple_modalities(
+        self, orchestrator, sample_task_results
+    ):
+        """Test cross-modal consistency with multiple modalities"""
+        consistency = orchestrator._check_cross_modal_consistency(sample_task_results)
+
+        assert "consistency_score" in consistency
+        assert "confidence_variance" in consistency
+        assert "conflicts" in consistency
+        assert "agreements" in consistency
+        assert consistency["modality_count"] == 3
+
+    @pytest.mark.ci_fast
+    def test_calculate_fusion_quality(self, orchestrator, sample_task_results):
+        """Test fusion quality metrics calculation"""
+        fused_result = {
+            "content": "Combined results",
+            "confidence": 0.85,
+        }
+        consistency_metrics = {
+            "consistency_score": 0.7,
+            "confidence_variance": 0.05,
+        }
+
+        quality = orchestrator._calculate_fusion_quality(
+            sample_task_results, fused_result, consistency_metrics
+        )
+
+        assert "overall_quality" in quality
+        assert "coverage" in quality
+        assert "consistency" in quality
+        assert "coherence" in quality
+        assert "redundancy" in quality
+        assert "complementarity" in quality
+        assert "modality_count" in quality
+        assert quality["modality_count"] == 3
+        assert 0.0 <= quality["overall_quality"] <= 1.0
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_aggregate_results_with_fusion(self, orchestrator):
+        """Test _aggregate_results with cross-modal fusion"""
+        from datetime import datetime
+
+        from src.app.agents.workflow_types import WorkflowPlan
+
+        # Create mock workflow plan with completed tasks
+        tasks = []
+        for agent_name in ["video_search_agent", "image_search_agent"]:
+            task = WorkflowTask(
+                task_id=f"task_{agent_name}",
+                agent_name=agent_name,
+                query="Find content about robotics",
+                dependencies=set(),
+            )
+            task.status = TaskStatus.COMPLETED
+            task.start_time = datetime.now()
+            task.end_time = datetime.now()
+            task.result = {
+                "content": f"Results from {agent_name}",
+                "confidence": 0.85,
+            }
+            tasks.append(task)
+
+        workflow_plan = WorkflowPlan(
+            workflow_id="test-workflow",
+            original_query="Find content about robotics",
+            status=WorkflowStatus.COMPLETED,
+            tasks=tasks,
+            start_time=datetime.now(),
+            end_time=datetime.now(),
+        )
+
+        result = await orchestrator._aggregate_results(workflow_plan)
+
+        assert "aggregated_content" in result
+        assert "confidence" in result
+        assert "fusion_strategy" in result
+        assert "fusion_quality" in result
+        assert "cross_modal_consistency" in result
+        assert "modality_coverage" in result
+        assert "video" in result["modality_coverage"]
+        assert "image" in result["modality_coverage"]
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_aggregate_results_no_completed_tasks(self, orchestrator):
+        """Test _aggregate_results with no completed tasks"""
+        from datetime import datetime
+
+        from src.app.agents.workflow_types import WorkflowPlan
+
+        workflow_plan = WorkflowPlan(
+            workflow_id="test-workflow",
+            original_query="Test query",
+            status=WorkflowStatus.FAILED,
+            tasks=[],
+            start_time=datetime.now(),
+            end_time=datetime.now(),
+        )
+
+        result = await orchestrator._aggregate_results(workflow_plan)
+
+        assert "error" in result
+        assert result["error"] == "No completed tasks to aggregate"
+
+
+@pytest.mark.unit
+class TestFusionStrategyEnum:
+    """Test FusionStrategy enum"""
+
+    @pytest.mark.ci_fast
+    def test_fusion_strategy_values(self):
+        """Test FusionStrategy enum values"""
+        assert FusionStrategy.SCORE_BASED.value == "score"
+        assert FusionStrategy.TEMPORAL.value == "temporal"
+        assert FusionStrategy.SEMANTIC.value == "semantic"
+        assert FusionStrategy.HIERARCHICAL.value == "hierarchical"
+        assert FusionStrategy.SIMPLE.value == "simple"
+
+    @pytest.mark.ci_fast
+    def test_fusion_strategy_members(self):
+        """Test FusionStrategy enum has all expected members"""
+        strategies = [s.value for s in FusionStrategy]
+        assert "score" in strategies
+        assert "temporal" in strategies
+        assert "semantic" in strategies
+        assert "hierarchical" in strategies
+        assert "simple" in strategies
 
 
 if __name__ == "__main__":

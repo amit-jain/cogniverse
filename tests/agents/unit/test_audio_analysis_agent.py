@@ -4,17 +4,15 @@ Unit tests for Audio Analysis Agent
 Tests audio transcription with Whisper, audio search, and Vespa integration.
 """
 
+from unittest.mock import MagicMock, PropertyMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
-from pathlib import Path
 
 from src.app.agents.audio_analysis_agent import (
     AudioAnalysisAgent,
     AudioResult,
-    TranscriptionResult,
-    AudioEvent,
-    SpeakerSegment,
     MusicClassification,
+    TranscriptionResult,
 )
 
 
@@ -24,9 +22,7 @@ class TestAudioAnalysisAgent:
     def setup_method(self):
         """Set up test fixtures"""
         self.agent = AudioAnalysisAgent(
-            vespa_endpoint="http://localhost:8080",
-            whisper_model_size="base",
-            port=8006
+            vespa_endpoint="http://localhost:8080", whisper_model_size="base", port=8006
         )
 
     def test_initialization(self):
@@ -36,7 +32,7 @@ class TestAudioAnalysisAgent:
         assert self.agent._whisper_model_size == "base"
         assert self.agent._vespa_endpoint == "http://localhost:8080"
 
-    @patch('src.app.agents.audio_analysis_agent.AudioTranscriber')
+    @patch("src.app.agents.audio_analysis_agent.AudioTranscriber")
     def test_audio_transcriber_lazy_loading(self, mock_transcriber_class):
         """Test AudioTranscriber is lazy loaded on first access"""
         mock_transcriber = MagicMock()
@@ -50,7 +46,7 @@ class TestAudioAnalysisAgent:
         mock_transcriber_class.assert_called_once_with(model_size="base")
 
     @pytest.mark.asyncio
-    @patch('requests.post')
+    @patch("requests.post")
     async def test_search_audio_transcript_mode(self, mock_post):
         """Test transcript-based audio search"""
         # Mock Vespa response
@@ -69,8 +65,8 @@ class TestAudioAnalysisAgent:
                             "duration": 300.0,
                             "speaker_labels": ["Speaker A"],
                             "detected_events": ["speech"],
-                            "language": "en"
-                        }
+                            "language": "en",
+                        },
                     }
                 ]
             }
@@ -79,9 +75,7 @@ class TestAudioAnalysisAgent:
 
         # Execute search
         results = await self.agent.search_audio(
-            query="AI podcast",
-            search_mode="transcript",
-            limit=20
+            query="AI podcast", search_mode="transcript", limit=20
         )
 
         # Verify results
@@ -97,7 +91,7 @@ class TestAudioAnalysisAgent:
         assert "transcript_search" in str(call_args)
 
     @pytest.mark.asyncio
-    @patch('requests.post')
+    @patch("requests.post")
     async def test_search_audio_hybrid_mode(self, mock_post):
         """Test hybrid audio search"""
         # Mock Vespa response
@@ -107,17 +101,15 @@ class TestAudioAnalysisAgent:
         mock_post.return_value = mock_response
 
         # Execute search
-        results = await self.agent.search_audio(
-            query="machine learning",
-            search_mode="hybrid",
-            limit=10
+        await self.agent.search_audio(
+            query="machine learning", search_mode="hybrid", limit=10
         )
 
         # Verify Vespa was called
         mock_post.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch.object(AudioAnalysisAgent, 'audio_transcriber', new_callable=PropertyMock)
+    @patch.object(AudioAnalysisAgent, "audio_transcriber", new_callable=PropertyMock)
     async def test_transcribe_audio(self, mock_transcriber):
         """Test audio transcription using Whisper"""
         # Mock AudioTranscriber
@@ -129,10 +121,10 @@ class TestAudioAnalysisAgent:
             "full_text": "This is a test transcription",
             "segments": [
                 {"start": 0.0, "end": 5.0, "text": "This is a test"},
-                {"start": 5.0, "end": 10.0, "text": "transcription"}
+                {"start": 5.0, "end": 10.0, "text": "transcription"},
             ],
             "language": "en",
-            "duration": 10.0
+            "duration": 10.0,
         }
 
         # Execute transcription
@@ -176,8 +168,8 @@ class TestAudioAnalysisAgent:
         assert result.tempo == 0.0
 
     @pytest.mark.asyncio
-    @patch.object(AudioAnalysisAgent, 'audio_transcriber', new_callable=PropertyMock)
-    @patch('requests.post')
+    @patch.object(AudioAnalysisAgent, "audio_transcriber", new_callable=PropertyMock)
+    @patch("requests.post")
     async def test_find_similar_audio_semantic(self, mock_post, mock_transcriber):
         """Test finding similar audio using semantic similarity"""
         # Mock transcriber
@@ -186,7 +178,7 @@ class TestAudioAnalysisAgent:
         mock_transcriber_obj.transcribe_audio.return_value = {
             "full_text": "Test transcription",
             "segments": [],
-            "language": "en"
+            "language": "en",
         }
 
         # Mock Vespa response
@@ -196,10 +188,10 @@ class TestAudioAnalysisAgent:
         mock_post.return_value = mock_response
 
         # Execute similar audio search
-        results = await self.agent.find_similar_audio(
+        await self.agent.find_similar_audio(
             reference_audio_url="http://example.com/ref.mp3",
             similarity_type="semantic",
-            limit=20
+            limit=20,
         )
 
         # Verify transcription was called
@@ -215,7 +207,7 @@ class TestAudioAnalysisAgent:
         # Should return the same path for local files
         assert result == local_path
 
-    @patch('requests.get')
+    @patch("requests.get")
     def test_get_audio_path_url(self, mock_get):
         """Test downloading audio from URL"""
         # Mock HTTP response
@@ -244,7 +236,7 @@ class TestAudioAnalysisAgent:
                 relevance_score=0.85,
                 speaker_labels=["Speaker A"],
                 detected_events=["speech"],
-                language="en"
+                language="en",
             )
         ]
 

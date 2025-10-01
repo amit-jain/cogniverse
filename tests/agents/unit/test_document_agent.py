@@ -26,7 +26,7 @@ class TestDocumentAgent:
         assert self.agent._text_embedding_model is None  # Lazy loaded
         assert self.agent._vespa_endpoint == "http://localhost:8080"
 
-    @patch('src.app.agents.document_agent.get_or_load_model')
+    @patch("src.app.agents.document_agent.get_or_load_model")
     def test_colpali_model_lazy_loading(self, mock_get_model):
         """Test ColPali model is lazy loaded on first access"""
         mock_model = MagicMock()
@@ -40,7 +40,7 @@ class TestDocumentAgent:
         assert model is not None
         assert mock_get_model.called
 
-    @patch('sentence_transformers.SentenceTransformer')
+    @patch("sentence_transformers.SentenceTransformer")
     def test_text_embedding_model_lazy_loading(self, mock_sentence_transformer):
         """Test text embedding model is lazy loaded"""
         mock_model = MagicMock()
@@ -51,7 +51,9 @@ class TestDocumentAgent:
 
         # Verify model was loaded
         assert model is not None
-        mock_sentence_transformer.assert_called_once_with("sentence-transformers/all-mpnet-base-v2")
+        mock_sentence_transformer.assert_called_once_with(
+            "sentence-transformers/all-mpnet-base-v2"
+        )
 
     def test_select_strategy_visual(self):
         """Test strategy selection for visual queries"""
@@ -62,7 +64,9 @@ class TestDocumentAgent:
         ]
         for query in queries:
             strategy = self.agent._select_strategy(query)
-            assert strategy == "visual", f"Expected visual for '{query}', got {strategy}"
+            assert (
+                strategy == "visual"
+            ), f"Expected visual for '{query}', got {strategy}"
 
     def test_select_strategy_text(self):
         """Test strategy selection for text queries"""
@@ -82,8 +86,8 @@ class TestDocumentAgent:
         assert strategy == "hybrid"
 
     @pytest.mark.asyncio
-    @patch.object(DocumentAgent, 'query_encoder', new_callable=PropertyMock)
-    @patch('requests.post')
+    @patch.object(DocumentAgent, "query_encoder", new_callable=PropertyMock)
+    @patch("requests.post")
     async def test_search_visual(self, mock_post, mock_query_encoder):
         """Test visual search strategy"""
         # Mock query encoder
@@ -107,7 +111,7 @@ class TestDocumentAgent:
                             "page_number": 1,
                             "page_count": 10,
                             "document_type": "pdf",
-                        }
+                        },
                     }
                 ]
             }
@@ -131,8 +135,8 @@ class TestDocumentAgent:
         assert "colpali" in str(call_args)
 
     @pytest.mark.asyncio
-    @patch.object(DocumentAgent, 'text_embedding_model', new_callable=PropertyMock)
-    @patch('requests.post')
+    @patch.object(DocumentAgent, "text_embedding_model", new_callable=PropertyMock)
+    @patch("requests.post")
     async def test_search_text(self, mock_post, mock_text_model):
         """Test text search strategy"""
         # Mock text embedding model
@@ -156,7 +160,7 @@ class TestDocumentAgent:
                             "page_count": 25,
                             "document_type": "pdf",
                             "full_text": "Deep learning is a subset of machine learning...",
-                        }
+                        },
                     }
                 ]
             }
@@ -197,8 +201,8 @@ class TestDocumentAgent:
             strategy_used="text",
         )
 
-        with patch.object(self.agent, '_search_visual', return_value=[visual_result]):
-            with patch.object(self.agent, '_search_text', return_value=[text_result]):
+        with patch.object(self.agent, "_search_visual", return_value=[visual_result]):
+            with patch.object(self.agent, "_search_text", return_value=[text_result]):
                 results = await self.agent._search_hybrid("test query", limit=20)
 
                 # Verify both strategies were called
@@ -210,12 +214,32 @@ class TestDocumentAgent:
     def test_fuse_results(self):
         """Test Reciprocal Rank Fusion algorithm"""
         visual_results = [
-            DocumentResult(document_id="doc_001", document_url="url1", title="Doc 1", relevance_score=0.9),
-            DocumentResult(document_id="doc_002", document_url="url2", title="Doc 2", relevance_score=0.8),
+            DocumentResult(
+                document_id="doc_001",
+                document_url="url1",
+                title="Doc 1",
+                relevance_score=0.9,
+            ),
+            DocumentResult(
+                document_id="doc_002",
+                document_url="url2",
+                title="Doc 2",
+                relevance_score=0.8,
+            ),
         ]
         text_results = [
-            DocumentResult(document_id="doc_002", document_url="url2", title="Doc 2", relevance_score=0.85),
-            DocumentResult(document_id="doc_003", document_url="url3", title="Doc 3", relevance_score=0.7),
+            DocumentResult(
+                document_id="doc_002",
+                document_url="url2",
+                title="Doc 2",
+                relevance_score=0.85,
+            ),
+            DocumentResult(
+                document_id="doc_003",
+                document_url="url3",
+                title="Doc 3",
+                relevance_score=0.7,
+            ),
         ]
 
         fused = self.agent._fuse_results(visual_results, text_results, limit=10, k=60)
@@ -227,9 +251,13 @@ class TestDocumentAgent:
     @pytest.mark.asyncio
     async def test_search_documents_auto_strategy(self):
         """Test auto-strategy selection in search_documents"""
-        with patch.object(self.agent, '_select_strategy', return_value="visual"):
-            with patch.object(self.agent, '_search_visual', return_value=[]) as mock_visual:
-                await self.agent.search_documents("diagram of neural network", strategy="auto")
+        with patch.object(self.agent, "_select_strategy", return_value="visual"):
+            with patch.object(
+                self.agent, "_search_visual", return_value=[]
+            ) as mock_visual:
+                await self.agent.search_documents(
+                    "diagram of neural network", strategy="auto"
+                )
                 mock_visual.assert_called_once()
 
     @pytest.mark.asyncio

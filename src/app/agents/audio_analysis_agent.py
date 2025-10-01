@@ -105,10 +105,13 @@ class AudioAnalysisAgent(DSPyA2AAgentBase):
             whisper_model_size: Whisper model size (tiny, base, small, medium, large)
             port: A2A server port
         """
+
         # Create DSPy module
         class AudioSearchSignature(dspy.Signature):
             query: str = dspy.InputField(desc="Audio search query")
-            mode: str = dspy.InputField(desc="Search mode: transcript, acoustic, hybrid")
+            mode: str = dspy.InputField(
+                desc="Search mode: transcript, acoustic, hybrid"
+            )
             result: str = dspy.OutputField(desc="Search results")
 
         class AudioSearchModule(dspy.Module):
@@ -116,7 +119,9 @@ class AudioAnalysisAgent(DSPyA2AAgentBase):
                 super().__init__()
 
             def forward(self, query: str, mode: str = "hybrid"):
-                return dspy.Prediction(result=f"Searching audio: {query} (mode: {mode})")
+                return dspy.Prediction(
+                    result=f"Searching audio: {query} (mode: {mode})"
+                )
 
         # Initialize A2A base
         super().__init__(
@@ -135,14 +140,18 @@ class AudioAnalysisAgent(DSPyA2AAgentBase):
         self._audio_transcriber = None
         self._embedding_generator = None
 
-        logger.info(f"🎵 Initialized AudioAnalysisAgent (Whisper: {whisper_model_size})")
+        logger.info(
+            f"🎵 Initialized AudioAnalysisAgent (Whisper: {whisper_model_size})"
+        )
 
     @property
     def audio_transcriber(self):
         """Lazy load AudioTranscriber"""
         if self._audio_transcriber is None:
             logger.info(f"Loading Whisper model: {self._whisper_model_size}")
-            self._audio_transcriber = AudioTranscriber(model_size=self._whisper_model_size)
+            self._audio_transcriber = AudioTranscriber(
+                model_size=self._whisper_model_size
+            )
             logger.info("✅ AudioTranscriber loaded")
         return self._audio_transcriber
 
@@ -215,8 +224,7 @@ class AudioAnalysisAgent(DSPyA2AAgentBase):
 
             # Use AudioTranscriber
             result = self.audio_transcriber.transcribe_audio(
-                video_path=Path(audio_path),
-                output_dir=None
+                video_path=Path(audio_path), output_dir=None
             )
 
             transcription = TranscriptionResult(
@@ -249,13 +257,13 @@ class AudioAnalysisAgent(DSPyA2AAgentBase):
 
         try:
             response = requests.post(
-                f"{self._vespa_endpoint}/search/",
-                json=params,
-                timeout=10
+                f"{self._vespa_endpoint}/search/", json=params, timeout=10
             )
 
             if response.status_code != 200:
-                logger.error(f"Vespa search failed: {response.status_code} - {response.text}")
+                logger.error(
+                    f"Vespa search failed: {response.status_code} - {response.text}"
+                )
                 return []
 
             # Parse results
@@ -264,17 +272,19 @@ class AudioAnalysisAgent(DSPyA2AAgentBase):
 
             for hit in data.get("root", {}).get("children", []):
                 fields = hit.get("fields", {})
-                results.append(AudioResult(
-                    audio_id=fields.get("audio_id", ""),
-                    audio_url=fields.get("source_url", ""),
-                    title=fields.get("audio_title", ""),
-                    transcript=fields.get("transcript", ""),
-                    duration=fields.get("duration", 0.0),
-                    relevance_score=hit.get("relevance", 0.0),
-                    speaker_labels=fields.get("speaker_labels", []),
-                    detected_events=fields.get("detected_events", []),
-                    language=fields.get("language", "unknown"),
-                ))
+                results.append(
+                    AudioResult(
+                        audio_id=fields.get("audio_id", ""),
+                        audio_url=fields.get("source_url", ""),
+                        title=fields.get("audio_title", ""),
+                        transcript=fields.get("transcript", ""),
+                        duration=fields.get("duration", 0.0),
+                        relevance_score=hit.get("relevance", 0.0),
+                        speaker_labels=fields.get("speaker_labels", []),
+                        detected_events=fields.get("detected_events", []),
+                        language=fields.get("language", "unknown"),
+                    )
+                )
 
             return results
 
@@ -310,13 +320,13 @@ class AudioAnalysisAgent(DSPyA2AAgentBase):
 
         try:
             response = requests.post(
-                f"{self._vespa_endpoint}/search/",
-                json=params,
-                timeout=10
+                f"{self._vespa_endpoint}/search/", json=params, timeout=10
             )
 
             if response.status_code != 200:
-                logger.error(f"Vespa search failed: {response.status_code} - {response.text}")
+                logger.error(
+                    f"Vespa search failed: {response.status_code} - {response.text}"
+                )
                 return []
 
             # Parse results
@@ -325,17 +335,19 @@ class AudioAnalysisAgent(DSPyA2AAgentBase):
 
             for hit in data.get("root", {}).get("children", []):
                 fields = hit.get("fields", {})
-                results.append(AudioResult(
-                    audio_id=fields.get("audio_id", ""),
-                    audio_url=fields.get("source_url", ""),
-                    title=fields.get("audio_title", ""),
-                    transcript=fields.get("transcript", ""),
-                    duration=fields.get("duration", 0.0),
-                    relevance_score=hit.get("relevance", 0.0),
-                    speaker_labels=fields.get("speaker_labels", []),
-                    detected_events=fields.get("detected_events", []),
-                    language=fields.get("language", "unknown"),
-                ))
+                results.append(
+                    AudioResult(
+                        audio_id=fields.get("audio_id", ""),
+                        audio_url=fields.get("source_url", ""),
+                        title=fields.get("audio_title", ""),
+                        transcript=fields.get("transcript", ""),
+                        duration=fields.get("duration", 0.0),
+                        relevance_score=hit.get("relevance", 0.0),
+                        speaker_labels=fields.get("speaker_labels", []),
+                        detected_events=fields.get("detected_events", []),
+                        language=fields.get("language", "unknown"),
+                    )
+                )
 
             return results
 
@@ -364,13 +376,13 @@ class AudioAnalysisAgent(DSPyA2AAgentBase):
 
         try:
             response = requests.post(
-                f"{self._vespa_endpoint}/search/",
-                json=params,
-                timeout=10
+                f"{self._vespa_endpoint}/search/", json=params, timeout=10
             )
 
             if response.status_code != 200:
-                logger.error(f"Vespa search failed: {response.status_code} - {response.text}")
+                logger.error(
+                    f"Vespa search failed: {response.status_code} - {response.text}"
+                )
                 return []
 
             # Parse results
@@ -379,17 +391,19 @@ class AudioAnalysisAgent(DSPyA2AAgentBase):
 
             for hit in data.get("root", {}).get("children", []):
                 fields = hit.get("fields", {})
-                results.append(AudioResult(
-                    audio_id=fields.get("audio_id", ""),
-                    audio_url=fields.get("source_url", ""),
-                    title=fields.get("audio_title", ""),
-                    transcript=fields.get("transcript", ""),
-                    duration=fields.get("duration", 0.0),
-                    relevance_score=hit.get("relevance", 0.0),
-                    speaker_labels=fields.get("speaker_labels", []),
-                    detected_events=fields.get("detected_events", []),
-                    language=fields.get("language", "unknown"),
-                ))
+                results.append(
+                    AudioResult(
+                        audio_id=fields.get("audio_id", ""),
+                        audio_url=fields.get("source_url", ""),
+                        title=fields.get("audio_title", ""),
+                        transcript=fields.get("transcript", ""),
+                        duration=fields.get("duration", 0.0),
+                        relevance_score=hit.get("relevance", 0.0),
+                        speaker_labels=fields.get("speaker_labels", []),
+                        detected_events=fields.get("detected_events", []),
+                        language=fields.get("language", "unknown"),
+                    )
+                )
 
             return results
 
@@ -398,9 +412,7 @@ class AudioAnalysisAgent(DSPyA2AAgentBase):
             return []
 
     async def detect_audio_events(
-        self,
-        audio_url: str,
-        event_types: Optional[List[str]] = None
+        self, audio_url: str, event_types: Optional[List[str]] = None
     ) -> List[AudioEvent]:
         """
         Detect sounds, music, speech segments
@@ -419,9 +431,7 @@ class AudioAnalysisAgent(DSPyA2AAgentBase):
         return []
 
     async def identify_speakers(
-        self,
-        audio_url: str,
-        num_speakers: Optional[int] = None
+        self, audio_url: str, num_speakers: Optional[int] = None
     ) -> List[SpeakerSegment]:
         """
         Speaker diarization - identify who spoke when
@@ -439,10 +449,7 @@ class AudioAnalysisAgent(DSPyA2AAgentBase):
         logger.warning("⚠️  Speaker diarization not yet fully implemented")
         return []
 
-    async def classify_music(
-        self,
-        audio_url: str
-    ) -> MusicClassification:
+    async def classify_music(self, audio_url: str) -> MusicClassification:
         """
         Classify music genre, mood, tempo, key
 
@@ -457,11 +464,7 @@ class AudioAnalysisAgent(DSPyA2AAgentBase):
         logger.info(f"🎵 Classifying music: {audio_url}")
         logger.warning("⚠️  Music classification not yet fully implemented")
         return MusicClassification(
-            genre="unknown",
-            mood="unknown",
-            tempo=0.0,
-            key=None,
-            instruments=[]
+            genre="unknown", mood="unknown", tempo=0.0, key=None, instruments=[]
         )
 
     async def find_similar_audio(
@@ -535,9 +538,7 @@ class AudioAnalysisAgent(DSPyA2AAgentBase):
         limit = dspy_input.get("limit", 20)
 
         results = await self.search_audio(
-            query=query,
-            search_mode=search_mode,
-            limit=limit
+            query=query, search_mode=search_mode, limit=limit
         )
 
         return {"results": results, "count": len(results)}
@@ -602,7 +603,11 @@ class AudioAnalysisAgent(DSPyA2AAgentBase):
             {
                 "name": "find_similar_audio",
                 "description": "Find acoustically or semantically similar audio",
-                "input": {"reference_audio_url": "str", "similarity_type": "str", "limit": "int"},
+                "input": {
+                    "reference_audio_url": "str",
+                    "similarity_type": "str",
+                    "limit": "int",
+                },
                 "output": {"results": "List[AudioResult]"},
             },
         ]

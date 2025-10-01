@@ -21,9 +21,9 @@ def test_vespa_manager():
 
     Automatically starts test Vespa before tests and cleans up after.
     """
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("Setting up Content Types Test Vespa Instance")
-    print("="*80)
+    print("=" * 80)
 
     # Configuration
     test_port = 8082
@@ -39,20 +39,35 @@ def test_vespa_manager():
     print(f"\n🚀 Starting test Vespa container on port {test_port}...")
 
     import platform
-    machine = platform.machine().lower()
-    docker_platform = "linux/arm64" if machine in ['arm64', 'aarch64'] else "linux/amd64"
 
-    docker_result = subprocess.run([
-        "docker", "run", "-d",
-        "--name", container_name,
-        "-p", f"{test_port}:8080",
-        "-p", f"{config_port}:19071",
-        "--platform", docker_platform,
-        "vespaengine/vespa"
-    ], capture_output=True, timeout=60)
+    machine = platform.machine().lower()
+    docker_platform = (
+        "linux/arm64" if machine in ["arm64", "aarch64"] else "linux/amd64"
+    )
+
+    docker_result = subprocess.run(
+        [
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            container_name,
+            "-p",
+            f"{test_port}:8080",
+            "-p",
+            f"{config_port}:19071",
+            "--platform",
+            docker_platform,
+            "vespaengine/vespa",
+        ],
+        capture_output=True,
+        timeout=60,
+    )
 
     if docker_result.returncode != 0:
-        pytest.fail(f"Failed to start Docker container: {docker_result.stderr.decode()}")
+        pytest.fail(
+            f"Failed to start Docker container: {docker_result.stderr.decode()}"
+        )
 
     print(f"✅ Container '{container_name}' started")
 
@@ -89,18 +104,24 @@ def test_vespa_manager():
     yield test_vespa
 
     # Teardown: Stop and remove test Vespa
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("Tearing Down Content Types Test Vespa Instance")
-    print("="*80)
+    print("=" * 80)
 
     print(f"\n🧹 Stopping and removing container '{container_name}'...")
-    stop_result = subprocess.run(["docker", "stop", container_name], capture_output=True, timeout=30)
-    remove_result = subprocess.run(["docker", "rm", container_name], capture_output=True, timeout=30)
+    stop_result = subprocess.run(
+        ["docker", "stop", container_name], capture_output=True, timeout=30
+    )
+    remove_result = subprocess.run(
+        ["docker", "rm", container_name], capture_output=True, timeout=30
+    )
 
     if stop_result.returncode == 0 and remove_result.returncode == 0:
         print("✅ Test Vespa cleaned up successfully")
     else:
-        print(f"⚠️  Issues during cleanup: stop={stop_result.returncode}, rm={remove_result.returncode}")
+        print(
+            f"⚠️  Issues during cleanup: stop={stop_result.returncode}, rm={remove_result.returncode}"
+        )
 
 
 class TestContentTypeVespaSchemas:
@@ -108,13 +129,13 @@ class TestContentTypeVespaSchemas:
 
     def test_content_type_schemas_upload(self, test_vespa_manager):
         """Test uploading both image_content and audio_content schemas together"""
-        print("\n" + "-"*80)
+        print("\n" + "-" * 80)
         print("Test: Content Type Schemas Upload (Image + Audio)")
-        print("-"*80)
+        print("-" * 80)
 
         schema_manager = VespaSchemaManager(
             vespa_endpoint=test_vespa_manager["config_url"],
-            vespa_port=test_vespa_manager["config_port"]
+            vespa_port=test_vespa_manager["config_port"],
         )
 
         # Upload both schemas together in one application package
@@ -132,8 +153,7 @@ class TestContentTypeVespaSchemas:
         for i in range(60):
             try:
                 response = requests.get(
-                    f"{test_vespa_manager['base_url']}/ApplicationStatus",
-                    timeout=5
+                    f"{test_vespa_manager['base_url']}/ApplicationStatus", timeout=5
                 )
                 if response.status_code == 200:
                     print(f"✅ Application ready (took {i*2}s)")
@@ -151,18 +171,22 @@ class TestContentTypeVespaSchemas:
             response = requests.get(
                 f"{test_vespa_manager['base_url']}/search/",
                 params={"query": "test", "restrict": "image_content"},
-                timeout=10
+                timeout=10,
             )
-            assert response.status_code == 200, f"Image search failed: {response.status_code}"
+            assert (
+                response.status_code == 200
+            ), f"Image search failed: {response.status_code}"
             print("✅ image_content schema is accessible")
 
             # Test audio_content schema
             response = requests.get(
                 f"{test_vespa_manager['base_url']}/search/",
                 params={"query": "test", "restrict": "audio_content"},
-                timeout=10
+                timeout=10,
             )
-            assert response.status_code == 200, f"Audio search failed: {response.status_code}"
+            assert (
+                response.status_code == 200
+            ), f"Audio search failed: {response.status_code}"
             print("✅ audio_content schema is accessible")
 
         except Exception as e:
@@ -170,10 +194,9 @@ class TestContentTypeVespaSchemas:
 
     def test_image_content_document_ingestion(self, test_vespa_manager):
         """Test ingesting sample image documents with real ColPali embeddings"""
-        print("\n" + "-"*80)
+        print("\n" + "-" * 80)
         print("Test: Image Content Document Ingestion (Real ColPali)")
-        print("-"*80)
-
+        print("-" * 80)
 
         import numpy as np
         import requests
@@ -194,6 +217,7 @@ class TestContentTypeVespaSchemas:
         # Generate real ColPali embedding
         print("\n🔢 Generating ColPali embedding...")
         import torch
+
         batch_inputs = processor.process_images([test_image]).to(model.device)
 
         with torch.no_grad():
@@ -227,18 +251,18 @@ class TestContentTypeVespaSchemas:
 
         # Ingest document via Vespa HTTP API
         print("\n📥 Ingesting sample image document...")
-        doc_url = (
-            f"{test_vespa_manager['base_url']}/document/v1/contenttypetest/image_content/docid/img_test_001"
-        )
+        doc_url = f"{test_vespa_manager['base_url']}/document/v1/contenttypetest/image_content/docid/img_test_001"
 
         response = requests.post(
             doc_url,
             json=sample_image,
             headers={"Content-Type": "application/json"},
-            timeout=10
+            timeout=10,
         )
 
-        assert response.status_code == 200, f"Document ingestion failed: {response.status_code} - {response.text}"
+        assert (
+            response.status_code == 200
+        ), f"Document ingestion failed: {response.status_code} - {response.text}"
         print("✅ Sample image document ingested successfully")
 
         # Wait for document to be indexed
@@ -255,10 +279,9 @@ class TestContentTypeVespaSchemas:
 
     def test_audio_content_document_ingestion(self, test_vespa_manager):
         """Test ingesting sample audio documents with real Whisper transcription and embeddings"""
-        print("\n" + "-"*80)
+        print("\n" + "-" * 80)
         print("Test: Audio Content Document Ingestion (Real Whisper + Embeddings)")
-        print("-"*80)
-
+        print("-" * 80)
 
         import numpy as np
         import requests
@@ -280,7 +303,7 @@ class TestContentTypeVespaSchemas:
 
         # Write to temporary WAV file
         temp_audio = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        with wave.open(temp_audio.name, 'w') as wav_file:
+        with wave.open(temp_audio.name, "w") as wav_file:
             wav_file.setnchannels(1)  # Mono
             wav_file.setsampwidth(2)  # 16-bit
             wav_file.setframerate(sample_rate)
@@ -294,7 +317,9 @@ class TestContentTypeVespaSchemas:
         print("✅ Whisper model loaded")
 
         print("\n🔊 Transcribing audio...")
-        result = transcriber.transcribe_audio(video_path=Path(temp_audio.name), output_dir=None)
+        result = transcriber.transcribe_audio(
+            video_path=Path(temp_audio.name), output_dir=None
+        )
         transcript = result.get("full_text", "")
         language = result.get("language", "unknown")
         print(f"✅ Transcription complete: '{transcript}' (language: {language})")
@@ -305,14 +330,19 @@ class TestContentTypeVespaSchemas:
         print("✅ Embedding models loaded")
 
         print("\n🔢 Generating embeddings...")
-        acoustic_embedding, semantic_embedding = embedding_generator.generate_embeddings(
-            audio_path=Path(temp_audio.name),
-            transcript=transcript if transcript else "Test audio with silence"
+        acoustic_embedding, semantic_embedding = (
+            embedding_generator.generate_embeddings(
+                audio_path=Path(temp_audio.name),
+                transcript=transcript if transcript else "Test audio with silence",
+            )
         )
-        print(f"✅ Generated embeddings: acoustic={acoustic_embedding.shape}, semantic={semantic_embedding.shape}")
+        print(
+            f"✅ Generated embeddings: acoustic={acoustic_embedding.shape}, semantic={semantic_embedding.shape}"
+        )
 
         # Clean up temp file
         import os
+
         os.unlink(temp_audio.name)
 
         # Sample audio document matching our schema
@@ -333,18 +363,18 @@ class TestContentTypeVespaSchemas:
 
         # Ingest document via Vespa HTTP API
         print("\n📥 Ingesting sample audio document...")
-        doc_url = (
-            f"{test_vespa_manager['base_url']}/document/v1/contenttypetest/audio_content/docid/audio_test_001"
-        )
+        doc_url = f"{test_vespa_manager['base_url']}/document/v1/contenttypetest/audio_content/docid/audio_test_001"
 
         response = requests.post(
             doc_url,
             json=sample_audio,
             headers={"Content-Type": "application/json"},
-            timeout=10
+            timeout=10,
         )
 
-        assert response.status_code == 200, f"Document ingestion failed: {response.status_code} - {response.text}"
+        assert (
+            response.status_code == 200
+        ), f"Document ingestion failed: {response.status_code} - {response.text}"
         print("✅ Sample audio document ingested successfully")
 
         # Wait for document to be indexed
@@ -359,13 +389,15 @@ class TestContentTypeVespaSchemas:
         assert doc_data["fields"]["audio_id"] == "audio_test_001"
         assert "audio_embedding" in doc_data["fields"]
         assert "semantic_embedding" in doc_data["fields"]
-        print(f"✅ Audio document retrieved successfully (language: {doc_data['fields'].get('language', 'unknown')})")
+        print(
+            f"✅ Audio document retrieved successfully (language: {doc_data['fields'].get('language', 'unknown')})"
+        )
 
     def test_image_content_search(self, test_vespa_manager):
         """Test searching image content"""
-        print("\n" + "-"*80)
+        print("\n" + "-" * 80)
         print("Test: Image Content Search")
-        print("-"*80)
+        print("-" * 80)
 
         import requests
 
@@ -380,15 +412,15 @@ class TestContentTypeVespaSchemas:
             params={
                 "yql": "select * from image_content where userQuery()",
                 "query": "car",
-                "hits": 10
+                "hits": 10,
             },
-            timeout=10
+            timeout=10,
         )
 
         assert response.status_code == 200, f"Search failed: {response.status_code}"
         results = response.json()
 
-        total_count = results.get('root', {}).get('fields', {}).get('totalCount', 0)
+        total_count = results.get("root", {}).get("fields", {}).get("totalCount", 0)
         print(f"✅ Search completed: {total_count} total hits")
 
         # Verify we can find our ingested document
@@ -400,14 +432,16 @@ class TestContentTypeVespaSchemas:
             assert first_hit.get("image_id") == "img_test_001"
             print("✅ Ingested image document found in search results")
         else:
-            print("⚠️  No search results found (document may not be indexed yet or BM25 didn't match)")
+            print(
+                "⚠️  No search results found (document may not be indexed yet or BM25 didn't match)"
+            )
             # This is okay - the important test is that schema works and document was ingested
 
     def test_audio_content_search(self, test_vespa_manager):
         """Test searching audio content"""
-        print("\n" + "-"*80)
+        print("\n" + "-" * 80)
         print("Test: Audio Content Search")
-        print("-"*80)
+        print("-" * 80)
 
         import requests
 
@@ -422,15 +456,15 @@ class TestContentTypeVespaSchemas:
             params={
                 "yql": "select * from audio_content where userQuery()",
                 "query": "podcast",
-                "hits": 10
+                "hits": 10,
             },
-            timeout=10
+            timeout=10,
         )
 
         assert response.status_code == 200, f"Search failed: {response.status_code}"
         results = response.json()
 
-        total_count = results.get('root', {}).get('fields', {}).get('totalCount', 0)
+        total_count = results.get("root", {}).get("fields", {}).get("totalCount", 0)
         print(f"✅ Search completed: {total_count} total hits")
 
         # Verify we can find our ingested document
@@ -442,27 +476,27 @@ class TestContentTypeVespaSchemas:
             assert first_hit.get("audio_id") == "audio_test_001"
             print("✅ Ingested audio document found in search results")
         else:
-            print("⚠️  No search results found (document may not be indexed yet or BM25 didn't match)")
+            print(
+                "⚠️  No search results found (document may not be indexed yet or BM25 didn't match)"
+            )
             # This is okay - the important test is that schema works and document was ingested
-
 
     def test_document_content_schemas_upload(self, test_vespa_manager):
         """Test uploading document_visual and document_text schemas"""
-        print("\n" + "-"*80)
+        print("\n" + "-" * 80)
         print("Test: Document Content Schemas Upload (Visual + Text)")
-        print("-"*80)
+        print("-" * 80)
 
         schema_manager = VespaSchemaManager(
             vespa_endpoint=test_vespa_manager["config_url"],
-            vespa_port=test_vespa_manager["config_port"]
+            vespa_port=test_vespa_manager["config_port"],
         )
 
         # Upload document schemas (visual and text)
         print("\n📤 Uploading document_visual and document_text schemas...")
         try:
             schema_manager.upload_content_type_schemas(
-                app_name="documenttest",
-                schemas=['document_visual', 'document_text']
+                app_name="documenttest", schemas=["document_visual", "document_text"]
             )
             print("✅ Both document schemas uploaded successfully")
         except Exception as e:
@@ -475,8 +509,7 @@ class TestContentTypeVespaSchemas:
         for i in range(60):
             try:
                 response = requests.get(
-                    f"{test_vespa_manager['base_url']}/ApplicationStatus",
-                    timeout=5
+                    f"{test_vespa_manager['base_url']}/ApplicationStatus", timeout=5
                 )
                 if response.status_code == 200:
                     print(f"✅ Application ready (took {i*2}s)")
@@ -494,18 +527,22 @@ class TestContentTypeVespaSchemas:
             response = requests.get(
                 f"{test_vespa_manager['base_url']}/search/",
                 params={"query": "test", "restrict": "document_visual"},
-                timeout=10
+                timeout=10,
             )
-            assert response.status_code == 200, f"Visual document search failed: {response.status_code}"
+            assert (
+                response.status_code == 200
+            ), f"Visual document search failed: {response.status_code}"
             print("✅ document_visual schema is accessible")
 
             # Test document_text schema
             response = requests.get(
                 f"{test_vespa_manager['base_url']}/search/",
                 params={"query": "test", "restrict": "document_text"},
-                timeout=10
+                timeout=10,
             )
-            assert response.status_code == 200, f"Text document search failed: {response.status_code}"
+            assert (
+                response.status_code == 200
+            ), f"Text document search failed: {response.status_code}"
             print("✅ document_text schema is accessible")
 
         except Exception as e:
@@ -513,9 +550,9 @@ class TestContentTypeVespaSchemas:
 
     def test_document_visual_ingestion(self, test_vespa_manager):
         """Test ingesting document pages with real ColPali embeddings"""
-        print("\n" + "-"*80)
+        print("\n" + "-" * 80)
         print("Test: Document Visual Strategy Ingestion (ColPali)")
-        print("-"*80)
+        print("-" * 80)
 
         import numpy as np
         import requests
@@ -542,6 +579,7 @@ class TestContentTypeVespaSchemas:
         # Generate ColPali embedding for document page
         print("\n🔢 Generating ColPali embedding for document page...")
         import torch
+
         batch_inputs = processor.process_images([test_page]).to(model.device)
 
         with torch.no_grad():
@@ -576,18 +614,18 @@ class TestContentTypeVespaSchemas:
 
         # Ingest document page via Vespa HTTP API
         print("\n📥 Ingesting sample document page (visual strategy)...")
-        doc_url = (
-            f"{test_vespa_manager['base_url']}/document/v1/documenttest/document_visual/docid/doc_test_001_p1"
-        )
+        doc_url = f"{test_vespa_manager['base_url']}/document/v1/documenttest/document_visual/docid/doc_test_001_p1"
 
         response = requests.post(
             doc_url,
             json=sample_doc_page,
             headers={"Content-Type": "application/json"},
-            timeout=10
+            timeout=10,
         )
 
-        assert response.status_code == 200, f"Document page ingestion failed: {response.status_code} - {response.text}"
+        assert (
+            response.status_code == 200
+        ), f"Document page ingestion failed: {response.status_code} - {response.text}"
         print("✅ Document page ingested successfully (visual strategy)")
 
         # Wait for document to be indexed
@@ -605,9 +643,9 @@ class TestContentTypeVespaSchemas:
 
     def test_document_text_ingestion(self, test_vespa_manager):
         """Test ingesting documents with text extraction and semantic embeddings"""
-        print("\n" + "-"*80)
+        print("\n" + "-" * 80)
         print("Test: Document Text Strategy Ingestion (Extraction + Semantic)")
-        print("-"*80)
+        print("-" * 80)
 
         import requests
         from sentence_transformers import SentenceTransformer
@@ -647,26 +685,34 @@ class TestContentTypeVespaSchemas:
                 "source_url": "file:///test/docs/ml_fundamentals.pdf",
                 "creation_timestamp": int(time.time()),
                 "full_text": sample_text.strip(),
-                "section_headings": ["Introduction", "Supervised Learning", "Unsupervised Learning"],
-                "key_entities": ["machine learning", "artificial intelligence", "neural networks"],
+                "section_headings": [
+                    "Introduction",
+                    "Supervised Learning",
+                    "Unsupervised Learning",
+                ],
+                "key_entities": [
+                    "machine learning",
+                    "artificial intelligence",
+                    "neural networks",
+                ],
                 "document_embedding": document_embedding.tolist(),
             }
         }
 
         # Ingest document via Vespa HTTP API
         print("\n📥 Ingesting sample document (text strategy)...")
-        doc_url = (
-            f"{test_vespa_manager['base_url']}/document/v1/documenttest/document_text/docid/doc_test_001"
-        )
+        doc_url = f"{test_vespa_manager['base_url']}/document/v1/documenttest/document_text/docid/doc_test_001"
 
         response = requests.post(
             doc_url,
             json=sample_doc_text,
             headers={"Content-Type": "application/json"},
-            timeout=10
+            timeout=10,
         )
 
-        assert response.status_code == 200, f"Document ingestion failed: {response.status_code} - {response.text}"
+        assert (
+            response.status_code == 200
+        ), f"Document ingestion failed: {response.status_code} - {response.text}"
         print("✅ Document ingested successfully (text strategy)")
 
         # Wait for document to be indexed
@@ -685,9 +731,9 @@ class TestContentTypeVespaSchemas:
 
     def test_document_visual_search(self, test_vespa_manager):
         """Test searching documents with visual strategy (ColPali)"""
-        print("\n" + "-"*80)
+        print("\n" + "-" * 80)
         print("Test: Document Visual Search (ColPali)")
-        print("-"*80)
+        print("-" * 80)
 
         import requests
 
@@ -721,10 +767,12 @@ class TestContentTypeVespaSchemas:
                 "ranking.profile": "colpali",
                 "input.query(qt)": str(query_embedding_flat),
             },
-            timeout=10
+            timeout=10,
         )
 
-        assert response.status_code == 200, f"Visual search failed: {response.status_code} - {response.text}"
+        assert (
+            response.status_code == 200
+        ), f"Visual search failed: {response.status_code} - {response.text}"
         results = response.json()
 
         hits = results.get("root", {}).get("children", [])
@@ -741,9 +789,9 @@ class TestContentTypeVespaSchemas:
 
     def test_document_text_search(self, test_vespa_manager):
         """Test searching documents with text strategy (semantic + BM25)"""
-        print("\n" + "-"*80)
+        print("\n" + "-" * 80)
         print("Test: Document Text Search (Semantic + BM25)")
-        print("-"*80)
+        print("-" * 80)
 
         import requests
         from sentence_transformers import SentenceTransformer
@@ -780,10 +828,12 @@ class TestContentTypeVespaSchemas:
                 "ranking.profile": "hybrid_bm25_semantic",
                 "input.query(q)": query_embedding.tolist(),
             },
-            timeout=10
+            timeout=10,
         )
 
-        assert response.status_code == 200, f"Text search failed: {response.status_code} - {response.text}"
+        assert (
+            response.status_code == 200
+        ), f"Text search failed: {response.status_code} - {response.text}"
         results = response.json()
 
         hits = results.get("root", {}).get("children", [])

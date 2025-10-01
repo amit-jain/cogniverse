@@ -85,3 +85,4 @@ coverage_*.xml
 
 # Strategy documents (internal only)
 OPTIMIZATION_STRATEGY*.md
+docs/git-author-fix.md

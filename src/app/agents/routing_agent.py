@@ -300,11 +300,13 @@ class RoutingAgent(DSPyRoutingMixin):
                         "routing.processing_time", execution_time
                     )
                     routing_span.set_attribute(
-                        "routing.search_modality", routing_decision.search_modality.value
+                        "routing.search_modality",
+                        routing_decision.search_modality.value,
                     )
                     if routing_decision.detected_modalities:
                         routing_span.set_attribute(
-                            "routing.detected_modalities", ",".join(routing_decision.detected_modalities)
+                            "routing.detected_modalities",
+                            ",".join(routing_decision.detected_modalities),
                         )
 
                     # Add routing decision event to routing span
@@ -318,7 +320,11 @@ class RoutingAgent(DSPyRoutingMixin):
                                 if routing_decision.reasoning
                                 else ""
                             ),
-                            "detected_modalities": ",".join(routing_decision.detected_modalities) if routing_decision.detected_modalities else "",
+                            "detected_modalities": (
+                                ",".join(routing_decision.detected_modalities)
+                                if routing_decision.detected_modalities
+                                else ""
+                            ),
                         },
                     )
 
@@ -416,10 +422,12 @@ class RoutingAgent(DSPyRoutingMixin):
 
                 # Add orchestration results to span
                 orchestration_span.set_attribute(
-                    "orchestration.status", orchestration_result.get("status", "unknown")
+                    "orchestration.status",
+                    orchestration_result.get("status", "unknown"),
                 )
                 orchestration_span.set_attribute(
-                    "orchestration.workflow_id", orchestration_result.get("workflow_id", "")
+                    "orchestration.workflow_id",
+                    orchestration_result.get("workflow_id", ""),
                 )
                 orchestration_span.set_attribute(
                     "orchestration.execution_time", execution_time
@@ -442,7 +450,8 @@ class RoutingAgent(DSPyRoutingMixin):
                 # Update parent span
                 parent_span.set_attribute("request.orchestration_performed", True)
                 parent_span.set_attribute(
-                    "request.orchestration_pattern", routing_decision.orchestration_pattern
+                    "request.orchestration_pattern",
+                    routing_decision.orchestration_pattern,
                 )
                 parent_span.set_attribute("request.processing_time", execution_time)
                 parent_span.set_status(Status(StatusCode.OK))
@@ -608,19 +617,25 @@ class RoutingAgent(DSPyRoutingMixin):
             if self.agent_registry.get("image_search"):
                 return "image_search"
             else:
-                logger.warning("image_search agent not available, falling back to video_search")
+                logger.warning(
+                    "image_search agent not available, falling back to video_search"
+                )
                 return "video_search"
         elif modality_value == "audio":
             if self.agent_registry.get("audio_analysis"):
                 return "audio_analysis"
             else:
-                logger.warning("audio_analysis agent not available, falling back to video_search")
+                logger.warning(
+                    "audio_analysis agent not available, falling back to video_search"
+                )
                 return "video_search"
         elif modality_value == "document":
             if self.agent_registry.get("document_agent"):
                 return "document_agent"
             else:
-                logger.warning("document_agent not available, falling back to text_search")
+                logger.warning(
+                    "document_agent not available, falling back to text_search"
+                )
                 return "text_search"
         else:
             raise ValueError(
@@ -952,9 +967,10 @@ async def evaluate_orchestration_spans(lookback_hours: int = 1, batch_size: int 
             f"(lookback: {lookback_hours}h, batch: {batch_size})"
         )
 
-        results = await routing_agent.orchestration_evaluator.evaluate_orchestration_spans(
-            lookback_hours=lookback_hours,
-            batch_size=batch_size
+        results = (
+            await routing_agent.orchestration_evaluator.evaluate_orchestration_spans(
+                lookback_hours=lookback_hours, batch_size=batch_size
+            )
         )
 
         logger.info(
@@ -972,8 +988,7 @@ async def evaluate_orchestration_spans(lookback_hours: int = 1, batch_size: int 
     except Exception as e:
         logger.error(f"❌ Orchestration evaluation failed: {e}")
         raise HTTPException(
-            status_code=500,
-            detail=f"Orchestration evaluation failed: {str(e)}"
+            status_code=500, detail=f"Orchestration evaluation failed: {str(e)}"
         )
 
 
@@ -999,8 +1014,7 @@ async def trigger_unified_optimization():
     except Exception as e:
         logger.error(f"❌ Unified optimization failed: {e}")
         raise HTTPException(
-            status_code=500,
-            detail=f"Unified optimization failed: {str(e)}"
+            status_code=500, detail=f"Unified optimization failed: {str(e)}"
         )
 
 
@@ -1013,7 +1027,9 @@ async def process_orchestration_annotations():
     try:
         logger.info("🔍 Processing new orchestration annotations")
 
-        results = await routing_agent.orchestration_feedback_loop.process_new_annotations()
+        results = (
+            await routing_agent.orchestration_feedback_loop.process_new_annotations()
+        )
 
         logger.info(
             f"✅ Annotation processing complete: "
@@ -1030,8 +1046,7 @@ async def process_orchestration_annotations():
     except Exception as e:
         logger.error(f"❌ Annotation processing failed: {e}")
         raise HTTPException(
-            status_code=500,
-            detail=f"Annotation processing failed: {str(e)}"
+            status_code=500, detail=f"Annotation processing failed: {str(e)}"
         )
 
 

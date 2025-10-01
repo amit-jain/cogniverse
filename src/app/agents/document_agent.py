@@ -62,10 +62,13 @@ class DocumentAgent(DSPyA2AAgentBase):
             colpali_model: ColPali model for visual strategy
             port: A2A server port
         """
+
         # Create DSPy module
         class DocumentSearchSignature(dspy.Signature):
             query: str = dspy.InputField(desc="Document search query")
-            strategy: str = dspy.InputField(desc="Search strategy: visual, text, hybrid, auto")
+            strategy: str = dspy.InputField(
+                desc="Search strategy: visual, text, hybrid, auto"
+            )
             result: str = dspy.OutputField(desc="Search results")
 
         class DocumentSearchModule(dspy.Module):
@@ -73,14 +76,21 @@ class DocumentAgent(DSPyA2AAgentBase):
                 super().__init__()
 
             def forward(self, query: str, strategy: str = "auto"):
-                return dspy.Prediction(result=f"Searching documents: {query} (strategy: {strategy})")
+                return dspy.Prediction(
+                    result=f"Searching documents: {query} (strategy: {strategy})"
+                )
 
         # Initialize A2A base
         super().__init__(
             agent_name="DocumentAgent",
             agent_description="Document search with visual and text strategies",
             dspy_module=DocumentSearchModule(),
-            capabilities=["document_search", "visual_search", "text_search", "hybrid_search"],
+            capabilities=[
+                "document_search",
+                "visual_search",
+                "text_search",
+                "hybrid_search",
+            ],
             port=port,
             version="1.0.0",
         )
@@ -103,9 +113,7 @@ class DocumentAgent(DSPyA2AAgentBase):
             logger.info(f"Loading ColPali model: {self._colpali_model_name}")
             config = {"colpali_model": self._colpali_model_name}
             self._colpali_model, self._colpali_processor = get_or_load_model(
-                self._colpali_model_name,
-                config,
-                logger
+                self._colpali_model_name, config, logger
             )
             logger.info("✅ ColPali model loaded")
         return self._colpali_model
@@ -121,7 +129,9 @@ class DocumentAgent(DSPyA2AAgentBase):
     def query_encoder(self):
         """Get ColPali query encoder for visual strategy"""
         if self._query_encoder is None:
-            self._query_encoder = ColPaliQueryEncoder(model_name=self._colpali_model_name)
+            self._query_encoder = ColPaliQueryEncoder(
+                model_name=self._colpali_model_name
+            )
         return self._query_encoder
 
     @property
@@ -130,7 +140,10 @@ class DocumentAgent(DSPyA2AAgentBase):
         if self._text_embedding_model is None:
             logger.info("Loading text embedding model...")
             from sentence_transformers import SentenceTransformer
-            self._text_embedding_model = SentenceTransformer("sentence-transformers/all-mpnet-base-v2")
+
+            self._text_embedding_model = SentenceTransformer(
+                "sentence-transformers/all-mpnet-base-v2"
+            )
             logger.info("✅ Text embedding model loaded")
         return self._text_embedding_model
 
@@ -194,14 +207,34 @@ class DocumentAgent(DSPyA2AAgentBase):
         Hybrid for complex or uncertain queries
         """
         visual_keywords = [
-            "chart", "diagram", "table", "figure", "graph",
-            "layout", "screenshot", "visual", "image", "picture",
-            "illustration", "drawing", "map", "plot"
+            "chart",
+            "diagram",
+            "table",
+            "figure",
+            "graph",
+            "layout",
+            "screenshot",
+            "visual",
+            "image",
+            "picture",
+            "illustration",
+            "drawing",
+            "map",
+            "plot",
         ]
         text_keywords = [
-            "definition", "explain", "list", "summary",
-            "mention", "quote", "section", "paragraph",
-            "author", "reference", "citation", "abstract"
+            "definition",
+            "explain",
+            "list",
+            "summary",
+            "mention",
+            "quote",
+            "section",
+            "paragraph",
+            "author",
+            "reference",
+            "citation",
+            "abstract",
         ]
 
         query_lower = query.lower()
@@ -246,13 +279,13 @@ class DocumentAgent(DSPyA2AAgentBase):
 
         # Execute search
         response = requests.post(
-            f"{self._vespa_endpoint}/search/",
-            json=params,
-            timeout=10
+            f"{self._vespa_endpoint}/search/", json=params, timeout=10
         )
 
         if response.status_code != 200:
-            logger.error(f"Vespa search failed: {response.status_code} - {response.text}")
+            logger.error(
+                f"Vespa search failed: {response.status_code} - {response.text}"
+            )
             return []
 
         # Parse results
@@ -261,16 +294,18 @@ class DocumentAgent(DSPyA2AAgentBase):
 
         for hit in data.get("root", {}).get("children", []):
             fields = hit.get("fields", {})
-            results.append(DocumentResult(
-                document_id=fields.get("document_id", ""),
-                document_url=fields.get("source_url", ""),
-                title=fields.get("document_title", ""),
-                page_number=fields.get("page_number"),
-                page_count=fields.get("page_count"),
-                document_type=fields.get("document_type", "pdf"),
-                relevance_score=hit.get("relevance", 0.0),
-                strategy_used="visual",
-            ))
+            results.append(
+                DocumentResult(
+                    document_id=fields.get("document_id", ""),
+                    document_url=fields.get("source_url", ""),
+                    title=fields.get("document_title", ""),
+                    page_number=fields.get("page_number"),
+                    page_count=fields.get("page_count"),
+                    document_type=fields.get("document_type", "pdf"),
+                    relevance_score=hit.get("relevance", 0.0),
+                    strategy_used="visual",
+                )
+            )
 
         return results
 
@@ -308,13 +343,13 @@ class DocumentAgent(DSPyA2AAgentBase):
 
         # Execute search
         response = requests.post(
-            f"{self._vespa_endpoint}/search/",
-            json=params,
-            timeout=10
+            f"{self._vespa_endpoint}/search/", json=params, timeout=10
         )
 
         if response.status_code != 200:
-            logger.error(f"Vespa search failed: {response.status_code} - {response.text}")
+            logger.error(
+                f"Vespa search failed: {response.status_code} - {response.text}"
+            )
             return []
 
         # Parse results
@@ -323,16 +358,18 @@ class DocumentAgent(DSPyA2AAgentBase):
 
         for hit in data.get("root", {}).get("children", []):
             fields = hit.get("fields", {})
-            results.append(DocumentResult(
-                document_id=fields.get("document_id", ""),
-                document_url=fields.get("source_url", ""),
-                title=fields.get("document_title", ""),
-                page_count=fields.get("page_count"),
-                document_type=fields.get("document_type", "pdf"),
-                content_preview=fields.get("full_text", "")[:200],
-                relevance_score=hit.get("relevance", 0.0),
-                strategy_used="text",
-            ))
+            results.append(
+                DocumentResult(
+                    document_id=fields.get("document_id", ""),
+                    document_url=fields.get("source_url", ""),
+                    title=fields.get("document_title", ""),
+                    page_count=fields.get("page_count"),
+                    document_type=fields.get("document_type", "pdf"),
+                    content_preview=fields.get("full_text", "")[:200],
+                    relevance_score=hit.get("relevance", 0.0),
+                    strategy_used="text",
+                )
+            )
 
         return results
 
@@ -362,7 +399,7 @@ class DocumentAgent(DSPyA2AAgentBase):
         visual_results: List[DocumentResult],
         text_results: List[DocumentResult],
         limit: int,
-        k: int = 60
+        k: int = 60,
     ) -> List[DocumentResult]:
         """
         Reciprocal Rank Fusion algorithm
@@ -415,9 +452,7 @@ class DocumentAgent(DSPyA2AAgentBase):
         limit = dspy_input.get("limit", 20)
 
         results = await self.search_documents(
-            query=query,
-            strategy=strategy,
-            limit=limit
+            query=query, strategy=strategy, limit=limit
         )
 
         return {"results": results, "count": len(results)}
@@ -455,7 +490,11 @@ class DocumentAgent(DSPyA2AAgentBase):
                 "description": "Search documents using visual, text, or hybrid strategies",
                 "parameters": {
                     "query": {"type": "string", "required": True},
-                    "strategy": {"type": "string", "required": False, "default": "auto"},
+                    "strategy": {
+                        "type": "string",
+                        "required": False,
+                        "default": "auto",
+                    },
                     "limit": {"type": "integer", "required": False, "default": 20},
                 },
             },
@@ -467,9 +506,13 @@ if __name__ == "__main__":
 
     async def test_agent():
         agent = DocumentAgent()
-        results = await agent.search_documents("machine learning algorithms", strategy="auto")
+        results = await agent.search_documents(
+            "machine learning algorithms", strategy="auto"
+        )
         print(f"Found {len(results)} results")
         for r in results[:3]:
-            print(f"  - {r.title} (strategy: {r.strategy_used}, score: {r.relevance_score:.3f})")
+            print(
+                f"  - {r.title} (strategy: {r.strategy_used}, score: {r.relevance_score:.3f})"
+            )
 
     asyncio.run(test_agent())

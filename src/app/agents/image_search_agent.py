@@ -60,6 +60,7 @@ class ImageSearchAgent(DSPyA2AAgentBase):
             colpali_model: ColPali model name
             port: A2A server port
         """
+
         # Create DSPy module
         class ImageSearchSignature(dspy.Signature):
             query: str = dspy.InputField(desc="Image search query")
@@ -71,7 +72,9 @@ class ImageSearchAgent(DSPyA2AAgentBase):
                 super().__init__()
 
             def forward(self, query: str, mode: str = "semantic"):
-                return dspy.Prediction(result=f"Searching images: {query} (mode: {mode})")
+                return dspy.Prediction(
+                    result=f"Searching images: {query} (mode: {mode})"
+                )
 
         # Initialize A2A base
         super().__init__(
@@ -100,9 +103,7 @@ class ImageSearchAgent(DSPyA2AAgentBase):
             logger.info(f"Loading ColPali model: {self._colpali_model_name}")
             config = {"colpali_model": self._colpali_model_name}
             self._colpali_model, self._colpali_processor = get_or_load_model(
-                self._colpali_model_name,
-                config,
-                logger
+                self._colpali_model_name, config, logger
             )
             logger.info("✅ ColPali model loaded")
         return self._colpali_model
@@ -119,7 +120,9 @@ class ImageSearchAgent(DSPyA2AAgentBase):
     def query_encoder(self):
         """Get query encoder"""
         if self._query_encoder is None:
-            self._query_encoder = ColPaliQueryEncoder(model_name=self._colpali_model_name)
+            self._query_encoder = ColPaliQueryEncoder(
+                model_name=self._colpali_model_name
+            )
         return self._query_encoder
 
     async def search_images(
@@ -153,7 +156,7 @@ class ImageSearchAgent(DSPyA2AAgentBase):
                 query_text=query,
                 search_mode=search_mode,
                 limit=limit,
-                filters=visual_filters
+                filters=visual_filters,
             )
 
             logger.info(f"✅ Found {len(results)} image results")
@@ -189,7 +192,7 @@ class ImageSearchAgent(DSPyA2AAgentBase):
                 query_embedding=image_embedding,
                 query_text="",
                 search_mode="semantic",
-                limit=limit
+                limit=limit,
             )
 
             logger.info(f"✅ Found {len(results)} similar images")
@@ -210,7 +213,9 @@ class ImageSearchAgent(DSPyA2AAgentBase):
             ColPali multi-vector embedding [1024, 128]
         """
         # Process image with ColPali (reusing existing pattern from embedding_generator)
-        batch_inputs = self.colpali_processor.process_images([image]).to(self.colpali_model.device)
+        batch_inputs = self.colpali_processor.process_images([image]).to(
+            self.colpali_model.device
+        )
 
         # Get embeddings
         with torch.no_grad():
@@ -234,7 +239,7 @@ class ImageSearchAgent(DSPyA2AAgentBase):
         query_text: str,
         search_mode: str,
         limit: int,
-        filters: Optional[Dict] = None
+        filters: Optional[Dict] = None,
     ) -> List[ImageResult]:
         """
         Search Vespa with ColPali embeddings
@@ -256,16 +261,22 @@ class ImageSearchAgent(DSPyA2AAgentBase):
         if filters:
             filter_parts = []
             if "detected_objects" in filters:
-                filter_parts.append(f"contains(detected_objects, '{filters['detected_objects']}')")
+                filter_parts.append(
+                    f"contains(detected_objects, '{filters['detected_objects']}')"
+                )
             if "detected_scenes" in filters:
-                filter_parts.append(f"contains(detected_scenes, '{filters['detected_scenes']}')")
+                filter_parts.append(
+                    f"contains(detected_scenes, '{filters['detected_scenes']}')"
+                )
             if filter_parts:
                 where_clause = " AND ".join(filter_parts)
 
         yql = f"select * from image_content where {where_clause}"
 
         # Choose rank profile
-        rank_profile = "colpali_similarity" if search_mode == "semantic" else "hybrid_image"
+        rank_profile = (
+            "colpali_similarity" if search_mode == "semantic" else "hybrid_image"
+        )
 
         # Flatten embedding for Vespa query
         query_embedding_flat = query_embedding.flatten().tolist()
@@ -283,13 +294,13 @@ class ImageSearchAgent(DSPyA2AAgentBase):
 
         # Execute search
         response = requests.post(
-            f"{self._vespa_endpoint}/search/",
-            json=params,
-            timeout=10
+            f"{self._vespa_endpoint}/search/", json=params, timeout=10
         )
 
         if response.status_code != 200:
-            logger.error(f"Vespa search failed: {response.status_code} - {response.text}")
+            logger.error(
+                f"Vespa search failed: {response.status_code} - {response.text}"
+            )
             return []
 
         # Parse results
@@ -298,15 +309,17 @@ class ImageSearchAgent(DSPyA2AAgentBase):
 
         for hit in data.get("root", {}).get("children", []):
             fields = hit.get("fields", {})
-            results.append(ImageResult(
-                image_id=fields.get("image_id", ""),
-                image_url=fields.get("source_url", ""),
-                title=fields.get("image_title", ""),
-                description=fields.get("image_description", ""),
-                relevance_score=hit.get("relevance", 0.0),
-                detected_objects=fields.get("detected_objects", []),
-                detected_scenes=fields.get("detected_scenes", []),
-            ))
+            results.append(
+                ImageResult(
+                    image_id=fields.get("image_id", ""),
+                    image_url=fields.get("source_url", ""),
+                    title=fields.get("image_title", ""),
+                    description=fields.get("image_description", ""),
+                    relevance_score=hit.get("relevance", 0.0),
+                    detected_objects=fields.get("detected_objects", []),
+                    detected_scenes=fields.get("detected_scenes", []),
+                )
+            )
 
         return results
 
@@ -322,7 +335,7 @@ class ImageSearchAgent(DSPyA2AAgentBase):
             query=query,
             search_mode=search_mode,
             limit=limit,
-            visual_filters=visual_filters
+            visual_filters=visual_filters,
         )
 
         return {"results": results, "count": len(results)}

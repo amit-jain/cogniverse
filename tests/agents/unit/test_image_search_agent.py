@@ -4,12 +4,13 @@ Unit tests for Image Search Agent
 Tests ColPali-based image search with Vespa integration.
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, PropertyMock, patch
+
 import numpy as np
+import pytest
 from PIL import Image
 
-from src.app.agents.image_search_agent import ImageSearchAgent, ImageResult
+from src.app.agents.image_search_agent import ImageResult, ImageSearchAgent
 
 
 class TestImageSearchAgent:
@@ -27,7 +28,7 @@ class TestImageSearchAgent:
         assert self.agent._query_encoder is None  # Lazy loaded
         assert self.agent._vespa_endpoint == "http://localhost:8080"
 
-    @patch('src.app.agents.image_search_agent.get_or_load_model')
+    @patch("src.app.agents.image_search_agent.get_or_load_model")
     def test_colpali_model_lazy_loading(self, mock_get_model):
         """Test ColPali model is lazy loaded on first access"""
         mock_model = MagicMock()
@@ -45,7 +46,7 @@ class TestImageSearchAgent:
         assert call_args[0] == "vidore/colsmol-500m"  # model_name
         assert "colpali_model" in call_args[1]  # config
 
-    @patch('src.app.agents.query_encoders.get_or_load_model')
+    @patch("src.app.agents.query_encoders.get_or_load_model")
     def test_query_encoder_initialization(self, mock_get_model):
         """Test query encoder is initialized correctly"""
         mock_model = MagicMock()
@@ -60,8 +61,8 @@ class TestImageSearchAgent:
         assert encoder.model == mock_model
 
     @pytest.mark.asyncio
-    @patch.object(ImageSearchAgent, 'query_encoder', new_callable=PropertyMock)
-    @patch('requests.post')
+    @patch.object(ImageSearchAgent, "query_encoder", new_callable=PropertyMock)
+    @patch("requests.post")
     async def test_search_images_semantic(self, mock_post, mock_query_encoder):
         """Test semantic image search using ColPali"""
         # Mock query encoder
@@ -85,7 +86,7 @@ class TestImageSearchAgent:
                             "image_description": "A red car",
                             "detected_objects": ["car"],
                             "detected_scenes": ["outdoor"],
-                        }
+                        },
                     }
                 ]
             }
@@ -94,9 +95,7 @@ class TestImageSearchAgent:
 
         # Execute search
         results = await self.agent.search_images(
-            query="red car",
-            search_mode="semantic",
-            limit=20
+            query="red car", search_mode="semantic", limit=20
         )
 
         # Verify results
@@ -112,8 +111,8 @@ class TestImageSearchAgent:
         assert "colpali_similarity" in str(call_args)
 
     @pytest.mark.asyncio
-    @patch.object(ImageSearchAgent, 'query_encoder', new_callable=PropertyMock)
-    @patch('requests.post')
+    @patch.object(ImageSearchAgent, "query_encoder", new_callable=PropertyMock)
+    @patch("requests.post")
     async def test_search_images_hybrid(self, mock_post, mock_query_encoder):
         """Test hybrid image search (BM25 + ColPali)"""
         # Mock query encoder
@@ -129,10 +128,8 @@ class TestImageSearchAgent:
         mock_post.return_value = mock_response
 
         # Execute search
-        results = await self.agent.search_images(
-            query="sports car",
-            search_mode="hybrid",
-            limit=10
+        await self.agent.search_images(
+            query="sports car", search_mode="hybrid", limit=10
         )
 
         # Verify Vespa was called with hybrid profile
@@ -140,9 +137,9 @@ class TestImageSearchAgent:
         assert "hybrid_image" in str(call_args)
 
     @pytest.mark.asyncio
-    @patch.object(ImageSearchAgent, 'colpali_model', new_callable=PropertyMock)
-    @patch.object(ImageSearchAgent, 'colpali_processor', new_callable=PropertyMock)
-    @patch('requests.post')
+    @patch.object(ImageSearchAgent, "colpali_model", new_callable=PropertyMock)
+    @patch.object(ImageSearchAgent, "colpali_processor", new_callable=PropertyMock)
+    @patch("requests.post")
     async def test_find_similar_images(self, mock_post, mock_processor, mock_model):
         """Test finding similar images using ColPali"""
         # Mock model and processor
@@ -162,8 +159,9 @@ class TestImageSearchAgent:
         # Mock model output
         mock_embeddings_tensor = MagicMock()
         mock_embeddings = np.random.randn(1, 1024, 128)
-        mock_embeddings_tensor.squeeze.return_value.cpu.return_value.numpy.return_value = \
-            mock_embeddings.squeeze(0)
+        mock_embeddings_tensor.squeeze.return_value.cpu.return_value.numpy.return_value = mock_embeddings.squeeze(
+            0
+        )
         mock_model_obj.return_value = mock_embeddings_tensor
 
         # Mock Vespa response
@@ -174,15 +172,12 @@ class TestImageSearchAgent:
 
         # Execute similar image search
         reference_image = Image.new("RGB", (100, 100))
-        results = await self.agent.find_similar_images(
-            reference_image=reference_image,
-            limit=20
-        )
+        await self.agent.find_similar_images(reference_image=reference_image, limit=20)
 
         # Verify Vespa was called
         mock_post.assert_called_once()
 
-    @patch('src.app.agents.image_search_agent.get_or_load_model')
+    @patch("src.app.agents.image_search_agent.get_or_load_model")
     def test_encode_image(self, mock_get_model):
         """Test image encoding with ColPali"""
         # Mock model and processor
@@ -201,8 +196,9 @@ class TestImageSearchAgent:
         # Mock model output with correct shape [batch, patches, dim]
         mock_embeddings_tensor = MagicMock()
         mock_embeddings = np.random.randn(1, 1024, 128)  # [batch, patches, dim]
-        mock_embeddings_tensor.squeeze.return_value.cpu.return_value.numpy.return_value = \
-            mock_embeddings.squeeze(0)
+        mock_embeddings_tensor.squeeze.return_value.cpu.return_value.numpy.return_value = mock_embeddings.squeeze(
+            0
+        )
         mock_model_obj.return_value = mock_embeddings_tensor
 
         # Encode image
@@ -224,7 +220,7 @@ class TestImageSearchAgent:
                 description="A test image",
                 relevance_score=0.95,
                 detected_objects=["car", "road"],
-                detected_scenes=["outdoor"]
+                detected_scenes=["outdoor"],
             )
         ]
 
