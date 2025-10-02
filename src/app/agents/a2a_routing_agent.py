@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from src.app.agents.routing_agent import RoutingAgent
+from src.common.agent_models import AgentEndpoint
 from src.common.config import get_config
 from src.tools.a2a_utils import (
     DataPart,
@@ -21,18 +22,6 @@ from src.tools.a2a_utils import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class AgentEndpoint:
-    """Agent endpoint configuration"""
-
-    name: str
-    url: str
-    capabilities: List[str]
-    health_endpoint: str = "/health"
-    process_endpoint: str = "/process"
-    timeout: int = 30
 
 
 @dataclass
