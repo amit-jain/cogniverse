@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from src.app.routing.modality_span_collector import ModalitySpanCollector
 from src.app.routing.xgboost_meta_models import FusionBenefitModel
 from src.app.search.multi_modal_reranker import QueryModality
 
@@ -43,25 +44,30 @@ class CrossModalOptimizer:
             pass
     """
 
-    def __init__(self, model_dir: Optional[Path] = None):
+    def __init__(self, model_dir: Optional[Path] = None, tenant_id: str = "default"):
         """
         Initialize cross-modal optimizer
 
         Args:
             model_dir: Directory for saving models (defaults to outputs/models/cross_modal)
+            tenant_id: Tenant identifier for multi-tenancy
         """
         self.model_dir = model_dir or Path("outputs/models/cross_modal")
         self.model_dir.mkdir(parents=True, exist_ok=True)
+        self.tenant_id = tenant_id
 
         # Initialize fusion benefit model
         self.fusion_model = FusionBenefitModel(model_dir=self.model_dir)
         self.fusion_model.load()
 
+        # Initialize span collector for pattern discovery
+        self.span_collector = ModalitySpanCollector(tenant_id=tenant_id)
+
         # Track fusion patterns
         self.fusion_history: List[Dict[str, Any]] = []
         self.fusion_success_rates: Dict[Tuple[QueryModality, QueryModality], float] = {}
 
-        logger.info(f"🔧 Initialized CrossModalOptimizer (model_dir: {self.model_dir})")
+        logger.info(f"🔧 Initialized CrossModalOptimizer (model_dir: {self.model_dir}, tenant: {tenant_id})")
 
     def predict_fusion_benefit(
         self,
@@ -533,3 +539,85 @@ class CrossModalOptimizer:
         except Exception as e:
             logger.error(f"❌ Error exporting fusion data: {e}")
             return False
+
+    async def discover_fusion_patterns(
+        self,
+        lookback_hours: int = 24,
+        min_samples_to_train: int = 10,
+    ) -> Dict[str, Any]:
+        """
+        Discover cross-modal fusion patterns from Phoenix spans
+
+        Analyzes routing spans to find cases where multiple modalities were used,
+        extracts fusion contexts, and trains the fusion benefit model.
+
+        Args:
+            lookback_hours: How far back to look for spans
+            min_samples_to_train: Minimum samples needed to train model
+
+        Returns:
+            Dictionary with discovery results and training status
+        """
+        logger.info(f"🔍 Discovering cross-modal fusion patterns (lookback: {lookback_hours}h)")
+
+        # Query Phoenix for routing spans with multiple modalities
+        # We look for spans that have "multi-modal" or multiple agent calls
+        spans = await self.span_collector.query_routing_spans(
+            lookback_hours=lookback_hours,
+            min_confidence=0.5,  # Include lower confidence for fusion analysis
+        )
+
+        fusion_examples = []
+
+        for span in spans:
+            # Check if this span involved multiple modalities
+            detected_modalities = span.get("detected_modalities", [])
+
+            if len(detected_modalities) >= 2:
+                # This is a multi-modal query
+                primary_mod = detected_modalities[0]
+                secondary_mod = detected_modalities[1]
+
+                # Build fusion context
+                fusion_context = self._build_fusion_context(
+                    primary_modality=QueryModality(primary_mod["modality"]),
+                    primary_confidence=primary_mod["confidence"],
+                    secondary_modality=QueryModality(secondary_mod["modality"]),
+                    secondary_confidence=secondary_mod["confidence"],
+                    query_text=span.get("query"),
+                )
+
+                # Determine success based on span attributes
+                success = span.get("success", False)
+                quality_score = span.get("quality_score", 0.0)
+
+                # Record this fusion result
+                self.record_fusion_result(
+                    primary_modality=QueryModality(primary_mod["modality"]),
+                    secondary_modality=QueryModality(secondary_mod["modality"]),
+                    fusion_context=fusion_context,
+                    success=success,
+                    improvement=quality_score if success else 0.0,
+                )
+
+                fusion_examples.append({
+                    "query": span.get("query"),
+                    "primary": primary_mod["modality"],
+                    "secondary": secondary_mod["modality"],
+                    "success": success,
+                    "quality": quality_score,
+                })
+
+        logger.info(f"📊 Found {len(fusion_examples)} cross-modal fusion examples")
+
+        # Train model if we have enough data
+        training_result = {"status": "skipped"}
+        if len(self.fusion_history) >= min_samples_to_train:
+            training_result = self.train_fusion_model()
+
+        return {
+            "fusion_examples_found": len(fusion_examples),
+            "total_fusion_history": len(self.fusion_history),
+            "training": training_result,
+            "fusion_pairs": list(self.fusion_success_rates.keys()),
+        }
