@@ -82,6 +82,3 @@ configs/schemas/ranking_strategies.json
 ideas/
 docs/internal/
 coverage_*.xml
-
-# Strategy documents (internal only)
-docs/git-author-fix.md
