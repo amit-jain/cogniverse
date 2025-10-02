@@ -13,6 +13,7 @@ import httpx
 
 from src.common.agent_models import AgentEndpoint
 from src.common.config import get_config
+from src.tools.a2a_utils import A2AClient
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class AgentRegistry:
         self.agents: Dict[str, AgentEndpoint] = {}
         self.capabilities: Dict[str, List[str]] = {}  # capability -> agent names
         self.http_client = httpx.AsyncClient(timeout=10.0)
+        self.a2a_client = A2AClient(timeout=10.0)
 
         # Initialize with system config agents
         self._initialize_from_config()
@@ -366,6 +368,86 @@ class AgentRegistry:
                 for name, agent in self.agents.items()
             },
         }
+
+    async def discover_agent_by_url(self, agent_url: str) -> Optional[AgentEndpoint]:
+        """
+        Discover agent by fetching its agent card via well-known URI.
+
+        Args:
+            agent_url: Base URL of the agent
+
+        Returns:
+            AgentEndpoint if successful, None otherwise
+
+        Raises:
+            Exception if agent card cannot be retrieved
+        """
+        card_data = await self.a2a_client.get_agent_card(agent_url)
+
+        # Convert agent card to AgentEndpoint
+        agent_endpoint = AgentEndpoint(
+            name=card_data.get("name", "unknown"),
+            url=card_data.get("url", agent_url),
+            capabilities=card_data.get("capabilities", []),
+            health_endpoint="/health",
+            process_endpoint=card_data.get("process_endpoint", "/tasks/send"),
+            timeout=30,
+        )
+
+        logger.info(f"Discovered agent: {agent_endpoint.name} at {agent_url}")
+        return agent_endpoint
+
+    async def auto_register_from_urls(self, agent_urls: List[str]) -> Dict[str, bool]:
+        """
+        Discover and auto-register agents from a list of URLs.
+
+        Args:
+            agent_urls: List of agent base URLs
+
+        Returns:
+            Dictionary mapping agent URLs to registration success status
+        """
+        results = {}
+
+        for url in agent_urls:
+            try:
+                agent_endpoint = await self.discover_agent_by_url(url)
+                success = self.register_agent(agent_endpoint)
+                results[url] = success
+            except Exception as e:
+                logger.error(f"Failed to auto-register agent from {url}: {e}")
+                results[url] = False
+
+        logger.info(f"Auto-registered {sum(results.values())}/{len(agent_urls)} agents")
+        return results
+
+    def register_agent_from_data(self, registration_data: Dict[str, Any]) -> bool:
+        """
+        Register agent from registration data payload.
+
+        Args:
+            registration_data: Agent registration data containing name, url, capabilities
+
+        Returns:
+            True if successfully registered
+        """
+        try:
+            agent_endpoint = AgentEndpoint(
+                name=registration_data.get("name"),
+                url=registration_data.get("url"),
+                capabilities=registration_data.get("capabilities", []),
+                health_endpoint=registration_data.get("health_endpoint", "/health"),
+                process_endpoint=registration_data.get(
+                    "process_endpoint", "/tasks/send"
+                ),
+                timeout=registration_data.get("timeout", 30),
+            )
+
+            return self.register_agent(agent_endpoint)
+
+        except Exception as e:
+            logger.error(f"Failed to register agent from data: {e}")
+            return False
 
     async def close(self):
         """Close HTTP client"""

@@ -11,7 +11,9 @@ from src.app.agents.dspy_integration_mixin import DSPyDetailedReportMixin
 
 # Enhanced routing support
 from src.app.agents.enhanced_routing_agent import RoutingDecision
+from src.common.a2a_mixin import A2AEndpointsMixin
 from src.common.config import get_config
+from src.common.health_mixin import HealthCheckMixin
 from src.common.vlm_interface import VLMInterface
 from src.tools.a2a_utils import DataPart, Task
 
@@ -89,7 +91,7 @@ class ReportResult:
     enhancement_applied: bool = False
 
 
-class DetailedReportAgent(DSPyDetailedReportMixin):
+class DetailedReportAgent(DSPyDetailedReportMixin, A2AEndpointsMixin, HealthCheckMixin):
     """Agent for generating comprehensive detailed reports with VLM integration"""
 
     def __init__(self, **kwargs):
@@ -100,6 +102,30 @@ class DetailedReportAgent(DSPyDetailedReportMixin):
         self.config = get_config()
         self._initialize_vlm_client()
         self.vlm = VLMInterface()
+
+        # A2A agent metadata
+        self.agent_name = "detailed_report_agent"
+        self.agent_description = (
+            "Generates comprehensive detailed reports with visual analysis"
+        )
+        self.agent_version = "1.0.0"
+        self.agent_url = (
+            f"http://localhost:{self.config.get('detailed_report_agent_port', 8003)}"
+        )
+        self.agent_capabilities = [
+            "detailed_report",
+            "visual_analysis",
+            "technical_analysis",
+            "comprehensive_analysis",
+        ]
+        self.agent_skills = [
+            {
+                "name": "generate_detailed_report",
+                "description": "Generate comprehensive detailed reports with visual and technical analysis",
+                "input_types": ["search_results", "query"],
+                "output_types": ["detailed_report"],
+            }
+        ]
 
         # Configuration
         self.max_report_length = kwargs.get("max_report_length", 2000)
@@ -1624,25 +1650,17 @@ async def startup_event():
 
     try:
         report_agent = DetailedReportAgent()
-        logger.info("Detailed report agent initialized")
+
+        # Setup A2A standard endpoints
+        report_agent.setup_a2a_endpoints(app)
+
+        # Setup health endpoint (mixin provides implementation)
+        report_agent.setup_health_endpoint(app)
+
+        logger.info("Detailed report agent initialized with A2A endpoints")
     except Exception as e:
         logger.error(f"Failed to initialize agent: {e}")
         raise
-
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "agent": "detailed_report",
-        "capabilities": [
-            "comprehensive_analysis",
-            "visual_analysis",
-            "technical_details",
-            "recommendations",
-        ],
-    }
 
 
 @app.post("/generate")

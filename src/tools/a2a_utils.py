@@ -1,9 +1,11 @@
 # src/tools/a2a_utils.py
-import httpx
 import json
 import uuid
-from typing import Dict, Any, List, Optional, Union, Literal
-from pydantic import BaseModel, Field
+from typing import Any, Dict, List, Literal, Optional, Union
+
+import httpx
+from pydantic import BaseModel
+
 
 # --- A2A Protocol Data Models ---
 class TextPart(BaseModel):
@@ -85,22 +87,32 @@ class A2AClient:
     async def get_agent_card(self, agent_url: str) -> Dict[str, Any]:
         """
         Retrieve the agent card from an A2A-compliant agent.
-        
+
+        Uses: /.well-known/agent-card.json (Google A2A standard)
+
         Args:
             agent_url: The base URL of the agent
-        
+
         Returns:
             Dict containing the agent card information
+
+        Raises:
+            httpx.HTTPStatusError: If the request fails
+            httpx.RequestError: If the connection fails
         """
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.get(f"{agent_url}/agent.json")
+                response = await client.get(f"{agent_url}/.well-known/agent-card.json")
                 response.raise_for_status()
                 return response.json()
-        except httpx.RequestError as e:
-            return {"error": f"Request failed: {e}"}
         except httpx.HTTPStatusError as e:
-            return {"error": f"HTTP error {e.response.status_code}: {e.response.text}"}
+            raise httpx.HTTPStatusError(
+                f"Failed to retrieve agent card from {agent_url}: HTTP {e.response.status_code}",
+                request=e.request,
+                response=e.response
+            )
+        except httpx.RequestError as e:
+            raise httpx.RequestError(f"Failed to connect to {agent_url}: {e}")
 
 # --- Utility Functions ---
 def create_text_message(text: str, role: str = "user") -> A2AMessage:
@@ -142,25 +154,24 @@ def extract_text_from_message(message: A2AMessage) -> Optional[str]:
 async def discover_agents(agent_urls: List[str]) -> Dict[str, AgentCard]:
     """
     Discover agent capabilities by fetching their agent cards.
-    
+
     Args:
         agent_urls: List of agent URLs to query
-    
+
     Returns:
         Dict mapping agent names to their agent cards
+
+    Raises:
+        Exception if any agent card cannot be retrieved
     """
     client = A2AClient()
     discovered_agents = {}
-    
+
     for url in agent_urls:
-        try:
-            card_data = await client.get_agent_card(url)
-            if "error" not in card_data:
-                agent_card = AgentCard(**card_data)
-                discovered_agents[agent_card.name] = agent_card
-        except Exception as e:
-            print(f"Failed to discover agent at {url}: {e}")
-    
+        card_data = await client.get_agent_card(url)
+        agent_card = AgentCard(**card_data)
+        discovered_agents[agent_card.name] = agent_card
+
     return discovered_agents
 
 def format_search_results(results: List[Dict[str, Any]], result_type: str = "generic") -> str:

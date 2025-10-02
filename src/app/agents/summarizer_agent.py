@@ -17,7 +17,9 @@ from src.app.agents.dspy_integration_mixin import DSPySummaryMixin
 
 # Enhanced routing support
 from src.app.agents.enhanced_routing_agent import RoutingDecision
+from src.common.a2a_mixin import A2AEndpointsMixin
 from src.common.config import get_config
+from src.common.health_mixin import HealthCheckMixin
 from src.common.vlm_interface import VLMInterface
 from src.tools.a2a_utils import (
     DataPart,
@@ -102,7 +104,7 @@ class SummaryResult:
     enhancement_applied: bool = False
 
 
-class SummarizerAgent(DSPySummaryMixin):
+class SummarizerAgent(DSPySummaryMixin, A2AEndpointsMixin, HealthCheckMixin):
     """
     Intelligent summarizer agent with VLM integration and thinking phase.
     Provides comprehensive analysis and summarization of search results.
@@ -119,6 +121,30 @@ class SummarizerAgent(DSPySummaryMixin):
         self._initialize_vlm_client()
         self.dspy_summarizer = dspy.Predict(SummaryGenerationSignature)
         self.vlm = VLMInterface()
+
+        # A2A agent metadata
+        self.agent_name = "summarizer_agent"
+        self.agent_description = (
+            "Intelligent summarization with visual analysis and thinking phase"
+        )
+        self.agent_version = "1.0.0"
+        self.agent_url = (
+            f"http://localhost:{self.config.get('summarizer_agent_port', 8004)}"
+        )
+        self.agent_capabilities = [
+            "summarization",
+            "visual_analysis",
+            "key_insights",
+            "content_analysis",
+        ]
+        self.agent_skills = [
+            {
+                "name": "generate_summary",
+                "description": "Generate intelligent summaries with visual analysis and key insights",
+                "input_types": ["search_results", "query"],
+                "output_types": ["summary", "key_points"],
+            }
+        ]
 
         # Configuration
         self.max_summary_length = kwargs.get("max_summary_length", 500)
@@ -1411,25 +1437,18 @@ async def startup_event():
 
     try:
         summarizer_agent = SummarizerAgent()
-        logger.info("Summarizer agent initialized")
+
+        # Setup A2A standard endpoints
+        summarizer_agent.setup_a2a_endpoints(app)
+
+        # Setup health endpoint (mixin provides implementation)
+        summarizer_agent.setup_health_endpoint(app)
+
+        logger.info("Summarizer agent initialized with A2A endpoints")
     except Exception as e:
         logger.error(f"Failed to initialize summarizer agent: {e}")
         if not os.getenv("PYTEST_CURRENT_TEST"):
             raise
-
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    if not summarizer_agent:
-        return {"status": "initializing", "agent": "summarizer"}
-
-    return {
-        "status": "healthy",
-        "agent": "summarizer",
-        "capabilities": ["summarization", "visual_analysis", "thinking_phase"],
-        "vlm_enabled": summarizer_agent.visual_analysis_enabled,
-    }
 
 
 @app.post("/process")
