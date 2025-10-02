@@ -347,6 +347,38 @@ class RoutingAgent(DSPyRoutingMixin):
                 if fusion_recommendation:
                     enriched_context["fusion_recommendation"] = fusion_recommendation
 
+                # Phase 11: Try modality-specific routing model if available
+                modality_prediction = None
+                if modality_intent and len(modality_intent) > 0:
+                    # Get primary modality from intent
+                    primary_modality_str = modality_intent[0]
+                    try:
+                        from src.app.search.multi_modal_reranker import QueryModality
+                        primary_modality = QueryModality(primary_modality_str.lower())
+
+                        # Try to get prediction from modality-specific model
+                        modality_prediction = self.modality_optimizer.predict_agent(
+                            query=query,
+                            modality=primary_modality,
+                            query_features=query_expansion.get("features", {})
+                        )
+
+                        if modality_prediction:
+                            # Add modality-specific prediction to enriched context
+                            enriched_context["modality_prediction"] = modality_prediction
+                            parent_span.set_attribute(
+                                "modality.predicted_agent", modality_prediction["recommended_agent"]
+                            )
+                            parent_span.set_attribute(
+                                "modality.prediction_confidence", modality_prediction["confidence"]
+                            )
+                            logger.info(
+                                f"🎯 Modality-specific prediction: {modality_prediction['recommended_agent']} "
+                                f"(confidence: {modality_prediction['confidence']:.2f})"
+                            )
+                    except (ValueError, KeyError) as e:
+                        logger.debug(f"Could not get modality prediction: {e}")
+
                 routing_decision = await self.router.route(query, enriched_context)
 
                 # Use routing decision's search modality for caching (convert to QueryModality)

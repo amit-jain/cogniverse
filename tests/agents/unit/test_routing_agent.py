@@ -309,8 +309,20 @@ class TestRoutingAgentEdgeCases:
         context = {"user_id": "test_user", "session_id": "session_123"}
         result = await agent.analyze_and_route("test query", context)
 
-        # Verify context was passed to router
-        agent.router.route.assert_called_once_with("test query", context)
+        # Verify router was called and enriched context includes original context
+        agent.router.route.assert_called_once()
+        call_args = agent.router.route.call_args
+        assert call_args[0][0] == "test query"
+        enriched_context = call_args[0][1]
+
+        # Original context should be preserved
+        assert enriched_context["user_id"] == "test_user"
+        assert enriched_context["session_id"] == "session_123"
+
+        # Enriched context should include query expansion
+        assert "query_expansion" in enriched_context
+        assert "modality_intent" in enriched_context
+
         assert result["confidence"] == 0.9
         assert result["routing_method"] == "contextual"
 

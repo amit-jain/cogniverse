@@ -273,9 +273,12 @@ class ComprehensiveRouter:
             logger.warning("All ensemble strategies failed, falling back to tiered")
             return await self._tiered_route(query, context, start_time)
 
+        # Extract modality prediction from context if available
+        modality_prediction = context.get("modality_prediction") if context else None
+
         # Vote on decisions
         final_decision = self._vote_on_decisions(
-            decisions, voting_method, strategy_weights, min_agreement
+            decisions, voting_method, strategy_weights, min_agreement, modality_prediction
         )
 
         # Determine orchestration strategy
@@ -317,6 +320,7 @@ class ComprehensiveRouter:
         voting_method: str,
         strategy_weights: dict[str, float],
         min_agreement: float,
+        modality_prediction: dict[str, Any] | None = None,
     ) -> RoutingDecision:
         """
         Vote on routing decisions from multiple strategies.
@@ -326,6 +330,7 @@ class ComprehensiveRouter:
             voting_method: "majority", "weighted", or "confidence_weighted"
             strategy_weights: Manual weights per strategy
             min_agreement: Minimum agreement threshold
+            modality_prediction: Optional modality-specific model prediction
 
         Returns:
             Final RoutingDecision
@@ -362,6 +367,31 @@ class ComprehensiveRouter:
 
             confidence_scores.append(decision.confidence_score * weight)
             reasonings.append(f"{strategy_name}: {decision.reasoning}")
+
+        # Phase 11: Apply modality-specific model prediction if available
+        if modality_prediction and modality_prediction.get("confidence", 0.0) >= 0.7:
+            # High-confidence modality-specific prediction overrides ensemble
+            recommended_agent = modality_prediction["recommended_agent"]
+
+            # Map agent to search modality
+            agent_to_modality = {
+                "video_search_agent": SearchModality.VIDEO,
+                "text_search_agent": SearchModality.TEXT,
+                "image_search_agent": SearchModality.IMAGE,
+                "audio_analysis_agent": SearchModality.AUDIO,
+                "document_agent": SearchModality.DOCUMENT,
+            }
+
+            modality_override = agent_to_modality.get(recommended_agent)
+            if modality_override:
+                logger.info(
+                    f"🎯 Modality prediction overriding ensemble: {recommended_agent} "
+                    f"(confidence: {modality_prediction['confidence']:.2f})"
+                )
+                # Boost this modality in voting
+                boost_weight = int(modality_prediction["confidence"] * 50)  # Strong boost
+                for _ in range(boost_weight):
+                    search_modalities.append(modality_override)
 
         # Vote on search modality
         modality_votes = Counter(search_modalities)
@@ -403,6 +433,19 @@ class ComprehensiveRouter:
 
         # Combine reasoning
         final_reasoning = f"Ensemble ({voting_method}): " + "; ".join(reasonings)
+        if modality_prediction and modality_prediction.get("confidence", 0.0) >= 0.7:
+            final_reasoning = (
+                f"Modality-specific ({modality_prediction['recommended_agent']}, "
+                f"confidence: {modality_prediction['confidence']:.2f}); " + final_reasoning
+            )
+
+        # Build metadata
+        metadata = {
+            "agreement_score": modality_agreement,
+            "strategies_count": len(decisions),
+        }
+        if modality_prediction:
+            metadata["modality_prediction"] = modality_prediction
 
         return RoutingDecision(
             search_modality=final_modality,
@@ -410,10 +453,7 @@ class ComprehensiveRouter:
             confidence_score=min(final_confidence, 1.0),  # Cap at 1.0
             routing_method="ensemble",
             reasoning=final_reasoning,
-            metadata={
-                "agreement_score": modality_agreement,
-                "strategies_count": len(decisions),
-            },
+            metadata=metadata,
         )
 
     def _determine_orchestration_strategy(
