@@ -35,10 +35,14 @@ class ModalityRoutingSignature(dspy.Signature):
     """Modality-specific routing decision"""
 
     query = dspy.InputField(desc="User query")
-    modality = dspy.InputField(desc="Query modality (video, image, audio, document, text)")
+    modality = dspy.InputField(
+        desc="Query modality (video, image, audio, document, text)"
+    )
     query_features = dspy.InputField(desc="Extracted query features as JSON")
 
-    recommended_agent = dspy.OutputField(desc="Recommended agent (video_search, image_search, audio_analysis, document_agent, text_search)")
+    recommended_agent = dspy.OutputField(
+        desc="Recommended agent (video_search, image_search, audio_analysis, document_agent, text_search)"
+    )
     confidence = dspy.OutputField(desc="Confidence in recommendation (0-1)")
     reasoning = dspy.OutputField(desc="Reasoning for this routing choice")
 
@@ -55,7 +59,9 @@ class ModalityRoutingModule(dspy.Module):
 
         result = self.route(
             query=query,
-            modality=modality.value if isinstance(modality, QueryModality) else modality,
+            modality=(
+                modality.value if isinstance(modality, QueryModality) else modality
+            ),
             query_features=features_str,
         )
 
@@ -494,7 +500,7 @@ class ModalityOptimizer:
                     ollama_lm = dspy.LM(
                         model="ollama_chat/qwen2.5:7b",
                         api_base="http://localhost:11434",
-                        temperature=0.7
+                        temperature=0.7,
                     )
                     dspy.configure(lm=ollama_lm)
                     logger.info("Configured DSPy with Ollama qwen2.5:7b model")
@@ -504,7 +510,9 @@ class ModalityOptimizer:
                     routing_module = ModalityRoutingModule()
                     self.modality_models[modality] = routing_module
 
-                    model_path = self.model_dir / f"{modality.value}_routing_module.json"
+                    model_path = (
+                        self.model_dir / f"{modality.value}_routing_module.json"
+                    )
                     routing_module.save(str(model_path))
 
                     return {
@@ -529,7 +537,7 @@ class ModalityOptimizer:
                     query_features=features_str,
                     recommended_agent=example.correct_agent,
                     confidence=str(0.95 if example.success else 0.5),
-                    reasoning=f"Route to {example.correct_agent} for {example.modality.value} queries"
+                    reasoning=f"Route to {example.correct_agent} for {example.modality.value} queries",
                 ).with_inputs("query", "modality", "query_features")
 
                 dspy_examples.append(dspy_example)
@@ -553,7 +561,9 @@ class ModalityOptimizer:
                 )
             else:
                 # Use BootstrapFewShot for smaller datasets
-                logger.info(f"Using BootstrapFewShot optimizer ({len(dspy_examples)} examples)")
+                logger.info(
+                    f"Using BootstrapFewShot optimizer ({len(dspy_examples)} examples)"
+                )
                 optimizer = BootstrapFewShot(
                     max_bootstrapped_demos=min(len(dspy_examples), 4),
                 )
@@ -575,7 +585,9 @@ class ModalityOptimizer:
 
             # Calculate accuracy on training set (as upper bound estimate)
             correct = 0
-            for example in dspy_examples[:min(20, len(dspy_examples))]:  # Sample validation
+            for example in dspy_examples[
+                : min(20, len(dspy_examples))
+            ]:  # Sample validation
                 try:
                     prediction = optimized_module.forward(
                         query=example.query,
@@ -587,20 +599,26 @@ class ModalityOptimizer:
                 except Exception:
                     pass
 
-            validation_accuracy = correct / min(20, len(dspy_examples)) if dspy_examples else 0.0
+            validation_accuracy = (
+                correct / min(20, len(dspy_examples)) if dspy_examples else 0.0
+            )
 
             return {
                 "status": "success",
                 "training_samples": len(training_data),
                 "strategy": strategy.value,
-                "optimizer": "MIPROv2" if len(dspy_examples) >= 50 else "BootstrapFewShot",
+                "optimizer": (
+                    "MIPROv2" if len(dspy_examples) >= 50 else "BootstrapFewShot"
+                ),
                 "validation_accuracy": validation_accuracy,
                 "model_path": str(model_path),
                 "timestamp": datetime.now().isoformat(),
             }
 
         except Exception as e:
-            logger.error(f"❌ Failed to train {modality.value} model: {e}", exc_info=True)
+            logger.error(
+                f"❌ Failed to train {modality.value} model: {e}", exc_info=True
+            )
             return {
                 "status": "error",
                 "training_samples": len(training_data),
@@ -737,7 +755,11 @@ class ModalityOptimizer:
 
             return {
                 "recommended_agent": result.recommended_agent,
-                "confidence": float(result.confidence) if isinstance(result.confidence, str) else result.confidence,
+                "confidence": (
+                    float(result.confidence)
+                    if isinstance(result.confidence, str)
+                    else result.confidence
+                ),
                 "reasoning": result.reasoning,
                 "modality": modality.value,
             }

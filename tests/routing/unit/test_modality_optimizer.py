@@ -341,7 +341,9 @@ class TestModalityOptimizer:
         assert result["training_samples"] == 1
         assert result["strategy"] == TrainingStrategy.PURE_REAL.value
         assert "validation_accuracy" in result
-        assert "optimizer" in result  # DSPy optimizer used (MIPROv2 or BootstrapFewShot)
+        assert (
+            "optimizer" in result
+        )  # DSPy optimizer used (MIPROv2 or BootstrapFewShot)
         assert "model_path" in result
 
     def test_record_training(self, optimizer):

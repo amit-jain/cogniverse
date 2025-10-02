@@ -371,7 +371,7 @@ class TestPhase12Integration:
                 (f"{modality.value}_agent", "test query", {"modality": modality})
             ]
 
-            result = await parallel_executor.execute_agents_parallel(
+            await parallel_executor.execute_agents_parallel(
                 agent_tasks,
                 timeout_seconds=5.0,
                 agent_caller=agent_caller_with_latency,
@@ -380,14 +380,12 @@ class TestPhase12Integration:
             latency_ms = (time.time() - start) * 1000
 
             # Record metrics
-            metrics_tracker.record_modality_execution(
-                modality, latency_ms, True
-            )
+            metrics_tracker.record_modality_execution(modality, latency_ms, True)
 
             # Verify latency under target
-            assert latency_ms < target_ms, (
-                f"{modality.value} latency {latency_ms:.0f}ms exceeds target {target_ms}ms"
-            )
+            assert (
+                latency_ms < target_ms
+            ), f"{modality.value} latency {latency_ms:.0f}ms exceeds target {target_ms}ms"
 
         # Verify all modalities have stats
         for modality in LATENCY_TARGETS.keys():

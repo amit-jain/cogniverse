@@ -319,9 +319,8 @@ class TestProductionRoutingIntegration:
                 # Use parallel executor for multiple agents
                 tasks = [
                     (agent, query, context)
-                    for agent in decision.agent_execution_order or [
-                        decision.primary_agent
-                    ]
+                    for agent in decision.agent_execution_order
+                    or [decision.primary_agent]
                 ]
                 results = await parallel_executor.execute_agents_parallel(
                     tasks[:3], agent_caller=mock_agent_call  # Limit to 3 agents

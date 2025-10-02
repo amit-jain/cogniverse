@@ -7,7 +7,6 @@ import asyncio
 import logging
 import os
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import dspy
@@ -40,8 +39,6 @@ class SummaryGenerationSignature(dspy.Signature):
     summary = dspy.OutputField(desc="Generated summary text")
     key_points = dspy.OutputField(desc="List of key points (comma-separated)")
     confidence_score = dspy.OutputField(desc="Confidence in summary quality (0.0-1.0)")
-
-
 
 
 @dataclass

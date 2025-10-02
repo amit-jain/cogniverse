@@ -278,7 +278,11 @@ class ComprehensiveRouter:
 
         # Vote on decisions
         final_decision = self._vote_on_decisions(
-            decisions, voting_method, strategy_weights, min_agreement, modality_prediction
+            decisions,
+            voting_method,
+            strategy_weights,
+            min_agreement,
+            modality_prediction,
         )
 
         # Determine orchestration strategy
@@ -389,7 +393,9 @@ class ComprehensiveRouter:
                     f"(confidence: {modality_prediction['confidence']:.2f})"
                 )
                 # Boost this modality in voting
-                boost_weight = int(modality_prediction["confidence"] * 50)  # Strong boost
+                boost_weight = int(
+                    modality_prediction["confidence"] * 50
+                )  # Strong boost
                 for _ in range(boost_weight):
                     search_modalities.append(modality_override)
 
@@ -436,7 +442,8 @@ class ComprehensiveRouter:
         if modality_prediction and modality_prediction.get("confidence", 0.0) >= 0.7:
             final_reasoning = (
                 f"Modality-specific ({modality_prediction['recommended_agent']}, "
-                f"confidence: {modality_prediction['confidence']:.2f}); " + final_reasoning
+                f"confidence: {modality_prediction['confidence']:.2f}); "
+                + final_reasoning
             )
 
         # Build metadata

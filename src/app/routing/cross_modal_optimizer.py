@@ -67,7 +67,9 @@ class CrossModalOptimizer:
         self.fusion_history: List[Dict[str, Any]] = []
         self.fusion_success_rates: Dict[Tuple[QueryModality, QueryModality], float] = {}
 
-        logger.info(f"🔧 Initialized CrossModalOptimizer (model_dir: {self.model_dir}, tenant: {tenant_id})")
+        logger.info(
+            f"🔧 Initialized CrossModalOptimizer (model_dir: {self.model_dir}, tenant: {tenant_id})"
+        )
 
     def predict_fusion_benefit(
         self,
@@ -558,7 +560,9 @@ class CrossModalOptimizer:
         Returns:
             Dictionary with discovery results and training status
         """
-        logger.info(f"🔍 Discovering cross-modal fusion patterns (lookback: {lookback_hours}h)")
+        logger.info(
+            f"🔍 Discovering cross-modal fusion patterns (lookback: {lookback_hours}h)"
+        )
 
         # Query Phoenix for routing spans with multiple modalities
         # We look for spans that have "multi-modal" or multiple agent calls
@@ -600,13 +604,15 @@ class CrossModalOptimizer:
                     improvement=quality_score if success else 0.0,
                 )
 
-                fusion_examples.append({
-                    "query": span.get("query"),
-                    "primary": primary_mod["modality"],
-                    "secondary": secondary_mod["modality"],
-                    "success": success,
-                    "quality": quality_score,
-                })
+                fusion_examples.append(
+                    {
+                        "query": span.get("query"),
+                        "primary": primary_mod["modality"],
+                        "secondary": secondary_mod["modality"],
+                        "success": success,
+                        "quality": quality_score,
+                    }
+                )
 
         logger.info(f"📊 Found {len(fusion_examples)} cross-modal fusion examples")
 

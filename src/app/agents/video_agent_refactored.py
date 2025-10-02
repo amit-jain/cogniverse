@@ -4,7 +4,7 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
-from a2a import A2AMessage, DataPart
+from a2a import DataPart
 from fastapi import FastAPI, HTTPException
 
 from src.app.search.service import SearchService

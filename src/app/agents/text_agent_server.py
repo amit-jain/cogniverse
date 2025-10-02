@@ -1,13 +1,13 @@
 # src/agents/text_agent_server.py
 import os
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List
 
 import uvicorn
 from elasticsearch import Elasticsearch
 from fastapi import FastAPI, HTTPException
 from sentence_transformers import SentenceTransformer
 
-from src.tools.a2a_utils import Task, A2AMessage, TextPart, DataPart
+from src.tools.a2a_utils import DataPart, Task
 
 
 # --- Text Search Agent Implementation ---

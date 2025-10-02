@@ -102,13 +102,14 @@ class TestRoutingAgentCacheMetrics:
         query = "deep learning tutorials"
 
         # Mock query expander
-        routing_agent.query_expander.expand_query = AsyncMock(return_value={
-            "modality_intent": ["video"],
-            "temporal": {}
-        })
+        routing_agent.query_expander.expand_query = AsyncMock(
+            return_value={"modality_intent": ["video"], "temporal": {}}
+        )
 
         # Mock cross modal optimizer
-        routing_agent.cross_modal_optimizer.get_fusion_recommendations = MagicMock(return_value=None)
+        routing_agent.cross_modal_optimizer.get_fusion_recommendations = MagicMock(
+            return_value=None
+        )
 
         # Mock router
         mock_decision = MagicMock()
@@ -122,7 +123,9 @@ class TestRoutingAgentCacheMetrics:
 
         # Mock contextual analyzer
         routing_agent.contextual_analyzer.update_context = MagicMock()
-        routing_agent.contextual_analyzer.get_contextual_hints = MagicMock(return_value=[])
+        routing_agent.contextual_analyzer.get_contextual_hints = MagicMock(
+            return_value=[]
+        )
 
         # Call analyze_and_route
         result = await routing_agent.analyze_and_route(query)
@@ -139,7 +142,9 @@ class TestRoutingAgentCacheMetrics:
                 return
 
         # If we get here, nothing was cached
-        assert False, f"Result was not cached in any modality. Result keys: {result.keys() if result else 'None'}"
+        assert (
+            False
+        ), f"Result was not cached in any modality. Result keys: {result.keys() if result else 'None'}"
 
     @pytest.mark.asyncio
     async def test_metrics_tracked_on_success(self, routing_agent):
@@ -192,13 +197,14 @@ class TestRoutingAgentCacheMetrics:
         assert cached is None
 
         # Mock query expander
-        routing_agent.query_expander.expand_query = AsyncMock(return_value={
-            "modality_intent": ["video"],
-            "temporal": {}
-        })
+        routing_agent.query_expander.expand_query = AsyncMock(
+            return_value={"modality_intent": ["video"], "temporal": {}}
+        )
 
         # Mock cross modal optimizer
-        routing_agent.cross_modal_optimizer.get_fusion_recommendations = MagicMock(return_value=None)
+        routing_agent.cross_modal_optimizer.get_fusion_recommendations = MagicMock(
+            return_value=None
+        )
 
         # Mock router
         mock_decision = MagicMock()
@@ -212,7 +218,9 @@ class TestRoutingAgentCacheMetrics:
 
         # Mock contextual analyzer
         routing_agent.contextual_analyzer.update_context = MagicMock()
-        routing_agent.contextual_analyzer.get_contextual_hints = MagicMock(return_value=[])
+        routing_agent.contextual_analyzer.get_contextual_hints = MagicMock(
+            return_value=[]
+        )
 
         # Process query
         result = await routing_agent.analyze_and_route(query)
@@ -226,7 +234,9 @@ class TestRoutingAgentCacheMetrics:
                 return
 
         # If we get here, nothing was cached
-        assert False, f"Result was not cached in any modality. Result keys: {result.keys() if result else 'None'}"
+        assert (
+            False
+        ), f"Result was not cached in any modality. Result keys: {result.keys() if result else 'None'}"
 
     def test_modality_detection_case_insensitive(self, routing_agent):
         """Test modality detection is case insensitive"""

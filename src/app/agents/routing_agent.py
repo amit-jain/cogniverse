@@ -135,9 +135,7 @@ class RoutingAgent(DSPyRoutingMixin):
         self.query_expander = QueryExpander()
         self.multi_modal_reranker = MultiModalReranker()
         self.contextual_analyzer = ContextualAnalyzer(
-            max_history_size=50,
-            context_window_minutes=30,
-            min_preference_count=3
+            max_history_size=50, context_window_minutes=30, min_preference_count=3
         )
         logger.info("🎯 Phase 10 advanced multi-modal features initialized")
 
@@ -327,16 +325,20 @@ class RoutingAgent(DSPyRoutingMixin):
                     detected_modalities = self._convert_to_modality_tuples(
                         modality_intent, query_expansion
                     )
-                    fusion_recommendation = self.cross_modal_optimizer.get_fusion_recommendations(
-                        query_text=query,
-                        detected_modalities=detected_modalities,
-                        fusion_threshold=0.5,
+                    fusion_recommendation = (
+                        self.cross_modal_optimizer.get_fusion_recommendations(
+                            query_text=query,
+                            detected_modalities=detected_modalities,
+                            fusion_threshold=0.5,
+                        )
                     )
                     parent_span.set_attribute(
-                        "fusion.should_fuse", fusion_recommendation.get("should_fuse", False)
+                        "fusion.should_fuse",
+                        fusion_recommendation.get("should_fuse", False),
                     )
                     parent_span.set_attribute(
-                        "fusion.benefit", fusion_recommendation.get("fusion_benefit", 0.0)
+                        "fusion.benefit",
+                        fusion_recommendation.get("fusion_benefit", 0.0),
                     )
 
                 # Step 2: Get routing decision from comprehensive router
@@ -354,23 +356,28 @@ class RoutingAgent(DSPyRoutingMixin):
                     primary_modality_str = modality_intent[0]
                     try:
                         from src.app.search.multi_modal_reranker import QueryModality
+
                         primary_modality = QueryModality(primary_modality_str.lower())
 
                         # Try to get prediction from modality-specific model
                         modality_prediction = self.modality_optimizer.predict_agent(
                             query=query,
                             modality=primary_modality,
-                            query_features=query_expansion.get("features", {})
+                            query_features=query_expansion.get("features", {}),
                         )
 
                         if modality_prediction:
                             # Add modality-specific prediction to enriched context
-                            enriched_context["modality_prediction"] = modality_prediction
-                            parent_span.set_attribute(
-                                "modality.predicted_agent", modality_prediction["recommended_agent"]
+                            enriched_context["modality_prediction"] = (
+                                modality_prediction
                             )
                             parent_span.set_attribute(
-                                "modality.prediction_confidence", modality_prediction["confidence"]
+                                "modality.predicted_agent",
+                                modality_prediction["recommended_agent"],
+                            )
+                            parent_span.set_attribute(
+                                "modality.prediction_confidence",
+                                modality_prediction["confidence"],
                             )
                             logger.info(
                                 f"🎯 Modality-specific prediction: {modality_prediction['recommended_agent']} "
@@ -399,7 +406,9 @@ class RoutingAgent(DSPyRoutingMixin):
 
                     # Cache orchestration result and record metrics
                     execution_time = time.time() - start_time
-                    self.cache_manager.cache_result(query, cache_modality, orchestration_result)
+                    self.cache_manager.cache_result(
+                        query, cache_modality, orchestration_result
+                    )
                     self.metrics_tracker.record_modality_execution(
                         cache_modality, execution_time * 1000, True, None
                     )
@@ -485,7 +494,9 @@ class RoutingAgent(DSPyRoutingMixin):
                 self.contextual_analyzer.update_context(
                     query=query,
                     detected_modalities=modality_intent,
-                    result_count=len(workflow_plan["agents"]),  # Number of agents called
+                    result_count=len(
+                        workflow_plan["agents"]
+                    ),  # Number of agents called
                 )
 
                 logger.info(f"Query analysis completed in {execution_time:.3f}s")
@@ -500,7 +511,9 @@ class RoutingAgent(DSPyRoutingMixin):
                     "routing_method": routing_decision.routing_method,
                     "execution_time": execution_time,
                     "query_expansion": query_expansion,  # Include expansion info
-                    "contextual_hints": self.contextual_analyzer.get_contextual_hints(query),
+                    "contextual_hints": self.contextual_analyzer.get_contextual_hints(
+                        query
+                    ),
                 }
 
                 # Phase 12: Cache result and record metrics
@@ -515,7 +528,9 @@ class RoutingAgent(DSPyRoutingMixin):
                 # Phase 12: Record failed execution metrics
                 execution_time = time.time() - start_time
                 # Use primary_modality as fallback if routing failed before decision
-                metrics_modality = cache_modality if 'cache_modality' in locals() else primary_modality
+                metrics_modality = (
+                    cache_modality if "cache_modality" in locals() else primary_modality
+                )
                 self.metrics_tracker.record_modality_execution(
                     metrics_modality, execution_time * 1000, False, str(e)
                 )
@@ -854,19 +869,28 @@ class RoutingAgent(DSPyRoutingMixin):
         query_lower = query.lower()
 
         # Video keywords
-        if any(kw in query_lower for kw in ["video", "watch", "show me", "clip", "footage"]):
+        if any(
+            kw in query_lower for kw in ["video", "watch", "show me", "clip", "footage"]
+        ):
             return QueryModality.VIDEO
 
         # Image keywords
-        if any(kw in query_lower for kw in ["image", "picture", "photo", "diagram", "screenshot"]):
+        if any(
+            kw in query_lower
+            for kw in ["image", "picture", "photo", "diagram", "screenshot"]
+        ):
             return QueryModality.IMAGE
 
         # Audio keywords
-        if any(kw in query_lower for kw in ["audio", "listen", "podcast", "sound", "music"]):
+        if any(
+            kw in query_lower for kw in ["audio", "listen", "podcast", "sound", "music"]
+        ):
             return QueryModality.AUDIO
 
         # Document keywords
-        if any(kw in query_lower for kw in ["document", "paper", "article", "pdf", "read"]):
+        if any(
+            kw in query_lower for kw in ["document", "paper", "article", "pdf", "read"]
+        ):
             return QueryModality.DOCUMENT
 
         # Default to TEXT
@@ -900,7 +924,7 @@ class RoutingAgent(DSPyRoutingMixin):
         query: str,
         results: List[Dict[str, Any]],
         modality_intent: Optional[List[str]] = None,
-        temporal_context: Optional[Dict[str, Any]] = None
+        temporal_context: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Apply multi-modal reranking to search results (Phase 10).
@@ -943,7 +967,9 @@ class RoutingAgent(DSPyRoutingMixin):
             for intent in modality_intent:
                 try:
                     if intent == "visual":
-                        query_modalities.extend([QueryModality.VIDEO, QueryModality.IMAGE])
+                        query_modalities.extend(
+                            [QueryModality.VIDEO, QueryModality.IMAGE]
+                        )
                     else:
                         query_modalities.append(QueryModality(intent.upper()))
                 except ValueError:

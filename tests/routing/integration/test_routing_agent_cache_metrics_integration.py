@@ -69,7 +69,9 @@ class TestRoutingAgentCacheMetricsIntegration:
         # Verify metrics were recorded
         summary = routing_agent.metrics_tracker.get_summary_stats()
         assert summary["total_requests"] >= len(queries)
-        assert summary["active_modalities"] >= 1  # At least one modality should be active
+        assert (
+            summary["active_modalities"] >= 1
+        )  # At least one modality should be active
 
     async def test_cache_miss_then_hit(self, routing_agent):
         """Test cache miss followed by cache hit"""
@@ -118,9 +120,7 @@ class TestRoutingAgentCacheMetricsIntegration:
         context = {"tenant_id": "test-concurrent-cache"}
 
         # Execute same query concurrently
-        tasks = [
-            routing_agent.analyze_and_route(query, context) for _ in range(5)
-        ]
+        tasks = [routing_agent.analyze_and_route(query, context) for _ in range(5)]
 
         results = await asyncio.gather(*tasks)
 
@@ -147,8 +147,12 @@ class TestRoutingAgentCacheMetricsIntegration:
 
         # Execute queries twice to populate caches
         for query, _ in queries:
-            await routing_agent.analyze_and_route(query, {"tenant_id": "test-modality-cache"})
-            await routing_agent.analyze_and_route(query, {"tenant_id": "test-modality-cache"})
+            await routing_agent.analyze_and_route(
+                query, {"tenant_id": "test-modality-cache"}
+            )
+            await routing_agent.analyze_and_route(
+                query, {"tenant_id": "test-modality-cache"}
+            )
 
         # Verify we have cache hits (queries executed twice each)
         total_hits = 0
@@ -171,9 +175,7 @@ class TestRoutingAgentCacheMetricsIntegration:
         result1 = await routing_agent.analyze_and_route(query, context)
 
         # Manually cache with short TTL
-        routing_agent.cache_manager.cache_result(
-            query, QueryModality.DOCUMENT, result1
-        )
+        routing_agent.cache_manager.cache_result(query, QueryModality.DOCUMENT, result1)
 
         # Immediate retrieval works
         cached = routing_agent.cache_manager.get_cached_result(
@@ -199,7 +201,9 @@ class TestRoutingAgentCacheMetricsIntegration:
         ]
 
         for query, _ in queries:
-            await routing_agent.analyze_and_route(query, {"tenant_id": "test-per-modality"})
+            await routing_agent.analyze_and_route(
+                query, {"tenant_id": "test-per-modality"}
+            )
 
         # Verify total requests across all modalities
         summary = routing_agent.metrics_tracker.get_summary_stats()
@@ -221,7 +225,9 @@ class TestRoutingAgentCacheMetricsIntegration:
             assert detected == expected_modality
 
             # Execute routing (actual modality may differ based on router decision)
-            result = await routing_agent.analyze_and_route(query, {"tenant_id": "test-detection"})
+            result = await routing_agent.analyze_and_route(
+                query, {"tenant_id": "test-detection"}
+            )
             assert "routing_decision" in result or "agent" in result
 
 

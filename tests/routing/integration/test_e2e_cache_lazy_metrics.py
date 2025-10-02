@@ -109,7 +109,9 @@ class TestProductionRoutingRealInfrastructure:
                     attributes = latest_span["attributes"]
                     logger.info(f"✅ Span attributes: {list(attributes.keys())[:10]}")
             else:
-                logger.warning("⚠️ No spans found in Phoenix (may need more time to sync)")
+                logger.warning(
+                    "⚠️ No spans found in Phoenix (may need more time to sync)"
+                )
 
         except Exception as e:
             logger.warning(f"⚠️ Phoenix verification failed: {e}")
@@ -180,9 +182,7 @@ class TestProductionRoutingRealInfrastructure:
             logger.warning(f"⚠️ Agent service not available: {e}")
             pytest.skip(f"Agent services not running: {e}")
 
-    async def test_cache_with_real_routing_queries(
-        self, routing_agent, cache_manager
-    ):
+    async def test_cache_with_real_routing_queries(self, routing_agent, cache_manager):
         """Test cache with real routing queries"""
         query = "machine learning tutorials"
         context = {"tenant_id": "test-cache"}
@@ -397,9 +397,7 @@ class TestProductionRoutingRealInfrastructure:
         ]
 
         for query in queries:
-            await routing_agent.analyze_and_route(
-                query, {"tenant_id": tenant_id}
-            )
+            await routing_agent.analyze_and_route(query, {"tenant_id": tenant_id})
 
         # Flush spans
         routing_agent.telemetry_manager.force_flush(timeout_millis=10000)
@@ -419,10 +417,7 @@ class TestProductionRoutingRealInfrastructure:
             logger.info(f"📊 Span attribute keys: {list(attributes.keys())}")
 
             # Verify routing decision is captured
-            assert (
-                "routing" in attributes
-                or "routing_decision" in str(attributes)
-            )
+            assert "routing" in attributes or "routing_decision" in str(attributes)
 
     async def test_cache_ttl_with_real_queries(self, routing_agent, cache_manager):
         """Test cache TTL expiration with real routing queries"""

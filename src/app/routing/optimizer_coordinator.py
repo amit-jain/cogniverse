@@ -7,7 +7,7 @@ specialized optimizer without requiring callers to know which optimizer to use.
 
 import logging
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +132,9 @@ class OptimizerCoordinator:
         Raises:
             ValueError: If optimization type is not supported
         """
-        logger.info(f"Coordinating {type.value} optimization with {len(training_data)} examples")
+        logger.info(
+            f"Coordinating {type.value} optimization with {len(training_data)} examples"
+        )
 
         if type == OptimizationType.ROUTING:
             optimizer = self._get_routing_optimizer()
@@ -142,7 +144,9 @@ class OptimizerCoordinator:
             optimizer = self._get_modality_optimizer()
             modality = kwargs.get("modality")
             if not modality:
-                raise ValueError("modality parameter required for MODALITY optimization")
+                raise ValueError(
+                    "modality parameter required for MODALITY optimization"
+                )
             return optimizer.train_modality_model(
                 modality=modality, training_data=training_data, **kwargs
             )

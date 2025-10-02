@@ -84,7 +84,9 @@ class TestLearnedRerankingIntegration:
 
             # Verify metadata
             assert reranked[0].metadata["reranking_score"] == 0.95
-            assert reranked[0].metadata["reranker_model"] == "cohere/rerank-english-v3.0"
+            assert (
+                reranked[0].metadata["reranker_model"] == "cohere/rerank-english-v3.0"
+            )
 
     @pytest.mark.asyncio
     @pytest.mark.skipif(
@@ -148,8 +150,7 @@ class TestHybridRerankingIntegration:
             assert all("heuristic_score" in r.metadata for r in reranked)
             assert all("learned_score" in r.metadata for r in reranked)
             assert all(
-                r.metadata["fusion_strategy"] == "weighted_ensemble"
-                for r in reranked
+                r.metadata["fusion_strategy"] == "weighted_ensemble" for r in reranked
             )
 
     @pytest.mark.asyncio

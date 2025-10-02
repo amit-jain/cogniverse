@@ -7,7 +7,6 @@ Validates Phase 12 checkpoint criteria: 100+ QPS capability.
 
 import asyncio
 import time
-from typing import Dict, List
 
 import pytest
 
@@ -56,9 +55,7 @@ class TestProductionLoadHandling:
                 QueryModality.VIDEO,
             ][i % 3]
 
-            agent_tasks = [
-                (f"agent_{i}", f"query_{i}", {"modality": modality})
-            ]
+            agent_tasks = [(f"agent_{i}", f"query_{i}", {"modality": modality})]
 
             requests.append(
                 parallel_executor.execute_agents_parallel(
@@ -85,7 +82,7 @@ class TestProductionLoadHandling:
 
         # Report metrics
         summary = metrics_tracker.get_summary_stats()
-        print(f"\n📊 Throughput Test Results:")
+        print("\n📊 Throughput Test Results:")
         print(f"   QPS: {qps:.0f}")
         print(f"   Duration: {duration:.2f}s")
         print(f"   Requests: {num_requests}")
@@ -122,7 +119,7 @@ class TestProductionLoadHandling:
                 cache_manager.cache_result(query, modality, result)
 
                 return result
-            except Exception as e:
+            except Exception:
                 error_count += 1
                 raise
 
@@ -140,9 +137,7 @@ class TestProductionLoadHandling:
                 QueryModality.DOCUMENT,
             ][i % 3]
 
-            agent_tasks = [
-                (f"agent_{i}", f"query_{query_id}", {"modality": modality})
-            ]
+            agent_tasks = [(f"agent_{i}", f"query_{query_id}", {"modality": modality})]
 
             requests.append(
                 parallel_executor.execute_agents_parallel(
@@ -157,7 +152,8 @@ class TestProductionLoadHandling:
 
         # Count successes
         successful = sum(
-            1 for r in results
+            1
+            for r in results
             if isinstance(r, dict) and r.get("successful_agents", 0) > 0
         )
 
@@ -170,7 +166,7 @@ class TestProductionLoadHandling:
         total_hits = sum(stats["hits"] for stats in cache_stats.values())
         assert total_hits > 0, "Cache should have hits with repeated queries"
 
-        print(f"\n🔥 Stress Test Results:")
+        print("\n🔥 Stress Test Results:")
         print(f"   Concurrent Requests: {num_requests}")
         print(f"   Success Rate: {success_rate:.1%}")
         print(f"   Cache Hits: {total_hits}")
@@ -199,16 +195,12 @@ class TestProductionLoadHandling:
                 await asyncio.sleep(0.01)  # 10ms work
                 latency_ms = (time.time() - start) * 1000
 
-                metrics_tracker.record_modality_execution(
-                    modality, latency_ms, True
-                )
+                metrics_tracker.record_modality_execution(modality, latency_ms, True)
 
                 return {"results": ["result"]}
             except Exception as e:
                 error_count += 1
-                metrics_tracker.record_modality_execution(
-                    modality, 0, False, str(e)
-                )
+                metrics_tracker.record_modality_execution(modality, 0, False, str(e))
                 raise
 
         async def request_generator():
@@ -225,7 +217,11 @@ class TestProductionLoadHandling:
                 ][request_count % 3]
 
                 agent_tasks = [
-                    (f"agent_{request_count}", f"query_{request_count}", {"modality": modality})
+                    (
+                        f"agent_{request_count}",
+                        f"query_{request_count}",
+                        {"modality": modality},
+                    )
                 ]
 
                 # Fire and forget (don't wait)
@@ -258,7 +254,7 @@ class TestProductionLoadHandling:
         assert qps >= 90, f"Sustained QPS {qps:.0f} below 90 (allowing 10% margin)"
         assert summary["overall_success_rate"] >= 0.95, "Success rate below 95%"
 
-        print(f"\n⏱️  Sustained Load Test Results:")
+        print("\n⏱️  Sustained Load Test Results:")
         print(f"   Duration: {duration:.1f}s")
         print(f"   Total Requests: {request_count}")
         print(f"   Average QPS: {qps:.0f}")
@@ -281,15 +277,14 @@ class TestProductionLoadHandling:
 
             # Variable latency (10-50ms)
             import random
+
             latency_s = random.uniform(0.01, 0.05)
 
             start = time.time()
             await asyncio.sleep(latency_s)
             actual_latency_ms = (time.time() - start) * 1000
 
-            metrics_tracker.record_modality_execution(
-                modality, actual_latency_ms, True
-            )
+            metrics_tracker.record_modality_execution(modality, actual_latency_ms, True)
 
             return {"results": ["result"]}
 
@@ -311,11 +306,17 @@ class TestProductionLoadHandling:
         stats = metrics_tracker.get_modality_stats(QueryModality.TEXT)
 
         # Verify latency distribution
-        assert stats["p50_latency"] < 100, f"P50 latency {stats['p50_latency']:.0f}ms too high"
-        assert stats["p95_latency"] < 200, f"P95 latency {stats['p95_latency']:.0f}ms too high"
-        assert stats["p99_latency"] < 300, f"P99 latency {stats['p99_latency']:.0f}ms too high"
+        assert (
+            stats["p50_latency"] < 100
+        ), f"P50 latency {stats['p50_latency']:.0f}ms too high"
+        assert (
+            stats["p95_latency"] < 200
+        ), f"P95 latency {stats['p95_latency']:.0f}ms too high"
+        assert (
+            stats["p99_latency"] < 300
+        ), f"P99 latency {stats['p99_latency']:.0f}ms too high"
 
-        print(f"\n📈 Latency Distribution Results:")
+        print("\n📈 Latency Distribution Results:")
         print(f"   P50: {stats['p50_latency']:.0f}ms")
         print(f"   P95: {stats['p95_latency']:.0f}ms")
         print(f"   P99: {stats['p99_latency']:.0f}ms")

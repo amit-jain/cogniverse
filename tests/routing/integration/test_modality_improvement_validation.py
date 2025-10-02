@@ -25,8 +25,7 @@ class TestModalityImprovementValidation:
     def modality_optimizer(self, tmp_path: Path):
         """Create modality optimizer with test directory"""
         optimizer = ModalityOptimizer(
-            model_dir=tmp_path / "models",
-            tenant_id="test_tenant"
+            model_dir=tmp_path / "models", tenant_id="test_tenant"
         )
         return optimizer
 
@@ -47,7 +46,7 @@ class TestModalityImprovementValidation:
                 correct_agent="video_search_agent",
                 success=True,
                 modality_features={},
-                is_synthetic=False
+                is_synthetic=False,
             ),
             ModalityExample(
                 query="find soccer game footage",
@@ -55,7 +54,7 @@ class TestModalityImprovementValidation:
                 correct_agent="video_search_agent",
                 success=True,
                 modality_features={},
-                is_synthetic=False
+                is_synthetic=False,
             ),
             ModalityExample(
                 query="watch tennis match replay",
@@ -63,7 +62,7 @@ class TestModalityImprovementValidation:
                 correct_agent="video_search_agent",
                 success=True,
                 modality_features={},
-                is_synthetic=False
+                is_synthetic=False,
             ),
         ]
 
@@ -77,7 +76,7 @@ class TestModalityImprovementValidation:
                 correct_agent="document_agent",
                 success=True,
                 modality_features={},
-                is_synthetic=False
+                is_synthetic=False,
             ),
             ModalityExample(
                 query="find PDF about machine learning",
@@ -85,7 +84,7 @@ class TestModalityImprovementValidation:
                 correct_agent="document_agent",
                 success=True,
                 modality_features={},
-                is_synthetic=False
+                is_synthetic=False,
             ),
             ModalityExample(
                 query="get whitepaper on neural networks",
@@ -93,7 +92,7 @@ class TestModalityImprovementValidation:
                 correct_agent="document_agent",
                 success=True,
                 modality_features={},
-                is_synthetic=False
+                is_synthetic=False,
             ),
         ]
 
@@ -108,7 +107,7 @@ class TestModalityImprovementValidation:
         result = modality_optimizer._train_modality_model(
             modality=QueryModality.VIDEO,
             training_data=video_training_examples,
-            strategy=TrainingStrategy.PURE_REAL
+            strategy=TrainingStrategy.PURE_REAL,
         )
 
         # Verify training completed
@@ -125,9 +124,7 @@ class TestModalityImprovementValidation:
         correct_predictions = 0
         for query, expected_agent in test_queries:
             prediction = modality_optimizer.predict_agent(
-                query=query,
-                modality=QueryModality.VIDEO,
-                query_features={}
+                query=query, modality=QueryModality.VIDEO, query_features={}
             )
 
             if prediction and prediction["recommended_agent"] == expected_agent:
@@ -148,7 +145,7 @@ class TestModalityImprovementValidation:
         result = modality_optimizer._train_modality_model(
             modality=QueryModality.DOCUMENT,
             training_data=document_training_examples,
-            strategy=TrainingStrategy.PURE_REAL
+            strategy=TrainingStrategy.PURE_REAL,
         )
 
         # Verify training completed
@@ -165,9 +162,7 @@ class TestModalityImprovementValidation:
         correct_predictions = 0
         for query, expected_agent in test_queries:
             prediction = modality_optimizer.predict_agent(
-                query=query,
-                modality=QueryModality.DOCUMENT,
-                query_features={}
+                query=query, modality=QueryModality.DOCUMENT, query_features={}
             )
 
             if prediction and prediction["recommended_agent"] == expected_agent:
@@ -187,21 +182,20 @@ class TestModalityImprovementValidation:
         """
         # Create optimizer and train video model
         optimizer = ModalityOptimizer(
-            model_dir=tmp_path / "models",
-            tenant_id="test_tenant"
+            model_dir=tmp_path / "models", tenant_id="test_tenant"
         )
 
         optimizer._train_modality_model(
             modality=QueryModality.VIDEO,
             training_data=video_training_examples,
-            strategy=TrainingStrategy.PURE_REAL
+            strategy=TrainingStrategy.PURE_REAL,
         )
 
         # Get prediction for video query
         prediction = optimizer.predict_agent(
             query="show basketball highlights",
             modality=QueryModality.VIDEO,
-            query_features={}
+            query_features={},
         )
 
         # Verify prediction has reasonable confidence
@@ -218,7 +212,7 @@ class TestModalityImprovementValidation:
         prediction = modality_optimizer.predict_agent(
             query="show basketball highlights",
             modality=QueryModality.VIDEO,
-            query_features={}
+            query_features={},
         )
 
         # Should return None or low-confidence prediction without trained model
@@ -235,7 +229,7 @@ class TestModalityImprovementValidation:
         video_result = modality_optimizer._train_modality_model(
             modality=QueryModality.VIDEO,
             training_data=video_training_examples,
-            strategy=TrainingStrategy.PURE_REAL
+            strategy=TrainingStrategy.PURE_REAL,
         )
         assert video_result["status"] == "completed"
 
@@ -243,15 +237,13 @@ class TestModalityImprovementValidation:
         doc_result = modality_optimizer._train_modality_model(
             modality=QueryModality.DOCUMENT,
             training_data=document_training_examples,
-            strategy=TrainingStrategy.PURE_REAL
+            strategy=TrainingStrategy.PURE_REAL,
         )
         assert doc_result["status"] == "completed"
 
         # Test video predictions
         video_pred = modality_optimizer.predict_agent(
-            query="watch soccer game",
-            modality=QueryModality.VIDEO,
-            query_features={}
+            query="watch soccer game", modality=QueryModality.VIDEO, query_features={}
         )
         assert video_pred is not None
         assert video_pred["recommended_agent"] == "video_search_agent"
@@ -260,7 +252,7 @@ class TestModalityImprovementValidation:
         doc_pred = modality_optimizer.predict_agent(
             query="read research paper",
             modality=QueryModality.DOCUMENT,
-            query_features={}
+            query_features={},
         )
         assert doc_pred is not None
         assert doc_pred["recommended_agent"] == "document_agent"
@@ -278,20 +270,18 @@ class TestModalityImprovementValidation:
         modality_optimizer._train_modality_model(
             modality=QueryModality.VIDEO,
             training_data=video_training_examples,
-            strategy=TrainingStrategy.PURE_REAL
+            strategy=TrainingStrategy.PURE_REAL,
         )
 
         # Get predictions for queries with varying clarity
         clear_query_pred = modality_optimizer.predict_agent(
             query="watch basketball video",
             modality=QueryModality.VIDEO,
-            query_features={}
+            query_features={},
         )
 
         ambiguous_query_pred = modality_optimizer.predict_agent(
-            query="sports content",
-            modality=QueryModality.VIDEO,
-            query_features={}
+            query="sports content", modality=QueryModality.VIDEO, query_features={}
         )
 
         # Clear queries should have higher confidence
@@ -307,21 +297,20 @@ class TestModalityImprovementValidation:
         """
         # Create optimizer and train model
         optimizer = ModalityOptimizer(
-            model_dir=tmp_path / "models",
-            tenant_id="test_tenant"
+            model_dir=tmp_path / "models", tenant_id="test_tenant"
         )
 
         optimizer._train_modality_model(
             modality=QueryModality.VIDEO,
             training_data=video_training_examples,
-            strategy=TrainingStrategy.PURE_REAL
+            strategy=TrainingStrategy.PURE_REAL,
         )
 
         # Get modality prediction
         prediction = optimizer.predict_agent(
             query="show basketball highlights",
             modality=QueryModality.VIDEO,
-            query_features={}
+            query_features={},
         )
 
         # Create context with modality prediction
@@ -337,11 +326,13 @@ class TestModalityImprovementValidation:
                     confidence_score=0.9,
                     routing_method="ensemble",
                     reasoning="Modality prediction influenced decision",
-                    metadata={"modality_prediction": prediction}
+                    metadata={"modality_prediction": prediction},
                 )
             )
 
-            decision = await mock_router_instance.route("show basketball highlights", context)
+            decision = await mock_router_instance.route(
+                "show basketball highlights", context
+            )
 
             # Verify modality prediction is in decision metadata
             assert "modality_prediction" in decision.metadata
@@ -357,7 +348,7 @@ class TestModalityImprovementValidation:
         result = modality_optimizer._train_modality_model(
             modality=QueryModality.VIDEO,
             training_data=video_training_examples,
-            strategy=TrainingStrategy.PURE_REAL
+            strategy=TrainingStrategy.PURE_REAL,
         )
 
         model_path = Path(result["model_path"])
@@ -365,8 +356,7 @@ class TestModalityImprovementValidation:
 
         # Create new optimizer instance (simulating new session)
         new_optimizer = ModalityOptimizer(
-            model_dir=tmp_path / "models",
-            tenant_id="test_tenant"
+            model_dir=tmp_path / "models", tenant_id="test_tenant"
         )
 
         # Load models
@@ -376,7 +366,7 @@ class TestModalityImprovementValidation:
         prediction = new_optimizer.predict_agent(
             query="watch basketball game",
             modality=QueryModality.VIDEO,
-            query_features={}
+            query_features={},
         )
 
         assert prediction is not None

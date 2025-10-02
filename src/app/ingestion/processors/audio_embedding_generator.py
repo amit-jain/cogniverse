@@ -54,7 +54,9 @@ class AudioEmbeddingGenerator:
                 from transformers import ClapModel, ClapProcessor
 
                 self._clap_model = ClapModel.from_pretrained(self._clap_model_name)
-                self._clap_processor = ClapProcessor.from_pretrained(self._clap_model_name)
+                self._clap_processor = ClapProcessor.from_pretrained(
+                    self._clap_model_name
+                )
                 self._clap_model.eval()
                 logger.info("✅ CLAP model loaded")
             except Exception as e:
@@ -105,6 +107,7 @@ class AudioEmbeddingGenerator:
             # Load audio if path provided
             if audio_path is not None:
                 import librosa
+
                 audio_array, sample_rate = librosa.load(
                     str(audio_path), sr=sample_rate, mono=True
                 )

@@ -18,8 +18,6 @@ from src.tools.a2a_utils import DataPart, Task
 logger = logging.getLogger(__name__)
 
 
-
-
 app = FastAPI(
     title="Detailed Report Agent",
     description="Generates comprehensive detailed reports with visual analysis",
