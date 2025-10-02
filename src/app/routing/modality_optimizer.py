@@ -489,14 +489,17 @@ class ModalityOptimizer:
             # Configure DSPy with LM if not already configured
             # This is needed for training/compilation
             if not dspy.settings.lm:
-                import os
-                api_key = os.getenv("OPENAI_API_KEY")
-                if api_key:
-                    dummy_lm = dspy.LM(model="openai/gpt-4o-mini", api_key=api_key)
-                    dspy.configure(lm=dummy_lm)
-                else:
-                    # In test/dev without API key, skip actual optimization
-                    logger.warning("No OPENAI_API_KEY found, skipping DSPy optimization")
+                try:
+                    # Use Ollama with qwen2.5:7b as default
+                    ollama_lm = dspy.LM(
+                        model="ollama_chat/qwen2.5:7b",
+                        api_base="http://localhost:11434",
+                        temperature=0.7
+                    )
+                    dspy.configure(lm=ollama_lm)
+                    logger.info("Configured DSPy with Ollama qwen2.5:7b model")
+                except Exception as e:
+                    logger.warning(f"Failed to configure Ollama LM: {e}")
                     # Just return unoptimized module for testing
                     routing_module = ModalityRoutingModule()
                     self.modality_models[modality] = routing_module
@@ -508,7 +511,7 @@ class ModalityOptimizer:
                         "status": "success",
                         "training_samples": len(training_data),
                         "strategy": strategy.value,
-                        "optimizer": "none (no API key)",
+                        "optimizer": "none (no LM available)",
                         "validation_accuracy": 0.0,
                         "model_path": str(model_path),
                         "timestamp": datetime.now().isoformat(),
