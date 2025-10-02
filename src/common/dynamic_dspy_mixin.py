@@ -189,9 +189,7 @@ class DynamicDSPyMixin:
         # Clear cached modules to force recreation with new config
         self._dynamic_modules.clear()
 
-        logger.info(
-            f"Updated module config to: {module_config.module_type.value}"
-        )
+        logger.info(f"Updated module config to: {module_config.module_type.value}")
 
     def update_optimizer_config(self, optimizer_config: OptimizerConfig):
         """

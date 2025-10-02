@@ -107,17 +107,17 @@ class ConfigAPIMixin:
         @app.post("/config/module")
         async def update_module_config_endpoint(request: ModuleConfigUpdate):
             """Update module configuration at runtime"""
+            # Validate module type
             try:
-                # Validate module type
-                try:
-                    module_type = DSPyModuleType(request.module_type)
-                except ValueError:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Invalid module type: {request.module_type}. "
-                        f"Valid types: {[t.value for t in DSPyModuleType]}",
-                    )
+                module_type = DSPyModuleType(request.module_type)
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid module type: {request.module_type}. "
+                    f"Valid types: {[t.value for t in DSPyModuleType]}",
+                )
 
+            try:
                 # Create new module config
                 new_config = ModuleConfig(
                     module_type=module_type,
@@ -157,17 +157,17 @@ class ConfigAPIMixin:
         @app.post("/config/optimizer")
         async def update_optimizer_config_endpoint(request: OptimizerConfigUpdate):
             """Update optimizer configuration at runtime"""
+            # Validate optimizer type
             try:
-                # Validate optimizer type
-                try:
-                    optimizer_type = OptimizerType(request.optimizer_type)
-                except ValueError:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Invalid optimizer type: {request.optimizer_type}. "
-                        f"Valid types: {[t.value for t in OptimizerType]}",
-                    )
+                optimizer_type = OptimizerType(request.optimizer_type)
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid optimizer type: {request.optimizer_type}. "
+                    f"Valid types: {[t.value for t in OptimizerType]}",
+                )
 
+            try:
                 # Create new optimizer config
                 new_config = OptimizerConfig(
                     optimizer_type=optimizer_type,

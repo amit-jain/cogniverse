@@ -138,9 +138,7 @@ class DSPyOptimizerRegistry:
         return cls._optimizer_registry[optimizer_type]
 
     @classmethod
-    def create_optimizer(
-        cls, optimizer_type: OptimizerType, **kwargs
-    ) -> Any:
+    def create_optimizer(cls, optimizer_type: OptimizerType, **kwargs) -> Any:
         """
         Create DSPy optimizer instance.
 
@@ -166,7 +164,9 @@ class DSPyOptimizerRegistry:
             ) from e
 
     @classmethod
-    def register_optimizer(cls, optimizer_type: OptimizerType, optimizer_class: Callable):
+    def register_optimizer(
+        cls, optimizer_type: OptimizerType, optimizer_class: Callable
+    ):
         """
         Register a custom DSPy optimizer type.
 

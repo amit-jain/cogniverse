@@ -2,8 +2,8 @@
 Unit tests for DSPy Module and Optimizer Registries.
 """
 
-import pytest
 import dspy
+import pytest
 
 from src.common.agent_config import DSPyModuleType, OptimizerType
 from src.common.dspy_module_registry import DSPyModuleRegistry, DSPyOptimizerRegistry
@@ -52,9 +52,7 @@ class TestDSPyModuleRegistry:
 
     def test_create_module_predict(self):
         """Test creating Predict module"""
-        module = DSPyModuleRegistry.create_module(
-            DSPyModuleType.PREDICT, TestSignature
-        )
+        module = DSPyModuleRegistry.create_module(DSPyModuleType.PREDICT, TestSignature)
 
         assert isinstance(module, dspy.Predict)
         assert module.signature == TestSignature
@@ -85,7 +83,6 @@ class TestDSPyModuleRegistry:
 
         # Create custom enum value (would need to extend DSPyModuleType)
         # For now, test the register method exists and works with existing enum
-        original_count = len(DSPyModuleRegistry.list_modules())
 
         # Register predict again with custom class
         DSPyModuleRegistry.register_module(DSPyModuleType.PREDICT, CustomModule)
@@ -136,13 +133,8 @@ class TestDSPyOptimizerRegistry:
 
     def test_create_optimizer_bootstrap_few_shot(self):
         """Test creating BootstrapFewShot optimizer"""
-        # Create mock module for optimizer
-        class MockModule(dspy.Module):
-            def forward(self, **kwargs):
-                return dspy.Prediction(**kwargs)
 
-        mock_module = MockModule()
-
+        # Create optimizer without mock module (not needed for this test)
         optimizer = DSPyOptimizerRegistry.create_optimizer(
             OptimizerType.BOOTSTRAP_FEW_SHOT,
             metric=lambda x, y: 1.0,
@@ -159,8 +151,6 @@ class TestDSPyOptimizerRegistry:
         class CustomOptimizer:
             def __init__(self, **kwargs):
                 self.kwargs = kwargs
-
-        original_count = len(DSPyOptimizerRegistry.list_optimizers())
 
         # Register copro again with custom class
         DSPyOptimizerRegistry.register_optimizer(OptimizerType.COPRO, CustomOptimizer)

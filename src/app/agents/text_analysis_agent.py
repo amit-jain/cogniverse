@@ -1,0 +1,168 @@
+"""
+Text Analysis Agent with runtime-configurable DSPy modules.
+Simple agent demonstrating dynamic DSPy configuration and optimization.
+"""
+
+import logging
+from typing import Any, Dict
+
+import dspy
+import uvicorn
+from fastapi import FastAPI
+
+from src.common.a2a_mixin import A2AEndpointsMixin
+from src.common.agent_config import AgentConfig, DSPyModuleType, ModuleConfig
+from src.common.config import get_config
+from src.common.config_api_mixin import ConfigAPIMixin
+from src.common.dynamic_dspy_mixin import DynamicDSPyMixin
+from src.common.health_mixin import HealthCheckMixin
+
+logger = logging.getLogger(__name__)
+
+
+class TextAnalysisSignature(dspy.Signature):
+    """Analyze text content and extract insights"""
+
+    text = dspy.InputField(desc="Text content to analyze")
+    analysis_type = dspy.InputField(
+        desc="Type of analysis: sentiment, summary, entities"
+    )
+
+    result = dspy.OutputField(desc="Analysis result")
+    confidence = dspy.OutputField(desc="Confidence score (0.0-1.0)")
+
+
+class TextAnalysisAgent(
+    DynamicDSPyMixin, ConfigAPIMixin, A2AEndpointsMixin, HealthCheckMixin
+):
+    """
+    Text analysis agent with runtime-configurable DSPy modules.
+    Supports dynamic reconfiguration of modules and optimizers via REST API.
+    """
+
+    def __init__(self):
+        """Initialize text analysis agent with dynamic configuration"""
+        logger.info("Initializing TextAnalysisAgent with dynamic DSPy configuration...")
+
+        self.system_config = get_config()
+
+        # Create agent configuration
+        module_config = ModuleConfig(
+            module_type=DSPyModuleType.PREDICT,
+            signature="TextAnalysisSignature",
+            max_retries=3,
+            temperature=0.7,
+        )
+
+        self.config = AgentConfig(
+            agent_name="text_analysis_agent",
+            agent_version="1.0.0",
+            agent_description="Text analysis with runtime-configurable DSPy modules",
+            agent_url=f"http://localhost:{self.system_config.get('text_analysis_port', 8005)}",
+            capabilities=["text_analysis", "sentiment", "summarization", "entity_extraction"],
+            skills=[
+                {
+                    "name": "analyze_text",
+                    "description": "Analyze text with configurable DSPy module",
+                    "input_types": ["text", "analysis_type"],
+                    "output_types": ["result", "confidence"],
+                }
+            ],
+            module_config=module_config,
+            llm_model=self.system_config.get("llm_model", "gpt-4"),
+            llm_base_url=self.system_config.get("ollama_base_url"),
+            llm_temperature=0.7,
+        )
+
+        # Initialize dynamic DSPy (creates LM, signatures, modules)
+        self.initialize_dynamic_dspy(self.config)
+
+        # Register signatures
+        self.register_signature("text_analysis", TextAnalysisSignature)
+
+        # Set A2A metadata from config
+        self.agent_name = self.config.agent_name
+        self.agent_description = self.config.agent_description
+        self.agent_version = self.config.agent_version
+        self.agent_url = self.config.agent_url
+        self.agent_capabilities = self.config.capabilities
+        self.agent_skills = self.config.skills
+
+        logger.info(
+            f"TextAnalysisAgent initialized with module type: {module_config.module_type.value}"
+        )
+
+    def analyze_text(self, text: str, analysis_type: str = "summary") -> Dict[str, Any]:
+        """
+        Analyze text using dynamically configured DSPy module.
+
+        Args:
+            text: Text content to analyze
+            analysis_type: Type of analysis (sentiment, summary, entities)
+
+        Returns:
+            Analysis result with confidence score
+        """
+        # Get or create module (will use cached if available)
+        module = self.get_or_create_module("text_analysis")
+
+        # Execute analysis
+        result = module(text=text, analysis_type=analysis_type)
+
+        return {
+            "result": result.result,
+            "confidence": float(result.confidence) if result.confidence else 0.0,
+            "module_type": self.config.module_config.module_type.value,
+            "analysis_type": analysis_type,
+        }
+
+
+# Create FastAPI app
+app = FastAPI(
+    title="Text Analysis Agent",
+    description="Text analysis with runtime-configurable DSPy modules",
+    version="1.0.0",
+)
+
+# Initialize agent
+agent = TextAnalysisAgent()
+
+# Setup configuration API endpoints
+agent.setup_config_endpoints(app)
+
+# Setup A2A endpoints
+agent.setup_a2a_endpoints(app)
+
+# Setup health check
+agent.setup_health_endpoint(app)
+
+
+@app.post("/analyze")
+async def analyze_text_endpoint(text: str, analysis_type: str = "summary"):
+    """
+    Analyze text using current DSPy configuration.
+
+    Args:
+        text: Text content to analyze
+        analysis_type: Type of analysis
+
+    Returns:
+        Analysis result
+    """
+    try:
+        result = agent.analyze_text(text, analysis_type)
+        return {"status": "success", "analysis": result}
+    except Exception as e:
+        logger.error(f"Text analysis failed: {e}")
+        raise
+
+
+if __name__ == "__main__":
+    config = get_config()
+    port = config.get("text_analysis_port", 8005)
+
+    logger.info(f"Starting Text Analysis Agent on port {port}")
+    logger.info(f"Configuration API: http://localhost:{port}/config")
+    logger.info(f"Available modules: http://localhost:{port}/config/modules/available")
+
+    uvicorn.run(app, host="0.0.0.0", port=port)
