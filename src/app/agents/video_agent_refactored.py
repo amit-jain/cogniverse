@@ -6,10 +6,10 @@ from typing import Any, Dict, List, Optional
 
 from a2a import A2AMessage, DataPart
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 
 from src.app.search.service import SearchService
 from src.common.config import get_config
+from src.tools.a2a_utils import Task
 
 logger = logging.getLogger(__name__)
 
@@ -18,11 +18,6 @@ app = FastAPI(
     description="Video search agent using unified search architecture",
     version="2.0.0",
 )
-
-
-class Task(BaseModel):
-    id: str
-    messages: List[A2AMessage]
 
 
 class VideoSearchAgent:

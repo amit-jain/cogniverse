@@ -5,29 +5,9 @@ from typing import Any, Dict, List, Union
 import uvicorn
 from elasticsearch import Elasticsearch
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
 from sentence_transformers import SentenceTransformer
 
-
-# --- A2A Protocol Data Models ---
-class TextPart(BaseModel):
-    type: str = Field("text", const=True)
-    text: str
-
-
-class DataPart(BaseModel):
-    type: str = Field("data", const=True)
-    data: Dict[str, Any]
-
-
-class A2AMessage(BaseModel):
-    role: str
-    parts: List[Union[TextPart, DataPart]] = Field(..., discriminator="type")
-
-
-class Task(BaseModel):
-    id: str
-    messages: List[A2AMessage]
+from src.tools.a2a_utils import Task, A2AMessage, TextPart, DataPart
 
 
 # --- Text Search Agent Implementation ---

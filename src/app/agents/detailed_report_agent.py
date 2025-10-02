@@ -12,29 +12,12 @@ from src.app.agents.dspy_integration_mixin import DSPyDetailedReportMixin
 # Enhanced routing support
 from src.app.agents.enhanced_routing_agent import RoutingDecision
 from src.common.config import get_config
+from src.common.vlm_interface import VLMInterface
 from src.tools.a2a_utils import DataPart, Task
 
 logger = logging.getLogger(__name__)
 
 
-class DetailedVisualAnalysisSignature(dspy.Signature):
-    """Analyze visual content for detailed reporting."""
-
-    images = dspy.InputField(desc="Description of images to analyze")
-    query = dspy.InputField(desc="Original search query for context")
-    context = dspy.InputField(desc="Additional context for analysis")
-
-    detailed_descriptions = dspy.OutputField(
-        desc="Detailed visual descriptions (comma-separated)"
-    )
-    technical_analysis = dspy.OutputField(
-        desc="Technical analysis findings (comma-separated)"
-    )
-    visual_patterns = dspy.OutputField(
-        desc="Visual patterns identified (comma-separated)"
-    )
-    quality_score = dspy.OutputField(desc="Overall quality assessment (0.0-1.0)")
-    annotations = dspy.OutputField(desc="Key annotations (comma-separated)")
 
 
 app = FastAPI(
@@ -106,70 +89,6 @@ class ReportResult:
     relationship_analysis: Optional[Dict[str, Any]] = None
     entity_analysis: Optional[Dict[str, Any]] = None
     enhancement_applied: bool = False
-
-
-class VLMInterface:
-    """Interface for Vision Language Model interactions using DSPy"""
-
-    def __init__(self):
-        self.config = get_config()
-        self._initialize_vlm_client()
-
-    def _initialize_vlm_client(self):
-        """Initialize DSPy LM from configuration"""
-        llm_config = self.config.get("llm", {})
-        model_name = llm_config.get("model_name")
-        base_url = llm_config.get("base_url")
-        api_key = llm_config.get("api_key")
-
-        if not all([model_name, base_url]):
-            raise ValueError(
-                "LLM configuration missing: model_name and base_url required"
-            )
-
-        if api_key:
-            dspy.settings.configure(
-                lm=dspy.LM(model=model_name, api_base=base_url, api_key=api_key)
-            )
-        else:
-            dspy.settings.configure(lm=dspy.LM(model=model_name, api_base=base_url))
-
-        logger.info(
-            f"Configured DSPy LM for detailed analysis: {model_name} at {base_url}"
-        )
-
-    async def analyze_visual_content_detailed(
-        self, image_paths: List[str], query: str, context: str = ""
-    ) -> Dict[str, Any]:
-        """Perform detailed visual analysis using DSPy"""
-        visual_analysis = dspy.Predict(DetailedVisualAnalysisSignature)
-
-        image_descriptions = []
-        for image_path in image_paths:
-            image_descriptions.append(f"Image: {image_path}")
-
-        logger.info(f"Analyzing {len(image_paths)} images with detailed VLM analysis")
-
-        result = visual_analysis(
-            images=", ".join(image_descriptions),
-            query=query,
-            context=context or "No additional context",
-        )
-
-        return {
-            "detailed_descriptions": result.detailed_descriptions.split(", "),
-            "technical_analysis": result.technical_analysis.split(", "),
-            "visual_patterns": result.visual_patterns.split(", "),
-            "quality_assessment": {
-                "overall": float(result.quality_score),
-                "clarity": float(result.quality_score),
-                "relevance": float(result.quality_score),
-            },
-            "annotations": [
-                {"element": ann, "confidence": float(result.quality_score)}
-                for ann in result.annotations.split(", ")
-            ],
-        }
 
 
 class DetailedReportAgent(DSPyDetailedReportMixin):
