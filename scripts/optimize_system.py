@@ -3,7 +3,7 @@
 CLI Optimization Tool for Cogniverse Multi-Agent System
 
 This script provides command-line interface for triggering optimization
-of routing, agents, and the overall system as described in OPTIMIZATION_STRATEGY.md
+of routing, agents, and the overall multi-modal system
 
 Usage:
     # Basic optimization with examples
