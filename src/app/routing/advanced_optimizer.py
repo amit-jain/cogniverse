@@ -193,64 +193,59 @@ class AdvancedRoutingOptimizer:
 
     def _initialize_advanced_components(self):
         """Initialize advanced optimization components"""
-        try:
-            # Create routing policy signatures
-            class RoutingPolicySignature(dspy.Signature):
-                """Optimized routing decision based on learned policy"""
+        # Create routing policy signatures
+        class RoutingPolicySignature(dspy.Signature):
+            """Optimized routing decision based on learned policy"""
 
-                query = dspy.InputField(desc="User query to route")
-                entities = dspy.InputField(desc="Extracted entities from query")
-                relationships = dspy.InputField(
-                    desc="Extracted relationships from query"
-                )
-                enhanced_query = dspy.InputField(
-                    desc="Enhanced query with relationship context"
-                )
+            query = dspy.InputField(desc="User query to route")
+            entities = dspy.InputField(desc="Extracted entities from query")
+            relationships = dspy.InputField(
+                desc="Extracted relationships from query"
+            )
+            enhanced_query = dspy.InputField(
+                desc="Enhanced query with relationship context"
+            )
 
-                recommended_agent = dspy.OutputField(desc="Best agent for this query")
-                confidence = dspy.OutputField(
-                    desc="Confidence in routing decision (0-1)"
-                )
-                reasoning = dspy.OutputField(desc="Reasoning for routing choice")
+            recommended_agent = dspy.OutputField(desc="Best agent for this query")
+            confidence = dspy.OutputField(
+                desc="Confidence in routing decision (0-1)"
+            )
+            reasoning = dspy.OutputField(desc="Reasoning for routing choice")
 
-            # Create policy module
-            class OptimizedRoutingPolicy(dspy.Module):
-                def __init__(self):
-                    super().__init__()
-                    self.route = dspy.ChainOfThought(RoutingPolicySignature)
+        # Create policy module
+        class OptimizedRoutingPolicy(dspy.Module):
+            def __init__(self):
+                super().__init__()
+                self.route = dspy.ChainOfThought(RoutingPolicySignature)
 
-                def forward(
-                    self, query, entities=None, relationships=None, enhanced_query=None
-                ):
-                    entities_str = json.dumps(entities or [], default=str)
-                    relationships_str = json.dumps(relationships or [], default=str)
+            def forward(
+                self, query, entities=None, relationships=None, enhanced_query=None
+            ):
+                entities_str = json.dumps(entities or [], default=str)
+                relationships_str = json.dumps(relationships or [], default=str)
 
-                    return self.route(
-                        query=query,
-                        entities=entities_str,
-                        relationships=relationships_str,
-                        enhanced_query=enhanced_query or query,
-                    )
-
-            self.routing_policy = OptimizedRoutingPolicy()
-
-            # Initialize advanced optimizer
-            if len(self.experiences) >= self.config.min_experiences_for_training:
-                self.advanced_optimizer = self._create_advanced_optimizer()
-                logger.info(
-                    "Advanced optimizer initialized with sufficient experience data"
-                )
-            else:
-                logger.info(
-                    f"Need {self.config.min_experiences_for_training - len(self.experiences)} more experiences to start advanced optimization training"
+                return self.route(
+                    query=query,
+                    entities=entities_str,
+                    relationships=relationships_str,
+                    enhanced_query=enhanced_query or query,
                 )
 
-            # Initialize confidence calibrator
-            self._initialize_confidence_calibrator()
+        self.routing_policy = OptimizedRoutingPolicy()
 
-        except Exception as e:
-            logger.error(f"Failed to initialize advanced optimization components: {e}")
-            self.advanced_optimizer = None
+        # Initialize advanced optimizer
+        if len(self.experiences) >= self.config.min_experiences_for_training:
+            self.advanced_optimizer = self._create_advanced_optimizer()
+            logger.info(
+                "Advanced optimizer initialized with sufficient experience data"
+            )
+        else:
+            logger.info(
+                f"Need {self.config.min_experiences_for_training - len(self.experiences)} more experiences to start advanced optimization training"
+            )
+
+        # Initialize confidence calibrator
+        self._initialize_confidence_calibrator()
 
     def _create_advanced_optimizer(self):
         """
@@ -287,7 +282,7 @@ class AdvancedRoutingOptimizer:
                 self.config = config
 
                 # Initialize all advanced optimizers with required parameters
-                self.gepa_optimizer = GEPA(metric=routing_accuracy_metric)
+                self.gepa_optimizer = GEPA(metric=routing_accuracy_metric, auto='light')
                 self.mipro_optimizer = MIPROv2()
                 self.simba_optimizer = SIMBA()
                 self.bootstrap_optimizer = BootstrapFewShot()
