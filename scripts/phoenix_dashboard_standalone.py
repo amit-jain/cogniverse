@@ -29,6 +29,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+# Import config management tab
+from config_management_tab import render_config_management_tab
+
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -482,7 +485,7 @@ async def call_agent_async(agent_url: str, task_data: dict) -> dict:
         return {"status": "error", "message": str(e)}
 
 # Create main tabs
-main_tabs = st.tabs(["📊 Analytics", "🧪 Evaluation", "🗺️ Embedding Atlas", "🎯 Routing Evaluation", "🔄 Orchestration Annotation", "📊 Multi-Modal Performance", "🔧 Optimization", "📥 Ingestion Testing", "🔍 Interactive Search"])
+main_tabs = st.tabs(["📊 Analytics", "🧪 Evaluation", "🗺️ Embedding Atlas", "🎯 Routing Evaluation", "🔄 Orchestration Annotation", "📊 Multi-Modal Performance", "🔧 Optimization", "📥 Ingestion Testing", "🔍 Interactive Search", "⚙️ Configuration"])
 
 # Show agent connectivity status in sidebar
 agent_status = show_agent_status()
@@ -2339,6 +2342,11 @@ with main_tabs[8]:
         st.metric("User Satisfaction", "87%", "5%")
     with col4:
         st.metric("Coverage Rate", "76%", "2%")
+
+# Configuration Tab
+with main_tabs[9]:
+    st.header("⚙️ Configuration Management")
+    render_config_management_tab()
 
 # Auto-refresh logic
 if st.session_state.auto_refresh:
