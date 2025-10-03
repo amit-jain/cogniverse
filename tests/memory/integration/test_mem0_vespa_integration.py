@@ -5,9 +5,10 @@ These tests verify the complete memory system works with real Vespa instance.
 """
 
 import os
+import time
+
 import pytest
 import requests
-import time
 
 from src.common.mem0_memory_manager import Mem0MemoryManager
 
@@ -300,7 +301,7 @@ class TestMem0MemoryAwareMixinIntegration:
         time.sleep(2)
 
         # Search memory
-        context = agent.get_relevant_context("test query")
+        agent.get_relevant_context("test query")
         # May or may not have results depending on semantic match
         # Just verify no errors
 

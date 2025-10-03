@@ -8,20 +8,18 @@ This optimizer implements the design specified in NEW_PROPOSAL.md:
 - Outputs portable prompt artifacts for agent integration
 """
 
-import os
 import json
+import os
 import time
-from typing import List, Dict, Tuple, Optional
 from datetime import datetime
-from pathlib import Path
+from typing import Dict, List, Optional
 
 import dspy
-from dspy.teleprompt import MIPROv2
-import pandas as pd
 from dotenv import load_dotenv
+from dspy.teleprompt import MIPROv2
 
 # Import schemas from the new location
-from .schemas import RoutingDecision, AgenticRouter
+from .schemas import AgenticRouter, RoutingDecision
 
 # Load environment variables
 load_dotenv()

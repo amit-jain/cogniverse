@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 from litellm import arerank, rerank
 
 from src.app.search.multi_modal_reranker import SearchResult
-from src.common.config_utils import get_config
+from src.common.config_utils import get_config_value
 
 logger = logging.getLogger(__name__)
 

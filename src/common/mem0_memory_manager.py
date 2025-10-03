@@ -15,9 +15,6 @@ os.environ["MEM0_TELEMETRY"] = "False"
 from mem0 import Memory
 from mem0.vector_stores.configs import VectorStoreConfig
 
-from src.common.mem0_vespa_store import VespaVectorStore
-from src.common.vespa_memory_config import VespaConfig
-
 logger = logging.getLogger(__name__)
 
 
@@ -25,6 +22,7 @@ logger = logging.getLogger(__name__)
 def _register_vespa_provider():
     """Register Vespa as a supported vector store provider in Mem0"""
     import sys
+
     from mem0.utils.factory import VectorStoreFactory
 
     # Register Vespa config in the provider_configs default dict

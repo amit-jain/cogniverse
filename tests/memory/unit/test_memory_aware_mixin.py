@@ -2,8 +2,9 @@
 Unit tests for MemoryAwareMixin
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from src.app.agents.memory_aware_mixin import MemoryAwareMixin
 

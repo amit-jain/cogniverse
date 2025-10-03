@@ -460,7 +460,7 @@ class RoutingAgent(MemoryAwareMixin, DSPyRoutingMixin):
                         )
                         if success_stored:
                             logger.debug(
-                                f"💾 Stored orchestration decision in memory"
+                                "💾 Stored orchestration decision in memory"
                             )
 
                     return orchestration_result
@@ -586,7 +586,7 @@ class RoutingAgent(MemoryAwareMixin, DSPyRoutingMixin):
                         },
                     )
                     if success_stored:
-                        logger.debug(f"💾 Stored routing decision in memory")
+                        logger.debug("💾 Stored routing decision in memory")
 
                 return result
 
@@ -616,7 +616,7 @@ class RoutingAgent(MemoryAwareMixin, DSPyRoutingMixin):
                         },
                     )
                     if failure_stored:
-                        logger.debug(f"💾 Stored routing failure in memory")
+                        logger.debug("💾 Stored routing failure in memory")
 
                 logger.error(f"Routing analysis failed: {e}")
                 raise

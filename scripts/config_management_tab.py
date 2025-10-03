@@ -7,8 +7,6 @@ Supports multi-tenant configs, versioning, history, and export/import.
 
 import json
 from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import streamlit as st
@@ -97,7 +95,7 @@ def render_system_config_ui(manager, tenant_id: str):
 
     try:
         system_config = manager.get_system_config(tenant_id)
-    except Exception as e:
+    except Exception:
         st.warning(f"No system config found for tenant '{tenant_id}'. Create a new one below.")
         system_config = SystemConfig(tenant_id=tenant_id)
 
@@ -634,7 +632,7 @@ def render_import_export_ui(manager, tenant_id: str):
         include_history = st.checkbox("Include Version History", value=False)
 
     with col2:
-        export_format = st.selectbox("Export Format", options=["JSON"])
+        st.selectbox("Export Format", options=["JSON"])
 
     if st.button("📥 Export Configurations"):
         try:

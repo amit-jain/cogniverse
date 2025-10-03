@@ -4,7 +4,6 @@ Provides unified interface for all configuration operations with caching.
 """
 
 import logging
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 

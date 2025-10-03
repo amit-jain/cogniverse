@@ -12,22 +12,21 @@ Key improvements:
 - Performance metrics collection
 """
 
-import numpy as np
-import jax
-import jax.numpy as jnp
-import threading
-import time
-from typing import Optional, Dict, Any, List, Tuple
-from dataclasses import dataclass
-from contextlib import contextmanager
-from collections import deque
 import logging
-from functools import lru_cache
-from enum import Enum
 
 # Import VideoPrism at module level
 import sys
-from pathlib import Path
+import threading
+import time
+from collections import deque
+from contextlib import contextmanager
+from dataclasses import dataclass
+from enum import Enum
+from functools import lru_cache
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+
 from src.common.config_utils import get_config
 
 # Add VideoPrism to path once at module level
@@ -144,7 +143,7 @@ class CircuitBreaker:
             result = func(*args, **kwargs)
             self._on_success()
             return result
-        except self.expected_exception as e:
+        except self.expected_exception:
             self._on_failure()
             raise
     
@@ -507,7 +506,7 @@ class VideoPrismTextEncoder:
         """Perform health check"""
         try:
             # Test encoding
-            test_embedding = self.encode("health check")
+            self.encode("health check")
             
             return {
                 "status": "healthy",

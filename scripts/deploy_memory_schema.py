@@ -13,8 +13,9 @@ import requests
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.backends.vespa.vespa_schema_manager import VespaSchemaManager
 from vespa.package import ApplicationPackage
+
+from src.backends.vespa.vespa_schema_manager import VespaSchemaManager
 
 
 def create_application_package(vespa_host="localhost", data_port=8080, config_port=19071):

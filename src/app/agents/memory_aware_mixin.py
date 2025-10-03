@@ -6,7 +6,7 @@ Handles context retrieval, memory updates, and lifecycle management.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from src.common.mem0_memory_manager import Mem0MemoryManager
 

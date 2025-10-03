@@ -8,18 +8,14 @@ This module manages datasets in Phoenix for evaluation, enabling:
 - Experiment tracking with metrics
 """
 
-import hashlib
-import json
 import logging
 from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 
 import numpy as np
 import pandas as pd
 import phoenix as px
-from phoenix.experiments import evaluate_experiment, run_experiment
-from phoenix.trace import DocumentEvaluations, SpanEvaluations
+from phoenix.trace import SpanEvaluations
 
 logger = logging.getLogger(__name__)
 

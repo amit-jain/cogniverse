@@ -4,18 +4,20 @@ Based on the VideoPrism repository but implemented locally
 """
 
 import os
+
 # Force CPU backend to avoid Metal issues
 os.environ["JAX_PLATFORM_NAME"] = "cpu"
 os.environ["JAX_PLATFORMS"] = "cpu"
 
 import jax
+
 jax.config.update('jax_platform_name', 'cpu')
+
+import logging
+from typing import Any, Dict
 
 import jax.numpy as jnp
 import numpy as np
-from typing import Dict, Any, Tuple
-import logging
-from huggingface_hub import hf_hub_download
 
 logger = logging.getLogger(__name__)
 

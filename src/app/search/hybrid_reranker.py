@@ -18,7 +18,7 @@ from src.app.search.multi_modal_reranker import (
     QueryModality,
     SearchResult,
 )
-from src.common.config_utils import get_config
+from src.common.config_utils import get_config_value
 
 logger = logging.getLogger(__name__)
 

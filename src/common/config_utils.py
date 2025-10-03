@@ -4,8 +4,7 @@ Provides get_config() helper that wraps ConfigManager for convenient access.
 """
 
 import logging
-import warnings
-from typing import Any, Optional
+from typing import Any
 
 from src.common.config_manager import get_config_manager
 

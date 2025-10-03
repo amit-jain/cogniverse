@@ -10,18 +10,17 @@ This test:
 Run with: pytest tests/memory/integration/test_mem0_complete_e2e.py -v -s
 """
 
-import os
 import subprocess
 import time
+from pathlib import Path
+
 import pytest
 import requests
-from pathlib import Path
 from vespa.package import ApplicationPackage
 
+from src.app.agents.memory_aware_mixin import MemoryAwareMixin
 from src.backends.vespa.vespa_schema_manager import VespaSchemaManager
 from src.common.mem0_memory_manager import Mem0MemoryManager
-from src.app.agents.memory_aware_mixin import MemoryAwareMixin
-
 
 VESPA_CONTAINER_NAME = "vespa-memory-standalone"
 VESPA_DATA_PORT = 8084

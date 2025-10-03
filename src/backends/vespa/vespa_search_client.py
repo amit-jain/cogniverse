@@ -3,14 +3,14 @@ Vespa Search Client for Video Frame Search
 Implements search functionality using the document-per-frame schema
 """
 
-import logging
 import json
-import torch
-import numpy as np
+import logging
 import os
-from typing import List, Dict, Any, Optional, Tuple, Union
 from datetime import datetime
 from enum import Enum
+from typing import Any, Dict, List, Optional, Union
+
+import numpy as np
 from vespa.application import Vespa
 
 
@@ -255,7 +255,7 @@ class VespaVideoSearchClient:
         
         try:
             # Simple query to test connectivity
-            response = self.vespa_app.query(
+            self.vespa_app.query(
                 yql=f"select * from {self.vespa_schema} where true limit 1",
                 hits=1
             )

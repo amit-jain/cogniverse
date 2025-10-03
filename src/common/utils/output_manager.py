@@ -5,6 +5,7 @@ Centralizes all output file handling to prevent pollution of the main directory
 
 from pathlib import Path
 from typing import Optional
+
 from src.common.config_utils import get_config
 
 
@@ -105,7 +106,7 @@ class OutputManager:
     
     def print_structure(self):
         """Print the directory structure"""
-        print(f"\nOutput Directory Structure:")
+        print("\nOutput Directory Structure:")
         print(f"Base: {self.base_dir}")
         for key, subdir in sorted(self.subdirs.items()):
             full_path = self.base_dir / subdir

@@ -413,7 +413,7 @@ class ConfigurableMultiModalReranker:
 
         from src.app.search.hybrid_reranker import HybridReranker
         from src.app.search.learned_reranker import LearnedReranker
-        from src.common.config_utils import get_config
+        from src.common.config_utils import get_config_value
 
         logger = logging.getLogger(__name__)
 
@@ -500,7 +500,7 @@ class ConfigurableMultiModalReranker:
         Returns:
             Dictionary with reranker details
         """
-        from src.common.config_utils import get_config
+        from src.common.config_utils import get_config_value
 
         rerank_config = get_config_value("reranking", {})
 

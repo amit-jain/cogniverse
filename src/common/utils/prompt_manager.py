@@ -7,9 +7,8 @@ Loads artifacts from Modal volumes or local files, with fallback to defaults.
 
 import json
 import os
-from pathlib import Path
-from typing import Dict, List, Optional, Any
-import yaml
+from typing import Any, Dict, Optional
+
 from src.common.config_utils import get_config
 
 

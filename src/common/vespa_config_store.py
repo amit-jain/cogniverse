@@ -9,7 +9,6 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from vespa.application import Vespa
-from vespa.io import VespaQueryResponse
 
 from src.common.config_store_interface import ConfigEntry, ConfigScope, ConfigStore
 
@@ -78,7 +77,7 @@ class VespaConfigStore(ConfigStore):
         """
         # Check if schema exists by attempting a simple query
         try:
-            response = self.vespa_app.query(
+            self.vespa_app.query(
                 yql=f"select * from {self.schema_name} where true limit 1"
             )
             logger.info(f"Vespa schema '{self.schema_name}' is accessible")
@@ -181,7 +180,7 @@ class VespaConfigStore(ConfigStore):
 
         # Feed document to Vespa
         try:
-            response = self.vespa_app.feed_data_point(
+            self.vespa_app.feed_data_point(
                 schema=self.schema_name,
                 data_id=doc_id,
                 fields=fields,
@@ -578,7 +577,7 @@ class VespaConfigStore(ConfigStore):
             True if healthy, False otherwise
         """
         try:
-            response = self.vespa_app.query(
+            self.vespa_app.query(
                 yql=f"select * from {self.schema_name} where true limit 1"
             )
             return True

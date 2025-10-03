@@ -5,15 +5,11 @@ Tests complete flow: ConfigManager → SQLite → ConfigAPIMixin → Hot Reload
 
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
 from src.common.agent_config import AgentConfig, DSPyModuleType, ModuleConfig
 from src.common.config_manager import ConfigManager
-from src.common.config_store import ConfigStore
 from src.common.unified_config import (
     ConfigScope,
     RoutingConfigUnified,

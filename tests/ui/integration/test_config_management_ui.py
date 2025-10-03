@@ -7,7 +7,6 @@ Uses temporary database for isolation.
 
 import json
 import tempfile
-from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -473,13 +472,12 @@ class TestConfigManagementUI:
 
     def test_config_validation_error_handling(self, config_manager):
         """Test error handling for invalid configurations"""
-        tenant_id = "test_tenant"
 
         # Try to create agent config with invalid module type
         # DSPyModuleType enum will reject invalid values at creation time
         with pytest.raises((ValueError, KeyError)):
             # This will fail because "invalid_module_type" is not a valid enum value
-            invalid_module_type = DSPyModuleType("invalid_module_type")
+            DSPyModuleType("invalid_module_type")
 
     def test_agent_config_without_optimizer(self, config_manager):
         """Test creating agent config without optimizer (optional field)"""

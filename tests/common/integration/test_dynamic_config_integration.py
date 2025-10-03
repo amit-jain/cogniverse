@@ -24,6 +24,7 @@ class TestDynamicConfigIntegration:
     def fresh_agent(self):
         """Create fresh TextAnalysisAgent instance with clean config"""
         from fastapi import FastAPI
+
         from src.common.config_manager import ConfigManager
 
         # Reset ConfigManager to ensure clean state

@@ -10,12 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from src.common.agent_config import (
     AgentConfig,
-    DSPyModuleType,
-    ModuleConfig,
-    OptimizerConfig,
-    OptimizerType,
 )
-from src.common.config_store_interface import ConfigScope
 
 logger = logging.getLogger(__name__)
 
