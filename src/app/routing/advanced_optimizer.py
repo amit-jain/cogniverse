@@ -263,12 +263,31 @@ class AdvancedRoutingOptimizer:
         4. Multi-stage optimization with experience-based learning
         """
 
+        def routing_accuracy_metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
+            """
+            Metric for GEPA optimizer to evaluate routing quality.
+            Returns a score between 0 and 1.
+            """
+            try:
+                # Extract predicted and gold agent types
+                pred_agent = getattr(pred, 'agent_type', None) or getattr(pred, 'prediction', None)
+                gold_agent = getattr(gold, 'agent_type', None) or gold.get('agent_type') if isinstance(gold, dict) else None
+
+                # Basic accuracy: 1 if correct, 0 if incorrect
+                if pred_agent == gold_agent:
+                    return 1.0
+                else:
+                    return 0.0
+            except Exception as e:
+                logger.warning(f"Error in routing_accuracy_metric: {e}")
+                return 0.0
+
         class AdvancedMultiStageOptimizer:
             def __init__(self, config: AdvancedOptimizerConfig):
                 self.config = config
 
-                # Initialize all advanced optimizers
-                self.gepa_optimizer = GEPA()
+                # Initialize all advanced optimizers with required parameters
+                self.gepa_optimizer = GEPA(metric=routing_accuracy_metric)
                 self.mipro_optimizer = MIPROv2()
                 self.simba_optimizer = SIMBA()
                 self.bootstrap_optimizer = BootstrapFewShot()
