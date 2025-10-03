@@ -15,7 +15,7 @@ from google.adk.tools import BaseTool
 logger = logging.getLogger(__name__)
 
 # Import our custom utilities
-from src.common.config import get_config
+from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
 from src.tools.a2a_utils import A2AClient, format_search_results
 from src.tools.video_player_tool import VideoPlayerTool
 

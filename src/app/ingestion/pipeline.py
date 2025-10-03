@@ -44,7 +44,7 @@ from src.app.ingestion.strategy_factory import StrategyFactory
 
 # Cache imports removed - using pipeline_cache directly
 from src.common.cache.pipeline_cache import PipelineArtifactCache
-from src.common.config import get_config
+from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
 
 
 class PipelineStep(Enum):

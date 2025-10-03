@@ -15,7 +15,7 @@ from vespa.package import (
     SecondPhaseRanking,
 )
 
-from src.common.config import get_config
+from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
 
 
 class VespaSchemaManager:

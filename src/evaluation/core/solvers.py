@@ -49,7 +49,7 @@ def create_retrieval_solver(
 
         # Import here to avoid circular dependencies
         from src.app.search.service import SearchService
-        from src.common.config import get_config
+        from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
 
         main_config = get_config()
 
@@ -179,7 +179,7 @@ def create_batch_solver(
         if config.get("use_backend_for_ground_truth", False):
             try:
                 from src.app.search.service import SearchService
-                from src.common.config import get_config
+                from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
 
                 main_config = get_config()
                 search_service = SearchService(main_config)

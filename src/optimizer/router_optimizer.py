@@ -5,7 +5,7 @@ This optimizer implements the design specified in NEW_PROPOSAL.md:
 - Uses google/gemma-3-1b-it as the student model
 - Implements unified decision schema with search_modality and generation_type
 - Uses DSPy MIPROv2 for optimization
-- Outputs portable prompt artifacts for integration with Letta/ADK
+- Outputs portable prompt artifacts for agent integration
 """
 
 import os

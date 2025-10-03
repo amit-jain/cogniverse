@@ -39,7 +39,7 @@ def video_search_tool():
             try:
                 from cogniverse_common import get_config
             except ImportError:
-                from src.common.config import get_config
+                from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
 
             config = get_config()
 

@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from src.app.agents.dspy_integration_mixin import DSPyQueryAnalysisMixin
 from src.app.agents.routing_agent import RoutingAgent
-from src.common.config import get_config
+from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
 
 logger = logging.getLogger(__name__)
 

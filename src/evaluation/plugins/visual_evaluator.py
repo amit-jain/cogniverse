@@ -30,7 +30,7 @@ class VisualEvaluatorPlugin:
 
         async def score(state, target=None) -> Score:
             """Score video search results using visual judge."""
-            from src.common.config import get_config
+            from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
             from src.evaluation.evaluators.configurable_visual_judge import (
                 ConfigurableVisualJudge,
             )

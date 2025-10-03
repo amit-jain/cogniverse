@@ -9,7 +9,7 @@ from typing import Any
 from inspect_ai import Task, task
 from inspect_ai.dataset import Dataset, Sample
 
-from src.common.config import get_config
+from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
 
 from .scorers import VideoRetrievalScorer
 from .solvers import (

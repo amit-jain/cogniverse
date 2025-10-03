@@ -17,9 +17,10 @@ from pydantic import BaseModel, Field
 
 # Enhanced query support from DSPy routing system
 from src.app.agents.enhanced_routing_agent import RoutingDecision
+from src.app.agents.memory_aware_mixin import MemoryAwareMixin
 from src.app.agents.query_encoders import QueryEncoderFactory
 from src.backends.vespa.vespa_search_client import VespaVideoSearchClient
-from src.common.config import get_config
+from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
 from src.tools.a2a_utils import DataPart, TextPart
 
 logger = logging.getLogger(__name__)
@@ -249,17 +250,30 @@ class VideoProcessor:
 
 
 # --- Enhanced Video Search Agent ---
-class EnhancedVideoSearchAgent:
+class EnhancedVideoSearchAgent(MemoryAwareMixin):
     """
     Enhanced video search agent supporting both text-to-video and video-to-video search.
+    Enhanced with memory capabilities for learning from search patterns.
     """
 
     def __init__(self, **kwargs):
         """Initialize enhanced video search agent"""
+        super().__init__()  # Initialize MemoryAwareMixin
         logger.info("Initializing EnhancedVideoSearchAgent...")
 
         # Initialize base configuration
         self.config = get_config()
+
+        # Initialize memory for video agent
+        tenant_id = self.config.get("tenant_id", "default")
+        memory_initialized = self.initialize_memory(
+            agent_name="video_agent",
+            tenant_id=tenant_id,
+        )
+        if memory_initialized:
+            logger.info(f"✅ Memory initialized for video_agent (tenant: {tenant_id})")
+        else:
+            logger.info("ℹ️  Memory disabled or not configured for video_agent")
 
         # Check environment variables first, then kwargs, then defaults
         vespa_url = kwargs.get("vespa_url") or os.getenv(
@@ -357,6 +371,12 @@ class EnhancedVideoSearchAgent:
         """
         logger.info(f"Text-to-video search: '{query}' (top_k={top_k})")
 
+        # Retrieve relevant search patterns from memory
+        if self.is_memory_enabled():
+            memory_context = self.get_relevant_context(query, top_k=3)
+            if memory_context:
+                logger.info(f"📚 Retrieved memory context for query: {query[:50]}...")
+
         try:
             # Encode text query
             query_embeddings = self.query_encoder.encode(query)
@@ -378,10 +398,34 @@ class EnhancedVideoSearchAgent:
             results = self.vespa_client.search(search_params, query_embeddings)
 
             logger.info(f"Text search completed: {len(results)} results")
+
+            # Store successful search in memory
+            if self.is_memory_enabled() and results:
+                self.remember_success(
+                    query=query,
+                    result={"result_count": len(results), "top_result": results[0] if results else None},
+                    metadata={
+                        "search_type": "text",
+                        "top_k": top_k,
+                        "ranking": search_params["ranking"],
+                    },
+                )
+                logger.debug("💾 Stored successful text search in memory")
+
             return results
 
         except Exception as e:
             logger.error(f"Text search failed: {e}")
+
+            # Store failure in memory
+            if self.is_memory_enabled():
+                self.remember_failure(
+                    query=query,
+                    error=str(e),
+                    metadata={"search_type": "text", "top_k": top_k},
+                )
+                logger.debug("💾 Stored search failure in memory")
+
             raise
 
     def search_by_video(
@@ -424,10 +468,35 @@ class EnhancedVideoSearchAgent:
             results = self.vespa_client.search(search_params, query_embeddings)
 
             logger.info(f"Video search completed: {len(results)} results")
+
+            # Store successful video search in memory
+            if self.is_memory_enabled() and results:
+                self.remember_success(
+                    query=f"Video: {filename}",
+                    result={"result_count": len(results), "top_result": results[0] if results else None},
+                    metadata={
+                        "search_type": "video",
+                        "filename": filename,
+                        "top_k": top_k,
+                        "ranking": search_params["ranking"],
+                    },
+                )
+                logger.debug("💾 Stored successful video search in memory")
+
             return results
 
         except Exception as e:
             logger.error(f"Video search failed: {e}")
+
+            # Store failure in memory
+            if self.is_memory_enabled():
+                self.remember_failure(
+                    query=f"Video: {filename}",
+                    error=str(e),
+                    metadata={"search_type": "video", "filename": filename, "top_k": top_k},
+                )
+                logger.debug("💾 Stored video search failure in memory")
+
             raise
 
     def search_by_image(
@@ -470,10 +539,35 @@ class EnhancedVideoSearchAgent:
             results = self.vespa_client.search(search_params, query_embeddings)
 
             logger.info(f"Image search completed: {len(results)} results")
+
+            # Store successful image search in memory
+            if self.is_memory_enabled() and results:
+                self.remember_success(
+                    query=f"Image: {filename}",
+                    result={"result_count": len(results), "top_result": results[0] if results else None},
+                    metadata={
+                        "search_type": "image",
+                        "filename": filename,
+                        "top_k": top_k,
+                        "ranking": search_params["ranking"],
+                    },
+                )
+                logger.debug("💾 Stored successful image search in memory")
+
             return results
 
         except Exception as e:
             logger.error(f"Image search failed: {e}")
+
+            # Store failure in memory
+            if self.is_memory_enabled():
+                self.remember_failure(
+                    query=f"Image: {filename}",
+                    error=str(e),
+                    metadata={"search_type": "image", "filename": filename, "top_k": top_k},
+                )
+                logger.debug("💾 Stored image search failure in memory")
+
             raise
 
     def process_enhanced_task(self, task: EnhancedTask) -> Dict[str, Any]:

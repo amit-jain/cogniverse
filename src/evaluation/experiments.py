@@ -17,7 +17,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace import set_tracer_provider
 from phoenix.experiments import run_experiment
 
-from src.common.config import get_config
+from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
 from tests.comprehensive_video_query_test_v2 import VISUAL_TEST_QUERIES
 
 from .evaluators.golden_dataset import create_low_scoring_golden_dataset

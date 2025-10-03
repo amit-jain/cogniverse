@@ -1,33 +1,51 @@
 """
 Shared configuration management for Cogniverse.
 
-This is the common config module that can be used by any Cogniverse component.
+DEPRECATED: This module is deprecated in favor of ConfigManager.
+Use src.common.config_manager.get_config_manager() instead.
+
+Kept for backward compatibility during migration.
 """
 
 import os
 import json
+import warnings
 from typing import Dict, Any, Optional
 from pathlib import Path
 import logging
 
 logger = logging.getLogger(__name__)
 
+# Migration warning
+warnings.warn(
+    "src.common.config is deprecated. Use ConfigManager instead:\n"
+    "  from src.common.config_manager import get_config_manager\n"
+    "  config_manager = get_config_manager()\n"
+    "  system_config = config_manager.get_system_config('default')",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 
 class Config:
-    """Singleton configuration manager."""
-    
+    """
+    Singleton configuration manager.
+
+    DEPRECATED: Use ConfigManager instead.
+    """
+
     _instance = None
     _initialized = False
-    
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(Config, cls).__new__(cls)
         return cls._instance
-    
+
     def __init__(self):
         if self._initialized:
             return
-            
+
         self.config_data = {}
         self.config_path = None
         self.load_config()

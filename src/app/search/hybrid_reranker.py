@@ -18,7 +18,7 @@ from src.app.search.multi_modal_reranker import (
     QueryModality,
     SearchResult,
 )
-from src.common.config import get_config_value
+from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager_value
 
 logger = logging.getLogger(__name__)
 

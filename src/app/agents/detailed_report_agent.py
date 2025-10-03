@@ -12,7 +12,7 @@ from src.app.agents.dspy_integration_mixin import DSPyDetailedReportMixin
 # Enhanced routing support
 from src.app.agents.enhanced_routing_agent import RoutingDecision
 from src.common.a2a_mixin import A2AEndpointsMixin
-from src.common.config import get_config
+from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
 from src.common.health_mixin import HealthCheckMixin
 from src.common.vlm_interface import VLMInterface
 from src.tools.a2a_utils import DataPart, Task

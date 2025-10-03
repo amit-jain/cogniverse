@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 import dspy
 
 from src.app.agents.dspy_a2a_agent_base import DSPyA2AAgentBase
+from src.app.agents.memory_aware_mixin import MemoryAwareMixin
 from src.app.agents.query_encoders import ColPaliQueryEncoder
 from src.common.models.model_loaders import get_or_load_model
 
@@ -37,9 +38,10 @@ class DocumentResult:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
-class DocumentAgent(DSPyA2AAgentBase):
+class DocumentAgent(MemoryAwareMixin, DSPyA2AAgentBase):
     """
     Document analysis and search with dual strategy support
+    Enhanced with memory capabilities for learning from search patterns.
 
     Implements both:
     - ColPali visual document understanding (page-as-image)
@@ -53,6 +55,7 @@ class DocumentAgent(DSPyA2AAgentBase):
         vespa_endpoint: str = "http://localhost:8080",
         colpali_model: str = "vidore/colsmol-500m",
         port: int = 8007,
+        tenant_id: str = "default",
     ):
         """
         Initialize Document Agent with dual strategy support
@@ -61,7 +64,11 @@ class DocumentAgent(DSPyA2AAgentBase):
             vespa_endpoint: Vespa endpoint URL
             colpali_model: ColPali model for visual strategy
             port: A2A server port
+            tenant_id: Tenant identifier for multi-tenancy
         """
+
+        # Initialize memory mixin first
+        MemoryAwareMixin.__init__(self)
 
         # Create DSPy module
         class DocumentSearchSignature(dspy.Signature):
@@ -81,7 +88,8 @@ class DocumentAgent(DSPyA2AAgentBase):
                 )
 
         # Initialize A2A base
-        super().__init__(
+        DSPyA2AAgentBase.__init__(
+            self,
             agent_name="DocumentAgent",
             agent_description="Document search with visual and text strategies",
             dspy_module=DocumentSearchModule(),
@@ -94,6 +102,16 @@ class DocumentAgent(DSPyA2AAgentBase):
             port=port,
             version="1.0.0",
         )
+
+        # Initialize memory for document agent
+        memory_initialized = self.initialize_memory(
+            agent_name="document_agent",
+            tenant_id=tenant_id,
+        )
+        if memory_initialized:
+            logger.info(f"✅ Memory initialized for document_agent (tenant: {tenant_id})")
+        else:
+            logger.info("ℹ️  Memory disabled or not configured for document_agent")
 
         self._vespa_endpoint = vespa_endpoint
         self._colpali_model_name = colpali_model
@@ -166,6 +184,12 @@ class DocumentAgent(DSPyA2AAgentBase):
         """
         logger.info(f"🔍 Searching documents: query='{query}', strategy={strategy}")
 
+        # Retrieve relevant search patterns from memory
+        if self.is_memory_enabled():
+            memory_context = self.get_relevant_context(query, top_k=3)
+            if memory_context:
+                logger.info(f"📚 Retrieved memory context for query: {query[:50]}...")
+
         # Auto-select strategy if needed
         if strategy == "auto":
             strategy = self._select_strategy(query)
@@ -183,10 +207,33 @@ class DocumentAgent(DSPyA2AAgentBase):
                 results = await self._search_hybrid(query, limit)
 
             logger.info(f"✅ Found {len(results)} document results")
+
+            # Store successful search in memory
+            if self.is_memory_enabled() and results:
+                self.remember_success(
+                    query=query,
+                    result={"result_count": len(results), "strategy": strategy, "top_result": results[0].title if results else None},
+                    metadata={
+                        "search_strategy": strategy,
+                        "limit": limit,
+                    },
+                )
+                logger.debug("💾 Stored successful document search in memory")
+
             return results
 
         except Exception as e:
             logger.error(f"❌ Document search failed: {e}")
+
+            # Store failure in memory
+            if self.is_memory_enabled():
+                self.remember_failure(
+                    query=query,
+                    error=str(e),
+                    metadata={"search_strategy": strategy, "limit": limit},
+                )
+                logger.debug("💾 Stored document search failure in memory")
+
             return []
 
     def _select_strategy(self, query: str) -> str:

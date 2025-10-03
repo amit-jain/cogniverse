@@ -11,7 +11,7 @@ import torch
 
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent.parent))
-from src.common.config import get_config
+from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
 from src.common.models import get_or_load_model
 
 logger = logging.getLogger(__name__)

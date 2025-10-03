@@ -22,12 +22,29 @@ class TestDynamicConfigIntegration:
 
     @pytest.fixture
     def fresh_agent(self):
-        """Create fresh TextAnalysisAgent instance"""
+        """Create fresh TextAnalysisAgent instance with clean config"""
         from fastapi import FastAPI
+        from src.common.config_manager import ConfigManager
+
+        # Reset ConfigManager to ensure clean state
+        ConfigManager._instance = None
+        ConfigManager._db_path = None
+
         fresh_app = FastAPI()
         with patch("dspy.LM"):
             agent = TextAnalysisAgent()
-            agent.setup_config_endpoints(fresh_app)
+
+            # Reset to default PREDICT module for consistent tests
+            from src.common.agent_config import DSPyModuleType, ModuleConfig
+            default_module_config = ModuleConfig(
+                module_type=DSPyModuleType.PREDICT,
+                signature="TextAnalysisSignature",
+                max_retries=3,
+                temperature=0.7,
+            )
+            agent.update_module_config(default_module_config)
+
+            agent.setup_config_endpoints(fresh_app, tenant_id=agent.tenant_id)
         return agent, fresh_app
 
     def test_agent_initialization_with_dynamic_dspy(self, fresh_agent):
@@ -41,7 +58,7 @@ class TestDynamicConfigIntegration:
         # Verify signature registered
         assert "text_analysis" in agent._signatures
 
-        # Verify initial configuration
+        # Verify configuration (reset to PREDICT in fixture)
         assert agent.agent_config.module_config.module_type == DSPyModuleType.PREDICT
 
     def test_agent_initialization_with_config_api(self, fresh_agent):
@@ -60,8 +77,11 @@ class TestDynamicConfigIntegration:
         assert data["config"]["agent_name"] == "text_analysis_agent"
         assert data["config"]["agent_version"] == "1.0.0"
 
-    def test_get_module_config_returns_module_info(self, client):
+    def test_get_module_config_returns_module_info(self, fresh_agent):
         """Test GET /config/module returns current module configuration"""
+        agent, fresh_app = fresh_agent
+        client = TestClient(fresh_app)
+
         response = client.get("/config/module")
 
         assert response.status_code == 200

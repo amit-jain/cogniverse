@@ -195,7 +195,7 @@ class VespaVideoSearchClient:
         import sys
         from pathlib import Path
         sys.path.append(str(Path(__file__).parent.parent.parent.parent))
-        from src.common.config import get_config
+        from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
         self.config = get_config()
         # Get schema from environment or config (required)
         self.vespa_schema = os.environ.get("VESPA_SCHEMA") or self.config.get("schema_name")

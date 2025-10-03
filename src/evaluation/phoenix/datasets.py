@@ -285,7 +285,7 @@ class PhoenixExperimentRunner:
         
         # Run experiment for each configuration
         from src.app.search.service import SearchService
-        from src.common.config import get_config
+        from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
         
         config = get_config()
         results = []

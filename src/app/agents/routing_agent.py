@@ -12,6 +12,7 @@ from opentelemetry.trace import Status, StatusCode
 from pydantic import BaseModel
 
 from src.app.agents.dspy_integration_mixin import DSPyRoutingMixin
+from src.app.agents.memory_aware_mixin import MemoryAwareMixin
 from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
 from src.app.routing.advanced_optimizer import (
     AdvancedRoutingOptimizer,
@@ -41,7 +42,7 @@ from src.app.telemetry.config import (
 )
 from src.app.telemetry.manager import TelemetryManager
 from src.app.telemetry.modality_metrics import ModalityMetricsTracker
-from src.common.config import get_config
+from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -63,15 +64,27 @@ class RoutingDecisionResponse(BaseModel):
     status: str
 
 
-class RoutingAgent(DSPyRoutingMixin):
+class RoutingAgent(MemoryAwareMixin, DSPyRoutingMixin):
     """
     Main routing agent that analyzes queries and determines appropriate agent workflows.
+    Enhanced with memory capabilities for learning from past routing decisions.
     """
 
     def __init__(self, config_path: Optional[str] = None):
         """Initialize routing agent with configuration"""
-        super().__init__()  # Initialize DSPy mixin
+        super().__init__()  # Initialize both mixins (MemoryAwareMixin, DSPyRoutingMixin)
         self.system_config = get_config()
+
+        # Initialize memory for routing agent
+        tenant_id = self.system_config.get("tenant_id", "default")
+        memory_initialized = self.initialize_memory(
+            agent_name="routing_agent",
+            tenant_id=tenant_id,
+        )
+        if memory_initialized:
+            logger.info(f"✅ Memory initialized for routing_agent (tenant: {tenant_id})")
+        else:
+            logger.info("ℹ️  Memory disabled or not configured for routing_agent")
 
         # Load routing configuration
         if config_path:
@@ -304,6 +317,21 @@ class RoutingAgent(DSPyRoutingMixin):
 
                 parent_span.set_attribute("cache.hit", False)
 
+                # Phase 6: Retrieve relevant routing context from memory
+                memory_context = None
+                if self.is_memory_enabled():
+                    memory_context = self.get_relevant_context(query, top_k=3)
+                    if memory_context:
+                        parent_span.set_attribute("memory.context_retrieved", True)
+                        parent_span.set_attribute(
+                            "memory.context_length", len(memory_context)
+                        )
+                        logger.info(
+                            f"📚 Retrieved memory context for query: {query[:50]}..."
+                        )
+                    else:
+                        parent_span.set_attribute("memory.context_retrieved", False)
+
                 # Phase 10 Step 1: Expand query for multi-modal search
                 query_expansion = await self.query_expander.expand_query(query)
                 modality_intent = query_expansion["modality_intent"]
@@ -342,12 +370,14 @@ class RoutingAgent(DSPyRoutingMixin):
                     )
 
                 # Step 2: Get routing decision from comprehensive router
-                # Enrich context with expanded query information
+                # Enrich context with expanded query information and memory
                 enriched_context = context.copy() if context else {}
                 enriched_context["query_expansion"] = query_expansion
                 enriched_context["modality_intent"] = modality_intent
                 if fusion_recommendation:
                     enriched_context["fusion_recommendation"] = fusion_recommendation
+                if memory_context:
+                    enriched_context["memory_context"] = memory_context
 
                 # Phase 11: Try modality-specific routing model if available
                 modality_prediction = None
@@ -412,6 +442,26 @@ class RoutingAgent(DSPyRoutingMixin):
                     self.metrics_tracker.record_modality_execution(
                         cache_modality, execution_time * 1000, True, None
                     )
+
+                    # Phase 6: Store successful orchestration in memory
+                    if self.is_memory_enabled():
+                        success_stored = self.remember_success(
+                            query=query,
+                            result=orchestration_result,
+                            metadata={
+                                "orchestration_pattern": routing_decision.orchestration_pattern,
+                                "primary_agent": routing_decision.primary_agent,
+                                "secondary_agents": routing_decision.secondary_agents,
+                                "execution_time": execution_time,
+                                "workflow_id": orchestration_result.get(
+                                    "workflow_id", ""
+                                ),
+                            },
+                        )
+                        if success_stored:
+                            logger.debug(
+                                f"💾 Stored orchestration decision in memory"
+                            )
 
                     return orchestration_result
 
@@ -522,6 +572,22 @@ class RoutingAgent(DSPyRoutingMixin):
                     cache_modality, execution_time * 1000, True, None
                 )
 
+                # Phase 6: Store successful routing decision in memory
+                if self.is_memory_enabled():
+                    success_stored = self.remember_success(
+                        query=query,
+                        result=result,
+                        metadata={
+                            "primary_agent": primary_agent,
+                            "confidence": routing_decision.confidence_score,
+                            "modalities": modality_intent,
+                            "execution_time": execution_time,
+                            "workflow_type": workflow_plan["type"],
+                        },
+                    )
+                    if success_stored:
+                        logger.debug(f"💾 Stored routing decision in memory")
+
                 return result
 
             except Exception as e:
@@ -538,6 +604,19 @@ class RoutingAgent(DSPyRoutingMixin):
                 # Mark parent span as failed and record exception
                 parent_span.set_status(Status(StatusCode.ERROR, str(e)))
                 parent_span.record_exception(e)
+
+                # Phase 6: Store routing failure in memory
+                if self.is_memory_enabled():
+                    failure_stored = self.remember_failure(
+                        query=query,
+                        error=str(e),
+                        metadata={
+                            "execution_time": execution_time,
+                            "error_type": type(e).__name__,
+                        },
+                    )
+                    if failure_stored:
+                        logger.debug(f"💾 Stored routing failure in memory")
 
                 logger.error(f"Routing analysis failed: {e}")
                 raise

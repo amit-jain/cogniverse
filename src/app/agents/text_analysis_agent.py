@@ -12,8 +12,9 @@ from fastapi import FastAPI
 
 from src.common.a2a_mixin import A2AEndpointsMixin
 from src.common.agent_config import AgentConfig, DSPyModuleType, ModuleConfig
-from src.common.config import get_config
+from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
 from src.common.config_api_mixin import ConfigAPIMixin
+from src.common.config_manager import get_config_manager
 from src.common.dynamic_dspy_mixin import DynamicDSPyMixin
 from src.common.health_mixin import HealthCheckMixin
 
@@ -40,39 +41,65 @@ class TextAnalysisAgent(
     Supports dynamic reconfiguration of modules and optimizers via REST API.
     """
 
-    def __init__(self):
-        """Initialize text analysis agent with dynamic configuration"""
+    def __init__(self, tenant_id: str = "default"):
+        """
+        Initialize text analysis agent with dynamic configuration.
+
+        Args:
+            tenant_id: Tenant identifier for multi-tenant configuration
+        """
         logger.info("Initializing TextAnalysisAgent with dynamic DSPy configuration...")
 
+        self.tenant_id = tenant_id
         self.system_config = get_config()
+        config_manager = get_config_manager()
 
-        # Create agent configuration
-        module_config = ModuleConfig(
-            module_type=DSPyModuleType.PREDICT,
-            signature="TextAnalysisSignature",
-            max_retries=3,
-            temperature=0.7,
+        # Try to load persisted agent config from ConfigManager
+        self.config = config_manager.get_agent_config(
+            tenant_id=tenant_id,
+            agent_name="text_analysis_agent"
         )
 
-        self.config = AgentConfig(
-            agent_name="text_analysis_agent",
-            agent_version="1.0.0",
-            agent_description="Text analysis with runtime-configurable DSPy modules",
-            agent_url=f"http://localhost:{self.system_config.get('text_analysis_port', 8005)}",
-            capabilities=["text_analysis", "sentiment", "summarization", "entity_extraction"],
-            skills=[
-                {
-                    "name": "analyze_text",
-                    "description": "Analyze text with configurable DSPy module",
-                    "input_types": ["text", "analysis_type"],
-                    "output_types": ["result", "confidence"],
-                }
-            ],
-            module_config=module_config,
-            llm_model=self.system_config.get("llm_model", "gpt-4"),
-            llm_base_url=self.system_config.get("ollama_base_url"),
-            llm_temperature=0.7,
-        )
+        if self.config is None:
+            # No persisted config - create default and persist
+            logger.info(f"No persisted config for {tenant_id}:text_analysis_agent, creating default")
+
+            module_config = ModuleConfig(
+                module_type=DSPyModuleType.PREDICT,
+                signature="TextAnalysisSignature",
+                max_retries=3,
+                temperature=0.7,
+            )
+
+            self.config = AgentConfig(
+                agent_name="text_analysis_agent",
+                agent_version="1.0.0",
+                agent_description="Text analysis with runtime-configurable DSPy modules",
+                agent_url=f"http://localhost:{self.system_config.get('text_analysis_port', 8005)}",
+                capabilities=["text_analysis", "sentiment", "summarization", "entity_extraction"],
+                skills=[
+                    {
+                        "name": "analyze_text",
+                        "description": "Analyze text with configurable DSPy module",
+                        "input_types": ["text", "analysis_type"],
+                        "output_types": ["result", "confidence"],
+                    }
+                ],
+                module_config=module_config,
+                llm_model=self.system_config.get("llm_model", "gpt-4"),
+                llm_base_url=self.system_config.get("ollama_base_url"),
+                llm_temperature=0.7,
+            )
+
+            # Persist default config
+            config_manager.set_agent_config(
+                tenant_id=tenant_id,
+                agent_name="text_analysis_agent",
+                agent_config=self.config
+            )
+            logger.info(f"Persisted default config for {tenant_id}:text_analysis_agent")
+        else:
+            logger.info(f"Loaded persisted config for {tenant_id}:text_analysis_agent")
 
         # Initialize dynamic DSPy (creates LM, signatures, modules)
         self.initialize_dynamic_dspy(self.config)
@@ -89,7 +116,7 @@ class TextAnalysisAgent(
         self.agent_skills = self.config.skills
 
         logger.info(
-            f"TextAnalysisAgent initialized with module type: {module_config.module_type.value}"
+            f"TextAnalysisAgent initialized with module type: {self.config.module_config.module_type.value}"
         )
 
     def analyze_text(self, text: str, analysis_type: str = "summary") -> Dict[str, Any]:
@@ -127,8 +154,8 @@ app = FastAPI(
 # Initialize agent
 agent = TextAnalysisAgent()
 
-# Setup configuration API endpoints
-agent.setup_config_endpoints(app)
+# Setup configuration API endpoints with tenant support
+agent.setup_config_endpoints(app, tenant_id=agent.tenant_id)
 
 # Setup A2A endpoints
 agent.setup_a2a_endpoints(app)

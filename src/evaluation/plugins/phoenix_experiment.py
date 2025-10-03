@@ -49,7 +49,7 @@ class PhoenixExperimentPlugin:
 
             # Import search service
             from src.app.search.service import SearchService
-            from src.common.config import get_config
+            from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
 
             main_config = get_config()
             all_results = {}

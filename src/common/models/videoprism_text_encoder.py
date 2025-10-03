@@ -28,7 +28,7 @@ from enum import Enum
 # Import VideoPrism at module level
 import sys
 from pathlib import Path
-from src.common.config import get_config
+from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
 
 # Add VideoPrism to path once at module level
 config = get_config()
