@@ -1,9 +1,9 @@
 """
-Mixin providing REST API endpoints for dynamic agent configuration.
+Mixin providing REST API endpoints for dynamic agent configuration with persistence.
 """
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
 from pydantic import BaseModel
@@ -14,6 +14,7 @@ from src.common.agent_config import (
     OptimizerConfig,
     OptimizerType,
 )
+from src.common.config_manager import get_config_manager
 
 logger = logging.getLogger(__name__)
 
@@ -53,12 +54,18 @@ class LLMConfigUpdate(BaseModel):
 
 class ConfigAPIMixin:
     """
-    Mixin providing REST API endpoints for runtime agent configuration.
+    Mixin providing REST API endpoints for runtime agent configuration with persistence.
 
     Requires:
         - self.agent_config: AgentConfig instance
         - self.update_module_config(ModuleConfig): method
         - self.update_optimizer_config(OptimizerConfig): method
+
+    Features:
+        - All config changes persist to SQLite via ConfigManager
+        - Supports multi-tenant configuration (tenant_id parameter)
+        - Version tracking for all changes
+        - Hot reload without restart
 
     Usage:
         class MyAgent(DynamicDSPyMixin, ConfigAPIMixin):
@@ -70,13 +77,15 @@ class ConfigAPIMixin:
                 self.setup_config_endpoints(app)
     """
 
-    def setup_config_endpoints(self, app):
+    def setup_config_endpoints(self, app, tenant_id: str = "default"):
         """
         Setup configuration API endpoints on FastAPI app.
 
         Args:
             app: FastAPI application instance
+            tenant_id: Tenant identifier for config persistence
         """
+        self._config_tenant_id = tenant_id
 
         @app.get("/config")
         async def get_config():
@@ -105,8 +114,8 @@ class ConfigAPIMixin:
             }
 
         @app.post("/config/module")
-        async def update_module_config_endpoint(request: ModuleConfigUpdate):
-            """Update module configuration at runtime"""
+        async def update_module_config_endpoint(request: ModuleConfigUpdate, tenant_id: Optional[str] = None):
+            """Update module configuration at runtime with persistence"""
             # Validate module type
             try:
                 module_type = DSPyModuleType(request.module_type)
@@ -128,12 +137,25 @@ class ConfigAPIMixin:
                     custom_params=request.custom_params,
                 )
 
-                # Update agent configuration
+                # Update in-memory configuration
                 self.update_module_config(new_config)
+
+                # Persist to ConfigManager
+                config_manager = get_config_manager()
+                effective_tenant_id = tenant_id or self._config_tenant_id
+                config_manager.set_agent_config(
+                    tenant_id=effective_tenant_id,
+                    agent_name=self.agent_config.agent_name,
+                    agent_config=self.agent_config,
+                )
+
+                logger.info(
+                    f"Persisted module config for {effective_tenant_id}:{self.agent_config.agent_name}"
+                )
 
                 return {
                     "status": "success",
-                    "message": f"Module configuration updated to {module_type.value}",
+                    "message": f"Module configuration updated to {module_type.value} and persisted",
                     "module_info": self.get_module_info(),
                 }
 
@@ -155,8 +177,8 @@ class ConfigAPIMixin:
             }
 
         @app.post("/config/optimizer")
-        async def update_optimizer_config_endpoint(request: OptimizerConfigUpdate):
-            """Update optimizer configuration at runtime"""
+        async def update_optimizer_config_endpoint(request: OptimizerConfigUpdate, tenant_id: Optional[str] = None):
+            """Update optimizer configuration at runtime with persistence"""
             # Validate optimizer type
             try:
                 optimizer_type = OptimizerType(request.optimizer_type)
@@ -179,12 +201,25 @@ class ConfigAPIMixin:
                     custom_params=request.custom_params,
                 )
 
-                # Update agent configuration
+                # Update in-memory configuration
                 self.update_optimizer_config(new_config)
+
+                # Persist to ConfigManager
+                config_manager = get_config_manager()
+                effective_tenant_id = tenant_id or self._config_tenant_id
+                config_manager.set_agent_config(
+                    tenant_id=effective_tenant_id,
+                    agent_name=self.agent_config.agent_name,
+                    agent_config=self.agent_config,
+                )
+
+                logger.info(
+                    f"Persisted optimizer config for {effective_tenant_id}:{self.agent_config.agent_name}"
+                )
 
                 return {
                     "status": "success",
-                    "message": f"Optimizer configuration updated to {optimizer_type.value}",
+                    "message": f"Optimizer configuration updated to {optimizer_type.value} and persisted",
                     "optimizer_info": self.get_optimizer_info(),
                 }
 
@@ -193,8 +228,8 @@ class ConfigAPIMixin:
                 raise HTTPException(status_code=500, detail=str(e))
 
         @app.post("/config/llm")
-        async def update_llm_config_endpoint(request: LLMConfigUpdate):
-            """Update LLM configuration at runtime"""
+        async def update_llm_config_endpoint(request: LLMConfigUpdate, tenant_id: Optional[str] = None):
+            """Update LLM configuration at runtime with persistence"""
             try:
                 # Update LLM config fields if provided
                 if request.llm_model:
@@ -211,9 +246,22 @@ class ConfigAPIMixin:
                 # Reconfigure DSPy LM
                 self._configure_dspy_lm(self.agent_config)
 
+                # Persist to ConfigManager
+                config_manager = get_config_manager()
+                effective_tenant_id = tenant_id or self._config_tenant_id
+                config_manager.set_agent_config(
+                    tenant_id=effective_tenant_id,
+                    agent_name=self.agent_config.agent_name,
+                    agent_config=self.agent_config,
+                )
+
+                logger.info(
+                    f"Persisted LLM config for {effective_tenant_id}:{self.agent_config.agent_name}"
+                )
+
                 return {
                     "status": "success",
-                    "message": "LLM configuration updated",
+                    "message": "LLM configuration updated and persisted",
                     "llm_config": {
                         "model": self.agent_config.llm_model,
                         "base_url": self.agent_config.llm_base_url,
