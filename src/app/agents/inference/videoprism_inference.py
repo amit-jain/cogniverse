@@ -73,7 +73,7 @@ class VideoPrismInference:
             # Try to import from the reference implementation
             import sys
 
-            from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
+            from src.common.config_utils import get_config
 
             config = get_config()
             videoprism_path = config.get("videoprism_repo_path")

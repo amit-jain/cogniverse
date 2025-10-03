@@ -1,6 +1,6 @@
 """
-Compatibility layer for migrating from old config.py to ConfigManager.
-Provides backward-compatible get_config() that uses ConfigManager.
+Configuration utilities for accessing ConfigManager with dict-like interface.
+Provides get_config() helper that wraps ConfigManager for convenient access.
 """
 
 import logging
@@ -12,11 +12,11 @@ from src.common.config_manager import get_config_manager
 logger = logging.getLogger(__name__)
 
 
-class ConfigCompat:
+class ConfigUtils:
     """
-    Backward-compatible config wrapper that delegates to ConfigManager.
+    Config utility wrapper that provides dict-like access to ConfigManager.
 
-    Mimics the old Config class interface while using ConfigManager backend.
+    Provides convenient .get() interface while using ConfigManager backend.
     """
 
     def __init__(self, tenant_id: str = "default"):
@@ -43,9 +43,9 @@ class ConfigCompat:
 
     def get(self, key: str, default: Any = None) -> Any:
         """
-        Get config value by key (backward compatible with old Config.get()).
+        Get config value by key with dict-like interface.
 
-        Maps old config keys to new ConfigManager structure.
+        Maps config keys to ConfigManager structure.
         """
         self._ensure_system_config()
         self._ensure_routing_config()
@@ -68,8 +68,7 @@ class ConfigCompat:
             "elasticsearch_url": lambda: self._system_config.elasticsearch_url,
             "llm_model": lambda: self._system_config.llm_model,
             "local_llm_model": lambda: self._system_config.llm_model,  # Alias
-            "base_url": lambda: self._system_config.ollama_base_url,
-            "ollama_base_url": lambda: self._system_config.ollama_base_url,
+            "base_url": lambda: self._system_config.base_url,
             "llm_api_key": lambda: self._system_config.llm_api_key,
             "phoenix_url": lambda: self._system_config.phoenix_url,
             "phoenix_collector_endpoint": lambda: self._system_config.phoenix_collector_endpoint,
@@ -106,34 +105,22 @@ class ConfigCompat:
         return default
 
 
-def get_config(tenant_id: str = "default") -> ConfigCompat:
+def get_config(tenant_id: str = "default") -> ConfigUtils:
     """
-    Get backward-compatible config wrapper.
-
-    DEPRECATED: Use ConfigManager directly instead.
+    Get config utility wrapper for dict-like access.
 
     Args:
         tenant_id: Tenant identifier
 
     Returns:
-        ConfigCompat instance that delegates to ConfigManager
+        ConfigUtils instance that delegates to ConfigManager
     """
-    warnings.warn(
-        "get_config() is deprecated. Use ConfigManager directly:\n"
-        "  from src.common.config_manager import get_config_manager\n"
-        "  config_manager = get_config_manager()\n"
-        "  system_config = config_manager.get_system_config('default')",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return ConfigCompat(tenant_id)
+    return ConfigUtils(tenant_id)
 
 
 def get_config_value(key: str, default: Any = None, tenant_id: str = "default") -> Any:
     """
     Get single config value by key.
-
-    DEPRECATED: Use ConfigManager directly instead.
 
     Args:
         key: Configuration key
@@ -143,10 +130,5 @@ def get_config_value(key: str, default: Any = None, tenant_id: str = "default") 
     Returns:
         Configuration value
     """
-    warnings.warn(
-        "get_config_value() is deprecated. Use ConfigManager directly.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    config = ConfigCompat(tenant_id)
+    config = ConfigUtils(tenant_id)
     return config.get(key, default)

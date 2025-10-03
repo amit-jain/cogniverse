@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from src.common.agent_models import AgentEndpoint
-from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
+from src.common.config_utils import get_config
 from src.tools.a2a_utils import A2AClient
 
 logger = logging.getLogger(__name__)

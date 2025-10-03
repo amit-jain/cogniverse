@@ -10,7 +10,7 @@ import requests
 from phoenix.experiments.evaluators.base import Evaluator
 from phoenix.experiments.types import EvaluationResult
 
-from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
+from src.common.config_utils import get_config
 
 logger = logging.getLogger(__name__)
 

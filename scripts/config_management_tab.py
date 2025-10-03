@@ -157,9 +157,9 @@ def render_system_config_ui(manager, tenant_id: str):
             llm_model = st.text_input("LLM Model", value=system_config.llm_model)
 
         with col2:
-            ollama_base_url = st.text_input(
-                "Ollama Base URL",
-                value=system_config.ollama_base_url,
+            base_url = st.text_input(
+                "LLM Base URL",
+                value=system_config.base_url,
             )
 
         with col3:
@@ -206,7 +206,7 @@ def render_system_config_ui(manager, tenant_id: str):
                 vespa_url=vespa_url,
                 vespa_port=vespa_port,
                 llm_model=llm_model,
-                ollama_base_url=ollama_base_url,
+                base_url=base_url,
                 llm_api_key=llm_api_key if llm_api_key else None,
                 phoenix_url=phoenix_url,
                 phoenix_collector_endpoint=phoenix_collector_endpoint,

@@ -14,7 +14,7 @@ from src.app.agents.enhanced_result_aggregator import (
 )
 from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent, RoutingDecision
 from src.backends.vespa.vespa_search_client import VespaVideoSearchClient
-from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
+from src.common.config_utils import get_config
 
 logger = logging.getLogger(__name__)
 

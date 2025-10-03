@@ -12,7 +12,7 @@ from fastapi import FastAPI
 
 from src.common.a2a_mixin import A2AEndpointsMixin
 from src.common.agent_config import AgentConfig, DSPyModuleType, ModuleConfig
-from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
+from src.common.config_utils import get_config
 from src.common.config_api_mixin import ConfigAPIMixin
 from src.common.config_manager import get_config_manager
 from src.common.dynamic_dspy_mixin import DynamicDSPyMixin

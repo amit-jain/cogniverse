@@ -42,7 +42,7 @@ from src.app.telemetry.config import (
 )
 from src.app.telemetry.manager import TelemetryManager
 from src.app.telemetry.modality_metrics import ModalityMetricsTracker
-from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
+from src.common.config_utils import get_config
 
 logger = logging.getLogger(__name__)
 

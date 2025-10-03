@@ -51,7 +51,7 @@ class SystemConfig:
 
     # LLM configuration
     llm_model: str = "gpt-4"
-    ollama_base_url: str = "http://localhost:11434"
+    base_url: str = "http://localhost:11434"
     llm_api_key: Optional[str] = None
 
     # Phoenix/Telemetry
@@ -79,7 +79,7 @@ class SystemConfig:
             "vespa_port": self.vespa_port,
             "elasticsearch_url": self.elasticsearch_url,
             "llm_model": self.llm_model,
-            "ollama_base_url": self.ollama_base_url,
+            "base_url": self.base_url,
             "llm_api_key": "***" if self.llm_api_key else None,
             "phoenix_url": self.phoenix_url,
             "phoenix_collector_endpoint": self.phoenix_collector_endpoint,
@@ -107,7 +107,7 @@ class SystemConfig:
             vespa_port=data.get("vespa_port", 8080),
             elasticsearch_url=data.get("elasticsearch_url"),
             llm_model=data.get("llm_model", "gpt-4"),
-            ollama_base_url=data.get("ollama_base_url", "http://localhost:11434"),
+            base_url=data.get("base_url", "http://localhost:11434"),
             llm_api_key=data.get("llm_api_key"),
             phoenix_url=data.get("phoenix_url", "http://localhost:6006"),
             phoenix_collector_endpoint=data.get(

@@ -8,7 +8,7 @@ from a2a import DataPart
 from fastapi import FastAPI, HTTPException
 
 from src.app.search.service import SearchService
-from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
+from src.common.config_utils import get_config
 from src.tools.a2a_utils import Task
 
 logger = logging.getLogger(__name__)

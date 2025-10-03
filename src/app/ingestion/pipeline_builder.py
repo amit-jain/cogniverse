@@ -9,7 +9,7 @@ without complex constructor parameters.
 from pathlib import Path
 from typing import Any
 
-from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
+from src.common.config_utils import get_config
 
 from .pipeline import PipelineConfig, VideoIngestionPipeline
 

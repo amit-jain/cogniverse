@@ -20,7 +20,7 @@ from src.app.agents.enhanced_routing_agent import RoutingDecision
 from src.app.agents.memory_aware_mixin import MemoryAwareMixin
 from src.app.agents.query_encoders import QueryEncoderFactory
 from src.backends.vespa.vespa_search_client import VespaVideoSearchClient
-from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
+from src.common.config_utils import get_config
 from src.tools.a2a_utils import DataPart, TextPart
 
 logger = logging.getLogger(__name__)

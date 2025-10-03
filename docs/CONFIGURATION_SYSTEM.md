@@ -271,15 +271,16 @@ class CustomConfigStore(ConfigStore):
 
 ## Migration from Old Config System
 
-All files have been migrated to use `config_compat.py` which provides backward compatibility while delegating to ConfigManager:
+All files have been migrated to use `config_utils.py` which provides dict-like access while delegating to ConfigManager:
 
 ```python
-# Old way (deprecated but still works)
-from src.common.config_compat import get_config  # Shows deprecation warning
+# Convenient dict-like access
+from src.common.config_utils import get_config
 config = get_config()
 llm_model = config.get("llm_model")
+base_url = config.get("base_url")
 
-# New way (recommended)
+# Direct ConfigManager access (type-safe)
 from src.common.config_manager import get_config_manager
 manager = get_config_manager()
 system_config = manager.get_system_config()
@@ -327,7 +328,7 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/common/integration/ -v
 - `src/common/vespa_config_store.py` - VespaConfigStore implementation
 - `src/common/config_manager.py` - Centralized manager
 - `src/common/unified_config.py` - Configuration schemas
-- `src/common/config_compat.py` - Backward compatibility layer
+- `src/common/config_utils.py` - Convenience wrapper for dict-like access
 
 ### Schemas
 - `schemas/config_metadata.sd` - Vespa schema for config storage

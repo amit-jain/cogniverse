@@ -5,7 +5,7 @@ Centralizes all output file handling to prevent pollution of the main directory
 
 from pathlib import Path
 from typing import Optional
-from src.common.config_compat import get_config  # DEPRECATED: Migrate to ConfigManager
+from src.common.config_utils import get_config
 
 
 class OutputManager:
