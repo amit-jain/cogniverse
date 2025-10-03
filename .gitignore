@@ -81,4 +81,5 @@ configs/schemas/ranking_strategies.json
 # Ideas folder (future implementations)
 ideas/
 docs/internal/
+docs/plan/
 coverage_*.xml
