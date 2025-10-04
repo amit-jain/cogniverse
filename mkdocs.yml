@@ -1,0 +1,229 @@
+site_name: Cogniverse
+site_description: Multi-Agent System for Multi-Modal Content with Automated Optimization and Evaluation
+site_author: Cogniverse Team
+site_url: https://cogniverse.github.io/cogniverse/
+repo_name: cogniverse/cogniverse
+repo_url: https://github.com/cogniverse/cogniverse
+edit_uri: edit/main/docs/
+
+# Copyright
+copyright: Copyright &copy; 2024-2025 Cogniverse Team
+
+# Theme Configuration
+theme:
+  name: material
+
+  # Theme Features
+  features:
+    # Navigation
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+
+    # Table of Contents
+    - toc.follow
+    - toc.integrate
+
+    # Search
+    - search.suggest
+    - search.highlight
+    - search.share
+
+    # Code
+    - content.code.copy
+    - content.code.annotate
+
+    # Content
+    - content.tabs.link
+    - content.tooltips
+    - content.action.edit
+    - content.action.view
+
+    # Header
+    - header.autohide
+
+    # Instant loading
+    - instant
+    - instant.progress
+
+  # Color Palette
+  palette:
+    # Light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+
+    # Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+  # Font
+  font:
+    text: Roboto
+    code: Roboto Mono
+
+  # Icons
+  icon:
+    logo: material/video-box
+    repo: fontawesome/brands/github
+    edit: material/pencil
+    view: material/eye
+
+  # Language
+  language: en
+
+# Plugins
+plugins:
+  - search:
+      separator: '[\s\-\.]'
+      lang:
+        - en
+  - minify:
+      minify_html: true
+  - git-revision-date-localized:
+      enable_creation_date: true
+      type: timeago
+  - tags
+
+# Markdown Extensions
+markdown_extensions:
+  # Python Extensions
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+      toc_depth: 3
+
+  # Python Markdown Extensions
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      combine_header_slug: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+# Extra CSS and JavaScript
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+# Social Links
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/cogniverse
+      name: GitHub
+    - icon: fontawesome/brands/docker
+      link: https://hub.docker.com/r/cogniverse
+      name: Docker Hub
+
+  # Version Provider
+  version:
+    provider: mike
+    default: stable
+
+  # Analytics (optional - add your tracking ID)
+  # analytics:
+  #   provider: google
+  #   property: G-XXXXXXXXXX
+
+# Page Navigation
+nav:
+  - Home: index.md
+
+  - Architecture:
+    - Overview: architecture.md
+    - Multi-Agent System: agent-orchestration.md
+    - Multi-Tenant: multi-tenant-system.md
+    - Schema-Driven Flow: architecture/schema_driven_flow.md
+    - Caching Strategy: architecture/caching_strategy.md
+    - Code Flow Examples: architecture/code_flow_examples.md
+
+  - System Components:
+    - System Flows: system-flows.md
+    - Memory System: memory-system.md
+    - Optimization Framework: optimization-system.md
+    - Configuration System: CONFIGURATION_SYSTEM.md
+    - Performance Targets: PERFORMANCE_TARGETS.md
+
+  - Deployment & Operations:
+    - Deployment Guide: deployment.md
+    - Modal VLM Deployment: modal/deploy_modal_vlm.md
+    - Modal GPU Guide: modal/gpu_recommendations.md
+    - Detailed Setup: setup/detailed_setup.md
+
+  - Observability:
+    - Phoenix Integration: phoenix-integration.md
+    - Evaluation Framework: evaluation.md
+
+  - Module Documentation:
+    - modules/index.md
+    - Agents: modules/agents/README.md
+    - Ingestion Pipeline: modules/ingestion/README.md
+    - Routing System: modules/routing/README.md
+    - Embedding Generator: modules/ingestion/embeddings/README.md
+    - Remote Inference: modules/ingestion/embeddings/remote-inference.md
+    - Vespa Backend: modules/backends/vespa.md
+    - Cache System: modules/cache/README.md
+    - Cache Design: modules/cache/design.md
+    - Evaluation Framework: modules/evaluation/README.md
+
+  - Testing:
+    - Search Client Testing: testing/search_client_testing.md
+    - Vespa Search Strategies: testing/vespa_search_strategies.md
+
+# Validation
+validation:
+  nav:
+    omitted_files: info
+    not_found: warn
+    absolute_links: info
+  links:
+    not_found: ignore
+    absolute_links: ignore
+    unrecognized_links: info

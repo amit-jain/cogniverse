@@ -1,8 +1,8 @@
-# Agent Orchestration & A2A Protocol
+# Multi-Agent Orchestration & A2A Protocol
 
 ## Overview
 
-Cogniverse uses a **multi-agent orchestration system** where specialized agents coordinate through the **Agent-to-Agent (A2A) communication protocol**. Agents can work sequentially, in parallel, or hierarchically to handle complex queries.
+Cogniverse is a **true multi-modal system** that uses specialized agents for each content type (video, audio, images, text, documents). These agents coordinate through the **Agent-to-Agent (A2A) communication protocol** to handle complex, multi-modal queries. The system intelligently routes queries to the appropriate agents based on content type and user requirements.
 
 ## Multi-Agent Coordination
 
@@ -61,23 +61,59 @@ routing_result = routing_agent.route_query(
 # }
 ```
 
-### 2. Video Search Agent
+### 2. Specialized Search Agents
 
+The system includes multiple specialized agents for different modalities:
+
+#### Video Search Agent
 **Purpose**: Execute video searches using ColPali/VideoPrism models
 
 **Capabilities**:
 - Semantic video search
 - Temporal filtering
-- Multi-modal queries
-- Ranking strategy selection
+- Frame-based and chunk-based search
+- Multiple ranking strategies
+
+#### Image Search Agent
+**Purpose**: Visual content search and retrieval
+
+**Capabilities**:
+- Image similarity search
+- Visual feature matching
+- Multi-vector embeddings
+
+#### Audio Analysis Agent
+**Purpose**: Audio content processing and search
+
+**Capabilities**:
+- Audio transcription search
+- Speaker identification
+- Temporal audio segments
+
+#### Text Analysis Agent
+**Purpose**: Document and text content analysis
+
+**Capabilities**:
+- Semantic text search
+- Document summarization
+- Text extraction and analysis
 
 **Example Usage**:
 ```python
+# The routing agent determines which specialized agent to use
 from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
+from src.app.agents.text_analysis_agent import TextAnalysisAgent
+from src.app.agents.audio_analysis_agent import AudioAnalysisAgent
+from src.app.agents.image_search_agent import ImageSearchAgent
 
+# Routing agent selects appropriate agent based on query
 video_agent = EnhancedVideoSearchAgent.from_config()
+text_agent = TextAnalysisAgent.from_config()
+audio_agent = AudioAnalysisAgent.from_config()
+image_agent = ImageSearchAgent.from_config()
 
-search_result = video_agent.search(
+# Example: Search video content
+video_result = video_agent.search(
     query="machine learning tutorial",
     temporal_filter={"start": "2025-09-26", "end": "2025-10-03"},
     ranking_strategy="hybrid_float_bm25",

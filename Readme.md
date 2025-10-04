@@ -1,10 +1,10 @@
-# Cogniverse - Multi-Agent Video Search System
+# Cogniverse - Multi-Agent System for Multi-Modal Content
 
-Production-ready multi-agent orchestration system for video content analysis and search, powered by DSPy optimization and state-of-the-art embedding models (ColPali, VideoPrism, ColQwen).
+Production-ready multi-agent system for multi-modal content analysis and search with automated optimization and evaluation, supporting video, audio, images, and text processing.
 
 ## 🎯 Key Features
 
-- **Multi-Agent Architecture**: ADK-based composing agent orchestrating specialized video search agents
+- **Multi-Agent Architecture**: A2A protocol-based orchestration of specialized agents for different content types
 - **Advanced Embeddings**: ColPali frame-level, VideoPrism global, and ColQwen multi-modal embeddings
 - **DSPy Optimization**: GEPA experience-guided optimization with Bootstrap, SIMBA, and MIPRO fallbacks
 - **Multi-Tenant Support**: Complete tenant isolation with schema-per-tenant Vespa deployment

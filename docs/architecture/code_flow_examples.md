@@ -94,7 +94,8 @@ curl -X POST http://localhost:8000/api/v1/search \
 ```python
 # 1. Composing Agent receives request
 from src.app.agents.composing_agent import ComposingAgent
-from src.app.agents.video_search_agent import VideoSearchAgent
+from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
+from src.app.agents.text_analysis_agent import TextAnalysisAgent
 
 composing_agent = ComposingAgent()
 
@@ -107,12 +108,12 @@ with telemetry.span("agent.route", tenant_id) as span:
         query="machine learning tutorial",
         tenant_id=tenant_id
     )
-    # Decision: RoutingTier.BALANCED
+    # Decision: Route to video agent for tutorial content
 
 # 4. Orchestrate agents via A2A protocol
 from src.app.agents.a2a_protocol import A2AMessage, MessageType
 
-# Create search message
+# Create search message for video agent
 search_msg = A2AMessage(
     type=MessageType.REQUEST,
     source="composing_agent",
@@ -125,7 +126,7 @@ search_msg = A2AMessage(
 )
 
 # 5. Video Search Agent executes search
-video_agent = VideoSearchAgent()
+video_agent = EnhancedVideoSearchAgent()
 results = await video_agent.search(
     query=search_msg.payload["query"],
     tenant_id=tenant_id,
@@ -210,7 +211,7 @@ else:
 from src.memory.mem0_manager import Mem0Manager
 from src.app.agents.memory_aware_mixin import MemoryAwareMixin
 
-class MemoryAwareVideoAgent(VideoSearchAgent, MemoryAwareMixin):
+class MemoryAwareVideoAgent(EnhancedVideoSearchAgent, MemoryAwareMixin):
     def __init__(self):
         super().__init__()
         self.memory = Mem0Manager()

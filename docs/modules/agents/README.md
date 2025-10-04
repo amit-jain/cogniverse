@@ -874,7 +874,7 @@ class DSPyAgentOptimizerPipeline:
 
 ## Testing
 
-The multi-agent system includes comprehensive testing at multiple levels. See [Testing Documentation](../../tests/README.md) for complete details.
+The multi-agent system includes comprehensive testing at multiple levels. See [Testing Documentation](../../../tests/README.md) for complete details.
 
 ### Quick Test Commands
 
@@ -1026,10 +1026,10 @@ print(f"System Health: {health}")
 
 ## Related Documentation
 
-- [Testing Guide](../../tests/README.md) - Comprehensive testing documentation
-- [E2E Testing Guide](../../tests/agents/e2e/README.md) - Real integration testing
-- [DSPy Integration](./dspy_agent_optimizer.py) - DSPy optimization implementation  
-- [A2A Protocol](../../../tools/a2a_utils.py) - Agent communication utilities
-- [Video Search](./enhanced_video_search_agent.py) - Video search capabilities
+- [Testing Guide](../../../tests/README.md) - Comprehensive testing documentation
+- [E2E Testing Guide](../../../tests/agents/e2e/README.md) - Real integration testing
+- [DSPy Integration](../../../src/app/agents/dspy_agent_optimizer.py) - DSPy optimization implementation
+- [A2A Protocol](../../../src/tools/a2a_utils.py) - Agent communication utilities
+- [Video Search](../../../src/app/agents/enhanced_video_search_agent.py) - Video search capabilities
 
 For more examples and advanced usage, see the test files in `tests/agents/` and example scripts in `scripts/`.

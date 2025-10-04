@@ -1,0 +1,163 @@
+/* Custom styles for Cogniverse documentation */
+
+/* Hero section styling */
+.md-typeset h1 {
+  font-weight: 700;
+  margin: 0 0 1rem;
+}
+
+.md-typeset h2 {
+  font-weight: 600;
+  border-bottom: 2px solid var(--md-primary-fg-color);
+  padding-bottom: .5rem;
+}
+
+/* Grid cards for feature sections */
+.md-typeset .grid.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1rem;
+  margin: 2rem 0;
+}
+
+.md-typeset .grid.cards > ul {
+  display: contents;
+}
+
+.md-typeset .grid.cards > ul > li {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: .5rem;
+  padding: 1rem;
+  transition: all .3s;
+}
+
+.md-typeset .grid.cards > ul > li:hover {
+  box-shadow: 0 4px 8px rgba(0,0,0,.1);
+  transform: translateY(-2px);
+}
+
+/* Code block improvements */
+.md-typeset pre > code {
+  font-size: .85rem;
+  line-height: 1.6;
+}
+
+/* Button styling */
+.md-button {
+  display: inline-block;
+  padding: .625rem 1.25rem;
+  font-weight: 500;
+  text-decoration: none;
+  border-radius: .25rem;
+  transition: all .3s;
+  margin: .25rem;
+}
+
+.md-button--primary {
+  background-color: var(--md-primary-fg-color);
+  color: var(--md-primary-bg-color);
+}
+
+.md-button--primary:hover {
+  background-color: var(--md-primary-fg-color--dark);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0,0,0,.2);
+}
+
+/* Mermaid diagram styling */
+.mermaid {
+  text-align: center;
+}
+
+/* Admonition styling */
+.md-typeset .admonition {
+  font-size: .9rem;
+}
+
+/* Table improvements */
+.md-typeset table {
+  font-size: .9rem;
+}
+
+.md-typeset table th {
+  background-color: var(--md-primary-fg-color);
+  color: var(--md-primary-bg-color);
+}
+
+/* Navigation tabs */
+.md-tabs__link {
+  font-weight: 500;
+}
+
+/* Search styling */
+.md-search__input {
+  background-color: var(--md-default-bg-color);
+}
+
+/* Footer styling */
+.md-footer-meta {
+  background-color: var(--md-footer-bg-color);
+}
+
+/* Responsive improvements */
+@media screen and (max-width: 768px) {
+  .md-typeset .grid.cards {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Dark mode adjustments */
+[data-md-color-scheme="slate"] {
+  .md-typeset .grid.cards > ul > li {
+    background-color: var(--md-code-bg-color);
+    border-color: var(--md-default-fg-color--lightest);
+  }
+
+  .md-typeset table th {
+    background-color: var(--md-primary-fg-color--light);
+  }
+}
+
+/* Animation for page transitions */
+.md-content__inner {
+  animation: fadeIn .5s ease-in;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Custom icon colors */
+.md-typeset .material-icons {
+  color: var(--md-primary-fg-color);
+  vertical-align: middle;
+}
+
+/* Version selector styling */
+.md-version__current {
+  font-weight: 600;
+}
+
+/* Announcement banner */
+.md-banner {
+  background: linear-gradient(90deg, var(--md-primary-fg-color), var(--md-accent-fg-color));
+  color: white;
+}
+
+/* Copy button for code blocks */
+.md-clipboard {
+  transition: all .3s;
+}
+
+.md-clipboard:hover {
+  color: var(--md-accent-fg-color);
+}

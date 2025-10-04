@@ -106,7 +106,7 @@ Memory ID: mem_123
 
 Memory ID: mem_456
 ├── user_id: "acme"                    (same tenant)
-├── agent_id: "video_search_agent"     (different agent)
+├── agent_id: "multi_modal_agent"      (different agent)
 ├── text: "Preferred strategy: hybrid"
 └── embedding: [0.45, -0.21, ...]
 
@@ -544,7 +544,7 @@ result2 = routing_agent.route_query("show machine learning content")
 ### Example 2: Video Search Agent Learning Preferences
 
 ```python
-from src.app.agents.video_search_agent import EnhancedVideoSearchAgent
+from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
 
 agent = EnhancedVideoSearchAgent(tenant_id="acme")
 

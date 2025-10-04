@@ -83,3 +83,6 @@ ideas/
 docs/internal/
 docs/plan/
 coverage_*.xml
+
+# MkDocs generated site
+site/
