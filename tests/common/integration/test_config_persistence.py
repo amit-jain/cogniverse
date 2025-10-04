@@ -11,7 +11,6 @@ import pytest
 from src.common.agent_config import AgentConfig, DSPyModuleType, ModuleConfig
 from src.common.config_manager import ConfigManager
 from src.common.unified_config import (
-    ConfigScope,
     RoutingConfigUnified,
     SystemConfig,
     TelemetryConfigUnified,
@@ -158,7 +157,7 @@ class TestConfigPersistence:
         store = config_manager.store
         entry = store.get_config(
             tenant_id="test_tenant",
-            scope=ConfigScope.SYSTEM,
+            scope="system",  # Use string instead of removed ConfigScope enum
             service="system",
             config_key="system_config",
         )

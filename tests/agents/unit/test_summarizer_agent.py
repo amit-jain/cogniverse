@@ -12,7 +12,6 @@ from src.app.agents.summarizer_agent import (
     SummaryRequest,
     SummaryResult,
     ThinkingPhase,
-    VisualAnalysisSignature,
     VLMInterface,
 )
 from src.tools.a2a_utils import A2AMessage, DataPart, Task
@@ -41,25 +40,14 @@ class TestSummaryGenerationSignature:
 
 
 @pytest.mark.unit
+@pytest.mark.skip(reason="VisualAnalysisSignature class removed - test needs update")
 class TestVisualAnalysisSignature:
     """Test DSPy signature for visual analysis"""
 
     @pytest.mark.ci_fast
     def test_signature_structure(self):
         """Test that the visual analysis signature has correct structure"""
-        signature = VisualAnalysisSignature
-
-        # Check that signature exists and has proper docstring (used by DSPy)
-        assert signature is not None
-        assert hasattr(signature, "__doc__")
-        assert "Analyze visual content" in signature.__doc__
-
-        # Test that we can reference the signature (validates DSPy structure)
-        try:
-            str(signature)
-            assert True
-        except Exception:
-            pytest.fail("DSPy VisualAnalysisSignature structure is invalid")
+        pytest.skip("VisualAnalysisSignature class removed")
 
 
 @pytest.mark.unit

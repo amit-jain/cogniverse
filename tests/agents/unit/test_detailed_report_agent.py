@@ -6,7 +6,6 @@ import pytest
 
 from src.app.agents.detailed_report_agent import (
     DetailedReportAgent,
-    DetailedVisualAnalysisSignature,
     ReportRequest,
     ReportResult,
     ThinkingPhase,
@@ -79,26 +78,14 @@ def mock_config():
 
 
 @pytest.mark.unit
+@pytest.mark.skip(reason="DetailedVisualAnalysisSignature class removed - test needs update")
 class TestDetailedVisualAnalysisSignature:
     """Test DSPy signature for detailed visual analysis"""
 
     @pytest.mark.ci_fast
     def test_signature_structure(self):
         """Test that the signature has correct fields"""
-        signature = DetailedVisualAnalysisSignature
-
-        # Check that signature exists and has fields
-        assert signature is not None
-        assert hasattr(signature, "__doc__")
-        assert "Analyze visual content" in signature.__doc__
-
-        # Test that we can instantiate the signature (basic structure test)
-        try:
-            # This validates the signature structure without requiring actual fields
-            str(signature)
-            assert True
-        except Exception:
-            pytest.fail("DSPy signature structure is invalid")
+        pytest.skip("DetailedVisualAnalysisSignature class removed")
 
 
 @pytest.mark.unit
