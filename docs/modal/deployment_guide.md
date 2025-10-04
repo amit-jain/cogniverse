@@ -1,355 +1,439 @@
-# Modal Deployment Guide - New Architecture
+# Modal Deployment Guide - Multi-Agent System
 
-Complete guide for deploying the provider-agnostic Agentic Router system using the new unified architecture.
+Complete guide for deploying LLMs and VLMs on Modal for the Cogniverse multi-agent video search system.
 
-## 🎯 Architecture Overview
+## 🎯 Overview
 
-The new system uses a **provider-agnostic architecture** with a single orchestrator and unified inference service:
+Modal provides serverless GPU infrastructure for:
+- **DSPy Optimization**: Teacher/student models for Bootstrap, SIMBA, MIPRO, GEPA optimizers
+- **Video Processing**: VLMs for frame description generation during ingestion
+- **Embedding Models**: ColPali, VideoPrism, ColQwen for video embeddings
+- **Agent LLMs**: Deploy agent models on GPUs instead of local Ollama
 
+## 🚀 Use Cases in Cogniverse
+
+### 1. DSPy Optimization (Teacher/Student)
+
+Our routing optimizer uses teacher/student patterns:
+
+```python
+# GEPA Optimizer with teacher/student
+from src.routing.gepa_optimizer import GEPAOptimizer
+
+optimizer = GEPAOptimizer(
+    teacher_model="claude-3-opus",  # API or Modal
+    student_model="gemma-7b",       # Modal deployment
+    experience_buffer=buffer
+)
+
+# Bootstrap/SIMBA/MIPRO also use teacher/student
+from dspy import BootstrapFewShot, SIMBA, MIPRO
+
+# Teacher generates examples, student learns routing
+bootstrap = BootstrapFewShot(
+    teacher_model=gpt4_model,    # Strong teacher
+    student_model=modal_gemma,   # Efficient student on Modal
+)
 ```
-New Architecture:
-├── src/optimizer/orchestrator.py     # Handles all optimization (teacher + student)
-├── src/inference/modal_inference_service.py  # General-purpose Modal service
-├── scripts/run_optimization.py       # Complete automated workflow
-└── config.json                       # Unified configuration
+
+### 2. VLM for Video Processing
+
+Deploy Qwen2-VL or LLaVA for frame descriptions:
+
+```python
+# Modal VLM for frame descriptions
+from scripts.modal_vlm_service import VLMModel
+
+vlm = VLMModel()
+description = vlm.generate_description(frame_image)
 ```
 
-**Key Benefits:**
-- ✅ **Single deployment** instead of multiple services
-- ✅ **Provider abstractions** - easy to switch between Modal/Ollama/APIs
-- ✅ **Unified configuration** in config.json
-- ✅ **Automatic artifact management** via Modal volumes
-- ✅ **Complete automation** with one script
-- ✅ **Cost optimization** - Serverless, pay per request
-- ✅ **Auto-scaling** - Handle traffic spikes automatically
+### 3. Embedding Models
 
-## 🚀 Quick Deployment (Recommended)
+Deploy heavy embedding models on Modal GPUs:
 
-### 1. Setup Configuration
+```python
+# ColPali on Modal instead of local
+from src.embeddings.modal_colpali import ModalColPali
+
+colpali = ModalColPali(endpoint="modal://colpali-deployment")
+embeddings = await colpali.encode_frames(frames)
+```
+
+## 📦 Modal Deployments
+
+### DSPy Optimizer Deployment
+
+```python
+# src/modal/dspy_optimizer_service.py
+import modal
+
+app = modal.App("cogniverse-dspy-optimizer")
+
+@app.cls(
+    gpu="A10G",
+    image=modal.Image.debian_slim()
+        .pip_install("dspy-ai", "torch", "transformers")
+)
+class DSPyOptimizerService:
+    def __init__(self):
+        # Load student model (Gemma, Llama, etc.)
+        self.student_model = load_model("google/gemma-7b")
+
+    @modal.method()
+    def optimize_routing(self,
+                        teacher_examples: list,
+                        routing_data: dict) -> dict:
+        """Run DSPy optimization with teacher examples"""
+        # Bootstrap, SIMBA, MIPRO, or GEPA optimization
+        optimizer = self.select_optimizer(len(teacher_examples))
+        return optimizer.compile(
+            student=self.student_model,
+            trainset=teacher_examples
+        )
+```
+
+Deploy:
+```bash
+modal deploy src/modal/dspy_optimizer_service.py
+```
+
+### VLM Service Deployment
+
+```python
+# scripts/modal_vlm_service.py (existing)
+import modal
+
+app = modal.App("cogniverse-vlm")
+
+@app.cls(
+    gpu="L40S",  # or T4 for cost savings
+    image=modal.Image.debian_slim()
+        .pip_install("transformers", "qwen-vl-utils")
+)
+class VLMModel:
+    def __init__(self):
+        self.model = AutoModelForVision2Seq.from_pretrained(
+            "Qwen/Qwen2-VL-7B-Instruct"
+        )
+
+    @modal.method()
+    def generate_description(self, image_base64: str) -> str:
+        """Generate description for video frame"""
+        return self.model.generate(image_base64)
+```
+
+### Embedding Model Deployment
+
+```python
+# src/modal/embedding_service.py
+import modal
+
+app = modal.App("cogniverse-embeddings")
+
+@app.cls(
+    gpu="A10G",
+    image=modal.Image.debian_slim()
+        .pip_install("colpali", "videopris", "torch")
+)
+class EmbeddingService:
+    def __init__(self):
+        self.colpali = ColPali.from_pretrained("vidore/colpali-v1.2")
+        self.videoprism = VideoPrism.from_pretrained("google/videoprism-base")
+
+    @modal.method()
+    def encode_frames(self, frames: list, model: str = "colpali") -> np.array:
+        """Generate embeddings for video frames"""
+        if model == "colpali":
+            return self.colpali.encode(frames)
+        elif model == "videoprism":
+            return self.videoprism.encode(frames)
+```
+
+## 🔧 Integration with Cogniverse
+
+### Configuration
+
+Update `configs/config.json`:
+
 ```json
 {
   "optimization": {
-    "enabled": true,
-    "type": "dspy",
-    "teacher": {
-      "model": "claude-3-5-sonnet-20241022",
-      "provider": "anthropic"
-    },
-    "student": {
-      "model": "google/gemma-3-1b-it",
-      "provider": "modal"
-    },
-    "providers": {
-      "modal": {
-        "gpu_config": "A10G",
-        "memory_mb": 16000
+    "dspy": {
+      "teacher": {
+        "provider": "anthropic",
+        "model": "claude-3-opus"
       },
-      "anthropic": {
-        "api_key_env": "ANTHROPIC_API_KEY"
+      "student": {
+        "provider": "modal",
+        "endpoint": "https://username--cogniverse-dspy-optimizer.modal.run",
+        "model": "gemma-7b"
       }
+    }
+  },
+  "ingestion": {
+    "vlm": {
+      "provider": "modal",
+      "endpoint": "https://username--cogniverse-vlm.modal.run"
+    },
+    "embeddings": {
+      "provider": "modal",
+      "endpoint": "https://username--cogniverse-embeddings.modal.run"
     }
   }
 }
 ```
 
-### 2. Set Modal Secrets
-```bash
-modal secret create anthropic-secret ANTHROPIC_API_KEY=your_key_here
-modal secret create openai-secret OPENAI_API_KEY=your_key_here
-```
+### Using Modal Services
 
-### 3. Run Optimization
+#### For DSPy Optimization
 
-#### Option 1: Just Optimization
-```bash
-# Run optimization only (no deployment)
-python scripts/run_orchestrator.py
-```
-
-#### Option 2: Full Workflow
-```bash
-# One command does everything:
-# - Runs orchestrator optimization (teacher-student training)
-# - Deploys student model to Modal
-# - Uploads artifacts to Modal volume
-# - Deploys production inference API
-# - Runs comprehensive tests
-python scripts/run_optimization.py
-```
-
-That's it! The system handles:
-- ✅ Teacher model calls via Anthropic API
-- ✅ Student model deployment on Modal
-- ✅ MIPROv2 optimization
-- ✅ Artifact storage and retrieval
-- ✅ Production API deployment
-
-## ⚙️ Component Details
-
-### Orchestrator (`src/optimizer/orchestrator.py`)
-**What it does:**
-- Calls teacher model (Claude) via API to generate training examples
-- Deploys student model (Gemma) on Modal automatically
-- Runs MIPROv2 optimization using DSPy
-- Uploads results to Modal volume
-
-**Resource Usage:**
-- Teacher: API calls only (no GPU needed)
-- Student: Modal GPU for optimization (~A10G, 15-30 minutes)
-- Cost: ~$5-15 one-time per optimization
-
-### Inference Service (`src/inference/modal_inference_service.py`)
-**What it does:**
-- Loads optimization artifacts automatically from Modal volume
-- Provides production routing API with sub-100ms latency
-- Supports both Modal GPU and local Ollama fallback
-- Auto-scales based on traffic
-
-**Resource Usage:**
-- GPU: T4 or A10G (always-on with auto-scaling)
-- Cost: ~$0.60-1.10/hour, scales to zero when idle
-
-## 🔧 Manual Deployment (Advanced)
-
-If you need more control:
-
-### 1. Run Orchestrator Only
-```bash
-# Run optimization without deployment
-python scripts/run_orchestrator.py --config config.json
-
-# Test model connections
-python scripts/run_orchestrator.py --test-models
-
-# Setup services only
-python scripts/run_orchestrator.py --setup-only
-```
-
-### 2. Deploy Inference Service Only
-```bash
-# Deploy the Modal inference service
-modal deploy src/inference/modal_inference_service.py
-
-# The service will be available at endpoints like:
-# https://your-app-generate.modal.run
-# https://your-app-chat-completions.modal.run
-```
-
-### 3. Manual Artifact Management
-```bash
-# Upload artifacts manually
-modal volume put optimization-artifacts \
-  optimization_results/unified_router_prompt_artifact.json \
-  /artifacts/unified_router_prompt_artifact.json
-
-# Download artifacts
-modal volume get optimization-artifacts \
-  /artifacts/unified_router_prompt_artifact.json \
-  ./downloaded_artifacts.json
-```
-
-## 📊 Resource Requirements
-
-### Development/Optimization
-```
-Teacher Model (API-based):
-- Provider: Anthropic Claude or OpenAI GPT-4
-- Cost: ~$0.01-0.10 per example
-- Total: ~$0.50-5.00 for 50 examples
-
-Student Model (Modal):
-- GPU: A10G (24GB) - sufficient for Gemma-3-1b
-- Duration: 15-30 minutes for optimization
-- Cost: ~$1.10 × 0.5 hours = ~$0.55
-
-Total optimization cost: ~$1-6 per run
-```
-
-### Production
-```
-Inference Service:
-- GPU: T4 (16GB) or A10G (24GB)
-- Memory: 16GB sufficient
-- Scaling: 1-10 instances based on traffic
-- Cost: $0.60-1.10/hour × actual usage
-```
-
-## 🔄 Provider Flexibility
-
-The system supports easy switching between providers:
-
-### Modal + API (Recommended)
-```yaml
-teacher:
-  provider: "anthropic"    # Claude API
-student:
-  provider: "modal"        # Gemma on Modal GPU
-```
-
-### Full Local Development
-```yaml
-teacher:
-  provider: "local"        # Ollama locally
-student:
-  provider: "local"        # Ollama locally
-```
-
-### Hybrid Setup
-```yaml
-teacher:
-  provider: "openai"       # GPT-4 API
-student:
-  provider: "local"        # Local Ollama for testing
-```
-
-## 🧪 Testing and Validation
-
-### Automated Testing
-```bash
-# Test optimizer structure and imports
-python tests/test_optimizer_structure.py
-
-# Test routing optimization
-python tests/routing/test_combined_routing.py
-```
-
-### Manual Testing
-```bash
-# Test API endpoint
-curl -X POST https://your-api.modal.run/route \
-  -H "Content-Type: application/json" \
-  -d '{"user_query": "Show me cooking videos"}'
-
-# Health check
-curl https://your-api.modal.run/health
-
-# Model info
-curl https://your-api.modal.run/get-model-info
-```
-
-## 🚀 Modal Deployment Benefits
-
-### Performance Gains vs Local
-- **GPU Acceleration**: T4/A10G/A100 GPUs vs local CPU/MPS
-- **Parallel Processing**: Run multiple optimizations simultaneously
-- **Inference Speed**: 50ms on Modal vs 200ms+ locally
-- **Always Available**: No need to keep local servers running
-
-### Cost Optimization
-- **Serverless Model**: Pay only for actual inference time
-- **GPU Sharing**: Multiple models on shared infrastructure
-- **Efficient Scaling**: Automatic up/down based on traffic
-- **Example Costs**: 
-  - T4 GPU: ~$0.59/hour (only when running)
-  - A10G GPU: ~$1.10/hour (better for larger models)
-  - Typical inference: ~$0.0001 per request
-
-### Development Benefits
-- **Reproducible Environment**: Same setup for all team members
-- **Version Control**: Model versioning and rollback support
-- **Built-in Monitoring**: Logging, metrics, and alerts
-- **CI/CD Ready**: Automated deployment pipeline
-
-## 📈 Monitoring and Scaling
-
-### Built-in Monitoring
 ```python
-# Production API includes metrics
-{
-  "search_modality": "video",
-  "generation_type": "raw_results", 
-  "latency_ms": 45,
-  "confidence": 0.95,
-  "provider": "modal",
-  "status": "success"
-}
+from src.routing.optimizer_factory import OptimizerFactory
+
+factory = OptimizerFactory()
+
+# Modal student, API teacher
+optimizer = factory.create_gepa_optimizer(
+    teacher_provider="anthropic",
+    student_provider="modal"
+)
+
+# Run optimization
+optimized_router = optimizer.optimize(
+    routing_examples=experience_buffer.sample(1000)
+)
 ```
 
-### Modal Monitoring
+#### For Video Ingestion
+
+```python
+from src.app.ingestion.pipeline import VideoIngestionPipeline
+
+pipeline = VideoIngestionPipeline(
+    vlm_provider="modal",  # Use Modal VLM
+    embedding_provider="modal",  # Use Modal embeddings
+    profile="video_colpali_smol500_mv_frame"
+)
+
+# Process videos with Modal acceleration
+await pipeline.process_video(video_path)
+```
+
+## 📊 Performance & Cost
+
+### DSPy Optimization
+```
+Teacher (Claude/GPT-4):
+- Cost: ~$0.01-0.10 per example
+- Total: ~$5-50 for full optimization
+
+Student (Modal Gemma-7B):
+- GPU: A10G (24GB)
+- Duration: 15-30 minutes
+- Cost: ~$1.10/hour = ~$0.55
+```
+
+### Video Processing
+```
+VLM (Qwen2-VL-7B):
+- GPU: L40S or T4
+- Speed: 2-4 seconds per frame
+- Cost: ~$0.01-0.05 per frame
+
+Embeddings (ColPali):
+- GPU: A10G
+- Speed: 100ms per frame
+- Cost: ~$0.001 per frame
+```
+
+### Production Inference
+```
+Agents with Modal LLMs:
+- GPU: T4 (16GB) minimum
+- Scaling: 1-10 instances auto-scale
+- Cost: $0.60-1.10/hour when active
+- Latency: 50-200ms per query
+```
+
+## 🚀 Deployment Commands
+
+### Full System Deployment
+
 ```bash
-# Check app status
-modal stats
+# 1. Deploy all Modal services
+modal deploy src/modal/dspy_optimizer_service.py
+modal deploy scripts/modal_vlm_service.py
+modal deploy src/modal/embedding_service.py
 
-# View logs
-modal logs agentic-router-production
+# 2. Get endpoints
+modal app list
 
-# Monitor costs
-modal billing
+# 3. Update config.json with endpoints
+vim configs/config.json
+
+# 4. Test integration
+python tests/test_modal_integration.py
 ```
 
-### Auto-scaling Configuration
-The inference service automatically scales:
-- **Min containers**: 2 (always-on for production)
-- **Max containers**: 10 (handles traffic spikes)
-- **Scale-down**: 5 minutes idle timeout
-- **Concurrent requests**: 50 per container
+### Development Workflow
+
+```bash
+# Local development with Modal services
+export MODAL_ENDPOINTS=true
+
+# Run video ingestion with Modal
+uv run python scripts/run_ingestion.py \
+    --video_dir data/videos \
+    --use-modal-vlm \
+    --use-modal-embeddings
+
+# Run DSPy optimization with Modal
+uv run python scripts/run_optimization.py \
+    --optimizer GEPA \
+    --use-modal-student
+```
+
+## 🔄 Hybrid Configurations
+
+### Option 1: Modal for Heavy Compute
+```yaml
+# Heavy models on Modal, light models local
+VLM: Modal (Qwen2-VL-7B)
+Embeddings: Modal (ColPali, VideoPrism)
+Agents: Local (Ollama Llama3)
+DSPy Student: Modal (Gemma-7B)
+DSPy Teacher: API (Claude/GPT-4)
+```
+
+### Option 2: Full Modal
+```yaml
+# Everything on Modal
+VLM: Modal
+Embeddings: Modal
+Agents: Modal (deployed LLMs)
+DSPy: Modal (both teacher and student)
+```
+
+### Option 3: Cost-Optimized
+```yaml
+# Balance cost and performance
+VLM: Local (Ollama LLaVA)
+Embeddings: Modal (only for batch processing)
+Agents: Local
+DSPy: Teacher API, Student Modal
+```
+
+## 🎯 Benefits vs Local
+
+### For DSPy Optimization
+- **Parallel Training**: Run multiple optimizers simultaneously
+- **No Local GPU Required**: Train student models without local hardware
+- **Experiment Tracking**: Modal provides built-in monitoring
+
+### For Video Processing
+- **10x Faster**: GPU acceleration for VLM and embeddings
+- **Scalable**: Process multiple videos concurrently
+- **Cost-Effective**: Pay only for processing time
+
+### For Production
+- **Auto-scaling**: Handle traffic spikes automatically
+- **High Availability**: No single point of failure
+- **Global Deployment**: Deploy close to users
+
+## 🧪 Testing
+
+### Test Modal Services
+```bash
+# Test VLM
+curl -X POST https://your-vlm.modal.run/describe \
+  -d '{"image_base64": "..."}'
+
+# Test embeddings
+curl -X POST https://your-embeddings.modal.run/encode \
+  -d '{"frames": [...], "model": "colpali"}'
+
+# Test DSPy optimizer
+curl -X POST https://your-optimizer.modal.run/optimize \
+  -d '{"examples": [...], "config": {...}}'
+```
+
+### Integration Tests
+```bash
+# Full pipeline test with Modal
+uv run pytest tests/integration/test_modal_pipeline.py
+
+# DSPy optimization test
+uv run pytest tests/routing/test_modal_optimization.py
+```
 
 ## 🚨 Troubleshooting
 
-### Common Issues
-
-**"Provider not found" errors:**
+### Authentication Issues
 ```bash
-# Check provider registration
-python -c "from src.optimizer.providers import *; print('Providers loaded')"
+# Refresh Modal credentials
+modal token new
+
+# Set secrets for API keys
+modal secret create anthropic-key ANTHROPIC_API_KEY=sk-...
+modal secret create openai-key OPENAI_API_KEY=sk-...
 ```
 
-**"Artifacts not found" errors:**
+### GPU Availability
 ```bash
-# Check Modal volume
-modal volume ls optimization-artifacts
+# Check available GPUs
+modal gpu list
 
-# Verify artifact path
-modal volume get optimization-artifacts /artifacts/ ./temp/
+# Use different GPU if needed
+# Change in deployment: gpu="T4" instead of gpu="A10G"
 ```
 
-**High latency:**
+### Cost Management
 ```bash
-# Check GPU utilization
-modal stats --gpu
+# Monitor usage
+modal billing current
 
-# Monitor scaling behavior
-modal logs agentic-router-production | grep scale
+# Set spending limits
+modal billing limit set --monthly 100
 ```
 
-### Recovery Procedures
+## 📈 Monitoring
 
-**Rerun optimization:**
-```bash
-python scripts/run_orchestrator.py --config config.json
+### Modal Dashboard
+- View all deployments: `modal app list`
+- Check logs: `modal logs app-name`
+- Monitor costs: `modal billing`
+
+### Phoenix Integration
+```python
+# Track Modal service calls in Phoenix
+from src.telemetry.multi_tenant_manager import MultiTenantTelemetryManager
+
+telemetry = MultiTenantTelemetryManager()
+
+with telemetry.span("modal.vlm.describe", tenant_id) as span:
+    span.set_attribute("provider", "modal")
+    span.set_attribute("model", "qwen2-vl-7b")
+    result = await modal_vlm.describe(frame)
 ```
 
-**Redeploy Service:**
-```bash
-modal deploy src/inference/modal_inference_service.py
-```
+## 🎯 When to Use Modal
 
-**Reset artifacts:**
-```bash
-# Clear and regenerate artifacts
-modal volume rm optimization-artifacts /artifacts/unified_router_prompt_artifact.json
-python scripts/run_optimization.py
-```
+### Use Modal When:
+- 🎯 Running DSPy optimization with large student models
+- 🎯 Processing large video batches (>100 videos)
+- 🎯 Need GPU acceleration without local hardware
+- 🎯 Scaling to multiple concurrent users
+- 🎯 Running experiments with different models
 
-## 🎯 Migration from Old Architecture
+### Use Local When:
+- 💻 Developing and testing
+- 💻 Processing small batches (<10 videos)
+- 💻 Have powerful local GPU
+- 💻 Need lowest latency
+- 💻 Cost-sensitive for small workloads
 
-If you have old teacher/student services:
+---
 
-1. **Stop old services:**
-   ```bash
-   modal app stop teacher-service
-   modal app stop student-service
-   modal app stop miprov2-optimizer
-   ```
-
-2. **Deploy new architecture:**
-   ```bash
-   python scripts/run_optimization.py
-   ```
-
-3. **Update integrations:**
-   - Use new API endpoint URLs
-   - Update to new response schema
-   - Remove separate service calls
-
-The new architecture is much simpler and more maintainable!
+**Last Updated**: 2025-10-04
+**Status**: Production Ready - Integrated with Multi-Agent Architecture

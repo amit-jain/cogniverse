@@ -1,212 +1,435 @@
 # Code Flow Examples
 
-## Processing Flow Example
+Real-world code execution flows through the Cogniverse multi-agent system.
 
-### 1. Deploy Schemas (One-time or after schema changes)
+## 1. Video Ingestion Flow
+
+### Deploy Tenant Schema
 ```bash
-$ python scripts/deploy_all_schemas.py
+# Deploy schema for a new tenant
+uv run python scripts/deploy_tenant_schema.py \
+    --tenant customer_a \
+    --profile video_colpali_smol500_mv_frame
 ```
 
-**What happens:**
+**Code Flow:**
 ```python
-# deploy_all_schemas.py
-schemas_dir = Path("configs/schemas")
-for schema_file in schemas_dir.glob("*.json"):
-    # Load and deploy each schema
-    schema = parser.load_schema_from_json_file(schema_file)
-    app_package.add_schema(schema)
+# 1. Schema Manager creates tenant-specific schema
+from src.backends.vespa.schema_manager import SchemaManager
 
-# After deployment, automatically extract strategies
-strategies = extract_all_ranking_strategies(schemas_dir)
-save_ranking_strategies(strategies, schemas_dir / "ranking_strategies.json")
+schema_manager = SchemaManager()
+schema_name = schema_manager.deploy_tenant_schema(
+    tenant_id="customer_a",
+    profile="video_colpali_smol500_mv_frame"
+)
+# Result: "video_colpali_smol500_mv_frame_customer_a"
+
+# 2. Deploy to Vespa
+from vespa.package import ApplicationPackage
+
+app_package = ApplicationPackage(name=schema_name)
+app_package.schema.add_fields(
+    Field("embedding", "tensor<float>(patch{}, v[768])"),
+    Field("binary_embedding", "tensor<int8>(patch{}, v[96])"),
+    Field("text", "string", indexing=["index", "summary"])
+)
+
+# 3. Add ranking profiles
+for strategy in ["hybrid_float_bm25", "float_float", "phased"]:
+    app_package.add_rank_profile(
+        create_ranking_profile(strategy)
+    )
+
+vespa_app.deploy(app_package)
 ```
 
-### 2. Process Videos
+### Process Videos
 ```bash
-$ python scripts/run_ingestion.py --video_dir data/videos --backend vespa
+# Ingest videos for tenant
+uv run python scripts/run_ingestion.py \
+    --video_dir /path/to/videos \
+    --tenant customer_a \
+    --profile video_colpali_smol500_mv_frame
 ```
 
-**What happens:**
+**Code Flow:**
 ```python
-# For each profile (e.g., "frame_based_colpali")
-pipeline = VideoIngestionPipeline(config)
+# 1. Pipeline initialization with Phoenix telemetry
+from src.app.ingestion.pipeline import VideoIngestionPipeline
+from src.telemetry.multi_tenant_manager import MultiTenantTelemetryManager
 
-# Process videos → generates embeddings
-embeddings = encoder.encode(frame)
-
-# Get schema name from profile
-schema_name = get_schema_for_profile("frame_based_colpali")  # → "video_frame"
-
-# Load ranking strategies to understand tensor requirements
-strategies = load_ranking_strategies()[schema_name]
-
-# Determine what embeddings to generate based on strategies
-needs_float = any(s.needs_float_embeddings for s in strategies.values())
-needs_binary = any(s.needs_binary_embeddings for s in strategies.values())
-
-# Get tensor dimensions from strategies
-# e.g., strategies["float_float"].inputs → "tensor<float>(querytoken{}, v[128])"
-tensor_dims = extract_tensor_dimensions(strategies)
-
-# Format document with required fields
-document = {
-    "video_id": "abc123",
-}
-
-if needs_float:
-    document["embedding"] = format_float_embeddings(embeddings, tensor_dims)
-
-if needs_binary:
-    binary_embeddings = generate_binary_embeddings(embeddings)
-    document["embedding_binary"] = format_binary_embeddings(binary_embeddings, tensor_dims)
-
-vespa_client.feed(schema_name, document)
-```
-
-## Query Flow Example
-
-### 1. Initialize Search Backend
-```python
-from src.search import VespaSearchBackend
-
-# Just specify schema - profile is auto-determined
-backend = VespaSearchBackend(
-    vespa_url="http://localhost",
-    vespa_port=8080,
-    schema_name="video_frame"
+telemetry = MultiTenantTelemetryManager()
+pipeline = VideoIngestionPipeline(
+    profile="video_colpali_smol500_mv_frame",
+    tenant_id="customer_a",
+    telemetry=telemetry
 )
+
+# 2. Process each video with tracing
+for video_path in video_paths:
+    with telemetry.span("ingestion.process_video", "customer_a") as span:
+        span.set_attribute("video.path", str(video_path))
+
+        # Extract frames
+        frames = await pipeline.extract_frames(video_path)
+
+        # Generate embeddings
+        embeddings = await pipeline.generate_embeddings(frames)
+
+        # Store in Vespa
+        await pipeline.store_in_vespa(embeddings)
 ```
 
-**What happens internally:**
-```python
-# Determine profile from schema
-self.profile = get_profile_for_schema("video_frame")  # → "frame_based_colpali"
+## 2. Multi-Agent Search Flow
 
-# Load ranking strategies (auto-generates if missing)
-if not Path("configs/schemas/ranking_strategies.json").exists():
-    strategies = extract_all_ranking_strategies(Path("configs/schemas"))
-    save_ranking_strategies(strategies, ...)
-
-# Load strategies for this schema
-self.ranking_strategies = {
-    "binary_binary": RankingConfig(...),
-    "hybrid_binary_bm25": RankingConfig(...),
-    # ... all strategies from schema
-}
+### User Query Request
+```bash
+curl -X POST http://localhost:8000/api/v1/search \
+  -H "X-Tenant-ID: customer_a" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "machine learning tutorial"}'
 ```
 
-### 2. Execute Search
+**Code Flow:**
 ```python
-# Encode query
-encoder = QueryEncoderFactory.create_encoder("frame_based_colpali", "vidore/colsmol-500m")
-embeddings = encoder.encode("person wearing winter clothes")
+# 1. Composing Agent receives request
+from src.app.agents.composing_agent import ComposingAgent
+from src.app.agents.video_search_agent import VideoSearchAgent
 
-# Search with specific strategy
-results = backend.search(
-    query_embeddings=embeddings,
-    query_text="person wearing winter clothes",
-    ranking_strategy="hybrid_binary_bm25"
+composing_agent = ComposingAgent()
+
+# 2. Extract tenant from header
+tenant_id = request.headers.get("X-Tenant-ID", "default")
+
+# 3. Route query with DSPy optimization
+with telemetry.span("agent.route", tenant_id) as span:
+    routing_decision = composing_agent.route_query(
+        query="machine learning tutorial",
+        tenant_id=tenant_id
+    )
+    # Decision: RoutingTier.BALANCED
+
+# 4. Orchestrate agents via A2A protocol
+from src.app.agents.a2a_protocol import A2AMessage, MessageType
+
+# Create search message
+search_msg = A2AMessage(
+    type=MessageType.REQUEST,
+    source="composing_agent",
+    target="video_search_agent",
+    payload={
+        "query": "machine learning tutorial",
+        "strategy": "hybrid_float_bm25",
+        "tenant_id": tenant_id
+    }
 )
+
+# 5. Video Search Agent executes search
+video_agent = VideoSearchAgent()
+results = await video_agent.search(
+    query=search_msg.payload["query"],
+    tenant_id=tenant_id,
+    strategy=search_msg.payload["strategy"]
+)
+
+# 6. Query Vespa with tenant schema
+from src.backends.vespa.query_builder import VespaQueryBuilder
+
+query_builder = VespaQueryBuilder()
+vespa_query = query_builder.build_hybrid_query(
+    text="machine learning tutorial",
+    embedding=query_embedding,
+    schema=f"video_colpali_smol500_mv_frame_{tenant_id}"
+)
+
+vespa_results = await vespa_app.query(vespa_query)
 ```
 
-**What happens internally:**
+## 3. DSPy Optimization Flow
+
+### GEPA Optimizer Training
 ```python
-# Get strategy configuration
-strategy = self.ranking_strategies["hybrid_binary_bm25"]
-# strategy.needs_binary_embeddings = True
-# strategy.needs_text_query = True
+# 1. Collect routing experiences
+from src.app.routing.gepa_optimizer import GEPAOptimizer
+from src.app.routing.experience_buffer import ExperienceBuffer
 
-# Validate inputs
-if strategy.needs_text_query and not query_text:
-    raise ValueError("Strategy 'hybrid_binary_bm25' requires a text query")
+buffer = ExperienceBuffer(capacity=10000)
+optimizer = GEPAOptimizer(buffer=buffer)
 
-# Build YQL based on strategy type
-if strategy.strategy_type == SearchStrategyType.HYBRID:
-    yql = "select ... from video_frame where userInput(@userQuery)"
-
-# Format query body
-query_body = {
-    "yql": yql,
-    "ranking.profile": "hybrid_binary_bm25",
-    "userQuery": "person wearing winter clothes",
-    "input.query(qtb)": format_binary_tensor(embeddings)  # For patch-based
+# 2. Record routing decision
+experience = {
+    "query": "machine learning tutorial",
+    "features": extract_query_features(query),
+    "decision": RoutingTier.BALANCED,
+    "reward": 0.85,  # Based on user feedback
+    "tenant_id": "customer_a"
 }
+buffer.add(experience)
 
-# Send to Vespa
-response = vespa.query(query_body)
+# 3. Periodic optimization (every 5 minutes)
+if buffer.size() > 1000:
+    with telemetry.span("optimization.gepa", tenant_id) as span:
+        # Sample batch for training
+        batch = buffer.sample(batch_size=100)
+
+        # Update routing model
+        optimizer.update(batch)
+
+        # Save optimized model
+        model_path = f"models/routing/{tenant_id}/gepa_model.pkl"
+        optimizer.save(model_path)
 ```
 
-## Key Integration Points
-
-### 1. Schema → Profile Mapping
+### Optimizer Selection Based on Data
 ```python
-# src/processing/vespa/schema_profile_mapping.py
-SCHEMA_TO_PROFILE = {
-    "video_frame": "frame_based_colpali",
-    "video_videoprism_global": "direct_video_global",
-}
-```
+from src.routing.optimizer_factory import OptimizerFactory
 
-### 2. Ranking Strategy Extraction
-```python
-# Happens automatically during:
-# - Schema deployment (deploy_all_schemas.py)
-# - Backend initialization (if missing)
+factory = OptimizerFactory()
+data_size = len(buffer)
 
-extractor = RankingStrategyExtractor()
-for schema_file in schemas_dir.glob("*.json"):
-    strategies = extractor.extract_from_schema(schema_file)
-    # Analyzes rank_profiles in schema JSON
-    # Determines strategy type, requirements, etc.
-```
-
-### 3. Profile-Based Tensor Formatting
-```python
-# Global models (VideoPrism)
-if profile_config.is_global:
-    return embeddings.tolist()  # [1, 2, 3, ...]
-
-# Patch-based models (ColPali)
+# Select appropriate optimizer
+if data_size < 100:
+    # Bootstrap for cold start
+    optimizer = factory.create_bootstrap_optimizer()
+elif data_size < 1000:
+    # SIMBA for moderate data
+    optimizer = factory.create_simba_optimizer()
+elif data_size < 10000:
+    # MIPRO for substantial data
+    optimizer = factory.create_mipro_optimizer()
 else:
-    return {"cells": [
-        {"address": {"querytoken": "0", "v": "0"}, "value": 1.23},
-        # ...
-    ]}
+    # GEPA for large-scale continuous learning
+    optimizer = factory.create_gepa_optimizer()
 ```
 
-## Error Examples
+## 4. Memory-Augmented Search Flow
 
-### Missing Embeddings
+### Search with Context
 ```python
-backend.search(
-    query_text="test",
-    ranking_strategy="float_float"  # Requires embeddings
+# 1. Initialize memory-aware agent
+from src.memory.mem0_manager import Mem0Manager
+from src.app.agents.memory_aware_mixin import MemoryAwareMixin
+
+class MemoryAwareVideoAgent(VideoSearchAgent, MemoryAwareMixin):
+    def __init__(self):
+        super().__init__()
+        self.memory = Mem0Manager()
+
+# 2. Retrieve user context
+user_memories = await agent.memory.search(
+    query="machine learning",
+    user_id="user_123",
+    tenant_id="customer_a",
+    limit=5
 )
-# ValueError: Strategy 'float_float' requires embeddings
+
+# 3. Augment query with context
+augmented_query = agent.augment_with_memory(
+    original_query="machine learning tutorial",
+    memories=user_memories
+)
+# Result: "machine learning tutorial python sklearn beginner"
+
+# 4. Store interaction in memory
+await agent.memory.add(
+    content="User searched for ML tutorial, showed interest in sklearn",
+    user_id="user_123",
+    tenant_id="customer_a",
+    metadata={
+        "query": "machine learning tutorial",
+        "selected_result": "sklearn_basics.mp4"
+    }
+)
 ```
 
-### Unknown Strategy
+## 5. Phoenix Experiment Flow
+
+### Run A/B Test
 ```python
-backend.search(
-    query_embeddings=embeddings,
-    ranking_strategy="unknown_strategy"
+# 1. Create experiment
+from src.evaluation.plugins.phoenix_experiment import PhoenixExperimentPlugin
+import phoenix as px
+
+plugin = PhoenixExperimentPlugin()
+client = px.Client()
+
+# 2. Setup dataset
+dataset = client.upload_dataset(
+    dataset_name="ml_queries_v1",
+    dataframe=queries_df
 )
-# ValueError: Unknown ranking strategy 'unknown_strategy' for schema 'video_frame'.
-# Available strategies: ['binary_binary', 'hybrid_binary_bm25', ...]
+
+# 3. Run experiment with multiple strategies
+experiment_id = plugin.run_experiment(
+    dataset_name="ml_queries_v1",
+    tenant_id="customer_a",
+    strategies=["hybrid_float_bm25", "float_float"],
+    evaluators=[quality_scorer, visual_judge]
+)
+
+# 4. Track results in Phoenix
+with telemetry.span("experiment.evaluate", tenant_id) as span:
+    for query in dataset:
+        for strategy in strategies:
+            # Execute search
+            results = await search(query, strategy)
+
+            # Evaluate quality
+            scores = evaluate(query, results)
+
+            # Record in Phoenix
+            client.log_evaluation(
+                experiment_id=experiment_id,
+                query=query,
+                strategy=strategy,
+                scores=scores
+            )
+
+# 5. Compare results
+comparison = client.compare_experiments(
+    baseline_id=exp_1,
+    treatment_id=exp_2
+)
+print(f"Improvement: {comparison['delta_quality']:.2%}")
 ```
 
-### Unknown Schema
+## 6. Configuration Hot Reload Flow
+
+### Dynamic Configuration Update
 ```python
-backend = VespaSearchBackend(
-    schema_name="non_existent_schema"
+# 1. Update configuration
+from src.common.config_manager import get_config_manager
+
+manager = get_config_manager()
+
+# 2. Change LLM model for tenant
+new_config = SystemConfig(
+    tenant_id="customer_a",
+    llm_model="gpt-4-turbo",  # Upgrade from gpt-4
+    temperature=0.7
 )
-# ValueError: Cannot determine profile for schema non_existent_schema: Unknown schema
+manager.set_system_config(new_config)
+
+# 3. Configuration watcher detects change
+from src.common.config_watcher import ConfigWatcher
+
+watcher = ConfigWatcher(manager)
+
+@watcher.on_change("customer_a", "SYSTEM")
+def reload_llm(config):
+    # Reinitialize LLM with new model
+    global llm_client
+    llm_client = create_llm_client(
+        model=config["llm_model"],
+        temperature=config["temperature"]
+    )
+    logger.info(f"Reloaded LLM: {config['llm_model']}")
+
+# 4. Changes apply immediately without restart
+# Next query uses gpt-4-turbo automatically
 ```
 
-## The Complete Flow
+## 7. Tiered Cache Flow
 
-1. **Schemas define everything** → `configs/schemas/*.json`
-2. **Deployment extracts strategies** → `ranking_strategies.json` 
-3. **Processing uses schema mapping** → profile → schema
-4. **Query loads strategies** → validates → executes
-5. **No manual steps** → Everything is automatic!
+### Cache-Aware Processing
+```python
+# 1. Setup tiered cache
+from src.cache.tiered_manager import TieredCacheManager
+
+cache = TieredCacheManager(
+    hot=RedisBackend(),   # 1 hour TTL
+    warm=LocalFSBackend(), # 24 hour TTL
+    cold=S3Backend()      # 30 day TTL
+)
+
+# 2. Check cache before processing
+async def process_video(video_id: str, tenant_id: str):
+    cache_key = f"embeddings/colpali/{video_id}"
+
+    # Try to get from cache
+    embeddings = await cache.get_or_compute(
+        key=cache_key,
+        tenant_id=tenant_id,
+        compute_fn=lambda: generate_embeddings(video_id),
+        cache_hot=False,  # Too large for Redis
+        cache_warm=True,   # Keep locally
+        cache_cold=True    # Long-term storage
+    )
+
+    return embeddings
+
+# 3. Cache hit flow
+# Hot (Redis) → Miss
+# Warm (Local) → Miss
+# Cold (S3) → Hit!
+# Promote to Warm cache
+# Return without computation
+
+# 4. Invalidate on update
+await cache.invalidate_pattern(
+    pattern=f"embeddings/*/{video_id}/*",
+    tenant_id=tenant_id
+)
+```
+
+## 8. Error Recovery Flow
+
+### Graceful Degradation
+```python
+# 1. Primary search fails
+try:
+    results = await video_agent.search(
+        query="tutorial",
+        strategy="hybrid_float_bm25"
+    )
+except VespaConnectionError:
+    logger.error("Vespa unavailable")
+
+    # 2. Try simpler strategy
+    try:
+        results = await video_agent.search(
+            query="tutorial",
+            strategy="bm25_only"  # Text-only, no embeddings
+        )
+    except Exception as e:
+        # 3. Return cached results if available
+        cache_key = f"search_results/{hash(query)}/latest"
+        cached = await cache.get(cache_key, tenant_id)
+
+        if cached:
+            logger.warning("Serving stale cached results")
+            return cached
+        else:
+            # 4. Return error with helpful message
+            raise ServiceUnavailableError(
+                "Search temporarily unavailable. Please try again."
+            )
+```
+
+## Performance Monitoring
+
+### Request Tracing
+```python
+# Complete request trace in Phoenix
+with telemetry.trace("search_request", tenant_id) as trace:
+    # Routing: 10ms
+    with telemetry.span("routing"):
+        tier = router.route(query)
+
+    # Search: 200ms
+    with telemetry.span("search"):
+        results = await search(query)
+
+    # Reranking: 50ms
+    with telemetry.span("rerank"):
+        results = rerank(results)
+
+    # Total: 260ms
+    trace.set_attribute("latency_ms", 260)
+    trace.set_attribute("cache_hit", True)
+```
+
+---
+
+**Last Updated**: 2025-10-04
+**Status**: Production Ready
