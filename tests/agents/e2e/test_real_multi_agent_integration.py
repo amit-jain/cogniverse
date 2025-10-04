@@ -113,7 +113,7 @@ class TestRealQueryAnalysisIntegration:
         for test_case in test_queries:
             logger.info(f"Testing query: {test_case['query']}")
 
-            result = await analyzer.analyze_query(test_case["query"])
+            result = await analyzer.analyze(test_case["query"])
 
             # Verify analysis structure
             assert isinstance(result, dict)
@@ -419,7 +419,7 @@ class TestRealDSPyOptimizationIntegration:
         )
 
         # Test without optimization
-        await analyzer.analyze_query("Show me videos of cats")
+        await analyzer.analyze("Show me videos of cats")
 
         # Verify DSPy metadata
         dspy_metadata = analyzer.get_dspy_metadata()
@@ -472,7 +472,7 @@ class TestRealEndToEndWorkflow:
 
         # Step 1: Query analysis
         logger.info(f"Step 1: Analyzing query: {test_query}")
-        analysis_result = await query_analyzer.analyze_query(test_query)
+        analysis_result = await query_analyzer.analyze(test_query)
         logger.info(f"Analysis result: {analysis_result}")
 
         # Step 2: Agent routing
@@ -551,12 +551,12 @@ class TestRealPerformanceComparison:
             import time
 
             start_time = time.time()
-            default_result = await default_analyzer.analyze_query(query)
+            default_result = await default_analyzer.analyze(query)
             default_time = time.time() - start_time
 
             # Test optimized agent
             start_time = time.time()
-            optimized_result = await optimized_analyzer.analyze_query(query)
+            optimized_result = await optimized_analyzer.analyze(query)
             optimized_time = time.time() - start_time
 
             performance_comparison["default"].append(
