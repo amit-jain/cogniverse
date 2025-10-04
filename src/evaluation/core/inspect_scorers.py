@@ -45,8 +45,13 @@ def relevance_scorer():
     Relevance scorer that unpacks solver output and evaluates keyword matching.
     """
 
-    async def score(output_str: str, target: Target) -> Score:
+    async def score(state, target: Target) -> Score:
         try:
+            # Extract the completion string from state.output.choices[0].message.content
+            output_str = ""
+            if state.output and state.output.choices and len(state.output.choices) > 0:
+                output_str = state.output.choices[0].message.content or ""
+
             # Unpack the structured output
             eval_output = unpack_solver_output(output_str)
 
@@ -119,8 +124,13 @@ def diversity_scorer():
     Diversity scorer that measures uniqueness of results.
     """
 
-    async def score(output_str: str, target: Target) -> Score:
+    async def score(state, target: Target) -> Score:
         try:
+            # Extract the completion string from state.output.choices[0].message.content
+            output_str = ""
+            if state.output and state.output.choices and len(state.output.choices) > 0:
+                output_str = state.output.choices[0].message.content or ""
+
             # Unpack the structured output
             eval_output = unpack_solver_output(output_str)
 
@@ -187,8 +197,13 @@ def result_count_scorer():
     Simple scorer that checks if we got results.
     """
 
-    async def score(output_str: str, target: Target) -> Score:
+    async def score(state, target: Target) -> Score:
         try:
+            # Extract the completion string from state.output.choices[0].message.content
+            output_str = ""
+            if state.output and state.output.choices and len(state.output.choices) > 0:
+                output_str = state.output.choices[0].message.content or ""
+
             # Unpack the structured output
             eval_output = unpack_solver_output(output_str)
 

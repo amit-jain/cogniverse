@@ -24,38 +24,70 @@ class TestEndToEnd:
         with patch(
             "src.evaluation.core.task.px.Client", return_value=mock_phoenix_client
         ):
+            # Patch SearchService at the module level where it's imported
             with patch(
                 "src.app.search.service.SearchService", return_value=mock_search_service
             ):
-                # Create evaluation task
-                task = evaluation_task(
-                    mode="experiment",
-                    dataset_name="test_dataset",
-                    profiles=["test_profile"],
-                    strategies=["test_strategy"],
-                    config={
-                        "use_ragas": False,
-                        "use_custom": True,
-                        "custom_metrics": ["diversity", "result_count"],
-                    },
-                )
+                # Patch get_config where it's imported
+                with patch(
+                    "src.common.config_utils.get_config",
+                    return_value={"vespa_url": "http://localhost", "vespa_port": 8080}
+                ):
+                    # Create evaluation task
+                    task = evaluation_task(
+                        mode="experiment",
+                        dataset_name="test_dataset",
+                        profiles=["test_profile"],
+                        strategies=["test_strategy"],
+                        config={
+                            "use_ragas": False,
+                            "use_custom": True,
+                            "custom_metrics": ["diversity", "result_count"],
+                        },
+                    )
 
-                # Run evaluation
-                results = inspect_eval(task, model="mockllm/model")
+                    # Run evaluation
+                    results = inspect_eval(task, model="mockllm/model")
 
-                # Verify results structure - it returns a list of EvalLog
-                assert results is not None
-                assert isinstance(results, list)
-                assert len(results) > 0
+                    # Verify results structure - it returns a list of EvalLog
+                    assert results is not None
+                    assert isinstance(results, list)
+                    assert len(results) > 0
 
-                # Get the first EvalLog
-                eval_log = results[0]
+                    # Get the first EvalLog
+                    eval_log = results[0]
 
-                # Check that evaluation ran
-                assert hasattr(eval_log, "samples") or hasattr(eval_log, "model_dump")
+                    # Validate evaluation completed successfully
+                    assert eval_log.status == "success", f"Evaluation failed with status: {eval_log.status}"
 
-                # For now, just verify the evaluation completed
-                # TODO: Add more specific assertions once scorers are properly implemented
+                    # Validate scores were generated
+                    assert eval_log.results is not None, "No results in eval log"
+                    assert eval_log.results.scores is not None, "No scores in results"
+                    assert len(eval_log.results.scores) > 0, "No scores generated"
+
+                    # Validate scorer names match configured scorers
+                    scorer_names = {score.name for score in eval_log.results.scores}
+                    expected_scorers = {"diversity_scorer", "result_count_scorer"}  # From config (custom_metrics)
+                    assert expected_scorers.issubset(scorer_names), f"Expected scorers {expected_scorers}, got {scorer_names}"
+
+                    # Validate score values are valid (0.0 to 1.0)
+                    for score in eval_log.results.scores:
+                        # EvalScore has metrics dict, not direct value
+                        assert score.metrics is not None, f"Scorer {score.name} has no metrics"
+                        # Check mean metric (configured with @scorer(metrics=[mean()]))
+                        assert "mean" in score.metrics, f"Scorer {score.name} missing 'mean' metric"
+                        mean_value = score.metrics["mean"].value
+                        assert mean_value is not None, f"Scorer {score.name} mean metric has no value"
+                        assert 0.0 <= mean_value <= 1.0, f"Scorer {score.name} mean {mean_value} not in [0, 1]"
+
+                    # Validate samples were processed
+                    assert eval_log.samples is not None, "No samples in eval log"
+                    assert len(eval_log.samples) > 0, "No samples processed"
+
+                    # Validate each sample has scores
+                    for sample in eval_log.samples:
+                        assert sample.scores is not None, f"Sample {sample.id} has no scores"
+                        assert len(sample.scores) > 0, f"Sample {sample.id} has empty scores"
 
     @pytest.mark.integration
     def test_batch_mode_e2e(self, mock_phoenix_client):

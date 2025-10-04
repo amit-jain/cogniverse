@@ -127,6 +127,7 @@ class AdvancedOptimizerConfig:
     experience_file: str = "routing_experiences.pkl"
     model_file: str = "grpo_routing_model.pkl"
     metrics_file: str = "optimization_metrics.json"
+    enable_persistence: bool = True  # Set to False in tests for isolation
 
     # Minimum experiences before starting optimization
     min_experiences_for_training: int = 50
@@ -281,11 +282,35 @@ class AdvancedRoutingOptimizer:
             def __init__(self, config: AdvancedOptimizerConfig):
                 self.config = config
 
+                # Get current DSPy LM for reflection (GEPA requires this)
+                try:
+                    current_lm = dspy.settings.lm
+                    if current_lm is None:
+                        # Set a default LM if none configured
+                        logger.warning("No LM configured for GEPA, using default ollama:smollm2:1.7b")
+                        current_lm = dspy.LM("ollama/smollm2:1.7b", api_base="http://localhost:11434")
+                        dspy.settings.configure(lm=current_lm)
+                except AttributeError:
+                    # Fallback for older DSPy versions
+                    logger.warning("Could not get DSPy LM, using default for GEPA")
+                    current_lm = dspy.LM("ollama/smollm2:1.7b", api_base="http://localhost:11434")
+                    dspy.settings.configure(lm=current_lm)
+
                 # Initialize all advanced optimizers with required parameters
-                self.gepa_optimizer = GEPA(metric=routing_accuracy_metric, auto='light')
-                self.mipro_optimizer = MIPROv2()
-                self.simba_optimizer = SIMBA()
-                self.bootstrap_optimizer = BootstrapFewShot()
+                self.gepa_optimizer = GEPA(
+                    metric=routing_accuracy_metric,
+                    auto='light',
+                    reflection_lm=current_lm  # Required by GEPA
+                )
+                self.mipro_optimizer = MIPROv2(
+                    metric=routing_accuracy_metric  # Required by MIPRO
+                )
+                self.simba_optimizer = SIMBA(
+                    metric=routing_accuracy_metric  # Required by SIMBA
+                )
+                self.bootstrap_optimizer = BootstrapFewShot(
+                    metric=routing_accuracy_metric  # Optional but good for consistency
+                )
 
                 # Optimization strategy based on config and data size
                 self.optimization_stages = [
@@ -374,44 +399,44 @@ class AdvancedRoutingOptimizer:
             def _apply_optimizer(
                 self, optimizer, optimizer_name, module, trainset, **kwargs
             ):
-                """Apply specific optimizer with appropriate parameters"""
+                """Apply specific optimizer with appropriate parameters based on API"""
 
                 if optimizer_name == "gepa":
                     # GEPA: Reflective prompt evolution
+                    # API: compile(student, trainset, teacher=None, valset=None)
                     return optimizer.compile(
                         module,
                         trainset=trainset,
-                        max_bootstrapped_demos=kwargs.get("max_bootstrapped_demos", 4),
-                        max_labeled_demos=kwargs.get("max_labeled_demos", 8),
-                        num_threads=kwargs.get("num_threads", 1),
+                        valset=kwargs.get("valset", None),
                     )
 
                 elif optimizer_name == "mipro":
                     # MIPROv2: Metric-aware instruction optimization
+                    # API accepts max_bootstrapped_demos and max_labeled_demos
                     return optimizer.compile(
                         module,
                         trainset=trainset,
                         max_bootstrapped_demos=kwargs.get("max_bootstrapped_demos", 4),
                         max_labeled_demos=kwargs.get("max_labeled_demos", 8),
-                        num_threads=kwargs.get("num_threads", 1),
+                        valset=kwargs.get("valset", None),
                     )
 
                 elif optimizer_name == "simba":
                     # SIMBA: Similarity-based memory augmentation
+                    # API: compile(student, trainset, seed=0)
                     return optimizer.compile(
                         module,
                         trainset=trainset,
-                        max_bootstrapped_demos=kwargs.get("max_bootstrapped_demos", 4),
-                        max_labeled_demos=kwargs.get("max_labeled_demos", 8),
+                        seed=kwargs.get("seed", 0),
                     )
 
                 else:
                     # Bootstrap or fallback
+                    # API: compile(student, teacher=None, trainset)
                     return optimizer.compile(
                         module,
                         trainset=trainset,
-                        max_bootstrapped_demos=kwargs.get("max_bootstrapped_demos", 4),
-                        max_labeled_demos=kwargs.get("max_labeled_demos", 8),
+                        teacher=kwargs.get("teacher", None),
                     )
 
             def get_optimization_info(self, dataset_size):
@@ -668,6 +693,12 @@ class AdvancedRoutingOptimizer:
 
     async def _run_optimization_step(self):
         """Run one step of GRPO optimization"""
+        # Lazy initialize advanced optimizer if we now have enough experiences
+        if self.advanced_optimizer is None and len(self.experiences) >= self.config.min_experiences_for_training:
+            logger.info("Lazy initializing advanced optimizer after reaching threshold")
+            self.advanced_optimizer = self._create_advanced_optimizer()
+            logger.info("Advanced optimizer initialized")
+
         if (
             not self.advanced_optimizer
             or len(self.experience_replay) < self.config.batch_size
@@ -1057,7 +1088,11 @@ class AdvancedRoutingOptimizer:
             logger.error(f"Failed to persist optimization data: {e}")
 
     def _load_stored_data(self):
-        """Load previously stored experiences and metrics"""
+        """Load previously stored experiences and metrics if persistence enabled"""
+        if not self.config.enable_persistence:
+            logger.info("Persistence disabled, skipping data loading")
+            return
+
         try:
             # Load experiences
             experience_file = self.storage_dir / self.config.experience_file

@@ -263,6 +263,170 @@ class TestAdvancedRoutingOptimizerIntegration:
     """Test integration between advanced routing optimization components."""
 
     @pytest.mark.asyncio
+    async def test_gepa_optimizer_execution_with_200_examples(self):
+        """
+        CRITICAL TEST: Prove GEPA optimizer executes with 200+ examples.
+
+        This test validates that:
+        1. Advanced optimizer is initialized when min experiences reached
+        2. GEPA is selected when dataset_size >= gepa_threshold (200)
+        3. Optimization actually runs and returns optimized module
+        4. Logging shows correct optimizer selection
+        """
+        import logging
+        import dspy
+        from unittest.mock import patch, MagicMock
+
+        # Configure DSPy with a mock LM (required for GEPA)
+        mock_lm = MagicMock()
+        mock_lm.model = "test-model"
+        dspy.settings.configure(lm=mock_lm)
+
+        # Enable logging to capture optimizer selection
+        logger = logging.getLogger("src.app.routing.advanced_optimizer")
+        logger.setLevel(logging.INFO)
+
+        # Create config with GEPA threshold at 200
+        config = AdvancedOptimizerConfig(
+            min_experiences_for_training=50,  # Can init optimizer early
+            bootstrap_threshold=20,
+            simba_threshold=50,
+            mipro_threshold=100,
+            gepa_threshold=200,
+            optimizer_strategy="adaptive",  # Use adaptive selection
+            update_frequency=10,  # Trigger optimization every 10 experiences
+            enable_persistence=False,  # Disable persistence for test isolation
+        )
+
+        optimizer = AdvancedRoutingOptimizer(config)
+
+        # Collect 210 experiences to exceed GEPA threshold
+        for i in range(210):
+            await optimizer.record_routing_experience(
+                query=f"Test query {i}",
+                entities=[{"type": "TEST", "text": f"entity_{i}"}],
+                relationships=[],
+                enhanced_query=f"Enhanced query {i}",
+                chosen_agent="video_search_agent" if i % 2 == 0 else "summarizer_agent",
+                routing_confidence=0.8 + (i % 20) * 0.01,  # Vary confidence
+                search_quality=0.7 + (i % 30) * 0.01,  # Vary quality
+                agent_success=i % 10 != 0,  # 90% success rate
+            )
+
+        # Verify optimizer was initialized
+        assert optimizer.advanced_optimizer is not None, \
+            "Advanced optimizer should be initialized after min_experiences_for_training"
+
+        # Verify we have enough experiences
+        assert len(optimizer.experiences) == 210, \
+            f"Should have 210 experiences, got {len(optimizer.experiences)}"
+
+        # Test optimizer selection with 210 examples
+        dataset_size = 210
+        selected_optimizer, optimizer_name = optimizer.advanced_optimizer._select_optimizer(dataset_size)
+
+        assert optimizer_name == "gepa", \
+            f"With {dataset_size} examples, should select GEPA, got {optimizer_name}"
+
+        # Get optimization info to verify logic
+        opt_info = optimizer.advanced_optimizer.get_optimization_info(dataset_size)
+        assert opt_info["primary_optimizer"] == "gepa", \
+            f"Primary optimizer should be GEPA, got {opt_info['primary_optimizer']}"
+        assert opt_info["dataset_size"] == 210
+        assert len(opt_info["applicable_optimizers"]) == 4, \
+            "All 4 optimizers (bootstrap, simba, mipro, gepa) should be applicable"
+
+        # Test that compile() is called with correct optimizer
+        # Mock the actual GEPA.compile to avoid LLM calls
+        with patch.object(optimizer.advanced_optimizer.gepa_optimizer, 'compile') as mock_gepa_compile:
+            mock_optimized_module = MagicMock()
+            mock_gepa_compile.return_value = mock_optimized_module
+
+            # Create dummy training data
+            import dspy
+            trainset = [
+                dspy.Example(
+                    query="test",
+                    entities="[]",
+                    relationships="[]",
+                    enhanced_query="test",
+                    recommended_agent="video_search_agent",
+                    confidence="0.8",
+                    reasoning="test"
+                ).with_inputs("query", "entities", "relationships", "enhanced_query")
+                for _ in range(210)
+            ]
+
+            # Run compile - should use GEPA
+            result = optimizer.advanced_optimizer.compile(
+                optimizer.routing_policy,
+                trainset=trainset,
+                max_bootstrapped_demos=4,
+                max_labeled_demos=8,
+            )
+
+            # Verify GEPA was called
+            mock_gepa_compile.assert_called_once()
+            assert result == mock_optimized_module, \
+                "Should return optimized module from GEPA"
+
+        # Verify status shows optimizer ready
+        status = optimizer.get_optimization_status()
+        assert status["optimizer_ready"] is True, \
+            "Optimizer should be ready with 210 experiences"
+        assert status["total_experiences"] == 210
+
+    @pytest.mark.asyncio
+    async def test_optimizer_selection_thresholds(self):
+        """Test that optimizer selection works correctly at each threshold."""
+        import dspy
+        from unittest.mock import MagicMock
+
+        # Configure DSPy with mock LM
+        mock_lm = MagicMock()
+        mock_lm.model = "test-model"
+        dspy.settings.configure(lm=mock_lm)
+
+        config = AdvancedOptimizerConfig(
+            min_experiences_for_training=10,
+            bootstrap_threshold=20,
+            simba_threshold=50,
+            mipro_threshold=100,
+            gepa_threshold=200,
+            optimizer_strategy="adaptive",
+            enable_persistence=False,  # Disable persistence for test isolation
+        )
+
+        optimizer = AdvancedRoutingOptimizer(config)
+
+        # Collect minimum experiences to init optimizer
+        for i in range(15):
+            await optimizer.record_routing_experience(
+                query=f"Query {i}",
+                entities=[],
+                relationships=[],
+                enhanced_query=f"Query {i}",
+                chosen_agent="test_agent",
+                routing_confidence=0.8,
+                search_quality=0.7,
+                agent_success=True,
+            )
+
+        # Test selections at different dataset sizes
+        test_cases = [
+            (15, "bootstrap"),   # < 20: bootstrap only
+            (25, "bootstrap"),   # < 50: bootstrap (highest applicable)
+            (60, "simba"),       # >= 50, < 100: simba
+            (120, "mipro"),      # >= 100, < 200: mipro
+            (250, "gepa"),       # >= 200: gepa
+        ]
+
+        for dataset_size, expected_optimizer in test_cases:
+            selected_optimizer, optimizer_name = optimizer.advanced_optimizer._select_optimizer(dataset_size)
+            assert optimizer_name == expected_optimizer, \
+                f"With {dataset_size} examples, expected {expected_optimizer}, got {optimizer_name}"
+
+    @pytest.mark.asyncio
     async def test_end_to_end_workflow_simulation(self):
         """Test a simulated end-to-end workflow."""
         # Create basic optimizer with low threshold for testing

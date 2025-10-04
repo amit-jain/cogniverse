@@ -139,7 +139,20 @@ def create_retrieval_solver(
             metadata={"profiles": profiles, "strategies": strategies, "config": config},
         )
 
-        state.output = ModelOutput(completion=packed_output, stop_reason="completed")
+        # Create ModelOutput with proper structure
+        from inspect_ai.model import ChatCompletionChoice, ChatMessageAssistant
+
+        state.output = ModelOutput(
+            model="search_eval",
+            choices=[
+                ChatCompletionChoice(
+                    message=ChatMessageAssistant(content=packed_output, source="generate"),
+                    stop_reason="stop"
+                )
+            ]
+        )
+
+        logger.info(f"Solver set state.output (length={len(packed_output)}): {packed_output[:100] if packed_output else 'EMPTY'}")
 
         # Also keep in metadata for backward compatibility
         state.metadata["search_results"] = all_results

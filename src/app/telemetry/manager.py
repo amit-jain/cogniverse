@@ -234,7 +234,8 @@ class TelemetryManager:
 
                 exporter = OTLPSpanExporter(
                     endpoint=endpoint,
-                    insecure=not self.config.phoenix_use_tls
+                    insecure=not self.config.phoenix_use_tls,
+                    timeout=5  # 5 second timeout to prevent hanging
                 )
 
                 # Create resource with project name using OpenInference semantic convention
