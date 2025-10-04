@@ -209,7 +209,8 @@ class TestRealIngestionPipeline:
 
     @pytest.mark.skip(reason="Full pipeline too slow - use for manual testing only")
     @pytest.mark.requires_vespa
-    def test_real_end_to_end_ingestion_to_vespa(
+    @pytest.mark.asyncio
+    async def test_real_end_to_end_ingestion_to_vespa(
         self, test_video_path, temp_output_dir
     ):
         """
@@ -242,7 +243,7 @@ class TestRealIngestionPipeline:
         pipeline = IngestionPipeline(pipeline_config)
 
         # Run REAL ingestion
-        result = pipeline.process_video(test_video_path)
+        result = await pipeline.process_video_async(test_video_path)
 
         # Validate result
         assert result is not None

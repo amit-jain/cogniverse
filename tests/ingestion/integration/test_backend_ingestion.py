@@ -5,18 +5,21 @@ Tests actual document ingestion with various video processing profiles.
 """
 
 import shutil
+import subprocess
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+import requests
 
 from tests.utils.markers import (
     skip_heavy_models_in_ci,
     skip_if_ci,
     skip_if_low_memory,
-    skip_if_no_vespa,
 )
+from tests.system.vespa_test_manager import VespaTestManager
 
 # Import components for integration testing
 try:
@@ -128,9 +131,21 @@ class TestMockBackendIngestion:
 
 @pytest.mark.integration
 @pytest.mark.requires_vespa
-@skip_if_no_vespa
 class TestVespaBackendIngestion:
     """Test ingestion with actual Vespa backend."""
+
+    @pytest.fixture(scope="class")
+    def vespa_backend(self):
+        """Start Vespa Docker container, deploy schemas, yield, cleanup."""
+        manager = VespaTestManager(app_name="test-ingestion", http_port=8082)
+
+        if not manager.full_setup():
+            pytest.skip("Failed to setup Vespa test environment")
+
+        yield manager
+
+        # Cleanup
+        manager.cleanup()
 
     @pytest.fixture
     def vespa_test_videos(self):
@@ -141,18 +156,15 @@ class TestVespaBackendIngestion:
         else:
             pytest.skip("Test videos not available")
 
-    def test_vespa_connection(self):
+    def test_vespa_connection(self, vespa_backend):
         """Test basic Vespa connectivity."""
-        import requests
-
-        try:
-            response = requests.get("http://localhost:8080/state/v1/health", timeout=5)
-            assert response.status_code == 200
-        except requests.RequestException:
-            pytest.fail("Vespa not accessible at localhost:8080")
+        assert vespa_backend.is_running()
+        response = requests.get(f"{vespa_backend.get_base_url()}/ApplicationStatus", timeout=5)
+        assert response.status_code == 200
 
     @pytest.mark.slow
-    def test_lightweight_vespa_ingestion(self, vespa_test_videos):
+    @pytest.mark.asyncio
+    async def test_lightweight_vespa_ingestion(self, vespa_backend, vespa_test_videos):
         """Test lightweight ingestion to Vespa (no heavy models)."""
         if not vespa_test_videos:
             pytest.skip("No test videos available")
@@ -166,6 +178,8 @@ class TestVespaBackendIngestion:
         config = PipelineConfig.from_config()
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
+        config.vespa_url = "http://localhost"
+        config.vespa_port = vespa_backend.http_port
         config.transcribe_audio = False
         config.generate_descriptions = False
         config.max_frames_per_video = 1
@@ -173,7 +187,7 @@ class TestVespaBackendIngestion:
         pipeline = VideoIngestionPipeline(config)
 
         # Process just one video
-        result = pipeline.process_video(vespa_test_videos[0])
+        result = await pipeline.process_video_async(vespa_test_videos[0])
 
         assert result is not None
         assert "video_id" in result
@@ -181,7 +195,8 @@ class TestVespaBackendIngestion:
     @pytest.mark.local_only
     @pytest.mark.requires_colpali
     @skip_heavy_models_in_ci
-    def test_colpali_vespa_ingestion(self, vespa_test_videos):
+    @pytest.mark.asyncio
+    async def test_colpali_vespa_ingestion(self, vespa_backend, vespa_test_videos):
         """Test ColPali model ingestion to Vespa (local only)."""
         if not vespa_test_videos:
             pytest.skip("No test videos available")
@@ -194,11 +209,13 @@ class TestVespaBackendIngestion:
         config = PipelineConfig.from_config()
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
+        config.vespa_url = "http://localhost"
+        config.vespa_port = vespa_backend.http_port
         config.active_video_profile = "video_colpali_smol500_mv_frame"
         config.max_frames_per_video = 2
 
         pipeline = VideoIngestionPipeline(config)
-        result = pipeline.process_video(vespa_test_videos[0])
+        result = await pipeline.process_video_async(vespa_test_videos[0])
 
         assert result is not None
         assert "embeddings" in result.get("results", {})
@@ -207,7 +224,8 @@ class TestVespaBackendIngestion:
     @pytest.mark.requires_videoprism
     @skip_heavy_models_in_ci
     @skip_if_low_memory
-    def test_videoprism_vespa_ingestion(self, vespa_test_videos):
+    @pytest.mark.asyncio
+    async def test_videoprism_vespa_ingestion(self, vespa_backend, vespa_test_videos):
         """Test VideoPrism model ingestion to Vespa (local only)."""
         if not vespa_test_videos:
             pytest.skip("No test videos available")
@@ -220,11 +238,13 @@ class TestVespaBackendIngestion:
         config = PipelineConfig.from_config()
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
+        config.vespa_url = "http://localhost"
+        config.vespa_port = vespa_backend.http_port
         config.active_video_profile = "video_videoprism_base_mv_chunk_30s"
         config.max_frames_per_video = 1
 
         pipeline = VideoIngestionPipeline(config)
-        result = pipeline.process_video(vespa_test_videos[0])
+        result = await pipeline.process_video_async(vespa_test_videos[0])
 
         assert result is not None
         assert "embeddings" in result.get("results", {})
@@ -232,7 +252,8 @@ class TestVespaBackendIngestion:
     @pytest.mark.local_only
     @pytest.mark.requires_colqwen
     @skip_heavy_models_in_ci
-    def test_colqwen_vespa_ingestion(self, vespa_test_videos):
+    @pytest.mark.asyncio
+    async def test_colqwen_vespa_ingestion(self, vespa_backend, vespa_test_videos):
         """Test ColQwen model ingestion to Vespa (local only)."""
         if not vespa_test_videos:
             pytest.skip("No test videos available")
@@ -245,11 +266,13 @@ class TestVespaBackendIngestion:
         config = PipelineConfig.from_config()
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
+        config.vespa_url = "http://localhost"
+        config.vespa_port = vespa_backend.http_port
         config.active_video_profile = "video_colqwen_omni_mv_chunk_30s"
         config.max_frames_per_video = 1
 
         pipeline = VideoIngestionPipeline(config)
-        result = pipeline.process_video(vespa_test_videos[0])
+        result = await pipeline.process_video_async(vespa_test_videos[0])
 
         assert result is not None
         assert "embeddings" in result.get("results", {})
@@ -272,7 +295,8 @@ class TestComprehensiveIngestion:
 
     @pytest.mark.slow
     @pytest.mark.requires_vespa
-    def test_multi_profile_ingestion(self, all_test_videos):
+    @pytest.mark.asyncio
+    async def test_multi_profile_ingestion(self, all_test_videos):
         """Test ingestion with multiple profiles."""
         if not all_test_videos:
             pytest.skip("No test videos available")
@@ -298,7 +322,7 @@ class TestComprehensiveIngestion:
                 config.max_frames_per_video = 1
 
                 pipeline = VideoIngestionPipeline(config)
-                result = pipeline.process_video(all_test_videos[0])
+                result = await pipeline.process_video_async(all_test_videos[0])
                 results[profile] = result
 
             except Exception as e:
@@ -309,7 +333,8 @@ class TestComprehensiveIngestion:
         assert len(results) > 0
 
     @pytest.mark.benchmark
-    def test_ingestion_performance(self, all_test_videos):
+    @pytest.mark.asyncio
+    async def test_ingestion_performance(self, all_test_videos):
         """Benchmark ingestion performance."""
         if not all_test_videos:
             pytest.skip("No test videos available")
@@ -330,7 +355,7 @@ class TestComprehensiveIngestion:
         pipeline = VideoIngestionPipeline(config)
 
         start_time = time.time()
-        result = pipeline.process_video(all_test_videos[0])
+        result = await pipeline.process_video_async(all_test_videos[0])
         end_time = time.time()
 
         processing_time = end_time - start_time

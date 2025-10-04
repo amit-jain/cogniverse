@@ -6,7 +6,7 @@ Tests the video processing pipeline functionality with proper mocking.
 """
 
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -454,17 +454,19 @@ class TestVideoIngestionPipelineUtilityMethods:
         assert "full_transcript" in result_data
         assert "document_structure" in result_data
 
-    @patch("asyncio.run")
-    def test_process_video_sync_wrapper(self, mock_asyncio_run, mock_pipeline):
-        """Test process_video method (sync wrapper)."""
+    @pytest.mark.asyncio
+    async def test_process_video_async(self, mock_pipeline):
+        """Test process_video_async method."""
         mock_result = {"video_id": "test", "status": "completed"}
-        mock_asyncio_run.return_value = mock_result
+
+        # Mock the async method directly
+        mock_pipeline.process_video_async = AsyncMock(return_value=mock_result)
 
         video_path = Path("/test/video.mp4")
-        result = mock_pipeline.process_video(video_path)
+        result = await mock_pipeline.process_video_async(video_path)
 
         assert result == mock_result
-        mock_asyncio_run.assert_called_once()
+        mock_pipeline.process_video_async.assert_called_once_with(video_path)
 
     def test_prepare_video_data_frame_strategy(self, mock_pipeline):
         """Test _prepare_video_data with frame strategy."""

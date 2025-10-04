@@ -188,9 +188,10 @@ class VespaTestManager:
             print(f"Starting isolated Vespa Docker container on port {self.http_port}...")
             
             # Calculate offset ports to avoid conflicts with main Vespa
-            port_offset = self.http_port - 8080  # e.g. if http_port=8081, offset=1  
+            port_offset = self.http_port - 8080  # e.g. if http_port=8081, offset=1
             config_port = 19071 + port_offset   # e.g. 19072
-            
+            self.config_port = config_port  # Update instance variable
+
             # Container name based on port to avoid conflicts
             container_name = f"vespa-test-{self.http_port}"
             
@@ -318,11 +319,31 @@ class VespaTestManager:
             # CRITICAL: Force config to update with new environment variables
             # The config singleton was loaded with old values, we need to override them
             from src.common.config import update_config
+            import json
+
+            # Load test config and update the global config with profiles
+            with open(system_test_config) as f:
+                test_config = json.load(f)
+
+            profiles = test_config.get('video_processing_profiles', {})
             update_config({
                 'vespa_url': "http://localhost",
-                'vespa_port': self.http_port
+                'vespa_port': self.http_port,
+                'video_processing_profiles': profiles,
+                'active_video_profile': test_config.get('active_video_profile', self.default_test_schema)
             })
             print(f"🔧 FORCED CONFIG UPDATE: vespa_url=http://localhost, vespa_port={self.http_port}")
+            print(f"🔧 Loaded {len(profiles)} profiles: {list(profiles.keys())}")
+
+            # Verify the config was actually updated
+            from src.common.config import get_config
+            current_config = get_config()
+            loaded_profiles = current_config.get('video_processing_profiles', {})
+            print(f"🔍 Config verification: video_processing_profiles has {len(loaded_profiles)} entries")
+            if self.default_test_schema in loaded_profiles:
+                profile = loaded_profiles[self.default_test_schema]
+                print(f"🔍 Profile {self.default_test_schema} has keys: {list(profile.keys())}")
+                print(f"🔍 Profile has 'strategies': {'strategies' in profile}")
             
             # Clear any cached backend instances that might have old config
             from src.common.core.backend_registry import get_backend_registry
@@ -348,11 +369,28 @@ class VespaTestManager:
                     size_mb = video.stat().st_size / (1024 * 1024)
                     print(f"   - {video.name} ({size_mb:.1f}MB)")
                 
-                # Build pipeline with test schema
-                pipeline = build_test_pipeline(
-                    video_dir=video_files[0].parent,  # Directory of first video
-                    schema=self.default_test_schema,
-                    max_frames=1  # Very minimal for fast testing
+                # Build pipeline with test schema and explicit app_config
+                from src.app.ingestion.pipeline_builder import create_pipeline, create_config
+
+                # Update test_config with correct Vespa port for this isolated instance
+                test_config['vespa_port'] = self.http_port
+                test_config['vespa_url'] = "http://localhost"
+
+                config = (
+                    create_config()
+                    .video_dir(video_files[0].parent)
+                    .max_frames_per_video(1)
+                    .backend("vespa")
+                    .build()
+                )
+
+                pipeline = (
+                    create_pipeline()
+                    .with_config(config)
+                    .with_app_config(test_config)  # Pass test_config with correct port!
+                    .with_schema(self.default_test_schema)
+                    .with_debug(True)
+                    .build()
                 )
                 
                 print(f"🔧 Using test schema: {self.default_test_schema}")

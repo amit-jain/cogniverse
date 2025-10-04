@@ -7,13 +7,47 @@
   "phoenix_url": "http://localhost:6006",
   "video_processing_profiles": {
     "video_colpali_smol500_mv_frame": {
-      "schema": "video_colpali_smol500_mv_frame",
-      "process_type": "mv_frame",
-      "model_id": "vidore/colsmol-500m",
-      "device": "cpu",
-      "batch_size": 4,
-      "max_frames_per_video": 2,
-      "frame_sampling_strategy": "uniform"
+      "schema_name": "video_colpali_smol500_mv_frame",
+      "embedding_model": "vidore/colsmol-500m",
+      "pipeline_config": {
+        "extract_keyframes": true,
+        "transcribe_audio": false,
+        "generate_descriptions": false,
+        "generate_embeddings": true,
+        "keyframe_strategy": "fps",
+        "keyframe_fps": 1.0
+      },
+      "strategies": {
+        "segmentation": {
+          "class": "FrameSegmentationStrategy",
+          "params": {
+            "fps": 1.0,
+            "threshold": 0.999,
+            "max_frames": 1
+          }
+        },
+        "transcription": {
+          "class": "AudioTranscriptionStrategy",
+          "params": {}
+        },
+        "description": {
+          "class": "NoDescriptionStrategy",
+          "params": {}
+        },
+        "embedding": {
+          "class": "MultiVectorEmbeddingStrategy",
+          "params": {}
+        }
+      },
+      "embedding_type": "frame_based",
+      "schema_config": {
+        "schema_name": "video_colpali_smol500_mv_frame",
+        "model_name": "ColPali",
+        "num_patches": 1024,
+        "embedding_dim": 128,
+        "binary_dim": 16
+      }
     }
-  }
+  },
+  "active_video_profile": "video_colpali_smol500_mv_frame"
 }

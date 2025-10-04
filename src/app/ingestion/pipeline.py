@@ -850,13 +850,6 @@ class VideoIngestionPipeline:
         """
         return await self.process_video_async_with_strategies(video_path)
 
-    def process_video(self, video_path: Path) -> dict[str, Any]:
-        """
-        DEPRECATED: Sync wrapper for backward compatibility
-        Use process_video_async directly in new code
-        """
-        # Use asyncio.run for simple event loop handling
-        return asyncio.run(self.process_video_async(video_path))
 
     async def process_videos_concurrent(
         self, video_files: list[Path], max_concurrent: int = 3

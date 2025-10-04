@@ -61,16 +61,16 @@ class CogniverseInstrumentor(BaseInstrumentor):
         """Add tracing to video processing pipeline"""
         try:
             from src.app.ingestion.pipeline import VideoIngestionPipeline
-            
-            # Store original method
-            original_process = VideoIngestionPipeline.process_video
-            self._original_methods['src.processing.unified_video_pipeline.VideoIngestionPipeline.process_video'] = original_process
-            
+
+            # Store original async method
+            original_process = VideoIngestionPipeline.process_video_async
+            self._original_methods['src.processing.unified_video_pipeline.VideoIngestionPipeline.process_video_async'] = original_process
+
             # Capture tracer in closure
             tracer = self.tracer
-            
+
             @wraps(original_process)
-            def traced_process(pipeline_self, video_path, *args, **kwargs):
+            async def traced_process(pipeline_self, video_path, *args, **kwargs):
                 with tracer.start_as_current_span(
                     "video_pipeline.process",
                     attributes={
@@ -80,18 +80,18 @@ class CogniverseInstrumentor(BaseInstrumentor):
                 ) as span:
                     try:
                         start_time = time.time()
-                        result = original_process(pipeline_self, video_path, *args, **kwargs)
-                        
+                        result = await original_process(pipeline_self, video_path, *args, **kwargs)
+
                         # Add result attributes
                         if isinstance(result, dict):
                             if "results" in result:
                                 if "keyframes" in result["results"]:
-                                    span.set_attribute("frames_extracted", 
+                                    span.set_attribute("frames_extracted",
                                                      len(result["results"]["keyframes"].get("keyframes", [])))
                                 if "transcript" in result["results"]:
-                                    span.set_attribute("transcript_segments", 
+                                    span.set_attribute("transcript_segments",
                                                      len(result["results"]["transcript"].get("segments", [])))
-                        
+
                         span.set_attribute("duration_ms", (time.time() - start_time) * 1000)
                         span.set_status(Status(StatusCode.OK))
                         return result
@@ -99,10 +99,10 @@ class CogniverseInstrumentor(BaseInstrumentor):
                         span.record_exception(e)
                         span.set_status(Status(StatusCode.ERROR, str(e)))
                         raise
-            
-            VideoIngestionPipeline.process_video = traced_process
-            logger.info("Instrumented VideoIngestionPipeline.process_video")
-            
+
+            VideoIngestionPipeline.process_video_async = traced_process
+            logger.info("Instrumented VideoIngestionPipeline.process_video_async")
+
         except ImportError as e:
             logger.warning(f"Could not instrument video pipeline: {e}")
     
