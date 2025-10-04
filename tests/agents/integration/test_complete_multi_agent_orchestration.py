@@ -82,22 +82,12 @@ class TestCompleteMultiAgentOrchestration:
 
     def test_summarization_workflow(self):
         """Test summarization agent workflow with structured data"""
-        from unittest.mock import patch
+        summarizer = SummarizerAgent()
 
-        with patch("src.app.agents.summarizer_agent.get_config") as mock_config:
-            mock_config.return_value = {
-                "llm": {
-                    "model_name": "smollm3:3b",
-                    "base_url": "http://localhost:11434/v1",
-                    "api_key": "dummy",
-                }
-            }
-            summarizer = SummarizerAgent()
+        # Test with sample search results
 
-            # Test with sample search results
-
-            # Should handle summarization request
-            assert summarizer is not None
+        # Should handle summarization request
+        assert summarizer is not None
         assert hasattr(summarizer, "summarize")
         assert callable(summarizer.summarize)
 
@@ -105,24 +95,14 @@ class TestCompleteMultiAgentOrchestration:
 
     def test_detailed_report_workflow(self):
         """Test detailed report generation workflow"""
-        from unittest.mock import patch
+        reporter = DetailedReportAgent()
 
-        with patch("src.app.agents.detailed_report_agent.get_config") as mock_config:
-            mock_config.return_value = {
-                "llm": {
-                    "model_name": "smollm3:3b",
-                    "base_url": "http://localhost:11434/v1",
-                    "api_key": "dummy",
-                }
-            }
-            reporter = DetailedReportAgent()
+        # Test with comprehensive data structure
 
-            # Test with comprehensive data structure
-
-            # Should handle report generation request
-            assert reporter is not None
-            assert hasattr(reporter, "generate_report")
-            assert callable(reporter.generate_report)
+        # Should handle report generation request
+        assert reporter is not None
+        assert hasattr(reporter, "generate_report")
+        assert callable(reporter.generate_report)
 
         print("✅ Detailed report workflow structure validated")
 
