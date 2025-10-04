@@ -50,7 +50,7 @@ class VespaVectorStore(VectorStoreBase):
         collection_name: str = "agent_memories",
         host: str = "localhost",
         port: int = 8080,
-        **kwargs
+        **kwargs,
     ):
         """
         Initialize Vespa vector store.
@@ -113,12 +113,14 @@ class VespaVectorStore(VectorStoreBase):
         # Silently ignore telemetry inserts
         if self.is_telemetry:
             import uuid
+
             return ids if ids else [str(uuid.uuid4()) for _ in vectors]
 
         logger.info(f"Inserting {len(vectors)} vectors into {self.collection_name}")
 
         if not ids:
             import uuid
+
             ids = [f"memory-{uuid.uuid4()}" for _ in vectors]
 
         if not payloads:
@@ -134,8 +136,9 @@ class VespaVectorStore(VectorStoreBase):
             if isinstance(created_at, str):
                 # Mem0 may pass ISO timestamp strings, convert to epoch
                 from datetime import datetime
+
                 try:
-                    dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
                     created_at = int(dt.timestamp())
                 except Exception:
                     created_at = int(time.time())
@@ -149,7 +152,9 @@ class VespaVectorStore(VectorStoreBase):
                     "text": payload.get("data", ""),
                     "user_id": payload.get("user_id", ""),
                     "agent_id": payload.get("agent_id", ""),
-                    "metadata_": json.dumps(metadata) if isinstance(metadata, dict) else metadata,
+                    "metadata_": (
+                        json.dumps(metadata) if isinstance(metadata, dict) else metadata
+                    ),
                     "created_at": created_at,
                 },
             }
@@ -237,19 +242,22 @@ class VespaVectorStore(VectorStoreBase):
                 created_at = fields.get("created_at")
                 if isinstance(created_at, (int, float)):
                     from datetime import datetime
+
                     created_at = datetime.fromtimestamp(created_at).isoformat()
 
-                results.append(VespaSearchResult(
-                    id=fields.get("id"),
-                    score=hit.get("relevance", 0.0),
-                    payload={
-                        "data": fields.get("text", ""),
-                        "user_id": fields.get("user_id", ""),
-                        "agent_id": fields.get("agent_id", ""),
-                        "metadata": fields.get("metadata_", {}),
-                        "created_at": created_at,
-                    },
-                ))
+                results.append(
+                    VespaSearchResult(
+                        id=fields.get("id"),
+                        score=hit.get("relevance", 0.0),
+                        payload={
+                            "data": fields.get("text", ""),
+                            "user_id": fields.get("user_id", ""),
+                            "agent_id": fields.get("agent_id", ""),
+                            "metadata": fields.get("metadata_", {}),
+                            "created_at": created_at,
+                        },
+                    )
+                )
 
             return results
 
@@ -424,19 +432,22 @@ class VespaVectorStore(VectorStoreBase):
                 created_at = fields.get("created_at")
                 if isinstance(created_at, (int, float)):
                     from datetime import datetime
+
                     created_at = datetime.fromtimestamp(created_at).isoformat()
 
-                results.append(VespaSearchResult(
-                    id=fields.get("id"),
-                    score=hit.get("relevance", 0.0),
-                    payload={
-                        "data": fields.get("text", ""),
-                        "user_id": fields.get("user_id", ""),
-                        "agent_id": fields.get("agent_id", ""),
-                        "metadata": fields.get("metadata_", {}),
-                        "created_at": created_at,
-                    },
-                ))
+                results.append(
+                    VespaSearchResult(
+                        id=fields.get("id"),
+                        score=hit.get("relevance", 0.0),
+                        payload={
+                            "data": fields.get("text", ""),
+                            "user_id": fields.get("user_id", ""),
+                            "agent_id": fields.get("agent_id", ""),
+                            "metadata": fields.get("metadata_", {}),
+                            "created_at": created_at,
+                        },
+                    )
+                )
 
             # Return as tuple (results, next_offset) to match Qdrant's scroll() API
             # Vespa doesn't have pagination offsets, so next_offset is always None

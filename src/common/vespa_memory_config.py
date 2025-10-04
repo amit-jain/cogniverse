@@ -12,8 +12,12 @@ from pydantic import BaseModel, Field, model_validator
 class VespaConfig(BaseModel):
     """Configuration for Vespa vector store"""
 
-    collection_name: str = Field("agent_memories", description="Name of the Vespa schema/document type")
-    embedding_model_dims: Optional[int] = Field(768, description="Dimensions of the embedding model")
+    collection_name: str = Field(
+        "agent_memories", description="Name of the Vespa schema/document type"
+    )
+    embedding_model_dims: Optional[int] = Field(
+        768, description="Dimensions of the embedding model"
+    )
     host: str = Field("localhost", description="Vespa endpoint host")
     port: int = Field(8080, description="Vespa endpoint port")
 

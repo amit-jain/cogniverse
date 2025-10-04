@@ -141,7 +141,9 @@ class VespaConfigStore(ConfigStore):
             ConfigEntry with new version number
         """
         # Get next version
-        current_version = self._get_latest_version(tenant_id, scope, service, config_key)
+        current_version = self._get_latest_version(
+            tenant_id, scope, service, config_key
+        )
         new_version = current_version + 1
 
         # Create timestamps
@@ -364,7 +366,10 @@ class VespaConfigStore(ConfigStore):
                 )
 
                 # Keep only latest version for each config_id
-                if config_id not in latest_configs or entry.version > latest_configs[config_id].version:
+                if (
+                    config_id not in latest_configs
+                    or entry.version > latest_configs[config_id].version
+                ):
                     latest_configs[config_id] = entry
 
             return list(latest_configs.values())
@@ -395,7 +400,9 @@ class VespaConfigStore(ConfigStore):
         config_id = self._create_document_id(tenant_id, scope, service, config_key)
 
         # Get all versions
-        history = self.get_config_history(tenant_id, scope, service, config_key, limit=1000)
+        history = self.get_config_history(
+            tenant_id, scope, service, config_key, limit=1000
+        )
 
         if not history:
             return False
@@ -463,16 +470,18 @@ class VespaConfigStore(ConfigStore):
             configs = []
             for hit in response.hits:
                 fields = hit["fields"]
-                configs.append({
-                    "tenant_id": fields["tenant_id"],
-                    "scope": fields["scope"],
-                    "service": fields["service"],
-                    "config_key": fields["config_key"],
-                    "config_value": json.loads(fields["config_value"]),
-                    "version": fields["version"],
-                    "created_at": fields["created_at"],
-                    "updated_at": fields["updated_at"],
-                })
+                configs.append(
+                    {
+                        "tenant_id": fields["tenant_id"],
+                        "scope": fields["scope"],
+                        "service": fields["service"],
+                        "config_key": fields["config_key"],
+                        "config_value": json.loads(fields["config_value"]),
+                        "version": fields["version"],
+                        "created_at": fields["created_at"],
+                        "updated_at": fields["updated_at"],
+                    }
+                )
 
             return {
                 "tenant_id": tenant_id,
@@ -533,14 +542,20 @@ class VespaConfigStore(ConfigStore):
         """
         try:
             # Count total configs (distinct config_ids)
-            yql_total = f"select config_id from {self.schema_name} where true limit 10000"
+            yql_total = (
+                f"select config_id from {self.schema_name} where true limit 10000"
+            )
             response = self.vespa_app.query(yql=yql_total)
 
             total_versions = len(response.hits)
-            unique_config_ids = len(set(hit["fields"]["config_id"] for hit in response.hits))
+            unique_config_ids = len(
+                set(hit["fields"]["config_id"] for hit in response.hits)
+            )
 
             # Count tenants
-            unique_tenants = len(set(hit["fields"]["tenant_id"] for hit in response.hits))
+            unique_tenants = len(
+                set(hit["fields"]["tenant_id"] for hit in response.hits)
+            )
 
             # Count per scope
             scope_counts: Dict[str, int] = {}

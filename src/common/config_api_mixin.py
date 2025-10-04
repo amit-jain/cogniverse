@@ -114,7 +114,9 @@ class ConfigAPIMixin:
             }
 
         @app.post("/config/module")
-        async def update_module_config_endpoint(request: ModuleConfigUpdate, tenant_id: Optional[str] = None):
+        async def update_module_config_endpoint(
+            request: ModuleConfigUpdate, tenant_id: Optional[str] = None
+        ):
             """Update module configuration at runtime with persistence"""
             # Validate module type
             try:
@@ -177,7 +179,9 @@ class ConfigAPIMixin:
             }
 
         @app.post("/config/optimizer")
-        async def update_optimizer_config_endpoint(request: OptimizerConfigUpdate, tenant_id: Optional[str] = None):
+        async def update_optimizer_config_endpoint(
+            request: OptimizerConfigUpdate, tenant_id: Optional[str] = None
+        ):
             """Update optimizer configuration at runtime with persistence"""
             # Validate optimizer type
             try:
@@ -228,7 +232,9 @@ class ConfigAPIMixin:
                 raise HTTPException(status_code=500, detail=str(e))
 
         @app.post("/config/llm")
-        async def update_llm_config_endpoint(request: LLMConfigUpdate, tenant_id: Optional[str] = None):
+        async def update_llm_config_endpoint(
+            request: LLMConfigUpdate, tenant_id: Optional[str] = None
+        ):
             """Update LLM configuration at runtime with persistence"""
             try:
                 # Update LLM config fields if provided

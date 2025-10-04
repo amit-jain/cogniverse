@@ -146,13 +146,17 @@ def create_retrieval_solver(
             model="search_eval",
             choices=[
                 ChatCompletionChoice(
-                    message=ChatMessageAssistant(content=packed_output, source="generate"),
-                    stop_reason="stop"
+                    message=ChatMessageAssistant(
+                        content=packed_output, source="generate"
+                    ),
+                    stop_reason="stop",
                 )
-            ]
+            ],
         )
 
-        logger.info(f"Solver set state.output (length={len(packed_output)}): {packed_output[:100] if packed_output else 'EMPTY'}")
+        logger.info(
+            f"Solver set state.output (length={len(packed_output)}): {packed_output[:100] if packed_output else 'EMPTY'}"
+        )
 
         # Also keep in metadata for backward compatibility
         state.metadata["search_results"] = all_results

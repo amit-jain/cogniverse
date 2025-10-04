@@ -221,7 +221,9 @@ class RoutingConfigUnified:
             llm_max_tokens=data.get("llm_max_tokens", 150),
             use_chain_of_thought=data.get("use_chain_of_thought", True),
             enable_auto_optimization=data.get("enable_auto_optimization", True),
-            optimization_interval_seconds=data.get("optimization_interval_seconds", 3600),
+            optimization_interval_seconds=data.get(
+                "optimization_interval_seconds", 3600
+            ),
             min_samples_for_optimization=data.get("min_samples_for_optimization", 100),
             dspy_enabled=data.get("dspy_enabled", True),
             dspy_max_bootstrapped_demos=data.get("dspy_max_bootstrapped_demos", 10),

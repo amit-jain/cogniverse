@@ -109,7 +109,9 @@ class DocumentAgent(MemoryAwareMixin, DSPyA2AAgentBase):
             tenant_id=tenant_id,
         )
         if memory_initialized:
-            logger.info(f"✅ Memory initialized for document_agent (tenant: {tenant_id})")
+            logger.info(
+                f"✅ Memory initialized for document_agent (tenant: {tenant_id})"
+            )
         else:
             logger.info("ℹ️  Memory disabled or not configured for document_agent")
 
@@ -212,7 +214,11 @@ class DocumentAgent(MemoryAwareMixin, DSPyA2AAgentBase):
             if self.is_memory_enabled() and results:
                 self.remember_success(
                     query=query,
-                    result={"result_count": len(results), "strategy": strategy, "top_result": results[0].title if results else None},
+                    result={
+                        "result_count": len(results),
+                        "strategy": strategy,
+                        "top_result": results[0].title if results else None,
+                    },
                     metadata={
                         "search_strategy": strategy,
                         "limit": limit,

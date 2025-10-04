@@ -33,12 +33,16 @@ class ConfigUtils:
     def _ensure_routing_config(self):
         """Lazy load routing config"""
         if self._routing_config is None:
-            self._routing_config = self._config_manager.get_routing_config(self.tenant_id)
+            self._routing_config = self._config_manager.get_routing_config(
+                self.tenant_id
+            )
 
     def _ensure_telemetry_config(self):
         """Lazy load telemetry config"""
         if self._telemetry_config is None:
-            self._telemetry_config = self._config_manager.get_telemetry_config(self.tenant_id)
+            self._telemetry_config = self._config_manager.get_telemetry_config(
+                self.tenant_id
+            )
 
     def get(self, key: str, default: Any = None) -> Any:
         """
@@ -106,7 +110,9 @@ class ConfigUtils:
             return telemetry_keys[key]()
 
         # Return default if not found
-        logger.warning(f"Config key '{key}' not found in ConfigManager, returning default")
+        logger.warning(
+            f"Config key '{key}' not found in ConfigManager, returning default"
+        )
         return default
 
 

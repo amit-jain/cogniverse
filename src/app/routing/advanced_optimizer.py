@@ -194,23 +194,20 @@ class AdvancedRoutingOptimizer:
 
     def _initialize_advanced_components(self):
         """Initialize advanced optimization components"""
+
         # Create routing policy signatures
         class RoutingPolicySignature(dspy.Signature):
             """Optimized routing decision based on learned policy"""
 
             query = dspy.InputField(desc="User query to route")
             entities = dspy.InputField(desc="Extracted entities from query")
-            relationships = dspy.InputField(
-                desc="Extracted relationships from query"
-            )
+            relationships = dspy.InputField(desc="Extracted relationships from query")
             enhanced_query = dspy.InputField(
                 desc="Enhanced query with relationship context"
             )
 
             recommended_agent = dspy.OutputField(desc="Best agent for this query")
-            confidence = dspy.OutputField(
-                desc="Confidence in routing decision (0-1)"
-            )
+            confidence = dspy.OutputField(desc="Confidence in routing decision (0-1)")
             reasoning = dspy.OutputField(desc="Reasoning for routing choice")
 
         # Create policy module
@@ -259,15 +256,23 @@ class AdvancedRoutingOptimizer:
         4. Multi-stage optimization with experience-based learning
         """
 
-        def routing_accuracy_metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
+        def routing_accuracy_metric(
+            gold, pred, trace=None, pred_name=None, pred_trace=None
+        ):
             """
             Metric for GEPA optimizer to evaluate routing quality.
             Returns a score between 0 and 1.
             """
             try:
                 # Extract predicted and gold agent types
-                pred_agent = getattr(pred, 'agent_type', None) or getattr(pred, 'prediction', None)
-                gold_agent = getattr(gold, 'agent_type', None) or gold.get('agent_type') if isinstance(gold, dict) else None
+                pred_agent = getattr(pred, "agent_type", None) or getattr(
+                    pred, "prediction", None
+                )
+                gold_agent = (
+                    getattr(gold, "agent_type", None) or gold.get("agent_type")
+                    if isinstance(gold, dict)
+                    else None
+                )
 
                 # Basic accuracy: 1 if correct, 0 if incorrect
                 if pred_agent == gold_agent:
@@ -287,20 +292,26 @@ class AdvancedRoutingOptimizer:
                     current_lm = dspy.settings.lm
                     if current_lm is None:
                         # Set a default LM if none configured
-                        logger.warning("No LM configured for GEPA, using default ollama:smollm2:1.7b")
-                        current_lm = dspy.LM("ollama/smollm2:1.7b", api_base="http://localhost:11434")
+                        logger.warning(
+                            "No LM configured for GEPA, using default ollama:smollm2:1.7b"
+                        )
+                        current_lm = dspy.LM(
+                            "ollama/smollm2:1.7b", api_base="http://localhost:11434"
+                        )
                         dspy.settings.configure(lm=current_lm)
                 except AttributeError:
                     # Fallback for older DSPy versions
                     logger.warning("Could not get DSPy LM, using default for GEPA")
-                    current_lm = dspy.LM("ollama/smollm2:1.7b", api_base="http://localhost:11434")
+                    current_lm = dspy.LM(
+                        "ollama/smollm2:1.7b", api_base="http://localhost:11434"
+                    )
                     dspy.settings.configure(lm=current_lm)
 
                 # Initialize all advanced optimizers with required parameters
                 self.gepa_optimizer = GEPA(
                     metric=routing_accuracy_metric,
-                    auto='light',
-                    reflection_lm=current_lm  # Required by GEPA
+                    auto="light",
+                    reflection_lm=current_lm,  # Required by GEPA
                 )
                 self.mipro_optimizer = MIPROv2(
                     metric=routing_accuracy_metric  # Required by MIPRO
@@ -694,7 +705,10 @@ class AdvancedRoutingOptimizer:
     async def _run_optimization_step(self):
         """Run one step of GRPO optimization"""
         # Lazy initialize advanced optimizer if we now have enough experiences
-        if self.advanced_optimizer is None and len(self.experiences) >= self.config.min_experiences_for_training:
+        if (
+            self.advanced_optimizer is None
+            and len(self.experiences) >= self.config.min_experiences_for_training
+        ):
             logger.info("Lazy initializing advanced optimizer after reaching threshold")
             self.advanced_optimizer = self._create_advanced_optimizer()
             logger.info("Advanced optimizer initialized")

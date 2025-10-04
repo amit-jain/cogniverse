@@ -82,7 +82,9 @@ class RoutingAgent(MemoryAwareMixin, DSPyRoutingMixin):
             tenant_id=tenant_id,
         )
         if memory_initialized:
-            logger.info(f"✅ Memory initialized for routing_agent (tenant: {tenant_id})")
+            logger.info(
+                f"✅ Memory initialized for routing_agent (tenant: {tenant_id})"
+            )
         else:
             logger.info("ℹ️  Memory disabled or not configured for routing_agent")
 
@@ -459,9 +461,7 @@ class RoutingAgent(MemoryAwareMixin, DSPyRoutingMixin):
                             },
                         )
                         if success_stored:
-                            logger.debug(
-                                "💾 Stored orchestration decision in memory"
-                            )
+                            logger.debug("💾 Stored orchestration decision in memory")
 
                     return orchestration_result
 

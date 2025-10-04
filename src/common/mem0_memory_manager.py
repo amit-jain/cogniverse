@@ -26,19 +26,22 @@ def _register_vespa_provider():
     from mem0.utils.factory import VectorStoreFactory
 
     # Import vespa_memory_config so it's available in sys.modules
-    import src.common.vespa_memory_config
 
     # Register Vespa config in the provider_configs default dict
     provider_configs = VectorStoreConfig._provider_configs.default
     if "vespa" not in provider_configs:
         provider_configs["vespa"] = "VespaConfig"
         # Make VespaConfig available for import
-        sys.modules["mem0.configs.vector_stores.vespa"] = sys.modules["src.common.vespa_memory_config"]
+        sys.modules["mem0.configs.vector_stores.vespa"] = sys.modules[
+            "src.common.vespa_memory_config"
+        ]
         logger.info("Registered Vespa config in Mem0")
 
     # Register Vespa vector store implementation
     if "vespa" not in VectorStoreFactory.provider_to_class:
-        VectorStoreFactory.provider_to_class["vespa"] = "src.common.mem0_vespa_store.VespaVectorStore"
+        VectorStoreFactory.provider_to_class["vespa"] = (
+            "src.common.mem0_vespa_store.VespaVectorStore"
+        )
         logger.info("Registered Vespa vector store in Mem0 factory")
 
 
@@ -175,12 +178,20 @@ class Mem0MemoryManager:
                 if "id" in result:
                     memory_id = result["id"]
                 elif "results" in result and result["results"]:
-                    memory_id = result["results"][0].get("id", str(result["results"][0]))
+                    memory_id = result["results"][0].get(
+                        "id", str(result["results"][0])
+                    )
                 else:
-                    logger.warning(f"Mem0 returned dict without id or results: {result}")
+                    logger.warning(
+                        f"Mem0 returned dict without id or results: {result}"
+                    )
                     memory_id = str(result)
             elif isinstance(result, list) and result:
-                memory_id = result[0].get("id") if isinstance(result[0], dict) else str(result[0])
+                memory_id = (
+                    result[0].get("id")
+                    if isinstance(result[0], dict)
+                    else str(result[0])
+                )
             else:
                 memory_id = str(result) if result else None
 

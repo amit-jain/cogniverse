@@ -78,9 +78,7 @@ class MemoryAwareMixin:
                 )
 
             self._memory_initialized = True
-            logger.info(
-                f"Memory initialized for {agent_name} (tenant: {tenant_id})"
-            )
+            logger.info(f"Memory initialized for {agent_name} (tenant: {tenant_id})")
 
             return True
 
@@ -133,9 +131,7 @@ class MemoryAwareMixin:
 
             context = "\n\n".join(context_parts)
 
-            logger.info(
-                f"Retrieved {len(results)} memories for {self.agent_name}"
-            )
+            logger.info(f"Retrieved {len(results)} memories for {self.agent_name}")
 
             return context
 
@@ -143,7 +139,9 @@ class MemoryAwareMixin:
             logger.error(f"Failed to get relevant context: {e}")
             return None
 
-    def update_memory(self, content: str, metadata: Optional[Dict[str, Any]] = None) -> bool:
+    def update_memory(
+        self, content: str, metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
         """
         Add content to agent's memory
 
@@ -262,7 +260,9 @@ class MemoryAwareMixin:
 
         return enhanced_prompt
 
-    def remember_success(self, query: str, result: Any, metadata: Optional[Dict[str, Any]] = None) -> bool:
+    def remember_success(
+        self, query: str, result: Any, metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
         """
         Remember a successful interaction
 
@@ -282,7 +282,9 @@ class MemoryAwareMixin:
 
         return self.update_memory(success_content, metadata)
 
-    def remember_failure(self, query: str, error: str, metadata: Optional[Dict[str, Any]] = None) -> bool:
+    def remember_failure(
+        self, query: str, error: str, metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
         """
         Remember a failed interaction to avoid repeating mistakes
 

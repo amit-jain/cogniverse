@@ -56,13 +56,14 @@ class TextAnalysisAgent(
 
         # Try to load persisted agent config from ConfigManager
         self.config = config_manager.get_agent_config(
-            tenant_id=tenant_id,
-            agent_name="text_analysis_agent"
+            tenant_id=tenant_id, agent_name="text_analysis_agent"
         )
 
         if self.config is None:
             # No persisted config - create default and persist
-            logger.info(f"No persisted config for {tenant_id}:text_analysis_agent, creating default")
+            logger.info(
+                f"No persisted config for {tenant_id}:text_analysis_agent, creating default"
+            )
 
             module_config = ModuleConfig(
                 module_type=DSPyModuleType.PREDICT,
@@ -76,7 +77,12 @@ class TextAnalysisAgent(
                 agent_version="1.0.0",
                 agent_description="Text analysis with runtime-configurable DSPy modules",
                 agent_url=f"http://localhost:{self.system_config.get('text_analysis_port', 8005)}",
-                capabilities=["text_analysis", "sentiment", "summarization", "entity_extraction"],
+                capabilities=[
+                    "text_analysis",
+                    "sentiment",
+                    "summarization",
+                    "entity_extraction",
+                ],
                 skills=[
                     {
                         "name": "analyze_text",
@@ -95,7 +101,7 @@ class TextAnalysisAgent(
             config_manager.set_agent_config(
                 tenant_id=tenant_id,
                 agent_name="text_analysis_agent",
-                agent_config=self.config
+                agent_config=self.config,
             )
             logger.info(f"Persisted default config for {tenant_id}:text_analysis_agent")
         else:

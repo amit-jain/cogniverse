@@ -444,7 +444,9 @@ class SQLiteConfigStore(ConfigStore):
             cursor = conn.cursor()
 
             # Total configs
-            cursor.execute("SELECT COUNT(DISTINCT tenant_id || scope || service || config_key) FROM configurations")
+            cursor.execute(
+                "SELECT COUNT(DISTINCT tenant_id || scope || service || config_key) FROM configurations"
+            )
             total_configs = cursor.fetchone()[0]
 
             # Total versions
@@ -510,16 +512,18 @@ class SQLiteConfigStore(ConfigStore):
 
                 configs = []
                 for row in cursor.fetchall():
-                    configs.append({
-                        "tenant_id": row[0],
-                        "scope": row[1],
-                        "service": row[2],
-                        "config_key": row[3],
-                        "config_value": json.loads(row[4]),
-                        "version": row[5],
-                        "created_at": row[6],
-                        "updated_at": row[7],
-                    })
+                    configs.append(
+                        {
+                            "tenant_id": row[0],
+                            "scope": row[1],
+                            "service": row[2],
+                            "config_key": row[3],
+                            "config_value": json.loads(row[4]),
+                            "version": row[5],
+                            "created_at": row[6],
+                            "updated_at": row[7],
+                        }
+                    )
 
                 return {
                     "tenant_id": tenant_id,

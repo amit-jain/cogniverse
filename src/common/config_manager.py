@@ -53,7 +53,12 @@ class ConfigManager:
 
         return cls._instance
 
-    def __init__(self, db_path: Optional[Path] = None, cache_size: int = 100, store: Optional[ConfigStore] = None):
+    def __init__(
+        self,
+        db_path: Optional[Path] = None,
+        cache_size: int = 100,
+        store: Optional[ConfigStore] = None,
+    ):
         """
         Initialize configuration manager.
 
@@ -74,7 +79,9 @@ class ConfigManager:
         self.cache_size = cache_size
         self._initialized = True
 
-        logger.info(f"ConfigManager initialized with {type(self.store).__name__}, cache size: {cache_size}")
+        logger.info(
+            f"ConfigManager initialized with {type(self.store).__name__}, cache size: {cache_size}"
+        )
 
     # ========== System Configuration ==========
 
@@ -334,9 +341,7 @@ class ConfigManager:
             config_value=telemetry_config.to_dict(),
         )
 
-        logger.info(
-            f"Set telemetry config for {telemetry_config.tenant_id}:{service}"
-        )
+        logger.info(f"Set telemetry config for {telemetry_config.tenant_id}:{service}")
         return telemetry_config
 
     # ========== Generic Configuration Access ==========

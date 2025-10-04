@@ -1,6 +1,6 @@
 """Shared health check endpoint mixin for FastAPI agents"""
 
-from typing import Dict, Any
+from typing import Any, Dict
 
 
 class HealthCheckMixin:

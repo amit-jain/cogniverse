@@ -50,26 +50,32 @@ class Config:
         self.config_path = None
         self.load_config()
         self._initialized = True
-    
+
     def load_config(self):
         """Load configuration from file or environment."""
         # Start with environment defaults
         self.config_data = {
             "vespa_url": os.getenv("VESPA_URL", None),
-            "vespa_port": int(os.getenv("VESPA_PORT", "8080")) if os.getenv("VESPA_PORT") else None,
+            "vespa_port": (
+                int(os.getenv("VESPA_PORT", "8080"))
+                if os.getenv("VESPA_PORT")
+                else None
+            ),
             "phoenix_url": os.getenv("PHOENIX_URL", None),
             "search_backend": os.getenv("SEARCH_BACKEND", None),
         }
-        
+
         # Find and load config file
         config_file = self._find_config_file()
         if config_file:
             try:
-                with open(config_file, 'r') as f:
+                with open(config_file, "r") as f:
                     file_config = json.load(f)
                     # Environment variables take precedence over file config
                     for key, value in file_config.items():
-                        if self.config_data.get(key) is None:  # Only use file value if env var not set
+                        if (
+                            self.config_data.get(key) is None
+                        ):  # Only use file value if env var not set
                             self.config_data[key] = value
                     self.config_path = config_file
                     logger.info(f"Configuration loaded from: {config_file}")
@@ -85,17 +91,17 @@ class Config:
                     "  2. Environment variable: export COGNIVERSE_CONFIG=/path/to/config.json\n"
                     "  3. Or set individual env vars: VESPA_URL, VESPA_PORT, etc."
                 )
-    
+
     def _find_config_file(self) -> Optional[Path]:
         """Find config file in standard locations."""
         # Check explicit path first
-        if os.environ.get('COGNIVERSE_CONFIG'):
-            path = Path(os.environ['COGNIVERSE_CONFIG'])
+        if os.environ.get("COGNIVERSE_CONFIG"):
+            path = Path(os.environ["COGNIVERSE_CONFIG"])
             if path.exists():
                 return path
             else:
                 raise RuntimeError(f"Config file specified but not found: {path}")
-        
+
         # Search standard locations
         search_paths = [
             Path.cwd() / "config.json",
@@ -105,21 +111,21 @@ class Config:
             # Relative to package when installed
             Path(__file__).parent.parent.parent / "configs" / "config.json",
         ]
-        
+
         for path in search_paths:
             if path.exists():
                 return path
-        
+
         return None
-    
+
     def get(self, key: str, default: Any = None) -> Any:
         """Get configuration value."""
         return self.config_data.get(key, default)
-    
+
     def update(self, updates: Dict[str, Any]):
         """Update configuration."""
         self.config_data.update(updates)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Get full configuration."""
         return self.config_data.copy()

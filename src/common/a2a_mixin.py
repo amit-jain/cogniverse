@@ -34,9 +34,7 @@ class A2AEndpointsMixin:
         """
         return {
             "name": getattr(self, "agent_name", self.__class__.__name__),
-            "description": getattr(
-                self, "agent_description", "A2A-compliant agent"
-            ),
+            "description": getattr(self, "agent_description", "A2A-compliant agent"),
             "url": getattr(self, "agent_url", "http://localhost:8000"),
             "version": getattr(self, "agent_version", "1.0.0"),
             "protocol": "a2a",
@@ -82,9 +80,7 @@ class A2AEndpointsMixin:
             "url": card["url"],
             "capabilities": card["capabilities"],
             "health_endpoint": "/health",
-            "process_endpoint": getattr(
-                self, "process_endpoint", "/tasks/send"
-            ),
+            "process_endpoint": getattr(self, "process_endpoint", "/tasks/send"),
             "agent_card_url": f"{card['url']}/.well-known/agent-card.json",
         }
 

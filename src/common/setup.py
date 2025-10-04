@@ -2,8 +2,9 @@
 Setup configuration for Cogniverse Core module.
 """
 
-from setuptools import setup, find_packages
 from pathlib import Path
+
+from setuptools import find_packages, setup
 
 # Read README for long description
 readme_path = Path(__file__).parent / "README.md"

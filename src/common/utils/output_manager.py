@@ -11,13 +11,13 @@ from src.common.config_utils import get_config
 
 class OutputManager:
     """Manages output directories for different components"""
-    
+
     def __init__(self, base_dir: Optional[str] = None):
         """Initialize output manager with base directory"""
         config = get_config()
         self.base_dir = Path(base_dir or config.get("output_base_dir", "outputs"))
         self.base_dir.mkdir(exist_ok=True)
-        
+
         # Define subdirectories for different components
         self.subdirs = {
             "logs": "logs",
@@ -27,25 +27,25 @@ class OutputManager:
             "agents": "agents",
             "vespa": "vespa",
             "exports": "exports",
-            "temp": "temp"
+            "temp": "temp",
         }
-        
+
         # Create all subdirectories
         self._create_subdirectories()
-    
+
     def _create_subdirectories(self):
         """Create all subdirectories"""
         for key, subdir in self.subdirs.items():
             dir_path = self.base_dir / subdir
             dir_path.mkdir(parents=True, exist_ok=True)
-    
+
     def get_path(self, component: str, filename: Optional[str] = None) -> Path:
         """Get path for a specific component
-        
+
         Args:
             component: Component name (e.g., 'logs', 'test_results')
             filename: Optional filename to append
-            
+
         Returns:
             Path object for the component directory or file
         """
@@ -56,36 +56,36 @@ class OutputManager:
             component_dir.mkdir(exist_ok=True)
         else:
             component_dir = self.base_dir / self.subdirs[component]
-        
+
         if filename:
             return component_dir / filename
         return component_dir
-    
+
     def get_logs_dir(self) -> Path:
         """Get logs directory"""
         return self.get_path("logs")
-    
+
     def get_test_results_dir(self) -> Path:
         """Get test results directory"""
         return self.get_path("test_results")
-    
+
     def get_optimization_dir(self) -> Path:
         """Get optimization directory"""
         return self.get_path("optimization")
-    
+
     def get_processing_dir(self, subtype: Optional[str] = None) -> Path:
         """Get processing directory or subdirectory
-        
+
         Args:
             subtype: Optional subdirectory type (embeddings, transcripts, etc.)
         """
         # Always return base processing dir - profiles handle subdirs
         return self.get_path("processing")
-    
+
     def get_temp_dir(self) -> Path:
         """Get temporary directory"""
         return self.get_path("temp")
-    
+
     def clean_temp(self):
         """Clean temporary directory"""
         temp_dir = self.get_temp_dir()
@@ -94,8 +94,9 @@ class OutputManager:
                 file.unlink()
             elif file.is_dir():
                 import shutil
+
                 shutil.rmtree(file)
-    
+
     def get_structure(self) -> dict:
         """Get the current directory structure"""
         structure = {"base": str(self.base_dir)}
@@ -103,7 +104,7 @@ class OutputManager:
             full_path = self.base_dir / subdir
             structure[key] = str(full_path)
         return structure
-    
+
     def print_structure(self):
         """Print the directory structure"""
         print("\nOutput Directory Structure:")

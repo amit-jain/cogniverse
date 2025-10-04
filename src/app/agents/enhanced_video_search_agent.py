@@ -403,7 +403,10 @@ class EnhancedVideoSearchAgent(MemoryAwareMixin):
             if self.is_memory_enabled() and results:
                 self.remember_success(
                     query=query,
-                    result={"result_count": len(results), "top_result": results[0] if results else None},
+                    result={
+                        "result_count": len(results),
+                        "top_result": results[0] if results else None,
+                    },
                     metadata={
                         "search_type": "text",
                         "top_k": top_k,
@@ -473,7 +476,10 @@ class EnhancedVideoSearchAgent(MemoryAwareMixin):
             if self.is_memory_enabled() and results:
                 self.remember_success(
                     query=f"Video: {filename}",
-                    result={"result_count": len(results), "top_result": results[0] if results else None},
+                    result={
+                        "result_count": len(results),
+                        "top_result": results[0] if results else None,
+                    },
                     metadata={
                         "search_type": "video",
                         "filename": filename,
@@ -493,7 +499,11 @@ class EnhancedVideoSearchAgent(MemoryAwareMixin):
                 self.remember_failure(
                     query=f"Video: {filename}",
                     error=str(e),
-                    metadata={"search_type": "video", "filename": filename, "top_k": top_k},
+                    metadata={
+                        "search_type": "video",
+                        "filename": filename,
+                        "top_k": top_k,
+                    },
                 )
                 logger.debug("💾 Stored video search failure in memory")
 
@@ -544,7 +554,10 @@ class EnhancedVideoSearchAgent(MemoryAwareMixin):
             if self.is_memory_enabled() and results:
                 self.remember_success(
                     query=f"Image: {filename}",
-                    result={"result_count": len(results), "top_result": results[0] if results else None},
+                    result={
+                        "result_count": len(results),
+                        "top_result": results[0] if results else None,
+                    },
                     metadata={
                         "search_type": "image",
                         "filename": filename,
@@ -564,7 +577,11 @@ class EnhancedVideoSearchAgent(MemoryAwareMixin):
                 self.remember_failure(
                     query=f"Image: {filename}",
                     error=str(e),
-                    metadata={"search_type": "image", "filename": filename, "top_k": top_k},
+                    metadata={
+                        "search_type": "image",
+                        "filename": filename,
+                        "top_k": top_k,
+                    },
                 )
                 logger.debug("💾 Stored image search failure in memory")
 
