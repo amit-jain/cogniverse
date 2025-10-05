@@ -1,28 +1,28 @@
 """
 Deploy agent_memories schema to Vespa
 
-This script deploys the agent_memories schema to a running Vespa instance.
+This script deploys the agent_memories JSON schema to a running Vespa instance.
 """
 
+import json
 import os
 import sys
 from pathlib import Path
 
 import requests
+from vespa.package import ApplicationPackage
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from vespa.package import ApplicationPackage
-
-from src.backends.vespa.vespa_schema_manager import VespaSchemaManager
+from src.backends.vespa.json_schema_parser import JsonSchemaParser
 
 
 def create_application_package(vespa_host="localhost", data_port=8080, config_port=19071):
     """Create Vespa application package with agent_memories schema"""
 
     # Schema path
-    schema_path = Path(__file__).parent.parent / "configs" / "schemas" / "agent_memories.sd"
+    schema_path = Path(__file__).parent.parent / "configs" / "schemas" / "agent_memories_schema.json"
 
     if not schema_path.exists():
         print(f"❌ Schema file not found: {schema_path}")
@@ -30,13 +30,12 @@ def create_application_package(vespa_host="localhost", data_port=8080, config_po
 
     print(f"📄 Loading schema from {schema_path}")
 
-    # Use VespaSchemaManager to parse the .sd file
-    schema_manager = VespaSchemaManager(
-        vespa_endpoint=f"http://{vespa_host}:{data_port}",
-        vespa_port=config_port
-    )
-    sd_content = schema_manager.read_sd_file(str(schema_path))
-    schema = schema_manager.parse_sd_schema(sd_content)
+    # Load and parse JSON schema
+    with open(schema_path, 'r') as f:
+        schema_config = json.load(f)
+
+    parser = JsonSchemaParser()
+    schema = parser.parse_schema(schema_config)
 
     # Create application package
     app_package = ApplicationPackage(name="agentmemories")

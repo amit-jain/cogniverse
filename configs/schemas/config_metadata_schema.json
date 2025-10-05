@@ -1,0 +1,72 @@
+{
+  "name": "config_metadata",
+  "document": {
+    "name": "config_metadata",
+    "fields": [
+      {
+        "name": "config_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "tenant_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "scope",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "service",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "config_key",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "config_value",
+        "type": "string",
+        "indexing": ["summary"]
+      },
+      {
+        "name": "version",
+        "type": "int",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "created_at",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "updated_at",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      }
+    ]
+  },
+  "fieldsets": [
+    {
+      "name": "default",
+      "fields": ["config_id", "tenant_id", "scope", "service", "config_key"]
+    }
+  ],
+  "rank_profiles": [
+    {
+      "name": "default",
+      "first_phase": {
+        "expression": "attribute(version)"
+      }
+    }
+  ]
+}

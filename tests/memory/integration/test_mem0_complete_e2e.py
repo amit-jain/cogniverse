@@ -138,23 +138,25 @@ def vespa_container():
 
 
 def deploy_schema():
-    """Deploy agent_memories schema to Vespa using VespaSchemaManager"""
+    """Deploy agent_memories schema to Vespa using JSON schema"""
 
     try:
         # Schema path
-        schema_path = Path(__file__).parent.parent.parent.parent / "configs" / "schemas" / "agent_memories.sd"
+        schema_path = Path(__file__).parent.parent.parent.parent / "configs" / "schemas" / "agent_memories_schema.json"
 
         if not schema_path.exists():
             print(f"❌ Schema file not found: {schema_path}")
             return False
 
-        # Use VespaSchemaManager to parse the .sd file
-        schema_manager = VespaSchemaManager(
-            vespa_endpoint=f"http://localhost:{VESPA_DATA_PORT}",
-            vespa_port=VESPA_CONFIG_PORT
-        )
-        sd_content = schema_manager.read_sd_file(str(schema_path))
-        schema = schema_manager.parse_sd_schema(sd_content)
+        # Load and parse JSON schema
+        import json
+        from src.backends.vespa.json_schema_parser import JsonSchemaParser
+
+        with open(schema_path, 'r') as f:
+            schema_config = json.load(f)
+
+        parser = JsonSchemaParser()
+        schema = parser.parse_schema(schema_config)
 
         # Create application package
         app_package = ApplicationPackage(name="agentmemories")

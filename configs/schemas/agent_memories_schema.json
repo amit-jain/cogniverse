@@ -1,0 +1,101 @@
+{
+  "name": "agent_memories",
+  "document": {
+    "name": "agent_memories",
+    "fields": [
+      {
+        "name": "id",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "embedding",
+        "type": "tensor<float>(d0[768])",
+        "indexing": ["summary", "attribute", "index"],
+        "attribute": {
+          "distance-metric": "angular"
+        },
+        "index": {
+          "hnsw": {
+            "max-links-per-node": 16,
+            "neighbors-to-explore-at-insert": 200
+          }
+        }
+      },
+      {
+        "name": "text",
+        "type": "string",
+        "indexing": ["summary", "index"],
+        "index": "enable-bm25"
+      },
+      {
+        "name": "user_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "agent_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "metadata_",
+        "type": "string",
+        "indexing": ["summary"]
+      },
+      {
+        "name": "created_at",
+        "type": "long",
+        "indexing": ["summary", "attribute"]
+      }
+    ]
+  },
+  "fieldsets": [
+    {
+      "name": "default",
+      "fields": ["text"]
+    }
+  ],
+  "rank_profiles": [
+    {
+      "name": "semantic_search",
+      "inputs": [
+        {
+          "name": "query(q)",
+          "type": "tensor<float>(d0[768])"
+        }
+      ],
+      "first_phase": {
+        "expression": "closeness(field, embedding)"
+      },
+      "match_features": [
+        "closeness(field, embedding)",
+        "distance(field, embedding)"
+      ]
+    },
+    {
+      "name": "bm25",
+      "first_phase": {
+        "expression": "bm25(text)"
+      }
+    },
+    {
+      "name": "hybrid",
+      "inputs": [
+        {
+          "name": "query(q)",
+          "type": "tensor<float>(d0[768])"
+        }
+      ],
+      "first_phase": {
+        "expression": "0.7 * closeness(field, embedding) + 0.3 * bm25(text)"
+      },
+      "match_features": [
+        "closeness(field, embedding)",
+        "bm25(text)"
+      ]
+    }
+  ]
+}
