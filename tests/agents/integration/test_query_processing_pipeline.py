@@ -10,7 +10,7 @@ import asyncio
 import pytest
 
 from src.app.agents.detailed_report_agent import DetailedReportAgent
-from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent
+from src.app.agents.routing_agent import RoutingAgent
 from src.app.agents.summarizer_agent import SummarizerAgent
 from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
 from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
@@ -172,7 +172,7 @@ class TestQueryProcessingPipeline:
         import logging
         from unittest.mock import patch
 
-        from src.app.agents.enhanced_routing_agent import EnhancedRoutingConfig
+        from src.app.agents.routing_agent import RoutingConfig
 
         # Mock only external service URLs, not core logic
         with patch("src.common.config.get_config") as mock_config:
@@ -182,35 +182,35 @@ class TestQueryProcessingPipeline:
                 "detailed_report_agent_url": "http://localhost:8004",
             }
 
-            # Mock EnhancedRoutingAgent initialization to avoid hangs
+            # Mock RoutingAgent initialization to avoid hangs
             with (
                 patch(
-                    "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._configure_dspy"
+                    "src.app.agents.routing_agent.RoutingAgent._configure_dspy"
                 ),
                 patch(
-                    "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._initialize_enhancement_pipeline"
+                    "src.app.agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
                 ),
                 patch(
-                    "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._initialize_routing_module"
+                    "src.app.agents.routing_agent.RoutingAgent._initialize_routing_module"
                 ),
                 patch(
-                    "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._initialize_advanced_optimizer"
+                    "src.app.agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
                 ),
                 patch(
-                    "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._initialize_mlflow_tracking"
+                    "src.app.agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
                 ),
                 patch(
                     "src.app.agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
                     return_value=None,
                 ),
             ):
-                routing_config = EnhancedRoutingConfig(
+                routing_config = RoutingConfig(
                     enable_mlflow_tracking=False,
                     enable_relationship_extraction=False,
                     enable_query_enhancement=False,
                 )
                 # Create a mock routing agent manually
-                agent = object.__new__(EnhancedRoutingAgent)
+                agent = object.__new__(RoutingAgent)
                 agent.config = routing_config
                 agent.routing_module = None
                 agent._routing_stats = {}
@@ -467,14 +467,14 @@ class TestAgentWorkflowIntegration:
         try:
             # Skip actual video agent initialization to avoid Vespa connection hang
             print(
-                "EnhancedVideoSearchAgent integration test skipped (would require Vespa connection)"
+                "VideoSearchAgent integration test skipped (would require Vespa connection)"
             )
             # Just verify the import works
-            from src.app.agents.enhanced_video_search_agent import (
-                EnhancedVideoSearchAgent,
+            from src.app.agents.video_search_agent import (
+                VideoSearchAgent,
             )
 
-            assert EnhancedVideoSearchAgent is not None
+            assert VideoSearchAgent is not None
 
         except Exception as e:
             # Should handle missing Vespa gracefully

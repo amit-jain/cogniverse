@@ -18,7 +18,7 @@ import psutil
 import pytest
 
 from src.app.agents.detailed_report_agent import DetailedReportAgent
-from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent
+from src.app.agents.routing_agent import RoutingAgent
 from src.app.agents.summarizer_agent import SummarizerAgent
 from src.app.routing.adaptive_threshold_learner import AdaptiveThresholdLearner
 from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
@@ -88,7 +88,7 @@ class TestPerformanceBenchmarks:
                 "detailed_report_agent_url": "http://localhost:8004",
             }
 
-            routing_agent = EnhancedRoutingAgent()
+            routing_agent = RoutingAgent()
 
             test_queries = [
                 "Find videos of robots",
@@ -250,7 +250,7 @@ class TestPerformanceBenchmarks:
         print(f"Initial memory usage: {initial_memory:.1f} MB")
 
         # Pre-initialize components to get baseline after model loading
-        routing_agent = EnhancedRoutingAgent()
+        routing_agent = RoutingAgent()
         extractor = RelationshipExtractorTool()
 
         # Do one warmup operation to load models
@@ -343,7 +343,7 @@ class TestPerformanceBenchmarks:
                 "detailed_report_agent_url": "http://localhost:8004",
             }
 
-            routing_agent = EnhancedRoutingAgent()
+            routing_agent = RoutingAgent()
 
             # Generate concurrent queries
             num_concurrent = 5

@@ -524,10 +524,10 @@ async def search(
     tenant_id: str = "default"
 ):
     """Execute search with appropriate agent"""
-    from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
+    from src.app.agents.video_search_agent import VideoSearchAgent
 
     # Using video search agent as example
-    agent = EnhancedVideoSearchAgent(profile=profile, tenant_id=tenant_id)
+    agent = VideoSearchAgent(profile=profile, tenant_id=tenant_id)
     results = await agent.search(
         query=query,
         ranking_strategy=ranking_strategy,

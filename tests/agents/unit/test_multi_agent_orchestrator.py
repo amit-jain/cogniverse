@@ -93,7 +93,7 @@ class TestMultiAgentOrchestrator:
             },
         }
 
-    @patch("src.app.agents.multi_agent_orchestrator.EnhancedRoutingAgent")
+    @patch("src.app.agents.multi_agent_orchestrator.RoutingAgent")
     @patch("src.app.agents.multi_agent_orchestrator.A2AClient")
     @patch("src.app.agents.multi_agent_orchestrator.create_workflow_intelligence")
     @pytest.mark.ci_fast
@@ -126,7 +126,7 @@ class TestMultiAgentOrchestrator:
         assert stats["failed_workflows"] == 0
         assert stats["average_execution_time"] == 0.0
 
-    @patch("src.app.agents.multi_agent_orchestrator.EnhancedRoutingAgent")
+    @patch("src.app.agents.multi_agent_orchestrator.RoutingAgent")
     @patch("src.app.agents.multi_agent_orchestrator.A2AClient")
     @pytest.mark.ci_fast
     def test_orchestrator_initialization_custom_config(
@@ -149,7 +149,7 @@ class TestMultiAgentOrchestrator:
         assert orchestrator.enable_workflow_intelligence is False
         assert orchestrator.workflow_intelligence is None
 
-    @patch("src.app.agents.multi_agent_orchestrator.EnhancedRoutingAgent")
+    @patch("src.app.agents.multi_agent_orchestrator.RoutingAgent")
     @patch("src.app.agents.multi_agent_orchestrator.A2AClient")
     @patch("src.app.agents.multi_agent_orchestrator.create_workflow_intelligence")
     @pytest.mark.ci_fast
@@ -169,7 +169,7 @@ class TestMultiAgentOrchestrator:
         assert "endpoint" in video_agent
         assert "timeout_seconds" in video_agent
 
-    @patch("src.app.agents.multi_agent_orchestrator.EnhancedRoutingAgent")
+    @patch("src.app.agents.multi_agent_orchestrator.RoutingAgent")
     @patch("src.app.agents.multi_agent_orchestrator.A2AClient")
     @patch("src.app.agents.multi_agent_orchestrator.create_workflow_intelligence")
     def test_initialize_dspy_modules(self, mock_workflow_intel, mock_a2a, mock_routing):
@@ -180,7 +180,7 @@ class TestMultiAgentOrchestrator:
         assert hasattr(orchestrator, "workflow_planner")
         assert hasattr(orchestrator, "result_aggregator")
 
-    @patch("src.app.agents.multi_agent_orchestrator.EnhancedRoutingAgent")
+    @patch("src.app.agents.multi_agent_orchestrator.RoutingAgent")
     @patch("src.app.agents.multi_agent_orchestrator.A2AClient")
     @patch("src.app.agents.multi_agent_orchestrator.create_workflow_intelligence")
     @pytest.mark.asyncio
@@ -231,7 +231,7 @@ class TestMultiAgentOrchestratorWorkflowExecution:
     def orchestrator_with_mocks(self):
         """Create orchestrator with mocked dependencies"""
         with (
-            patch("src.app.agents.multi_agent_orchestrator.EnhancedRoutingAgent"),
+            patch("src.app.agents.multi_agent_orchestrator.RoutingAgent"),
             patch("src.app.agents.multi_agent_orchestrator.A2AClient"),
             patch(
                 "src.app.agents.multi_agent_orchestrator.create_workflow_intelligence"
@@ -294,7 +294,7 @@ class TestMultiAgentOrchestratorWorkflowExecution:
 class TestMultiAgentOrchestratorEdgeCases:
     """Test edge cases and error handling"""
 
-    @patch("src.app.agents.multi_agent_orchestrator.EnhancedRoutingAgent")
+    @patch("src.app.agents.multi_agent_orchestrator.RoutingAgent")
     @patch("src.app.agents.multi_agent_orchestrator.A2AClient")
     def test_orchestrator_with_disabled_workflow_intelligence(
         self, mock_a2a, mock_routing
@@ -305,7 +305,7 @@ class TestMultiAgentOrchestratorEdgeCases:
         assert orchestrator.enable_workflow_intelligence is False
         assert orchestrator.workflow_intelligence is None
 
-    @patch("src.app.agents.multi_agent_orchestrator.EnhancedRoutingAgent")
+    @patch("src.app.agents.multi_agent_orchestrator.RoutingAgent")
     @patch("src.app.agents.multi_agent_orchestrator.A2AClient")
     @pytest.mark.ci_fast
     def test_orchestrator_agent_utilization_tracking(self, mock_a2a, mock_routing):
@@ -326,7 +326,7 @@ class TestCrossModalFusion:
     def orchestrator(self):
         """Create orchestrator for testing fusion"""
         with (
-            patch("src.app.agents.multi_agent_orchestrator.EnhancedRoutingAgent"),
+            patch("src.app.agents.multi_agent_orchestrator.RoutingAgent"),
             patch("src.app.agents.multi_agent_orchestrator.A2AClient"),
         ):
             return MultiAgentOrchestrator(enable_workflow_intelligence=False)

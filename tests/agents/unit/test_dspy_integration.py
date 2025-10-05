@@ -23,10 +23,10 @@ from src.app.agents.dspy_integration_mixin import (
     DSPyRoutingMixin,
     DSPySummaryMixin,
 )
-from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent, RoutingDecision
+from src.app.agents.routing_agent import RoutingAgent, RoutingDecision
 
 # Phase 5 imports for enhanced agent testing
-from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
+from src.app.agents.video_search_agent import VideoSearchAgent
 from src.app.agents.query_analysis_tool_v3 import QueryAnalysisToolV3
 
 # Agent imports
@@ -2278,22 +2278,22 @@ class TestDSPyComponentsIntegration:
 
 
 @pytest.mark.unit
-class TestEnhancedRoutingAgent:
+class TestRoutingAgent:
     """Unit tests for Enhanced Routing Agent"""
 
     @pytest.mark.ci_fast
-    def test_enhanced_routing_agent_initialization(self):
+    def test_routing_agent_initialization(self):
         """Test Enhanced Routing Agent initialization"""
-        from src.app.agents.enhanced_routing_agent import EnhancedRoutingConfig
+        from src.app.agents.routing_agent import RoutingConfig
 
         # Test with default config
-        agent = EnhancedRoutingAgent()
+        agent = RoutingAgent()
         assert agent is not None
         assert hasattr(agent, "config")
         assert hasattr(agent, "enhanced_system_available")
 
         # Test with custom config
-        custom_config = EnhancedRoutingConfig(
+        custom_config = RoutingConfig(
             model_name="smollm3:3b",
             base_url="http://localhost:11434/v1",
             confidence_threshold=0.8,
@@ -2301,14 +2301,14 @@ class TestEnhancedRoutingAgent:
             enable_query_enhancement=True,
         )
 
-        custom_agent = EnhancedRoutingAgent(config=custom_config)
+        custom_agent = RoutingAgent(config=custom_config)
         assert custom_agent.config.confidence_threshold == 0.8
         assert custom_agent.config.enable_relationship_extraction is True
 
     def test_orchestration_need_assessment(self):
         """Test orchestration need assessment logic"""
 
-        agent = EnhancedRoutingAgent()
+        agent = RoutingAgent()
 
         # Simple query - should not need orchestration
         simple_entities = [{"text": "robot", "label": "ENTITY", "confidence": 0.9}]
@@ -2353,7 +2353,7 @@ class TestEnhancedRoutingAgent:
     def test_orchestration_signals_detection(self):
         """Test orchestration signals detection"""
 
-        agent = EnhancedRoutingAgent()
+        agent = RoutingAgent()
 
         entities = [
             {"text": "test", "label": "TEST", "confidence": 0.8}
@@ -2552,7 +2552,7 @@ class TestA2AEnhancedGateway:
             A2AEnhancedGateway,
             create_a2a_enhanced_gateway,
         )
-        from src.app.agents.enhanced_routing_agent import EnhancedRoutingConfig
+        from src.app.agents.routing_agent import RoutingConfig
 
         # Test factory function
         gateway = create_a2a_enhanced_gateway()
@@ -2561,7 +2561,7 @@ class TestA2AEnhancedGateway:
         assert hasattr(gateway, "gateway_stats")
 
         # Test with custom config
-        custom_config = EnhancedRoutingConfig(confidence_threshold=0.9)
+        custom_config = RoutingConfig(confidence_threshold=0.9)
         custom_gateway = A2AEnhancedGateway(
             enhanced_routing_config=custom_config,
             enable_orchestration=True,
@@ -2895,7 +2895,7 @@ class TestSystemIntegration:
         from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
 
         # Create components
-        router = EnhancedRoutingAgent()
+        router = RoutingAgent()
         orchestrator = MultiAgentOrchestrator(routing_agent=router)
 
         # Test routing decision that needs orchestration
@@ -2960,7 +2960,7 @@ class TestSystemIntegration:
         """Test Phase 4 components initialize in correct order without circular dependencies"""
 
         # Test 1: Enhanced Routing Agent (independent)
-        router = EnhancedRoutingAgent()
+        router = RoutingAgent()
         assert router is not None
 
         # Test 2: Workflow Intelligence (independent)
@@ -2991,7 +2991,7 @@ class TestSystemIntegration:
         # All components should handle initialization errors gracefully
         try:
             # Test with invalid config that might cause errors
-            router = EnhancedRoutingAgent()  # Should not raise exception
+            router = RoutingAgent()  # Should not raise exception
             orchestrator = MultiAgentOrchestrator()  # Should not raise exception
             intelligence = WorkflowIntelligence(
                 enable_persistence=False
@@ -3018,7 +3018,7 @@ class TestSystemIntegration:
         from src.app.agents.workflow_intelligence import WorkflowIntelligence
 
         # All statistics should return dict with consistent structure
-        router = EnhancedRoutingAgent()
+        router = RoutingAgent()
         router_stats = router.get_routing_statistics()
         assert isinstance(router_stats, dict)
         assert "total_queries" in router_stats
@@ -3043,19 +3043,19 @@ class TestSystemIntegration:
 
 
 @pytest.mark.unit
-class TestEnhancedVideoSearchAgent:
+class TestVideoSearchAgent:
     """Unit tests for Enhanced Video Search Agent"""
 
-    def test_enhanced_video_search_agent_initialization(self):
+    def test_video_search_agent_initialization(self):
         """Test Enhanced Video Search Agent initialization"""
 
         # Mock the required dependencies
-        with patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient"):
+        with patch("src.app.agents.video_search_agent.VespaVideoSearchClient"):
             with patch(
-                "src.app.agents.enhanced_video_search_agent.get_config"
+                "src.app.agents.video_search_agent.get_config"
             ) as mock_config:
                 with patch(
-                    "src.app.agents.enhanced_video_search_agent.QueryEncoderFactory"
+                    "src.app.agents.video_search_agent.QueryEncoderFactory"
                 ) as mock_encoder_factory:
                     # Create a mock config with required methods
                     mock_config_obj = Mock()
@@ -3068,14 +3068,14 @@ class TestEnhancedVideoSearchAgent:
                     # Mock encoder factory
                     mock_encoder_factory.create_encoder.return_value = Mock()
 
-                    agent = EnhancedVideoSearchAgent()
+                    agent = VideoSearchAgent()
                     assert agent is not None
                     assert hasattr(agent, "vespa_client")
                     assert hasattr(agent, "config")
 
     def test_relationship_aware_search_params(self):
         """Test RelationshipAwareSearchParams structure"""
-        from src.app.agents.enhanced_video_search_agent import (
+        from src.app.agents.video_search_agent import (
             RelationshipAwareSearchParams,
         )
 
@@ -3104,7 +3104,7 @@ class TestEnhancedVideoSearchAgent:
 
     def test_enhanced_search_context(self):
         """Test EnhancedSearchContext structure"""
-        from src.app.agents.enhanced_video_search_agent import (
+        from src.app.agents.video_search_agent import (
             EnhancedSearchContext,
             RelationshipAwareSearchParams,
         )
@@ -3145,15 +3145,15 @@ class TestEnhancedVideoSearchAgent:
         assert context.confidence == 0.8
         assert context.routing_metadata["agent"] == "video_search_agent"
 
-    @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
     def test_relevance_score_calculation(self, mock_vespa_class):
         """Test relevance score calculation with relationship context"""
 
         with patch(
-            "src.app.agents.enhanced_video_search_agent.get_config"
+            "src.app.agents.video_search_agent.get_config"
         ) as mock_config:
             with patch(
-                "src.app.agents.enhanced_video_search_agent.QueryEncoderFactory"
+                "src.app.agents.video_search_agent.QueryEncoderFactory"
             ) as mock_encoder_factory:
                 # Create a mock config with required methods
                 mock_config_obj = Mock()
@@ -3166,7 +3166,7 @@ class TestEnhancedVideoSearchAgent:
                 # Mock encoder factory
                 mock_encoder_factory.create_encoder.return_value = Mock()
 
-                agent = EnhancedVideoSearchAgent()
+                agent = VideoSearchAgent()
 
                 # Test result with entity matches
                 result = {
@@ -3199,12 +3199,12 @@ class TestEnhancedVideoSearchAgent:
     def test_entity_matching_logic(self):
         """Test entity matching in results"""
 
-        with patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient"):
+        with patch("src.app.agents.video_search_agent.VespaVideoSearchClient"):
             with patch(
-                "src.app.agents.enhanced_video_search_agent.get_config"
+                "src.app.agents.video_search_agent.get_config"
             ) as mock_config:
                 with patch(
-                    "src.app.agents.enhanced_video_search_agent.QueryEncoderFactory"
+                    "src.app.agents.video_search_agent.QueryEncoderFactory"
                 ) as mock_encoder_factory:
                     # Create a mock config with required methods
                     mock_config_obj = Mock()
@@ -3217,7 +3217,7 @@ class TestEnhancedVideoSearchAgent:
                     # Mock encoder factory
                     mock_encoder_factory.create_encoder.return_value = Mock()
 
-                    agent = EnhancedVideoSearchAgent()
+                    agent = VideoSearchAgent()
 
                     # Mock the method since it might not exist in the actual implementation
                     agent._find_matching_entities = Mock(
@@ -3252,12 +3252,12 @@ class TestEnhancedVideoSearchAgent:
     def test_search_result_enhancement(self):
         """Test search result enhancement with relationships"""
 
-        with patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient"):
+        with patch("src.app.agents.video_search_agent.VespaVideoSearchClient"):
             with patch(
-                "src.app.agents.enhanced_video_search_agent.get_config"
+                "src.app.agents.video_search_agent.get_config"
             ) as mock_config:
                 with patch(
-                    "src.app.agents.enhanced_video_search_agent.QueryEncoderFactory"
+                    "src.app.agents.video_search_agent.QueryEncoderFactory"
                 ) as mock_encoder_factory:
                     # Create a mock config with required methods
                     mock_config_obj = Mock()
@@ -3270,7 +3270,7 @@ class TestEnhancedVideoSearchAgent:
                     # Mock encoder factory
                     mock_encoder_factory.create_encoder.return_value = Mock()
 
-                    agent = EnhancedVideoSearchAgent()
+                    agent = VideoSearchAgent()
 
                     # Mock the method since it might not exist in the actual implementation
                     enhanced_results = [

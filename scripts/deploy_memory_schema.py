@@ -22,7 +22,7 @@ def create_application_package(vespa_host="localhost", data_port=8080, config_po
     """Create Vespa application package with agent_memories schema"""
 
     # Schema path
-    schema_path = Path(__file__).parent.parent / "vespa_schemas" / "agent_memories.sd"
+    schema_path = Path(__file__).parent.parent / "configs" / "schemas" / "agent_memories.sd"
 
     if not schema_path.exists():
         print(f"❌ Schema file not found: {schema_path}")

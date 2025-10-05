@@ -1,18 +1,18 @@
 """
-Unit tests for EnhancedResultAggregator with relationship context integration
+Unit tests for ResultAggregator with relationship context integration
 """
 
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from src.app.agents.enhanced_result_aggregator import (
+from src.app.agents.result_aggregator import (
     AgentResult,
     AggregatedResult,
     AggregationRequest,
-    EnhancedResultAggregator,
+    ResultAggregator,
 )
-from src.app.agents.enhanced_routing_agent import RoutingDecision
+from src.app.agents.routing_agent import RoutingDecision
 from src.app.agents.result_enhancement_engine import EnhancedResult
 
 
@@ -159,8 +159,8 @@ class TestAggregatedResult:
 
 
 @pytest.mark.unit
-class TestEnhancedResultAggregator:
-    """Test cases for EnhancedResultAggregator class"""
+class TestResultAggregator:
+    """Test cases for ResultAggregator class"""
 
     @pytest.fixture
     def sample_routing_decision(self):
@@ -186,9 +186,9 @@ class TestEnhancedResultAggregator:
         ]
 
     @pytest.mark.ci_fast
-    def test_enhanced_result_aggregator_initialization_default(self):
-        """Test EnhancedResultAggregator initialization with default config"""
-        aggregator = EnhancedResultAggregator()
+    def test_result_aggregator_initialization_default(self):
+        """Test ResultAggregator initialization with default config"""
+        aggregator = ResultAggregator()
 
         assert aggregator is not None
         assert aggregator.max_concurrent_agents == 3
@@ -202,8 +202,8 @@ class TestEnhancedResultAggregator:
         assert "detailed_report" in aggregator.agent_endpoints
         assert "enhanced_video_search" in aggregator.agent_endpoints
 
-    def test_enhanced_result_aggregator_initialization_custom(self):
-        """Test EnhancedResultAggregator initialization with custom config"""
+    def test_result_aggregator_initialization_custom(self):
+        """Test ResultAggregator initialization with custom config"""
         custom_config = {
             "max_concurrent_agents": 5,
             "agent_timeout": 60.0,
@@ -214,14 +214,14 @@ class TestEnhancedResultAggregator:
             },
         }
 
-        aggregator = EnhancedResultAggregator(**custom_config)
+        aggregator = ResultAggregator(**custom_config)
 
         assert aggregator.max_concurrent_agents == 5
         assert aggregator.agent_timeout == 60.0
         assert aggregator.enable_fallbacks is False
 
     @pytest.mark.ci_fast
-    @patch("src.app.agents.enhanced_result_aggregator.ResultEnhancementEngine")
+    @patch("src.app.agents.result_aggregator.ResultEnhancementEngine")
     @pytest.mark.asyncio
     async def test_aggregate_and_enhance_basic(
         self, mock_enhancement_engine, sample_routing_decision, sample_search_results
@@ -244,7 +244,7 @@ class TestEnhancedResultAggregator:
             ]
         )
 
-        aggregator = EnhancedResultAggregator()
+        aggregator = ResultAggregator()
         aggregator.enhancement_engine = mock_engine_instance
 
         request = AggregationRequest(
@@ -266,7 +266,7 @@ class TestEnhancedResultAggregator:
     ):
         """Test aggregation with no agents to invoke"""
         with patch(
-            "src.app.agents.enhanced_result_aggregator.ResultEnhancementEngine"
+            "src.app.agents.result_aggregator.ResultEnhancementEngine"
         ) as mock_engine_class:
             mock_engine = Mock()
             mock_engine_class.return_value = mock_engine
@@ -284,7 +284,7 @@ class TestEnhancedResultAggregator:
                 ]
             )
 
-            aggregator = EnhancedResultAggregator()
+            aggregator = ResultAggregator()
 
             request = AggregationRequest(
                 routing_decision=sample_routing_decision,
@@ -303,7 +303,7 @@ class TestEnhancedResultAggregator:
         self, sample_routing_decision
     ):
         """Test that aggregator works with different agent configurations"""
-        aggregator = EnhancedResultAggregator()
+        aggregator = ResultAggregator()
 
         # Test initialization sets up agent endpoints properly
         assert isinstance(aggregator.agent_endpoints, dict)
@@ -328,7 +328,7 @@ class TestEnhancedResultAggregator:
 
 
 @pytest.mark.unit
-class TestEnhancedResultAggregatorEdgeCases:
+class TestResultAggregatorEdgeCases:
     """Test edge cases and error handling"""
 
     @pytest.fixture
@@ -348,13 +348,13 @@ class TestEnhancedResultAggregatorEdgeCases:
     async def test_aggregate_empty_search_results(self, minimal_routing_decision):
         """Test aggregation with empty search results"""
         with patch(
-            "src.app.agents.enhanced_result_aggregator.ResultEnhancementEngine"
+            "src.app.agents.result_aggregator.ResultEnhancementEngine"
         ) as mock_engine_class:
             mock_engine = Mock()
             mock_engine_class.return_value = mock_engine
             mock_engine.enhance_search_results = AsyncMock(return_value=[])
 
-            aggregator = EnhancedResultAggregator()
+            aggregator = ResultAggregator()
 
             request = AggregationRequest(
                 routing_decision=minimal_routing_decision,
@@ -370,13 +370,13 @@ class TestEnhancedResultAggregatorEdgeCases:
     async def test_aggregate_with_agent_failures(self, minimal_routing_decision):
         """Test aggregation when agents fail"""
         with patch(
-            "src.app.agents.enhanced_result_aggregator.ResultEnhancementEngine"
+            "src.app.agents.result_aggregator.ResultEnhancementEngine"
         ) as mock_engine_class:
             mock_engine = Mock()
             mock_engine_class.return_value = mock_engine
             mock_engine.enhance_search_results = AsyncMock(return_value=[])
 
-            aggregator = EnhancedResultAggregator()
+            aggregator = ResultAggregator()
 
             # Simulate what happens when there are no agents to invoke
             # The aggregator should handle this gracefully
@@ -397,14 +397,14 @@ class TestEnhancedResultAggregatorEdgeCases:
     async def test_max_results_processing_limit(self, minimal_routing_decision):
         """Test that max_results_to_process is respected during aggregation"""
         with patch(
-            "src.app.agents.enhanced_result_aggregator.ResultEnhancementEngine"
+            "src.app.agents.result_aggregator.ResultEnhancementEngine"
         ) as mock_engine_class:
             mock_engine = Mock()
             mock_engine_class.return_value = mock_engine
             # Mock enhancement to return only a limited number of results
             mock_engine.enhance_search_results = AsyncMock(return_value=[])
 
-            aggregator = EnhancedResultAggregator()
+            aggregator = ResultAggregator()
 
             # Create many search results
             many_results = [{"video_id": f"v{i}"} for i in range(100)]
@@ -424,7 +424,7 @@ class TestEnhancedResultAggregatorEdgeCases:
     async def test_enhancement_statistics_in_result(self, minimal_routing_decision):
         """Test that enhancement statistics are included in aggregated results"""
         with patch(
-            "src.app.agents.enhanced_result_aggregator.ResultEnhancementEngine"
+            "src.app.agents.result_aggregator.ResultEnhancementEngine"
         ) as mock_engine_class:
             mock_engine = Mock()
             mock_engine_class.return_value = mock_engine
@@ -442,7 +442,7 @@ class TestEnhancedResultAggregatorEdgeCases:
                 ]
             )
 
-            aggregator = EnhancedResultAggregator()
+            aggregator = ResultAggregator()
 
             request = AggregationRequest(
                 routing_decision=minimal_routing_decision,

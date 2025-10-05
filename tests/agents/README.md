@@ -56,14 +56,14 @@ class TestA2ARoutingAgentIntegration:
     def test_summarizer_routing_integration(self)
 ```
 
-#### `test_enhanced_video_search_agent.py`
+#### `test_video_search_agent.py`
 Tests video search capabilities with VLM integration:
 ```python
 class TestVideoProcessor:
     def test_extract_frames_and_encode(self)
     def test_extract_frames_error_handling(self)
 
-class TestEnhancedVideoSearchAgent:
+class TestVideoSearchAgent:
     def test_analyze_visual_content(self)
     def test_search_videos(self)
     def test_process_search_request(self)

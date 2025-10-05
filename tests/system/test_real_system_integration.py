@@ -21,7 +21,7 @@ import os
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
-from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent
+from src.app.agents.routing_agent import RoutingAgent
 from src.app.agents.summarizer_agent import SummarizerAgent
 from src.app.agents.detailed_report_agent import DetailedReportAgent
 from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
@@ -166,7 +166,7 @@ class TestRealVespaIntegration:
         assert response.status_code == 200
         print("✅ Test Vespa search API is working")
 
-    def test_real_enhanced_video_search_agent(self):
+    def test_real_video_search_agent(self):
         """Test our actual Enhanced Video Search Agent with isolated Vespa backend"""
         assert self.vespa_manager is not None, "Vespa manager should be initialized"
         
@@ -179,10 +179,10 @@ class TestRealVespaIntegration:
         
         try:
             # Test our actual Enhanced Video Search Agent
-            from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
+            from src.app.agents.video_search_agent import VideoSearchAgent
             
             print("Initializing Enhanced Video Search Agent...")
-            video_agent = EnhancedVideoSearchAgent()
+            video_agent = VideoSearchAgent()
             
             # Test queries that should match our ingested test data
             test_queries = [
@@ -230,10 +230,10 @@ class TestRealVespaIntegration:
         os.environ['VESPA_SCHEMA'] = 'video_colpali_smol500_mv_frame'
         
         try:
-            from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
+            from src.app.agents.video_search_agent import VideoSearchAgent
             
-            print("Initializing EnhancedVideoSearchAgent...")
-            video_agent = EnhancedVideoSearchAgent()
+            print("Initializing VideoSearchAgent...")
+            video_agent = VideoSearchAgent()
             
             # Verify agent is properly configured
             assert video_agent is not None
@@ -402,7 +402,7 @@ class TestRealEndToEndIntegration:
     def test_real_complete_pipeline(self):
         """Test complete pipeline with real services: routing -> extraction -> enhancement -> search"""
         # Initialize all components
-        routing_agent = EnhancedRoutingAgent()
+        routing_agent = RoutingAgent()
         extractor = RelationshipExtractorTool()
         pipeline = QueryEnhancementPipeline()
         
@@ -480,8 +480,8 @@ class TestRealEndToEndIntegration:
                 
                 try:
                     os.environ['VESPA_SCHEMA'] = 'video_colpali_smol500_mv_frame'
-                    from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
-                    video_agent = EnhancedVideoSearchAgent()
+                    from src.app.agents.video_search_agent import VideoSearchAgent
+                    video_agent = VideoSearchAgent()
                     
                     assert video_agent.vespa_client is not None
                     print("✅ Enhanced video search agent connected to Vespa")
@@ -569,7 +569,7 @@ class TestRealEndToEndIntegration:
         print(f"🔧 DEBUG: Base URL: {vespa_test_manager.get_base_url()}")
         
         # Initialize all agents
-        enhanced_routing_agent = EnhancedRoutingAgent()
+        routing_agent = RoutingAgent()
         summarizer_agent = SummarizerAgent()
         
         # Initialize relationship extractor properly
@@ -587,7 +587,7 @@ class TestRealEndToEndIntegration:
         print("1. Testing Enhanced Routing Agent with entity validation...")
         routing_result = None
         try:
-            routing_result = await enhanced_routing_agent.route_query(test_query)
+            routing_result = await routing_agent.route_query(test_query)
             print(f"   ✅ Routing result: {routing_result}")
             
             # STRICT ASSERTION 1: Must recommend video_search_agent
@@ -684,8 +684,8 @@ class TestRealEndToEndIntegration:
                 'vespa_port': vespa_test_manager.http_port
             })
             
-            from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
-            video_search_agent = EnhancedVideoSearchAgent()
+            from src.app.agents.video_search_agent import VideoSearchAgent
+            video_search_agent = VideoSearchAgent()
             
             search_results = video_search_agent.search_by_text(test_query, ranking="binary_binary")
             print(f"   Search results: {len(search_results)} videos found")

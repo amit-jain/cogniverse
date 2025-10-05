@@ -16,7 +16,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 # Enhanced query support from DSPy routing system
-from src.app.agents.enhanced_routing_agent import RoutingDecision
+from src.app.agents.routing_agent import RoutingDecision
 from src.app.agents.memory_aware_mixin import MemoryAwareMixin
 from src.app.agents.query_encoders import QueryEncoderFactory
 from src.backends.vespa.vespa_search_client import VespaVideoSearchClient
@@ -250,7 +250,7 @@ class VideoProcessor:
 
 
 # --- Enhanced Video Search Agent ---
-class EnhancedVideoSearchAgent(MemoryAwareMixin):
+class VideoSearchAgent(MemoryAwareMixin):
     """
     Enhanced video search agent supporting both text-to-video and video-to-video search.
     Enhanced with memory capabilities for learning from search patterns.
@@ -259,7 +259,7 @@ class EnhancedVideoSearchAgent(MemoryAwareMixin):
     def __init__(self, **kwargs):
         """Initialize enhanced video search agent"""
         super().__init__()  # Initialize MemoryAwareMixin
-        logger.info("Initializing EnhancedVideoSearchAgent...")
+        logger.info("Initializing VideoSearchAgent...")
 
         # Initialize base configuration
         self.config = get_config()
@@ -353,7 +353,7 @@ class EnhancedVideoSearchAgent(MemoryAwareMixin):
         # Initialize video processor
         self.video_processor = VideoProcessor(self.query_encoder)
 
-        logger.info("EnhancedVideoSearchAgent initialization complete")
+        logger.info("VideoSearchAgent initialization complete")
 
     def search_by_text(
         self, query: str, top_k: int = 10, **kwargs
@@ -665,7 +665,7 @@ class EnhancedVideoSearchAgent(MemoryAwareMixin):
         Search with enhanced query and relationship context from DSPy routing.
 
         Args:
-            routing_decision: Decision from EnhancedRoutingAgent with relationship context
+            routing_decision: Decision from RoutingAgent with relationship context
             top_k: Number of results to return
             **kwargs: Additional search parameters
 
@@ -978,7 +978,7 @@ class EnhancedVideoSearchAgent(MemoryAwareMixin):
 
         # Add A2A task compatibility
         result["task_id"] = task_id or "routing_decision_search"
-        result["agent"] = "enhanced_video_search_agent"
+        result["agent"] = "video_search_agent"
         result["routing_decision_metadata"] = {
             "recommended_agent": routing_decision.recommended_agent,
             "confidence": routing_decision.confidence,
@@ -1011,7 +1011,7 @@ async def startup_event():
     }
 
     try:
-        enhanced_video_agent = EnhancedVideoSearchAgent(**agent_config)
+        enhanced_video_agent = VideoSearchAgent(**agent_config)
         logger.info("Enhanced video search agent initialized")
     except Exception as e:
         logger.error(f"Failed to initialize enhanced agent: {e}")
@@ -1038,7 +1038,7 @@ async def health_check():
 async def get_agent_card():
     """Agent card with enhanced capabilities"""
     return {
-        "name": "EnhancedVideoSearchAgent",
+        "name": "VideoSearchAgent",
         "description": "Advanced video search with text, video, and image query support",
         "url": "/process",
         "version": "3.0.0",
@@ -1200,13 +1200,13 @@ async def enhanced_search(params: RelationshipAwareSearchParams):
 
 @app.post("/search/routing-decision")
 async def search_with_routing_decision(routing_decision: dict, top_k: int = 10):
-    """Search using a routing decision from EnhancedRoutingAgent"""
+    """Search using a routing decision from RoutingAgent"""
     if not enhanced_video_agent:
         raise HTTPException(status_code=503, detail="Agent not initialized")
 
     try:
         # Convert dict to RoutingDecision object (simplified)
-        from src.app.agents.enhanced_routing_agent import RoutingDecision
+        from src.app.agents.routing_agent import RoutingDecision
 
         decision = RoutingDecision(
             recommended_agent=routing_decision.get("recommended_agent", "video_search"),
@@ -1242,7 +1242,7 @@ async def handle_enhanced_a2a_task(task: dict):
             routing_data = task["routing_decision"]
 
             # Create RoutingDecision from task data
-            from src.app.agents.enhanced_routing_agent import RoutingDecision
+            from src.app.agents.routing_agent import RoutingDecision
 
             routing_decision = RoutingDecision(
                 recommended_agent=routing_data.get("recommended_agent", "video_search"),

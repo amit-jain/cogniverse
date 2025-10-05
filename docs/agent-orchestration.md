@@ -101,13 +101,13 @@ The system includes multiple specialized agents for different modalities:
 **Example Usage**:
 ```python
 # The routing agent determines which specialized agent to use
-from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
+from src.app.agents.video_search_agent import VideoSearchAgent
 from src.app.agents.text_analysis_agent import TextAnalysisAgent
 from src.app.agents.audio_analysis_agent import AudioAnalysisAgent
 from src.app.agents.image_search_agent import ImageSearchAgent
 
 # Routing agent selects appropriate agent based on query
-video_agent = EnhancedVideoSearchAgent.from_config()
+video_agent = VideoSearchAgent.from_config()
 text_agent = TextAnalysisAgent.from_config()
 audio_agent = AudioAnalysisAgent.from_config()
 image_agent = ImageSearchAgent.from_config()

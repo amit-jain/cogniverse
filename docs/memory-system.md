@@ -544,9 +544,9 @@ result2 = routing_agent.route_query("show machine learning content")
 ### Example 2: Video Search Agent Learning Preferences
 
 ```python
-from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
+from src.app.agents.video_search_agent import VideoSearchAgent
 
-agent = EnhancedVideoSearchAgent(tenant_id="acme")
+agent = VideoSearchAgent(tenant_id="acme")
 
 # User searches with different strategies
 agent.search(query="ML tutorial", strategy="hybrid_float_bm25")

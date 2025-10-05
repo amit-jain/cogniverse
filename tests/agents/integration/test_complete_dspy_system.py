@@ -24,7 +24,7 @@ class TestCompleteDSPySystem:
         """Test complete query processing pipeline"""
 
         # Test that the core components can be imported and work together
-        from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent
+        from src.app.agents.routing_agent import RoutingAgent
         from src.app.routing.base import GenerationType, SearchModality
 
         # Mock the dependencies for testing
@@ -33,10 +33,10 @@ class TestCompleteDSPySystem:
         ):
             with patch("src.common.config.get_config") as mock_config:
                 with patch(
-                    "src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient"
+                    "src.app.agents.video_search_agent.VespaVideoSearchClient"
                 ):
                     with patch(
-                        "src.app.agents.enhanced_video_search_agent.QueryEncoderFactory"
+                        "src.app.agents.video_search_agent.QueryEncoderFactory"
                     ):
 
                         # Mock configuration
@@ -48,7 +48,7 @@ class TestCompleteDSPySystem:
                         mock_config.return_value = mock_config_obj
 
                         # Initialize routing agent
-                        routing_agent = EnhancedRoutingAgent()
+                        routing_agent = RoutingAgent()
 
                         # Test that it can process a query
                         query = "Find videos of robots playing soccer"
@@ -108,14 +108,14 @@ class TestCompleteDSPySystem:
     async def test_enhanced_video_search_with_relationships(self):
         """Test enhanced video search with relationship context"""
 
-        from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
+        from src.app.agents.video_search_agent import VideoSearchAgent
 
-        with patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient"):
+        with patch("src.app.agents.video_search_agent.VespaVideoSearchClient"):
             with patch(
-                "src.app.agents.enhanced_video_search_agent.get_config"
+                "src.app.agents.video_search_agent.get_config"
             ) as mock_config:
                 with patch(
-                    "src.app.agents.enhanced_video_search_agent.QueryEncoderFactory"
+                    "src.app.agents.video_search_agent.QueryEncoderFactory"
                 ) as mock_encoder:
 
                     # Mock configuration as a dict (not object)
@@ -135,7 +135,7 @@ class TestCompleteDSPySystem:
                     mock_encoder.create_encoder.return_value = Mock()
 
                     # Initialize agent
-                    video_agent = EnhancedVideoSearchAgent()
+                    video_agent = VideoSearchAgent()
 
                     # Test that the agent can handle enhanced context
                     assert hasattr(video_agent, "vespa_client")
@@ -194,7 +194,7 @@ class TestCompleteDSPySystem:
     async def test_multi_agent_orchestration_simulation(self):
         """Test multi-agent orchestration with mocked agents"""
 
-        from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent
+        from src.app.agents.routing_agent import RoutingAgent
 
         with patch("src.common.config.get_config") as mock_config:
             with patch(
@@ -207,7 +207,7 @@ class TestCompleteDSPySystem:
                     "detailed_report_agent_url": "http://localhost:8004",
                 }
 
-                routing_agent = EnhancedRoutingAgent()
+                routing_agent = RoutingAgent()
 
                 # Test orchestration capability detection
                 capabilities = routing_agent._get_routing_capabilities()

@@ -15,7 +15,7 @@ import os
 import pytest
 
 from src.app.agents.detailed_report_agent import DetailedReportAgent
-from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent
+from src.app.agents.routing_agent import RoutingAgent
 from src.app.agents.summarizer_agent import SummarizerAgent
 from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
 from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
@@ -45,7 +45,7 @@ class TestCompleteMultiAgentOrchestration:
             }
 
             # Initialize routing agent
-            routing_agent = EnhancedRoutingAgent()
+            routing_agent = RoutingAgent()
 
             # Test video search query
             video_query = "Find videos of robots playing soccer"
@@ -159,7 +159,7 @@ class TestCompleteMultiAgentOrchestration:
         import logging
         from unittest.mock import patch
 
-        from src.app.agents.enhanced_routing_agent import EnhancedRoutingConfig
+        from src.app.agents.routing_agent import RoutingConfig
 
         with (
             patch(
@@ -183,32 +183,32 @@ class TestCompleteMultiAgentOrchestration:
             # Initialize all core agents with mocked routing agent
             with (
                 patch(
-                    "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._configure_dspy"
+                    "src.app.agents.routing_agent.RoutingAgent._configure_dspy"
                 ),
                 patch(
-                    "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._initialize_enhancement_pipeline"
+                    "src.app.agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
                 ),
                 patch(
-                    "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._initialize_routing_module"
+                    "src.app.agents.routing_agent.RoutingAgent._initialize_routing_module"
                 ),
                 patch(
-                    "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._initialize_advanced_optimizer"
+                    "src.app.agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
                 ),
                 patch(
-                    "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._initialize_mlflow_tracking"
+                    "src.app.agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
                 ),
                 patch(
                     "src.app.agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
                     return_value=None,
                 ),
             ):
-                routing_config = EnhancedRoutingConfig(
+                routing_config = RoutingConfig(
                     enable_mlflow_tracking=False,
                     enable_relationship_extraction=False,
                     enable_query_enhancement=False,
                 )
                 # Create a mock routing agent manually
-                routing_agent = object.__new__(EnhancedRoutingAgent)
+                routing_agent = object.__new__(RoutingAgent)
                 routing_agent.config = routing_config
                 routing_agent.routing_module = None
                 routing_agent._routing_stats = {}
@@ -244,36 +244,36 @@ class TestCompleteMultiAgentOrchestration:
         import logging
         from unittest.mock import patch
 
-        from src.app.agents.enhanced_routing_agent import EnhancedRoutingConfig
+        from src.app.agents.routing_agent import RoutingConfig
 
         with (
             patch(
-                "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._configure_dspy"
+                "src.app.agents.routing_agent.RoutingAgent._configure_dspy"
             ),
             patch(
-                "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._initialize_enhancement_pipeline"
+                "src.app.agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
             ),
             patch(
-                "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._initialize_routing_module"
+                "src.app.agents.routing_agent.RoutingAgent._initialize_routing_module"
             ),
             patch(
-                "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._initialize_advanced_optimizer"
+                "src.app.agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
             ),
             patch(
-                "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._initialize_mlflow_tracking"
+                "src.app.agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
             ),
             patch(
                 "src.app.agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
                 return_value=None,
             ),
         ):
-            routing_config = EnhancedRoutingConfig(
+            routing_config = RoutingConfig(
                 enable_mlflow_tracking=False,
                 enable_relationship_extraction=False,
                 enable_query_enhancement=False,
             )
             # Create a mock routing agent manually
-            routing_agent = object.__new__(EnhancedRoutingAgent)
+            routing_agent = object.__new__(RoutingAgent)
             routing_agent.config = routing_config
             routing_agent.routing_module = None
             routing_agent._routing_stats = {}
@@ -309,7 +309,7 @@ class TestCompleteMultiAgentOrchestration:
         import logging
         from unittest.mock import patch
 
-        from src.app.agents.enhanced_routing_agent import EnhancedRoutingConfig
+        from src.app.agents.routing_agent import RoutingConfig
 
         agents = []
 
@@ -336,32 +336,32 @@ class TestCompleteMultiAgentOrchestration:
                 # Create multiple agents simultaneously with mocked routing agent
                 with (
                     patch(
-                        "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._configure_dspy"
+                        "src.app.agents.routing_agent.RoutingAgent._configure_dspy"
                     ),
                     patch(
-                        "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._initialize_enhancement_pipeline"
+                        "src.app.agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
                     ),
                     patch(
-                        "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._initialize_routing_module"
+                        "src.app.agents.routing_agent.RoutingAgent._initialize_routing_module"
                     ),
                     patch(
-                        "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._initialize_advanced_optimizer"
+                        "src.app.agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
                     ),
                     patch(
-                        "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._initialize_mlflow_tracking"
+                        "src.app.agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
                     ),
                     patch(
                         "src.app.agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
                         return_value=None,
                     ),
                 ):
-                    routing_config = EnhancedRoutingConfig(
+                    routing_config = RoutingConfig(
                         enable_mlflow_tracking=False,
                         enable_relationship_extraction=False,
                         enable_query_enhancement=False,
                     )
                     # Create a mock routing agent manually
-                    routing_agent = object.__new__(EnhancedRoutingAgent)
+                    routing_agent = object.__new__(RoutingAgent)
                     routing_agent.config = routing_config
                     routing_agent.routing_module = None
                     routing_agent._routing_stats = {}
@@ -410,7 +410,7 @@ class TestSystemScalability:
         import logging
         from unittest.mock import patch
 
-        from src.app.agents.enhanced_routing_agent import EnhancedRoutingConfig
+        from src.app.agents.routing_agent import RoutingConfig
 
         with patch("src.common.config.get_config") as mock_config:
             mock_config.return_value = {
@@ -421,32 +421,32 @@ class TestSystemScalability:
 
             with (
                 patch(
-                    "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._configure_dspy"
+                    "src.app.agents.routing_agent.RoutingAgent._configure_dspy"
                 ),
                 patch(
-                    "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._initialize_enhancement_pipeline"
+                    "src.app.agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
                 ),
                 patch(
-                    "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._initialize_routing_module"
+                    "src.app.agents.routing_agent.RoutingAgent._initialize_routing_module"
                 ),
                 patch(
-                    "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._initialize_advanced_optimizer"
+                    "src.app.agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
                 ),
                 patch(
-                    "src.app.agents.enhanced_routing_agent.EnhancedRoutingAgent._initialize_mlflow_tracking"
+                    "src.app.agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
                 ),
                 patch(
                     "src.app.agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
                     return_value=None,
                 ),
             ):
-                routing_config = EnhancedRoutingConfig(
+                routing_config = RoutingConfig(
                     enable_mlflow_tracking=False,
                     enable_relationship_extraction=False,
                     enable_query_enhancement=False,
                 )
                 # Create a mock routing agent manually
-                routing_agent = object.__new__(EnhancedRoutingAgent)
+                routing_agent = object.__new__(RoutingAgent)
                 routing_agent.config = routing_config
                 routing_agent.routing_module = None
                 routing_agent._routing_stats = {}

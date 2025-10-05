@@ -84,7 +84,7 @@ This multi-agent system provides intelligent routing and specialized processing 
    └── Confidence Assessment
 
 3. Agent Execution → Specialized Agents
-   ├── EnhancedVideoSearchAgent: Video content retrieval and analysis
+   ├── VideoSearchAgent: Video content retrieval and analysis
    ├── SummarizerAgent: Content summarization with VLM integration
    └── DetailedReportAgent: Comprehensive analysis and reporting
 
@@ -192,7 +192,7 @@ routing = await router.route_query(
 }
 ```
 
-### 3. EnhancedVideoSearchAgent
+### 3. VideoSearchAgent
 
 **Purpose**: Advanced video content search and analysis
 
@@ -205,9 +205,9 @@ routing = await router.route_query(
 
 **Example Usage**:
 ```python
-from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
+from src.app.agents.video_search_agent import VideoSearchAgent
 
-search_agent = EnhancedVideoSearchAgent(
+search_agent = VideoSearchAgent(
     vespa_url="http://localhost:8080",
     openai_api_key="your-key"
 )
@@ -1030,6 +1030,6 @@ print(f"System Health: {health}")
 - [E2E Testing Guide](../../../tests/agents/e2e/README.md) - Real integration testing
 - [DSPy Integration](../../../src/app/agents/dspy_agent_optimizer.py) - DSPy optimization implementation
 - [A2A Protocol](../../../src/tools/a2a_utils.py) - Agent communication utilities
-- [Video Search](../../../src/app/agents/enhanced_video_search_agent.py) - Video search capabilities
+- [Video Search](../../../src/app/agents/video_search_agent.py) - Video search capabilities
 
 For more examples and advanced usage, see the test files in `tests/agents/` and example scripts in `scripts/`.

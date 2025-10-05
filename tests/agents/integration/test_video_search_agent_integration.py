@@ -5,10 +5,10 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from src.app.agents.enhanced_video_search_agent import (
+from src.app.agents.video_search_agent import (
     EnhancedA2AMessage,
     EnhancedTask,
-    EnhancedVideoSearchAgent,
+    VideoSearchAgent,
     ImagePart,
     VideoPart,
 )
@@ -51,12 +51,12 @@ def mock_processor():
     return processor
 
 
-class TestEnhancedVideoSearchAgentIntegration:
+class TestVideoSearchAgentIntegration:
     """Integration tests for Enhanced Video Search Agent functionality"""
 
-    @patch("src.app.agents.enhanced_video_search_agent.get_config")
+    @patch("src.app.agents.video_search_agent.get_config")
     @pytest.mark.ci_fast
-    @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
     def test_agent_initialization_with_real_config(
         self, mock_vespa_client_class, mock_config, mock_vespa_client
     ):
@@ -75,14 +75,14 @@ class TestEnhancedVideoSearchAgentIntegration:
         mock_config.return_value = mock_config_obj
         mock_vespa_client_class.return_value = mock_vespa_client
 
-        agent = EnhancedVideoSearchAgent()
+        agent = VideoSearchAgent()
 
         assert agent.vespa_client == mock_vespa_client
         assert agent.video_processor is not None
         mock_vespa_client_class.assert_called_once()
 
-    @patch("src.app.agents.enhanced_video_search_agent.get_config")
-    @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_multimodal_search_workflow_integration(
@@ -103,7 +103,7 @@ class TestEnhancedVideoSearchAgentIntegration:
         mock_config.return_value = mock_config_obj
         mock_vespa_client_class.return_value = mock_vespa_client
 
-        agent = EnhancedVideoSearchAgent()
+        agent = VideoSearchAgent()
         agent.video_processor = mock_processor
 
         # Test text search
@@ -129,8 +129,8 @@ class TestEnhancedVideoSearchAgentIntegration:
             image_data, "test.jpg"
         )
 
-    @patch("src.app.agents.enhanced_video_search_agent.get_config")
-    @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_a2a_message_processing_integration(
@@ -151,7 +151,7 @@ class TestEnhancedVideoSearchAgentIntegration:
         mock_config.return_value = mock_config_obj
         mock_vespa_client_class.return_value = mock_vespa_client
 
-        agent = EnhancedVideoSearchAgent()
+        agent = VideoSearchAgent()
         agent.video_processor = mock_processor
 
         # Create mixed content A2A task
@@ -178,8 +178,8 @@ class TestEnhancedVideoSearchAgentIntegration:
         mock_processor.process_video_file.assert_called_once()
         mock_processor.process_image_file.assert_called_once()
 
-    @patch("src.app.agents.enhanced_video_search_agent.get_config")
-    @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_error_handling_integration(
@@ -203,7 +203,7 @@ class TestEnhancedVideoSearchAgentIntegration:
         # Mock search service to raise exception
         mock_vespa_client.search.side_effect = Exception("Search service unavailable")
 
-        agent = EnhancedVideoSearchAgent()
+        agent = VideoSearchAgent()
 
         # Test graceful error handling
         with pytest.raises(Exception) as exc_info:
@@ -211,8 +211,8 @@ class TestEnhancedVideoSearchAgentIntegration:
 
         assert "Search service unavailable" in str(exc_info.value)
 
-    @patch("src.app.agents.enhanced_video_search_agent.get_config")
-    @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_concurrent_search_operations(
@@ -233,7 +233,7 @@ class TestEnhancedVideoSearchAgentIntegration:
         mock_config.return_value = mock_config_obj
         mock_vespa_client_class.return_value = mock_vespa_client
 
-        agent = EnhancedVideoSearchAgent()
+        agent = VideoSearchAgent()
         agent.video_processor = mock_processor
 
         # Create multiple concurrent search tasks
@@ -252,8 +252,8 @@ class TestEnhancedVideoSearchAgentIntegration:
         # Verify search service called for each query
         assert mock_vespa_client.search.call_count == 5
 
-    @patch("src.app.agents.enhanced_video_search_agent.get_config")
-    @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_search_result_aggregation(
@@ -290,7 +290,7 @@ class TestEnhancedVideoSearchAgentIntegration:
 
         mock_vespa_client.search.side_effect = side_effect
 
-        agent = EnhancedVideoSearchAgent()
+        agent = VideoSearchAgent()
         agent.video_processor = mock_processor
 
         # Perform different search types
@@ -303,8 +303,8 @@ class TestEnhancedVideoSearchAgentIntegration:
         assert video_results[0]["id"] == "video_result"
         assert image_results[0]["id"] == "image_result"
 
-    @patch("src.app.agents.enhanced_video_search_agent.get_config")
-    @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_performance_monitoring_integration(
@@ -330,7 +330,7 @@ class TestEnhancedVideoSearchAgentIntegration:
             await asyncio.sleep(0.1)
             return mock_vespa_client.search(*args, **kwargs)
 
-        agent = EnhancedVideoSearchAgent()
+        agent = VideoSearchAgent()
 
         # Measure search performance
         import time
@@ -345,8 +345,8 @@ class TestEnhancedVideoSearchAgentIntegration:
         assert len(results) == 2
         assert execution_time < 1.0  # Should be fast for mock
 
-    @patch("src.app.agents.enhanced_video_search_agent.get_config")
-    @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
     def test_configuration_integration(
         self, mock_vespa_client_class, mock_config, mock_vespa_client
     ):
@@ -366,8 +366,8 @@ class TestEnhancedVideoSearchAgentIntegration:
         mock_vespa_client_class.return_value = mock_vespa_client
 
         # Test with different configurations
-        agent1 = EnhancedVideoSearchAgent()
-        agent2 = EnhancedVideoSearchAgent()
+        agent1 = VideoSearchAgent()
+        agent2 = VideoSearchAgent()
 
         # Both agents should have same client type but potentially different instances
         assert type(agent1.vespa_client) is type(agent2.vespa_client)
@@ -375,11 +375,11 @@ class TestEnhancedVideoSearchAgentIntegration:
         assert agent2.video_processor is not None
 
 
-class TestEnhancedVideoSearchAgentEdgeCasesIntegration:
+class TestVideoSearchAgentEdgeCasesIntegration:
     """Integration tests for edge cases and error scenarios"""
 
-    @patch("src.app.agents.enhanced_video_search_agent.get_config")
-    @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_large_file_handling_integration(
@@ -400,7 +400,7 @@ class TestEnhancedVideoSearchAgentEdgeCasesIntegration:
         mock_config.return_value = mock_config_obj
         mock_vespa_client_class.return_value = mock_vespa_client
 
-        agent = EnhancedVideoSearchAgent()
+        agent = VideoSearchAgent()
         agent.video_processor = mock_processor
 
         # Simulate large video file
@@ -413,8 +413,8 @@ class TestEnhancedVideoSearchAgentEdgeCasesIntegration:
             large_video_data, "large_video.mp4"
         )
 
-    @patch("src.app.agents.enhanced_video_search_agent.get_config")
-    @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_empty_results_handling(
@@ -436,14 +436,14 @@ class TestEnhancedVideoSearchAgentEdgeCasesIntegration:
         mock_vespa_client_class.return_value = mock_vespa_client
         mock_vespa_client.search.return_value = []
 
-        agent = EnhancedVideoSearchAgent()
+        agent = VideoSearchAgent()
 
         results = agent.search_by_text("nonexistent content")
 
         assert results == []
 
-    @patch("src.app.agents.enhanced_video_search_agent.get_config")
-    @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_malformed_a2a_message_handling(
@@ -464,7 +464,7 @@ class TestEnhancedVideoSearchAgentEdgeCasesIntegration:
         mock_config.return_value = mock_config_obj
         mock_vespa_client_class.return_value = mock_vespa_client
 
-        agent = EnhancedVideoSearchAgent()
+        agent = VideoSearchAgent()
 
         # Test with missing parts
         message = EnhancedA2AMessage(role="user", parts=[])
@@ -479,8 +479,8 @@ class TestEnhancedVideoSearchAgentEdgeCasesIntegration:
         assert result["results"] == []
         assert result["total_results"] == 0
 
-    @patch("src.app.agents.enhanced_video_search_agent.get_config")
-    @patch("src.app.agents.enhanced_video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_resource_cleanup_integration(
@@ -501,7 +501,7 @@ class TestEnhancedVideoSearchAgentEdgeCasesIntegration:
         mock_config.return_value = mock_config_obj
         mock_vespa_client_class.return_value = mock_vespa_client
 
-        agent = EnhancedVideoSearchAgent()
+        agent = VideoSearchAgent()
         agent.video_processor = mock_processor
 
         # Perform multiple operations

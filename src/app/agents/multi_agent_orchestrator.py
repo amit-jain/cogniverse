@@ -27,8 +27,8 @@ from typing import Any, Dict, List, Optional
 import dspy
 
 # Enhanced routing imports
-from src.app.agents.enhanced_routing_agent import (
-    EnhancedRoutingAgent,
+from src.app.agents.routing_agent import (
+    RoutingAgent,
 )
 
 # Workflow intelligence (import after types to avoid circular dependency)
@@ -116,7 +116,7 @@ class MultiAgentOrchestrator:
 
     def __init__(
         self,
-        routing_agent: Optional[EnhancedRoutingAgent] = None,
+        routing_agent: Optional[RoutingAgent] = None,
         available_agents: Optional[Dict[str, Dict[str, Any]]] = None,
         max_parallel_tasks: int = 3,
         workflow_timeout_minutes: int = 15,
@@ -126,7 +126,7 @@ class MultiAgentOrchestrator:
         self.logger = logging.getLogger(__name__)
 
         # Initialize routing agent
-        self.routing_agent = routing_agent or EnhancedRoutingAgent()
+        self.routing_agent = routing_agent or RoutingAgent()
 
         # Configure available agents and their capabilities
         self.available_agents = available_agents or self._get_default_agents()
@@ -1306,7 +1306,7 @@ class MultiAgentOrchestrator:
 
 
 def create_multi_agent_orchestrator(
-    routing_agent: Optional[EnhancedRoutingAgent] = None,
+    routing_agent: Optional[RoutingAgent] = None,
     available_agents: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> MultiAgentOrchestrator:
     """Factory function to create Multi-Agent Orchestrator"""

@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException
 from src.app.agents.dspy_integration_mixin import DSPySummaryMixin
 
 # Enhanced routing support
-from src.app.agents.enhanced_routing_agent import RoutingDecision
+from src.app.agents.routing_agent import RoutingDecision
 from src.common.a2a_mixin import A2AEndpointsMixin
 from src.common.config_utils import get_config
 from src.common.health_mixin import HealthCheckMixin

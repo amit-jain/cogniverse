@@ -94,7 +94,7 @@ curl -X POST http://localhost:8000/api/v1/search \
 ```python
 # 1. Composing Agent receives request
 from src.app.agents.composing_agent import ComposingAgent
-from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
+from src.app.agents.video_search_agent import VideoSearchAgent
 from src.app.agents.text_analysis_agent import TextAnalysisAgent
 
 composing_agent = ComposingAgent()
@@ -126,7 +126,7 @@ search_msg = A2AMessage(
 )
 
 # 5. Video Search Agent executes search
-video_agent = EnhancedVideoSearchAgent()
+video_agent = VideoSearchAgent()
 results = await video_agent.search(
     query=search_msg.payload["query"],
     tenant_id=tenant_id,
@@ -211,7 +211,7 @@ else:
 from src.memory.mem0_manager import Mem0Manager
 from src.app.agents.memory_aware_mixin import MemoryAwareMixin
 
-class MemoryAwareVideoAgent(EnhancedVideoSearchAgent, MemoryAwareMixin):
+class MemoryAwareVideoAgent(VideoSearchAgent, MemoryAwareMixin):
     def __init__(self):
         super().__init__()
         self.memory = Mem0Manager()

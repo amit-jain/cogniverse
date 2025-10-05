@@ -487,7 +487,7 @@ class TestSummarizerAgentCoreFunctionality:
         """Test summarization with routing decision context"""
         agent = agent_with_mocks
 
-        from src.app.agents.enhanced_routing_agent import RoutingDecision
+        from src.app.agents.routing_agent import RoutingDecision
 
         routing_decision = RoutingDecision(
             query="AI overview",

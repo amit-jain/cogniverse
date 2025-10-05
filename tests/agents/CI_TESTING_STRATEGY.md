@@ -10,7 +10,7 @@ To reduce CI execution time while maintaining test coverage, we use a two-tier t
   - detailed_report_agent.py: 82% coverage (comprehensive core functionality tests)
   - summarizer_agent.py: 76% coverage (thinking phase, theme extraction, content categorization)
   - routing_agent.py: Core routing and workflow determination
-  - enhanced_video_search_agent.py: Search functionality and video processing
+  - video_search_agent.py: Search functionality and video processing
   - DSPy integration: Relationship extraction, query enhancement, optimization
   - Multi-agent orchestration: Workflow planning, result aggregation
 

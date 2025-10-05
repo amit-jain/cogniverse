@@ -6,22 +6,22 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from src.app.agents.enhanced_agent_orchestrator import (
-    EnhancedAgentOrchestrator,
+from src.app.agents.agent_orchestrator import (
+    AgentOrchestrator,
     ProcessingRequest,
     ProcessingResult,
 )
-from src.app.agents.enhanced_result_aggregator import (
+from src.app.agents.result_aggregator import (
     AggregatedResult,
     AggregationRequest,
-    EnhancedResultAggregator,
+    ResultAggregator,
 )
 
 # Phase 4 imports
-from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent, RoutingDecision
+from src.app.agents.routing_agent import RoutingAgent, RoutingDecision
 
 # Phase 5 imports
-from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
+from src.app.agents.video_search_agent import VideoSearchAgent
 from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
 from src.app.agents.result_enhancement_engine import (
     EnhancedResult,
@@ -38,7 +38,7 @@ class TestRoutingToEnhancedSearchIntegration:
     def mock_dependencies(self):
         """Mock external dependencies for testing"""
         with patch(
-            "src.app.agents.enhanced_video_search_agent.get_config"
+            "src.app.agents.video_search_agent.get_config"
         ) as mock_search_config:
             with patch(
                 "src.backends.vespa.vespa_search_client.VespaVideoSearchClient"
@@ -70,7 +70,7 @@ class TestRoutingToEnhancedSearchIntegration:
 
         # Try to create search agent with proper error handling
         try:
-            search_agent = EnhancedVideoSearchAgent()
+            search_agent = VideoSearchAgent()
         except ValueError as e:
             if "schema_name" in str(e):
                 pytest.skip(
@@ -83,7 +83,7 @@ class TestRoutingToEnhancedSearchIntegration:
         routing_decision = RoutingDecision(
             query="robots playing soccer in competitions",
             enhanced_query="autonomous robots demonstrating advanced soccer skills in competitive tournaments",
-            recommended_agent="enhanced_video_search_agent",
+            recommended_agent="video_search_agent",
             confidence=0.85,
             reasoning="Query contains technology and sports entities with competitive context, requiring enhanced video search",
             entities=[
@@ -198,14 +198,14 @@ class TestRoutingToEnhancedSearchIntegration:
                 mock_pipeline_class.return_value = mock_pipeline
 
                 # Test complete routing with enhancement
-                from src.app.agents.enhanced_routing_agent import EnhancedRoutingConfig
+                from src.app.agents.routing_agent import RoutingConfig
 
-                config = EnhancedRoutingConfig(
+                config = RoutingConfig(
                     enable_mlflow_tracking=False,
                     enable_relationship_extraction=True,
                     enable_query_enhancement=True,
                 )
-                routing_agent = EnhancedRoutingAgent(config=config)
+                routing_agent = RoutingAgent(config=config)
 
                 routing_decision = (
                     await routing_agent.analyze_and_route_with_relationships(
@@ -240,14 +240,14 @@ class TestRoutingToEnhancedSearchIntegration:
         """Test orchestration need assessment between routing and orchestrator"""
 
         # Create components
-        routing_agent = EnhancedRoutingAgent()
+        routing_agent = RoutingAgent()
         orchestrator = MultiAgentOrchestrator(routing_agent=routing_agent)
 
         # Test complex query that should trigger orchestration
         complex_routing_decision = RoutingDecision(
             query="find videos of robots playing soccer then analyze techniques and create detailed report with summary",
             enhanced_query="locate footage of autonomous robots demonstrating soccer skills then perform technical analysis and generate comprehensive documentation with executive summary",
-            recommended_agent="enhanced_video_search_agent",
+            recommended_agent="video_search_agent",
             confidence=0.6,  # Lower confidence indicates complexity
             reasoning="Complex multi-step query with video search, analysis, and report generation requiring orchestration",
             entities=[
@@ -313,10 +313,10 @@ class TestEnhancedAgentComponentIntegration:
         """Mock external dependencies for testing"""
         with patch("src.app.agents.result_enhancement_engine.logger"):
             with patch(
-                "src.app.agents.enhanced_result_aggregator.ResultEnhancementEngine"
+                "src.app.agents.result_aggregator.ResultEnhancementEngine"
             ):
                 with patch(
-                    "src.app.agents.enhanced_agent_orchestrator.EnhancedRoutingAgent"
+                    "src.app.agents.agent_orchestrator.RoutingAgent"
                 ):
                     # Mock the actual imports that exist
                     yield
@@ -368,7 +368,7 @@ class TestEnhancedAgentComponentIntegration:
         routing_decision = RoutingDecision(
             query="robots playing soccer using AI techniques",
             enhanced_query="autonomous robots demonstrating soccer skills with artificial intelligence techniques",
-            recommended_agent="enhanced_video_search_agent",
+            recommended_agent="video_search_agent",
             confidence=0.85,
             reasoning="Technology-focused query about AI-enabled robotics in sports context",
             entities=[
@@ -423,7 +423,7 @@ class TestEnhancedAgentComponentIntegration:
         with patch.object(
             enhancement_engine, "enhance_results", return_value=enhanced_results
         ):
-            aggregator = EnhancedResultAggregator()
+            aggregator = ResultAggregator()
             aggregator.enhancement_engine = enhancement_engine
 
             # Test agent data preparation
@@ -451,7 +451,7 @@ class TestEnhancedAgentComponentIntegration:
 
         # Mock all dependencies
         with patch(
-            "src.app.agents.enhanced_agent_orchestrator.EnhancedResultAggregator"
+            "src.app.agents.agent_orchestrator.ResultAggregator"
         ) as mock_aggregator_class:
 
             # Mock routing agent
@@ -459,7 +459,7 @@ class TestEnhancedAgentComponentIntegration:
             mock_routing_decision = RoutingDecision(
                 query="robots playing soccer",
                 enhanced_query="autonomous robots demonstrating soccer techniques",
-                recommended_agent="enhanced_video_search_agent",
+                recommended_agent="video_search_agent",
                 confidence=0.85,
                 reasoning="Sports technology query requiring video search capabilities",
                 entities=[{"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9}],
@@ -538,7 +538,7 @@ class TestEnhancedAgentComponentIntegration:
             # Set environment for orchestrator
             os.environ["VESPA_SCHEMA"] = "video_colpali_smol500_mv_frame"
 
-            orchestrator = EnhancedAgentOrchestrator()
+            orchestrator = AgentOrchestrator()
             orchestrator.routing_agent = mock_routing_agent
             orchestrator.vespa_client = mock_vespa_client
             orchestrator.result_aggregator = mock_aggregator
@@ -698,12 +698,12 @@ class TestRoutingEnhancementErrorHandlingIntegration:
             mock_extractor_class.return_value = mock_extractor
 
             # Create routing agent
-            from src.app.agents.enhanced_routing_agent import EnhancedRoutingConfig
+            from src.app.agents.routing_agent import RoutingConfig
 
-            config = EnhancedRoutingConfig(
+            config = RoutingConfig(
                 enable_mlflow_tracking=False, enable_relationship_extraction=True
             )
-            routing_agent = EnhancedRoutingAgent(config=config)
+            routing_agent = RoutingAgent(config=config)
 
             # Test that routing falls back gracefully
             try:
@@ -722,7 +722,7 @@ class TestRoutingEnhancementErrorHandlingIntegration:
                         reasoning="Fallback routing due to extraction failure",
                         entities=[],
                         relationships=[],
-                        fallback_agents=["enhanced_video_search_agent"],
+                        fallback_agents=["video_search_agent"],
                         metadata={
                             "error": "Relationship extraction failed",
                             "fallback": True,
@@ -771,8 +771,8 @@ class TestRoutingEnhancementErrorHandlingIntegration:
     async def test_agent_failure_to_aggregation_resilience(self, mock_dependencies):
         """Test aggregation resilience when individual agents fail"""
 
-        with patch("src.app.agents.enhanced_result_aggregator.ResultEnhancementEngine"):
-            aggregator = EnhancedResultAggregator(enable_fallbacks=True)
+        with patch("src.app.agents.result_aggregator.ResultEnhancementEngine"):
+            aggregator = ResultAggregator(enable_fallbacks=True)
 
             # Mock failing agent invocation
             async def failing_agent_invocation(agent_name, request_data):

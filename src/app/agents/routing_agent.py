@@ -152,7 +152,7 @@ class RoutingConfig:
     enable_mlflow_tracking: bool = (
         False  # Disabled by default to avoid connection issues
     )
-    mlflow_experiment_name: str = "enhanced_routing_agent"
+    mlflow_experiment_name: str = "routing_agent"
     mlflow_tracking_uri: str = "http://localhost:5000"
 
 
@@ -197,7 +197,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin):
 
         # Initialize A2A base with DSPy module
         super().__init__(
-            agent_name="enhanced_routing_agent",
+            agent_name="routing_agent",
             agent_description="Intelligent routing with relationship extraction and query enhancement",
             dspy_module=self.routing_module,
             capabilities=self._get_routing_capabilities(),
@@ -1319,7 +1319,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin):
             return nullcontext()
 
         additional_tags = {
-            "agent_type": "enhanced_routing_agent",
+            "agent_type": "routing_agent",
             "grpo_enabled": self.config.enable_grpo_optimization,
             "simba_enabled": self.config.enable_query_enhancement,
             "adaptive_thresholds_enabled": True,
@@ -1373,7 +1373,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin):
         try:
             tags = {
                 "model_type": "dspy_routing_module",
-                "agent_type": "enhanced_routing_agent",
+                "agent_type": "routing_agent",
                 "features": "relationship_extraction,query_enhancement,grpo_optimization",
             }
 
@@ -1434,7 +1434,7 @@ if __name__ == "__main__":
             mlflow_tracking_uri="http://localhost:5000",
         )
 
-        agent = create_enhanced_routing_agent(config, port=8001)
+        agent = create_routing_agent(config, port=8001)
 
         # Start MLflow run for this demonstration
         with agent.start_mlflow_run(run_name="routing_demo", tags={"demo": "true"}):

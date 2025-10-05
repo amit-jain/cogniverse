@@ -9,7 +9,7 @@ import asyncio
 
 import pytest
 
-from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent
+from src.app.agents.routing_agent import RoutingAgent
 from src.app.routing.adaptive_threshold_learner import (
     AdaptiveThresholdLearner,
 )
@@ -139,7 +139,7 @@ class TestDSPySystemIntegration:
         assert "total_samples" in status
 
     @pytest.mark.asyncio
-    async def test_enhanced_routing_agent_routing(self):
+    async def test_routing_agent_routing(self):
         """Test enhanced routing agent routing logic"""
         # Mock only external dependencies, not core logic
         from unittest.mock import patch
@@ -152,7 +152,7 @@ class TestDSPySystemIntegration:
                 "detailed_report_agent_url": "http://localhost:8004",
             }
 
-            agent = EnhancedRoutingAgent()
+            agent = RoutingAgent()
 
             # Test real routing decision logic
             test_query = "Find videos of robots playing soccer"
@@ -248,13 +248,13 @@ class TestMultiAgentSystem:
         """Test enhanced video search agent with real configuration"""
         import os
 
-        from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent
+        from src.app.agents.video_search_agent import VideoSearchAgent
 
         # Set required environment for video search
         os.environ["VESPA_SCHEMA"] = "video_colpali_smol500_mv_frame"
 
         try:
-            agent = EnhancedVideoSearchAgent()
+            agent = VideoSearchAgent()
 
             # Should initialize with real config
             assert agent is not None

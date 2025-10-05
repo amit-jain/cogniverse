@@ -87,3 +87,7 @@ coverage_*.xml
 
 # MkDocs generated site
 site/
+
+# Database and backup files
+*.db
+*.bak

@@ -5,7 +5,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from src.app.agents.enhanced_routing_agent import RoutingDecision
+from src.app.agents.routing_agent import RoutingDecision
 from src.app.agents.result_enhancement_engine import (
     EnhancedResult,
     EnhancementContext,
@@ -53,12 +53,12 @@ class AggregatedResult:
     total_processing_time: float = 0.0
 
 
-class EnhancedResultAggregator:
+class ResultAggregator:
     """Aggregates and enhances results from multiple agents with relationship context"""
 
     def __init__(self, **kwargs):
-        """Initialize enhanced result aggregator"""
-        logger.info("Initializing EnhancedResultAggregator...")
+        """Initialize result aggregator"""
+        logger.info("Initializing ResultAggregator...")
 
         # Initialize enhancement engine
         self.enhancement_engine = ResultEnhancementEngine(
@@ -77,7 +77,7 @@ class EnhancedResultAggregator:
             "enhanced_video_search": "http://localhost:8001",
         }
 
-        logger.info("EnhancedResultAggregator initialization complete")
+        logger.info("ResultAggregator initialization complete")
 
     async def aggregate_and_enhance(
         self, request: AggregationRequest

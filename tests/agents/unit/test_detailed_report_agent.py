@@ -650,7 +650,7 @@ class TestDetailedReportAgentCoreFunctionality:
         """Test enhanced report generation with routing decision"""
         agent = agent_with_mocks
 
-        from src.app.agents.enhanced_routing_agent import RoutingDecision
+        from src.app.agents.routing_agent import RoutingDecision
 
         routing_decision = RoutingDecision(
             query="test query",

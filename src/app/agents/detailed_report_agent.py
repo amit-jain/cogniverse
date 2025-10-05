@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException
 from src.app.agents.dspy_integration_mixin import DSPyDetailedReportMixin
 
 # Enhanced routing support
-from src.app.agents.enhanced_routing_agent import RoutingDecision
+from src.app.agents.routing_agent import RoutingDecision
 from src.common.a2a_mixin import A2AEndpointsMixin
 from src.common.config_utils import get_config
 from src.common.health_mixin import HealthCheckMixin
@@ -1702,7 +1702,7 @@ async def generate_report_with_routing_decision_endpoint(
         raise HTTPException(status_code=503, detail="Agent not initialized")
 
     try:
-        from src.app.agents.enhanced_routing_agent import RoutingDecision
+        from src.app.agents.routing_agent import RoutingDecision
 
         routing_obj = RoutingDecision(**routing_decision)
 

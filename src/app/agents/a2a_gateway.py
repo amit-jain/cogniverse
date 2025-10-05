@@ -30,7 +30,7 @@ from src.app.agents.multi_agent_orchestrator import (
     MultiAgentOrchestrator,
 )
 
-# No longer need fallback routing - EnhancedRoutingAgent has all features
+# No longer need fallback routing - RoutingAgent has all features
 
 
 class A2AQueryRequest(BaseModel):

@@ -142,7 +142,7 @@ def deploy_schema():
 
     try:
         # Schema path
-        schema_path = Path(__file__).parent.parent.parent.parent / "vespa_schemas" / "agent_memories.sd"
+        schema_path = Path(__file__).parent.parent.parent.parent / "configs" / "schemas" / "agent_memories.sd"
 
         if not schema_path.exists():
             print(f"❌ Schema file not found: {schema_path}")

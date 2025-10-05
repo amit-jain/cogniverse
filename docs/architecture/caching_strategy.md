@@ -335,7 +335,7 @@ class VideoProcessor:
 ### Search Result Caching
 ```python
 # Example with video search agent
-class EnhancedVideoSearchAgent:
+class VideoSearchAgent:
     def __init__(self, cache_manager: TieredCacheManager):
         self.cache = cache_manager
 

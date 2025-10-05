@@ -7,12 +7,12 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
 
-from src.app.agents.enhanced_result_aggregator import (
+from src.app.agents.result_aggregator import (
     AggregatedResult,
     AggregationRequest,
-    EnhancedResultAggregator,
+    ResultAggregator,
 )
-from src.app.agents.enhanced_routing_agent import EnhancedRoutingAgent, RoutingDecision
+from src.app.agents.routing_agent import RoutingAgent, RoutingDecision
 from src.backends.vespa.vespa_search_client import VespaVideoSearchClient
 from src.common.config_utils import get_config
 
@@ -52,12 +52,12 @@ class ProcessingResult:
     total_processing_time: float
 
 
-class EnhancedAgentOrchestrator:
-    """Orchestrates the complete enhanced multi-agent processing pipeline"""
+class AgentOrchestrator:
+    """Orchestrates the complete multi-agent processing pipeline"""
 
     def __init__(self, **kwargs):
-        """Initialize enhanced agent orchestrator"""
-        logger.info("Initializing EnhancedAgentOrchestrator...")
+        """Initialize agent orchestrator"""
+        logger.info("Initializing AgentOrchestrator...")
 
         self.config = get_config()
 
@@ -77,13 +77,13 @@ class EnhancedAgentOrchestrator:
         # Initialize components
         self._initialize_components(**kwargs)
 
-        logger.info("EnhancedAgentOrchestrator initialization complete")
+        logger.info("AgentOrchestrator initialization complete")
 
     def _initialize_components(self, **kwargs):
         """Initialize orchestrator components"""
         try:
             # Initialize routing agent
-            self.routing_agent = EnhancedRoutingAgent(
+            self.routing_agent = RoutingAgent(
                 enable_relationship_extraction=True,
                 enable_query_enhancement=True,
                 **kwargs.get("routing_agent_config", {}),
@@ -91,7 +91,7 @@ class EnhancedAgentOrchestrator:
             logger.info("Routing agent initialized")
 
             # Initialize result aggregator
-            self.result_aggregator = EnhancedResultAggregator(
+            self.result_aggregator = ResultAggregator(
                 **kwargs.get("aggregator_config", {})
             )
             logger.info("Result aggregator initialized")
@@ -268,7 +268,7 @@ class EnhancedAgentOrchestrator:
         except Exception as e:
             logger.error(f"Result aggregation failed: {e}")
             # Return minimal aggregated result
-            from src.app.agents.enhanced_result_aggregator import AggregatedResult
+            from src.app.agents.result_aggregator import AggregatedResult
 
             return AggregatedResult(
                 routing_decision=routing_decision,
@@ -380,7 +380,7 @@ class EnhancedAgentOrchestrator:
         )
 
         # Create minimal aggregated result
-        from src.app.agents.enhanced_result_aggregator import AggregatedResult
+        from src.app.agents.result_aggregator import AggregatedResult
 
         error_aggregated_result = AggregatedResult(
             routing_decision=error_routing_decision,
@@ -416,7 +416,7 @@ async def startup_event():
     global orchestrator
 
     try:
-        orchestrator = EnhancedAgentOrchestrator()
+        orchestrator = AgentOrchestrator()
         logger.info("Enhanced agent orchestrator initialized")
     except Exception as e:
         logger.error(f"Failed to initialize orchestrator: {e}")
@@ -428,7 +428,7 @@ async def health_check():
     """Health check endpoint"""
     return {
         "status": "healthy",
-        "service": "enhanced_agent_orchestrator",
+        "service": "agent_orchestrator",
         "capabilities": [
             "enhanced_routing",
             "relationship_extraction",
