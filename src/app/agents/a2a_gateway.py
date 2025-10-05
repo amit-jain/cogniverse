@@ -1,17 +1,16 @@
 """
-A2A Enhanced Gateway - Integration layer for DSPy 3.0 routing system
+A2A Gateway - Integration layer for DSPy 3.0 routing system
 
-This gateway provides seamless integration between the enhanced DSPy 3.0 routing system
-and the existing A2A protocol infrastructure, maintaining backward compatibility while
-adding advanced routing, orchestration, and relationship-aware processing.
+This gateway provides seamless integration between the DSPy 3.0 routing system
+and the A2A protocol infrastructure, with full production features.
 
 Features:
-- Backward-compatible A2A protocol support
-- Enhanced routing with relationship extraction and query enhancement
+- Complete A2A protocol support
+- Advanced routing with relationship extraction and query enhancement
 - Multi-agent orchestration for complex queries
-- Intelligent fallback to original routing system
+- Production features: caching, parallel execution, memory
 - Performance monitoring and telemetry
-- Graceful degradation strategies
+- Emergency response handling
 """
 
 import asyncio
@@ -22,22 +21,16 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-# Enhanced routing imports
-from src.app.agents.enhanced_routing_agent import (
-    EnhancedRoutingAgent,
-    EnhancedRoutingConfig,
+# Routing imports
+from src.app.agents.routing_agent import (
+    RoutingAgent,
+    RoutingConfig,
 )
 from src.app.agents.multi_agent_orchestrator import (
     MultiAgentOrchestrator,
 )
 
-# Original A2A imports (for fallback compatibility)
-
-# Existing agent imports (for fallback routing)
-try:
-    from src.app.agents.routing_agent import RoutingAgent as OriginalRoutingAgent
-except ImportError:
-    OriginalRoutingAgent = None
+# No longer need fallback routing - EnhancedRoutingAgent has all features
 
 
 class A2AQueryRequest(BaseModel):
@@ -126,34 +119,28 @@ class OrchestrationResponse(BaseModel):
     )
 
 
-class A2AEnhancedGateway:
+class A2AGateway:
     """
-    A2A Enhanced Gateway - Integration layer for DSPy 3.0 routing system
+    A2A Gateway - Integration layer for DSPy 3.0 routing system
 
-    Provides seamless integration between enhanced routing/orchestration and
-    existing A2A protocol infrastructure with backward compatibility.
+    Provides seamless integration between routing/orchestration and
+    A2A protocol infrastructure with full production features.
     """
 
     def __init__(
         self,
-        enhanced_routing_config: Optional[EnhancedRoutingConfig] = None,
+        routing_config: Optional[RoutingConfig] = None,
         enable_orchestration: bool = True,
-        enable_fallback: bool = True,
         port: int = 8000,
     ):
         self.logger = logging.getLogger(__name__)
 
         # Configuration
         self.enable_orchestration = enable_orchestration
-        self.enable_fallback = enable_fallback
         self.port = port
 
-        # Initialize enhanced routing system
-        self._initialize_enhanced_system(enhanced_routing_config)
-
-        # Initialize fallback system if enabled
-        if enable_fallback:
-            self._initialize_fallback_system()
+        # Initialize routing system (with all production features)
+        self._initialize_routing_system(routing_config)
 
         # Initialize FastAPI app with A2A endpoints
         self.app = self._create_fastapi_app()
@@ -168,14 +155,14 @@ class A2AEnhancedGateway:
             "average_response_time": 0.0,
         }
 
-    def _initialize_enhanced_system(
-        self, config: Optional[EnhancedRoutingConfig]
+    def _initialize_routing_system(
+        self, config: Optional[RoutingConfig]
     ) -> None:
-        """Initialize enhanced routing and orchestration system"""
+        """Initialize routing and orchestration system"""
         try:
-            # Initialize enhanced routing agent
-            self.enhanced_router = EnhancedRoutingAgent(
-                config=config or EnhancedRoutingConfig(),
+            # Initialize routing agent
+            self.router = RoutingAgent(
+                config=config or RoutingConfig(),
                 port=self.port + 1,  # Use different port to avoid conflicts
                 enable_telemetry=True,
             )
@@ -183,38 +170,22 @@ class A2AEnhancedGateway:
             # Initialize multi-agent orchestrator
             if self.enable_orchestration:
                 self.orchestrator = MultiAgentOrchestrator(
-                    routing_agent=self.enhanced_router
+                    routing_agent=self.router
                 )
 
-            self.enhanced_system_available = True
-            self.logger.info("Enhanced routing system initialized successfully")
+            self.routing_system_available = True
+            self.logger.info("Routing system initialized successfully")
 
         except Exception as e:
             self.logger.error(f"Failed to initialize enhanced system: {e}")
-            self.enhanced_system_available = False
-            if not self.enable_fallback:
-                raise RuntimeError("Enhanced system failed and fallback disabled")
+            self.routing_system_available = False
+            raise RuntimeError("Routing system failed to initialize")
 
-    def _initialize_fallback_system(self) -> None:
-        """Initialize fallback routing system for backward compatibility"""
-        try:
-            # Initialize original routing agent if available
-            if OriginalRoutingAgent is not None:
-                self.fallback_router = OriginalRoutingAgent()
-                self.fallback_system_available = True
-                self.logger.info("Fallback routing system initialized")
-            else:
-                self.fallback_system_available = False
-                self.logger.warning("Original routing agent not available for fallback")
-
-        except Exception as e:
-            self.logger.error(f"Failed to initialize fallback system: {e}")
-            self.fallback_system_available = False
 
     def _create_fastapi_app(self) -> FastAPI:
         """Create FastAPI app with A2A protocol endpoints"""
         app = FastAPI(
-            title="A2A Enhanced Gateway",
+            title="A2A Gateway",
             description="Enhanced A2A routing with DSPy 3.0, relationship extraction, and orchestration",
             version="1.0.0",
         )
@@ -236,8 +207,7 @@ class A2AEnhancedGateway:
         async def health_check():
             return {
                 "status": "healthy",
-                "enhanced_system": self.enhanced_system_available,
-                "fallback_system": self.fallback_system_available,
+                "enhanced_system": self.routing_system_available,
                 "orchestration_enabled": self.enable_orchestration,
                 "timestamp": datetime.now().isoformat(),
             }
@@ -247,10 +217,10 @@ class A2AEnhancedGateway:
         async def get_statistics():
             gateway_stats = self.gateway_stats.copy()
 
-            # Add enhanced routing stats if available
-            if self.enhanced_system_available:
+            # Add routing stats if available
+            if self.routing_system_available:
                 gateway_stats["enhanced_routing_stats"] = (
-                    self.enhanced_router.get_routing_statistics()
+                    self.router.get_routing_statistics()
                 )
 
             # Add orchestration stats if available
@@ -297,34 +267,21 @@ class A2AEnhancedGateway:
         self.gateway_stats["total_requests"] += 1
 
         try:
-            # Try enhanced routing first
-            if self.enhanced_system_available:
-                return await self._enhanced_routing(request, start_time)
-
-            # Fallback to original routing system
-            elif self.fallback_system_available:
-                return await self._fallback_routing(request, start_time)
-
+            # Use routing (now has all production features)
+            if self.routing_system_available:
+                return await self._process_routing(request, start_time)
             else:
-                # Ultimate fallback
+                # System not available
                 return self._create_emergency_response(
-                    request, start_time, "No routing systems available"
+                    request, start_time, "Routing system not available"
                 )
 
         except Exception as e:
             self.logger.error(f"Routing request failed: {e}")
             self.gateway_stats["failed_requests"] += 1
-
-            # Try fallback if enhanced failed
-            if self.enhanced_system_available and self.fallback_system_available:
-                try:
-                    return await self._fallback_routing(request, start_time)
-                except Exception as fallback_error:
-                    self.logger.error(f"Fallback routing also failed: {fallback_error}")
-
             return self._create_emergency_response(request, start_time, str(e))
 
-    async def _enhanced_routing(
+    async def _process_routing(
         self, request: A2AQueryRequest, start_time: datetime
     ) -> A2AQueryResponse:
         """Process request using enhanced DSPy 3.0 routing system"""
@@ -334,8 +291,8 @@ class A2AEnhancedGateway:
         routing_options = request.routing_options or {}
         require_orchestration = routing_options.get("require_orchestration")
 
-        # Perform enhanced routing
-        routing_decision = await self.enhanced_router.route_query(
+        # Perform routing
+        routing_decision = await self.router.route_query(
             query=request.query,
             context=request.context,
             user_id=request.user_id,
@@ -370,67 +327,12 @@ class A2AEnhancedGateway:
         )
 
         self.logger.info(
-            f"Enhanced routing: {request.query[:50]}... → {response.agent} "
+            f"Routing: {request.query[:50]}... → {response.agent} "
             f"(confidence: {response.confidence:.3f}, time: {processing_time:.1f}ms)"
         )
 
         return response
 
-    async def _fallback_routing(
-        self, request: A2AQueryRequest, start_time: datetime
-    ) -> A2AQueryResponse:
-        """Process request using fallback routing system"""
-        self.gateway_stats["fallback_requests"] += 1
-
-        try:
-            # Use original routing agent
-            if hasattr(self.fallback_router, "analyze_and_route"):
-                # Async routing method
-                result = await self.fallback_router.analyze_and_route(
-                    request.query, request.context
-                )
-            else:
-                # Sync routing method (wrap in async)
-                result = await asyncio.get_event_loop().run_in_executor(
-                    None, self.fallback_router.route, request.query, request.context
-                )
-
-            # Extract fallback result
-            agent = result.get("agent", "video_search_agent")
-            confidence = result.get("confidence", 0.5)
-            reasoning = result.get("reasoning", "Fallback routing decision")
-
-            # Calculate processing time
-            processing_time = (datetime.now() - start_time).total_seconds() * 1000
-            self._update_response_time_stats(processing_time)
-
-            response = A2AQueryResponse(
-                agent=agent,
-                confidence=confidence,
-                reasoning=reasoning,
-                enhanced_query=request.query,  # No enhancement in fallback
-                fallback_agents=[],
-                needs_orchestration=False,
-                entities=[],
-                relationships=[],
-                processing_time_ms=processing_time,
-                routing_method="fallback_original",
-                metadata={
-                    "fallback_used": True,
-                    "timestamp": datetime.now().isoformat(),
-                },
-            )
-
-            self.logger.info(
-                f"Fallback routing: {request.query[:50]}... → {response.agent} "
-                f"(confidence: {response.confidence:.3f}, time: {processing_time:.1f}ms)"
-            )
-
-            return response
-
-        except Exception as e:
-            self.logger.error(f"Fallback routing failed: {e}")
-            return self._create_emergency_response(request, start_time, str(e))
 
     def _create_emergency_response(
         self, request: A2AQueryRequest, start_time: datetime, error: str
@@ -534,20 +436,17 @@ class A2AEnhancedGateway:
         )
 
     def start_server(self, host: str = "0.0.0.0", port: Optional[int] = None) -> None:
-        """Start the A2A Enhanced Gateway server"""
+        """Start the A2A Gateway server"""
         import uvicorn
 
         server_port = port or self.port
 
-        self.logger.info(f"Starting A2A Enhanced Gateway on {host}:{server_port}")
+        self.logger.info(f"Starting A2A Gateway on {host}:{server_port}")
         self.logger.info(
-            f"Enhanced routing: {'enabled' if self.enhanced_system_available else 'disabled'}"
+            f"Routing: {'enabled' if self.routing_system_available else 'disabled'}"
         )
         self.logger.info(
             f"Orchestration: {'enabled' if self.enable_orchestration else 'disabled'}"
-        )
-        self.logger.info(
-            f"Fallback routing: {'enabled' if self.enable_fallback else 'disabled'}"
         )
 
         uvicorn.run(
@@ -555,17 +454,15 @@ class A2AEnhancedGateway:
         )
 
 
-def create_a2a_enhanced_gateway(
-    enhanced_routing_config: Optional[EnhancedRoutingConfig] = None,
+def create_a2a_gateway(
+    routing_config: Optional[RoutingConfig] = None,
     enable_orchestration: bool = True,
-    enable_fallback: bool = True,
     port: int = 8000,
-) -> A2AEnhancedGateway:
-    """Factory function to create A2A Enhanced Gateway"""
-    return A2AEnhancedGateway(
-        enhanced_routing_config=enhanced_routing_config,
+) -> A2AGateway:
+    """Factory function to create A2A Gateway"""
+    return A2AGateway(
+        routing_config=routing_config,
         enable_orchestration=enable_orchestration,
-        enable_fallback=enable_fallback,
         port=port,
     )
 
@@ -575,17 +472,16 @@ if __name__ == "__main__":
     import asyncio
 
     async def test_gateway():
-        """Test the A2A Enhanced Gateway"""
-        # Create gateway with enhanced routing and orchestration
-        gateway = create_a2a_enhanced_gateway(
-            enhanced_routing_config=EnhancedRoutingConfig(
+        """Test the A2A Gateway"""
+        # Create gateway with routing and orchestration
+        gateway = create_a2a_gateway(
+            routing_config=RoutingConfig(
                 model_name="smollm3:3b",
                 base_url="http://localhost:11434/v1",
                 enable_relationship_extraction=True,
                 enable_query_enhancement=True,
             ),
             enable_orchestration=True,
-            enable_fallback=True,
             port=8000,
         )
 
@@ -605,7 +501,7 @@ if __name__ == "__main__":
             ),
         ]
 
-        print("Testing A2A Enhanced Gateway:")
+        print("Testing A2A Gateway:")
         print("=" * 50)
 
         for i, request in enumerate(test_requests, 1):
@@ -651,5 +547,5 @@ if __name__ == "__main__":
     asyncio.run(test_gateway())
 
     # Uncomment to start server
-    # gateway = create_a2a_enhanced_gateway()
+    # gateway = create_a2a_gateway()
     # gateway.start_server()
