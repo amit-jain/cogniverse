@@ -1404,16 +1404,16 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin):
                 self.logger.error(f"MLflow cleanup failed: {e}")
 
 
-def create_enhanced_routing_agent(
-    config: Optional[EnhancedRoutingConfig] = None, port: int = 8001
-) -> EnhancedRoutingAgent:
-    """Factory function to create Enhanced Routing Agent"""
-    return EnhancedRoutingAgent(config=config, port=port)
+def create_routing_agent(
+    config: Optional[RoutingConfig] = None, port: int = 8001
+) -> RoutingAgent:
+    """Factory function to create Routing Agent"""
+    return RoutingAgent(config=config, port=port)
 
 
-def create_default_routing_config() -> EnhancedRoutingConfig:
+def create_default_routing_config() -> RoutingConfig:
     """Create default routing configuration"""
-    return EnhancedRoutingConfig()
+    return RoutingConfig()
 
 
 # Example usage and configuration
@@ -1422,7 +1422,7 @@ if __name__ == "__main__":
 
     async def main():
         # Create enhanced routing agent with local SmolLM 3B and MLflow tracking
-        config = EnhancedRoutingConfig(
+        config = RoutingConfig(
             model_name="smollm3:3b",
             base_url="http://localhost:11434/v1",
             confidence_threshold=0.7,
