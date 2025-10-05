@@ -35,7 +35,7 @@ This document provides detailed end-to-end request traces for Cogniverse operati
    │   │   ├── Requirements: {"video_search": true}
    │   │   └── Thinking: "User seeks educational video content on ML"
    │   │
-   │   ├── Routing Decision (EnhancedRoutingAgent)
+   │   ├── Routing Decision (RoutingAgent)
    │   │   ├── Chosen Agent: "video_search_agent"
    │   │   ├── Confidence: 0.92
    │   │   ├── Reasoning: "Video search needed for ML tutorial content"

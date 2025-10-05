@@ -44,9 +44,9 @@ Cogniverse is a **true multi-modal system** that uses specialized agents for eac
 
 **Example Usage**:
 ```python
-from src.app.agents.routing_agent import EnhancedRoutingAgent
+from src.app.agents.routing_agent import RoutingAgent
 
-routing_agent = EnhancedRoutingAgent.from_config()
+routing_agent = RoutingAgent.from_config()
 
 routing_result = routing_agent.route_query(
     query="Find videos about machine learning from last week"

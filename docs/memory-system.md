@@ -518,10 +518,10 @@ Combined semantic + keyword:
 ### Example 1: Routing Agent with Memory
 
 ```python
-from src.app.agents.routing_agent import EnhancedRoutingAgent
+from src.app.agents.routing_agent import RoutingAgent
 
 # Initialize with memory
-routing_agent = EnhancedRoutingAgent(tenant_id="acme")
+routing_agent = RoutingAgent(tenant_id="acme")
 
 # First query - no context
 result1 = routing_agent.route_query("find ML videos")

@@ -27,7 +27,7 @@ Cogniverse is a multi-modal video search system with intelligent multi-agent orc
 │  │ QueryAnalysisToolV3 (Intent, Complexity, Context)  │         │
 │  └────────────────────────────────────────────────────┘         │
 │  ┌────────────────────────────────────────────────────┐         │
-│  │ EnhancedRoutingAgent (DSPy-optimized decisions)    │         │
+│  │ RoutingAgent (DSPy-optimized decisions)    │         │
 │  └────────────────────────────────────────────────────┘         │
 └─────────────────────────────────────────────────────────────────┘
                              ↓
@@ -114,7 +114,7 @@ See: [Agent Orchestration Documentation](agent-orchestration.md)
 - Relationship identification
 - Thinking rationale for transparency
 
-**EnhancedRoutingAgent:**
+**RoutingAgent:**
 - DSPy-powered decision making
 - Confidence scoring for routing choices
 - Multi-stage optimization (Bootstrap → SIMBA → MIPRO → GEPA)
