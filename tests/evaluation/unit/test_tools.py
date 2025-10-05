@@ -27,7 +27,7 @@ class TestVideoSearchTool:
         """Test video search tool execution."""
         with (
             patch("src.app.search.service.SearchService") as mock_service_cls,
-            patch("src.common.config.get_config") as mock_config,
+            patch("src.common.config_utils.get_config") as mock_config,
         ):
 
             # Setup mocks
@@ -77,7 +77,7 @@ class TestVideoSearchTool:
         """Test video search tool when source_id is missing."""
         with (
             patch("src.app.search.service.SearchService") as mock_service_cls,
-            patch("src.common.config.get_config") as mock_config,
+            patch("src.common.config_utils.get_config") as mock_config,
         ):
 
             mock_config.return_value = {"test": "config"}
@@ -101,7 +101,7 @@ class TestVideoSearchTool:
         """Test video search tool when score is missing."""
         with (
             patch("src.app.search.service.SearchService") as mock_service_cls,
-            patch("src.common.config.get_config") as mock_config,
+            patch("src.common.config_utils.get_config") as mock_config,
         ):
 
             mock_config.return_value = {"test": "config"}
@@ -133,7 +133,7 @@ class TestVideoSearchTool:
         """Test video search tool error handling."""
         with (
             patch("src.app.search.service.SearchService") as mock_service_cls,
-            patch("src.common.config.get_config") as mock_config,
+            patch("src.common.config_utils.get_config") as mock_config,
         ):
 
             mock_config.return_value = {"test": "config"}

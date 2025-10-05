@@ -235,12 +235,14 @@ class TestDSPySpecializedMixins:
 class TestDSPyAgentIntegration:
     """Test DSPy integration with actual agent classes."""
 
-    @patch("src.app.agents.routing_agent.ComprehensiveRouter")
-    def test_routing_agent_dspy_integration(self, mock_router):
+    @patch("src.app.agents.routing_agent.DSPyAdvancedRoutingModule")
+    @patch("src.app.agents.routing_agent.AdvancedRoutingOptimizer")
+    def test_routing_agent_dspy_integration(self, mock_optimizer, mock_routing_module):
         """Test DSPy integration in RoutingAgent."""
-        # Mock the router to avoid GLiNER loading
-        mock_router_instance = Mock()
-        mock_router.return_value = mock_router_instance
+        # Mock the routing modules to avoid loading models
+        mock_routing_instance = Mock()
+        mock_routing_module.return_value = mock_routing_instance
+        mock_optimizer.return_value = Mock()
 
         agent = RoutingAgent()
 

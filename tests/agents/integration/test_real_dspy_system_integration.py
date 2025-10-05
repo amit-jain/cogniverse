@@ -144,7 +144,7 @@ class TestDSPySystemIntegration:
         # Mock only external dependencies, not core logic
         from unittest.mock import patch
 
-        with patch("src.common.config.get_config") as mock_config:
+        with patch("src.common.config_utils.get_config") as mock_config:
             # Provide real config structure
             mock_config.return_value = {
                 "video_agent_url": "http://localhost:8002",

@@ -263,7 +263,7 @@ class TestConfigurableMultiModalReranker:
         from unittest.mock import patch
 
         # Patch where get_config_value is imported and used
-        with patch("src.common.config.get_config_value") as mock_config:
+        with patch("src.common.config_utils.get_config_value") as mock_config:
             mock_config.return_value = {"enabled": False}
 
             reranker = ConfigurableMultiModalReranker()
@@ -284,7 +284,7 @@ class TestConfigurableMultiModalReranker:
         from unittest.mock import patch
 
         # Patch where get_config_value is imported and used
-        with patch("src.common.config.get_config_value") as mock_config:
+        with patch("src.common.config_utils.get_config_value") as mock_config:
             mock_config.return_value = {
                 "enabled": True,
                 "model": "heuristic",

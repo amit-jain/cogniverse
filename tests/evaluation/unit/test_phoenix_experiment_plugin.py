@@ -52,7 +52,7 @@ class TestPhoenixExperimentPlugin:
                 "src.app.search.service.SearchService", return_value=mock_search_service
             ),
             patch(
-                "src.common.config.get_config",
+                "src.common.config_utils.get_config",
                 return_value={"vespa_url": "http://localhost"},
             ),
         ):
@@ -87,7 +87,7 @@ class TestPhoenixExperimentPlugin:
                 "src.app.search.service.SearchService", return_value=mock_search_service
             ),
             patch(
-                "src.common.config.get_config",
+                "src.common.config_utils.get_config",
                 return_value={"vespa_url": "http://localhost"},
             ),
         ):
@@ -113,7 +113,7 @@ class TestPhoenixExperimentPlugin:
                 "src.app.search.service.SearchService", return_value=mock_search_service
             ),
             patch(
-                "src.common.config.get_config",
+                "src.common.config_utils.get_config",
                 return_value={"vespa_url": "http://localhost"},
             ),
         ):
@@ -140,7 +140,7 @@ class TestPhoenixExperimentPlugin:
                 side_effect=Exception("Search failed"),
             ),
             patch(
-                "src.common.config.get_config",
+                "src.common.config_utils.get_config",
                 return_value={"vespa_url": "http://localhost"},
             ),
         ):
@@ -178,7 +178,7 @@ class TestPhoenixExperimentPlugin:
         with (
             patch("src.app.search.service.SearchService", return_value=service),
             patch(
-                "src.common.config.get_config",
+                "src.common.config_utils.get_config",
                 return_value={"vespa_url": "http://localhost"},
             ),
         ):
@@ -209,7 +209,7 @@ class TestPhoenixExperimentPlugin:
         with (
             patch("src.app.search.service.SearchService", return_value=service),
             patch(
-                "src.common.config.get_config",
+                "src.common.config_utils.get_config",
                 return_value={"vespa_url": "http://localhost"},
             ),
         ):

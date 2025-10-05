@@ -31,7 +31,7 @@ class TestCompleteDSPySystem:
         with patch(
             "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
         ):
-            with patch("src.common.config.get_config") as mock_config:
+            with patch("src.common.config_utils.get_config") as mock_config:
                 with patch(
                     "src.app.agents.video_search_agent.VespaVideoSearchClient"
                 ):
@@ -196,7 +196,7 @@ class TestCompleteDSPySystem:
 
         from src.app.agents.routing_agent import RoutingAgent
 
-        with patch("src.common.config.get_config") as mock_config:
+        with patch("src.common.config_utils.get_config") as mock_config:
             with patch(
                 "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
             ):

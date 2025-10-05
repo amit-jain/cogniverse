@@ -24,7 +24,7 @@ class TestRetrievalSolver:
             "src.app.search.service.SearchService", return_value=mock_search_service
         ):
             with patch(
-                "src.common.config.get_config",
+                "src.common.config_utils.get_config",
                 return_value={"vespa_url": "http://localhost"},
             ):
                 solver = create_retrieval_solver(
@@ -54,7 +54,7 @@ class TestRetrievalSolver:
             "src.app.search.service.SearchService", return_value=mock_search_service
         ):
             with patch(
-                "src.common.config.get_config",
+                "src.common.config_utils.get_config",
                 return_value={"vespa_url": "http://localhost"},
             ):
                 solver = create_retrieval_solver(
@@ -93,7 +93,7 @@ class TestRetrievalSolver:
             "src.app.search.service.SearchService", return_value=mock_search_service
         ):
             with patch(
-                "src.common.config.get_config",
+                "src.common.config_utils.get_config",
                 return_value={"vespa_url": "http://localhost"},
             ):
                 # Note: enable_tracing config is accepted but not used in current implementation
@@ -121,7 +121,7 @@ class TestRetrievalSolver:
         """Test retrieval solver error handling."""
         with patch("src.app.search.service.SearchService") as mock_service:
             with patch(
-                "src.common.config.get_config",
+                "src.common.config_utils.get_config",
                 return_value={"vespa_url": "http://localhost"},
             ):
                 # Simulate search failure

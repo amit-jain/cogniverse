@@ -75,12 +75,12 @@ mock_config = MockConfig(
 )
 
 # Apply multiple config mocks to handle different access patterns
-config_patcher = patch("src.common.config.get_config", return_value=mock_config)
+config_patcher = patch("src.common.config_utils.get_config", return_value=mock_config)
 config_patcher.start()
 
 # Also mock the config import in the composing_agents_main module specifically
 composing_config_patcher = patch(
-    "src.app.agents.composing_agents_main.config", mock_config
+    "src.app.agents.composing_agents_main.get_config", return_value=mock_config
 )
 composing_config_patcher.start()
 
@@ -89,7 +89,7 @@ class TestEnhancedA2AClientTool:
     """Test the enhanced A2A client tool for agent communication"""
 
     @patch("src.tools.a2a_utils.A2AClient")
-    @patch("src.common.config.get_config")
+    @patch("src.common.config_utils.get_config")
     def test_tool_initialization(self, mock_get_config, mock_a2a_client):
         """Test basic tool initialization"""
         # Mock config
@@ -118,7 +118,7 @@ class TestEnhancedA2AClientTool:
         assert hasattr(tool, "client")
 
     @patch("src.tools.a2a_utils.A2AClient")
-    @patch("src.common.config.get_config")
+    @patch("src.common.config_utils.get_config")
     def test_tool_initialization_default_result_type(
         self, mock_get_config, mock_a2a_client
     ):
@@ -140,7 +140,7 @@ class TestEnhancedA2AClientTool:
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
     @patch("src.app.agents.composing_agents_main.format_search_results")
-    @patch("src.common.config.get_config")
+    @patch("src.common.config_utils.get_config")
     async def test_execute_success(self, mock_get_config, mock_format):
         """Test successful execution with proper result formatting"""
         # Mock config
@@ -184,7 +184,7 @@ class TestEnhancedA2AClientTool:
 
     @pytest.mark.asyncio
     @patch("src.app.agents.composing_agents_main.format_search_results")
-    @patch("src.common.config.get_config")
+    @patch("src.common.config_utils.get_config")
     async def test_execute_with_temporal_parameters(self, mock_get_config, mock_format):
         """Test execution with start_date and end_date parameters"""
         # Mock config
@@ -225,7 +225,7 @@ class TestEnhancedA2AClientTool:
         )
 
     @pytest.mark.asyncio
-    @patch("src.common.config.get_config")
+    @patch("src.common.config_utils.get_config")
     async def test_execute_agent_error_response(self, mock_get_config):
         """Test handling of error response from agent"""
         mock_config = MagicMock()
@@ -252,7 +252,7 @@ class TestEnhancedA2AClientTool:
         assert "Error from TestAgent: Connection failed" in result["formatted_results"]
 
     @pytest.mark.asyncio
-    @patch("src.common.config.get_config")
+    @patch("src.common.config_utils.get_config")
     async def test_execute_exception_handling(self, mock_get_config):
         """Test exception handling during execution"""
         mock_config = MagicMock()
@@ -282,7 +282,7 @@ class TestEnhancedA2AClientTool:
 class TestQueryAnalysisTool:
     """Test the query analysis tool for intent detection and routing"""
 
-    @patch("src.common.config.get_config")
+    @patch("src.common.config_utils.get_config")
     def test_tool_initialization_keyword_mode(self, mock_get_config):
         """Test initialization in keyword mode"""
         mock_config = MagicMock()
@@ -319,7 +319,7 @@ class TestQueryAnalysisTool:
 
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
-    @patch("src.common.config.get_config")
+    @patch("src.common.config_utils.get_config")
     async def test_keyword_based_analysis_video_intent(self, mock_get_config):
         """Test keyword-based analysis detecting video search intent"""
         mock_config = MagicMock()
@@ -338,7 +338,7 @@ class TestQueryAnalysisTool:
         assert result["cleaned_query"] == "show me video clips of meetings"
 
     @pytest.mark.asyncio
-    @patch("src.common.config.get_config")
+    @patch("src.common.config_utils.get_config")
     async def test_keyword_based_analysis_text_intent(self, mock_get_config):
         """Test keyword-based analysis detecting text search intent"""
         mock_config = MagicMock()
@@ -368,7 +368,7 @@ class TestQueryAnalysisTool:
         assert result["needs_text_search"] is True
         assert result["routing_method"] == "keyword"
 
-    @patch("src.common.config.get_config")
+    @patch("src.common.config_utils.get_config")
     def test_extract_temporal_info_yesterday(self, mock_get_config):
         """Test temporal extraction for 'yesterday' pattern"""
         mock_config = MagicMock()
@@ -387,7 +387,7 @@ class TestQueryAnalysisTool:
         assert temporal_info["end_date"] == today.strftime("%Y-%m-%d")
         assert temporal_info["detected_pattern"] == r"yesterday"
 
-    @patch("src.common.config.get_config")
+    @patch("src.common.config_utils.get_config")
     def test_extract_temporal_info_specific_dates(self, mock_get_config):
         """Test temporal extraction for specific date patterns"""
         mock_config = MagicMock()
@@ -410,7 +410,7 @@ class TestQueryAnalysisTool:
         assert temporal_info["start_date"] == "2024-01-15"
         assert temporal_info["end_date"] == "2024-01-20"
 
-    @patch("src.common.config.get_config")
+    @patch("src.common.config_utils.get_config")
     def test_extract_temporal_info_no_pattern(self, mock_get_config):
         """Test temporal extraction when no temporal patterns are found"""
         mock_config = MagicMock()
@@ -432,7 +432,7 @@ class TestRouteAndExecuteQuery:
     @pytest.mark.ci_fast
     @patch("src.tools.a2a_utils.A2AClient")
     @patch("src.tools.a2a_utils.format_search_results")
-    @patch("src.common.config.get_config")
+    @patch("src.common.config_utils.get_config")
     async def test_manual_routing(self, mock_get_config, mock_format, mock_a2a_client):
         """Test manual routing to a specific agent"""
         preferred_agent = "http://localhost:9001"
@@ -466,7 +466,7 @@ class TestRouteAndExecuteQuery:
     @pytest.mark.asyncio
     @patch("src.app.agents.composing_agents_main.query_analyzer")
     @patch("src.app.agents.composing_agents_main.video_search_tool")
-    @patch("src.common.config.get_config")
+    @patch("src.common.config_utils.get_config")
     async def test_automatic_routing_video_search(
         self, mock_get_config, mock_video_tool, mock_analyzer
     ):
@@ -509,7 +509,7 @@ class TestRouteAndExecuteQuery:
 
     @pytest.mark.asyncio
     @patch("src.app.agents.composing_agents_main.query_analyzer")
-    @patch("src.common.config.get_config")
+    @patch("src.common.config_utils.get_config")
     async def test_automatic_routing_text_search_unavailable(
         self, mock_get_config, mock_analyzer
     ):
@@ -537,7 +537,7 @@ class TestRouteAndExecuteQuery:
 
     @pytest.mark.asyncio
     @patch("src.app.agents.composing_agents_main.query_analyzer")
-    @patch("src.common.config.get_config")
+    @patch("src.common.config_utils.get_config")
     async def test_routing_exception_handling(self, mock_get_config, mock_analyzer):
         """Test exception handling in routing"""
         mock_config = MagicMock()
@@ -607,7 +607,7 @@ class TestADKIntegration:
     @pytest.mark.asyncio
     @patch("src.app.agents.composing_agents_main.InMemorySessionService")
     @patch("src.app.agents.composing_agents_main.Runner")
-    @patch("src.common.config.get_config")
+    @patch("src.common.config_utils.get_config")
     async def test_run_query_programmatically(
         self, mock_get_config, mock_runner_class, mock_session_service
     ):
@@ -656,7 +656,7 @@ class TestPerformanceAndEdgeCases:
 
     @pytest.mark.asyncio
     @patch("src.app.agents.composing_agents_main.format_search_results")
-    @patch("src.common.config.get_config")
+    @patch("src.common.config_utils.get_config")
     async def test_concurrent_tool_execution(self, mock_get_config, mock_format):
         """Test handling of concurrent tool executions"""
         mock_config = MagicMock()
@@ -691,7 +691,7 @@ class TestPerformanceAndEdgeCases:
         assert results[1]["agent_used"] == "Agent2"
 
     @patch("src.tools.a2a_utils.A2AClient")
-    @patch("src.common.config.get_config")
+    @patch("src.common.config_utils.get_config")
     def test_tool_memory_efficiency(self, mock_get_config, mock_a2a_client):
         """Test that tools don't retain unnecessary state"""
         mock_config = MagicMock()
@@ -710,7 +710,7 @@ class TestPerformanceAndEdgeCases:
         assert len(actual_attrs) < 20, f"Tool has too many attributes: {actual_attrs}"
         assert expected_attrs.issubset(actual_attrs)
 
-    @patch("src.common.config.get_config")
+    @patch("src.common.config_utils.get_config")
     def test_temporal_info_edge_cases(self, mock_get_config):
         """Test temporal information extraction edge cases"""
         mock_config = MagicMock()

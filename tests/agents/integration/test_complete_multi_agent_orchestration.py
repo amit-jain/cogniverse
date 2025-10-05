@@ -37,7 +37,7 @@ class TestCompleteMultiAgentOrchestration:
         """Test routing decision leading to video search workflow"""
         from unittest.mock import patch
 
-        with patch("src.common.config.get_config") as mock_config:
+        with patch("src.common.config_utils.get_config") as mock_config:
             mock_config.return_value = {
                 "video_agent_url": "http://localhost:8002",
                 "summarizer_agent_url": "http://localhost:8003",
@@ -412,7 +412,7 @@ class TestSystemScalability:
 
         from src.app.agents.routing_agent import RoutingConfig
 
-        with patch("src.common.config.get_config") as mock_config:
+        with patch("src.common.config_utils.get_config") as mock_config:
             mock_config.return_value = {
                 "video_agent_url": "http://localhost:8002",
                 "summarizer_agent_url": "http://localhost:8003",
