@@ -192,14 +192,6 @@ class VideoIngestionPipeline:
         # Initialize processors using ProcessorManager - NEW CLEAN APPROACH
         self.processor_manager = ProcessorManager(self.logger)
 
-        # Map processors from manager for backward compatibility
-        self.keyframe_extractor = self.processor_manager.get_processor("keyframe")
-        self.audio_transcriber = self.processor_manager.get_processor("audio")
-        self.vlm_descriptor = self.processor_manager.get_processor("vlm")
-        self.video_chunk_extractor = self.processor_manager.get_processor("chunk")
-        self.single_vector_processor = self.processor_manager.get_processor(
-            "single_vector"
-        )
 
         # Create processing strategy set from config - CLEAN APPROACH
         self.strategy_set = self._create_strategy_set_from_config()
@@ -363,14 +355,6 @@ class VideoIngestionPipeline:
 
         return StrategyFactory.create_from_profile_config(profile_config)
 
-    def _init_processors(self):
-        """
-        Legacy processor initialization - now handled by ProcessorManager
-        This method is kept for backward compatibility but does nothing
-        """
-        # All processor initialization is now handled by ProcessorManager
-        # in __init__ after strategy resolution
-        pass
 
     def _get_chunk_duration(self) -> float:
         """Get chunk duration from profile configuration"""
@@ -572,11 +556,8 @@ class VideoIngestionPipeline:
         self, video_data: dict[str, Any], results: dict[str, Any]
     ) -> dict[str, Any]:
         """Process chunk-based video data"""
-        # Handle both 'chunks' and 'video_chunks' keys for backward compatibility
         if "chunks" in results["results"]:
             video_data["chunks"] = results["results"]["chunks"]
-        elif "video_chunks" in results["results"]:
-            video_data["chunks"] = results["results"]["video_chunks"]
         else:
             self.logger.warning("No chunks data found in results")
             return video_data
@@ -1073,8 +1054,6 @@ class VideoIngestionPipeline:
         pass
 
 
-# Keep AsyncVideoIngestionPipeline as an alias for backward compatibility
-AsyncVideoIngestionPipeline = VideoIngestionPipeline
 
 
 if __name__ == "__main__":

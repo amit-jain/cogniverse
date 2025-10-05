@@ -48,7 +48,7 @@ class FPSKeyframeExtractor:
                 / f"{video_id}_keyframes.json"
             )
         else:
-            # Legacy path support
+            # For testing - should migrate tests to use OutputManager
             keyframes_dir = output_dir / "keyframes" / video_id
             metadata_file = output_dir / "metadata" / f"{video_id}_keyframes.json"
 

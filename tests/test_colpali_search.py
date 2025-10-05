@@ -19,7 +19,7 @@ from datetime import datetime
 sys.path.append(str(Path(__file__).parent.parent))
 
 from src.app.search.service import SearchService
-from src.common.config import get_config
+from src.common.config_utils import get_config
 from tests.test_utils import TestResultsFormatter
 
 

@@ -21,11 +21,17 @@ class MockProcessor(BaseProcessor):
         self.param1 = param1
         self.param2 = param2
 
+    def process(self, video_path, output_dir=None, **kwargs):
+        """Mock process implementation."""
+        return {"result": "mock"}
+
 
 class MockProcessorNoName(BaseProcessor):
     """Mock processor without PROCESSOR_NAME for testing validation."""
 
-    pass
+    def process(self, video_path, output_dir=None, **kwargs):
+        """Mock process implementation."""
+        return {"result": "mock"}
 
 
 class TestBaseProcessor:

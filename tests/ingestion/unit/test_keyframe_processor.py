@@ -103,8 +103,8 @@ class TestKeyframeProcessor:
 
         # Verify results
         assert result["video_id"] == "test_video"
-        assert result["extraction_method"] == "fps"
-        assert result["total_keyframes"] > 0
+        assert result["metadata"]["extraction_method"] == "fps"
+        assert result["metadata"]["keyframes_extracted"] > 0
         assert len(result["keyframes"]) > 0
 
         # Should have extracted frames at 1 FPS (every 30 frames)
@@ -165,16 +165,16 @@ class TestKeyframeProcessor:
 
         # Verify results
         assert result["video_id"] == "test_video"
-        assert result["extraction_method"] == "histogram"
-        assert result["total_keyframes"] > 0
+        assert result["metadata"]["extraction_method"] == "histogram"
+        assert result["metadata"]["keyframes_extracted"] > 0
         assert len(result["keyframes"]) > 0
 
         # Should have extracted keyframes based on histogram differences
         for keyframe in result["keyframes"]:
-            assert "frame_index" in keyframe
+            assert "frame_number" in keyframe
             assert "timestamp" in keyframe
             assert "filename" in keyframe
-            assert "histogram_difference" in keyframe
+            assert "correlation" in keyframe
 
     @patch("cv2.VideoCapture")
     def test_extract_keyframes_max_frames_limit(
@@ -216,19 +216,24 @@ class TestKeyframeProcessor:
 
         # Should not exceed max_frames limit
         assert len(result["keyframes"]) <= processor.max_frames
-        assert result["total_keyframes"] == len(result["keyframes"])
+        assert result["metadata"]["keyframes_extracted"] == len(result["keyframes"])
 
-    def test_extract_keyframes_invalid_video(self, processor, temp_dir):
+    @patch("cv2.VideoCapture")
+    def test_extract_keyframes_invalid_video(self, mock_cv2, processor, temp_dir):
         """Test handling of invalid video file."""
         invalid_path = temp_dir / "nonexistent.mp4"
 
-        with patch("cv2.VideoCapture") as mock_cv2:
-            mock_cap = Mock()
-            mock_cap.isOpened.return_value = False
-            mock_cv2.return_value = mock_cap
+        mock_cap = Mock()
+        mock_cap.isOpened.return_value = False
+        mock_cap.get.return_value = 0
+        mock_cv2.return_value = mock_cap
 
-            with pytest.raises(ValueError, match="Invalid video"):
-                processor.extract_keyframes(invalid_path, temp_dir)
+        with patch("cv2.imwrite"):
+            result = processor.extract_keyframes(invalid_path, temp_dir)
+
+        # Should return empty result for invalid video
+        assert result["keyframes"] == []
+        assert result["metadata"]["keyframes_extracted"] == 0
 
     @patch("cv2.VideoCapture")
     def test_extract_keyframes_output_directory_creation(

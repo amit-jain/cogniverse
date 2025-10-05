@@ -301,7 +301,7 @@ class VespaTestManager:
             original_cogniverse_config = os.environ.get('COGNIVERSE_CONFIG')
             
             # Store original config values for restoration
-            from src.common.config import get_config
+            from src.common.config_utils import get_config
             original_config_values = get_config()
             original_config_vespa_url = original_config_values.get('vespa_url')
             original_config_vespa_port = original_config_values.get('vespa_port')
@@ -318,7 +318,7 @@ class VespaTestManager:
             
             # CRITICAL: Force config to update with new environment variables
             # The config singleton was loaded with old values, we need to override them
-            from src.common.config import update_config
+            from src.common.config_utils import update_config
             import json
 
             # Load test config and update the global config with profiles
@@ -336,7 +336,7 @@ class VespaTestManager:
             print(f"🔧 Loaded {len(profiles)} profiles: {list(profiles.keys())}")
 
             # Verify the config was actually updated
-            from src.common.config import get_config
+            from src.common.config_utils import get_config
             current_config = get_config()
             loaded_profiles = current_config.get('video_processing_profiles', {})
             print(f"🔍 Config verification: video_processing_profiles has {len(loaded_profiles)} entries")
@@ -447,7 +447,7 @@ class VespaTestManager:
                     del os.environ['COGNIVERSE_CONFIG']
                     
                 # Restore original config values
-                from src.common.config import update_config
+                from src.common.config_utils import update_config
                 restore_config = {}
                 if original_config_vespa_url is not None:
                     restore_config['vespa_url'] = original_config_vespa_url

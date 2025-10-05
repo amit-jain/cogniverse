@@ -24,7 +24,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 # Import search backend
 try:
     from src.backends.vespa.search_backend import VespaSearchBackend as SearchBackend
-    from src.common.config import get_config
+    from src.common.config_utils import get_config
     VESPA_AVAILABLE = True
 except ImportError:
     VESPA_AVAILABLE = False

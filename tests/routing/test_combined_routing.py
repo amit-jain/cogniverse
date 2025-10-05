@@ -19,7 +19,7 @@ from typing import Any
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.common.config import get_config
+from src.common.config_utils import get_config
 # from src.tools.query_analyzer import QueryAnalyzer  # Module removed
 
 import pytest

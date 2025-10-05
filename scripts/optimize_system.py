@@ -33,7 +33,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.tools.a2a_utils import A2AClient
-from src.common.config import get_config
+from src.common.config_utils import get_config
 
 
 class SystemOptimizer:

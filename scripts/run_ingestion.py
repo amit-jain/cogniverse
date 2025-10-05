@@ -35,7 +35,7 @@ async def main_async():
     args = parser.parse_args()
     
     # Get profiles to process
-    from src.common.config import get_config
+    from src.common.config_utils import get_config
     app_config = get_config()
     
     if args.profile:

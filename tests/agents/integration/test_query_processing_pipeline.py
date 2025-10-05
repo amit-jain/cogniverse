@@ -574,7 +574,7 @@ class TestSystemIntegrationReadiness:
 
     def test_system_configuration_readiness(self):
         """Test system can handle different configuration states"""
-        from src.common.config import get_config
+        from src.common.config_utils import get_config
 
         config = get_config()
 

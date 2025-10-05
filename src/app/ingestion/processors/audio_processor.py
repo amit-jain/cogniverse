@@ -98,7 +98,7 @@ class AudioProcessor(BaseProcessor):
                 / f"{video_id}_transcript.json"
             )
         else:
-            # Legacy path support
+            # For testing - should migrate tests to use OutputManager
             transcript_file = output_dir / "transcripts" / f"{video_id}_transcript.json"
 
         transcript_file.parent.mkdir(parents=True, exist_ok=True)

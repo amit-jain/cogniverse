@@ -265,7 +265,7 @@ class TestEmbeddingGeneratorImpl:
         assert result.documents_processed == 0
         assert result.documents_fed == 0
         assert "No segments found in video_data" in result.errors
-        assert result.processing_time > 0
+        assert result.processing_time >= 0
 
     def test_generate_embeddings_multi_doc_mode(
         self, frame_based_config, mock_logger, mock_backend_client

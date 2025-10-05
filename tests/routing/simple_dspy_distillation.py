@@ -19,7 +19,7 @@ import dspy
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 sys.path.insert(0, os.path.join(project_root, "src"))
 
-from src.common.config import get_config  # noqa: E402
+from src.common.config_utils import get_config  # noqa: E402
 
 
 class SimpleRoutingSignature(dspy.Signature):

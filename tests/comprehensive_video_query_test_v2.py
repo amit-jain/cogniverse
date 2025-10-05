@@ -42,7 +42,7 @@ from datetime import datetime
 
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
-from src.common.config import get_config
+from src.common.config_utils import get_config
 from src.app.search.service import SearchService
 
 

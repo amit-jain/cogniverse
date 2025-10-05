@@ -73,7 +73,7 @@ class ChunkProcessor(BaseProcessor):
                 / f"{video_id}_chunks.json"
             )
         else:
-            # Legacy path support
+            # For testing - should migrate tests to use OutputManager
             chunks_dir = output_dir / "chunks" / video_id
             metadata_file = output_dir / "metadata" / f"{video_id}_chunks.json"
 

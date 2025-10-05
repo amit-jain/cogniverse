@@ -43,6 +43,16 @@ from src.app.routing.mlflow_integration import ExperimentConfig, MLflowIntegrati
 from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
 from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
 
+# Production features from RoutingAgent
+from src.app.agents.memory_aware_mixin import MemoryAwareMixin
+from src.app.routing.contextual_analyzer import ContextualAnalyzer
+from src.app.routing.cross_modal_optimizer import CrossModalOptimizer
+from src.app.routing.lazy_executor import LazyModalityExecutor
+from src.app.routing.modality_cache import ModalityCacheManager
+from src.app.routing.parallel_executor import ParallelAgentExecutor
+from src.app.search.multi_modal_reranker import MultiModalReranker
+from src.app.telemetry.modality_metrics import ModalityMetricsTracker
+
 # A2A protocol imports
 
 
@@ -120,6 +130,18 @@ class EnhancedRoutingConfig:
     enable_confidence_calibration: bool = True
     enable_advanced_optimization: bool = True
 
+    # Production features
+    enable_caching: bool = True
+    cache_size_per_modality: int = 1000
+    cache_ttl_seconds: int = 300
+    enable_parallel_execution: bool = True
+    max_concurrent_agents: int = 5
+    enable_memory: bool = False  # Disabled by default (requires Mem0)
+    enable_contextual_analysis: bool = True
+    enable_metrics_tracking: bool = True
+    enable_multi_modal_reranking: bool = True
+    enable_cross_modal_optimization: bool = True
+
     # Advanced optimization configuration
     optimizer_config: Optional[AdvancedOptimizerConfig] = None
     optimization_storage_dir: str = "data/optimization"
@@ -132,7 +154,7 @@ class EnhancedRoutingConfig:
     mlflow_tracking_uri: str = "http://localhost:5000"
 
 
-class EnhancedRoutingAgent(DSPyA2AAgentBase):
+class EnhancedRoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin):
     """
     Enhanced Routing Agent combining DSPy 3.0, relationship extraction, and query enhancement
 
@@ -166,6 +188,9 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
 
         # Initialize Phase 6.4: MLflow integration
         self._initialize_mlflow_tracking()
+
+        # Initialize production features
+        self._initialize_production_components()
 
         # Initialize A2A base with DSPy module
         super().__init__(
@@ -333,6 +358,88 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
             self.logger.error(f"Failed to initialize MLflow tracking: {e}")
             self.mlflow_integration = None
 
+    def _initialize_production_components(self) -> None:
+        """Initialize production-ready components from RoutingAgent"""
+        try:
+            # Initialize caching
+            if self.config.enable_caching:
+                self.cache_manager = ModalityCacheManager(
+                    cache_size_per_modality=self.config.cache_size_per_modality
+                )
+                self.logger.info("💾 Cache manager initialized")
+            else:
+                self.cache_manager = None
+
+            # Initialize parallel execution
+            if self.config.enable_parallel_execution:
+                self.parallel_executor = ParallelAgentExecutor(
+                    max_concurrent_agents=self.config.max_concurrent_agents
+                )
+                self.logger.info("⚡ Parallel executor initialized")
+            else:
+                self.parallel_executor = None
+
+            # Initialize memory system (if enabled)
+            if self.config.enable_memory:
+                try:
+                    # MemoryAwareMixin provides memory initialization
+                    self.initialize_memory(
+                        user_id="routing_agent",
+                        session_id="default"
+                    )
+                    self.logger.info("🧠 Memory system initialized")
+                except Exception as e:
+                    self.logger.warning(f"Failed to initialize memory: {e}")
+
+            # Initialize contextual analysis
+            if self.config.enable_contextual_analysis:
+                self.contextual_analyzer = ContextualAnalyzer(
+                    max_history_size=50,
+                    context_window_minutes=30,
+                    min_preference_count=3
+                )
+                self.logger.info("📊 Contextual analyzer initialized")
+            else:
+                self.contextual_analyzer = None
+
+            # Initialize metrics tracking
+            if self.config.enable_metrics_tracking:
+                self.metrics_tracker = ModalityMetricsTracker(window_size=1000)
+                self.logger.info("📈 Metrics tracker initialized")
+            else:
+                self.metrics_tracker = None
+
+            # Initialize multi-modal reranking
+            if self.config.enable_multi_modal_reranking:
+                self.multi_modal_reranker = MultiModalReranker()
+                self.logger.info("🎯 Multi-modal reranker initialized")
+            else:
+                self.multi_modal_reranker = None
+
+            # Initialize cross-modal optimization
+            if self.config.enable_cross_modal_optimization:
+                self.cross_modal_optimizer = CrossModalOptimizer()
+                self.logger.info("🔄 Cross-modal optimizer initialized")
+            else:
+                self.cross_modal_optimizer = None
+
+            # Initialize lazy executor (always on for efficiency)
+            self.lazy_executor = LazyModalityExecutor()
+            self.logger.info("💤 Lazy executor initialized")
+
+            self.logger.info("✅ Production components initialized successfully")
+
+        except Exception as e:
+            self.logger.error(f"Failed to initialize production components: {e}")
+            # Set defaults for graceful degradation
+            self.cache_manager = None
+            self.parallel_executor = None
+            self.contextual_analyzer = None
+            self.metrics_tracker = None
+            self.multi_modal_reranker = None
+            self.cross_modal_optimizer = None
+            self.lazy_executor = None
+
     def _get_routing_capabilities(self) -> List[str]:
         """Get routing agent capabilities"""
         capabilities = ["intelligent_routing", "query_analysis", "agent_orchestration"]
@@ -361,6 +468,22 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
                 ["mlflow_tracking", "experiment_management", "performance_monitoring"]
             )
 
+        # Production capabilities
+        if self.config.enable_caching:
+            capabilities.append("result_caching")
+        if self.config.enable_parallel_execution:
+            capabilities.append("parallel_agent_execution")
+        if self.config.enable_memory:
+            capabilities.append("conversation_memory")
+        if self.config.enable_contextual_analysis:
+            capabilities.append("contextual_analysis")
+        if self.config.enable_metrics_tracking:
+            capabilities.append("performance_metrics")
+        if self.config.enable_multi_modal_reranking:
+            capabilities.append("multi_modal_reranking")
+        if self.config.enable_cross_modal_optimization:
+            capabilities.append("cross_modal_optimization")
+
         return capabilities
 
     async def route_query(
@@ -379,6 +502,26 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
         start_time = datetime.now()
 
         try:
+            # Check cache first (if enabled)
+            if self.cache_manager:
+                from src.app.search.multi_modal_reranker import QueryModality
+                cached_decision = self.cache_manager.get_cached_result(
+                    query=query,
+                    modality=QueryModality.TEXT,  # Use TEXT as default for routing
+                    ttl_seconds=self.config.cache_ttl_seconds
+                )
+                if cached_decision:
+                    self.logger.info(f"Cache hit for query: {query[:50]}...")
+                    return cached_decision
+
+            # Add contextual analysis (if enabled)
+            contextual_insights = None
+            if self.contextual_analyzer and user_id:
+                contextual_insights = self.contextual_analyzer.analyze_query_context(
+                    query=query,
+                    user_id=user_id
+                )
+
             # Phase 2: Extract relationships and entities
             entities, relationships = await self._extract_relationships(query)
 
@@ -450,6 +593,34 @@ class EnhancedRoutingAgent(DSPyA2AAgentBase):
 
             # Update statistics
             self._update_routing_stats(decision)
+
+            # Cache the decision (if enabled)
+            if self.cache_manager:
+                from src.app.search.multi_modal_reranker import QueryModality
+                self.cache_manager.cache_result(
+                    query=query,
+                    modality=QueryModality.TEXT,
+                    result=decision
+                )
+
+            # Track metrics (if enabled)
+            if self.metrics_tracker:
+                from src.app.search.multi_modal_reranker import QueryModality
+                self.metrics_tracker.record_routing_metric(
+                    modality=QueryModality.TEXT,
+                    metric_type="routing_confidence",
+                    value=decision.confidence,
+                    metadata={"agent": decision.recommended_agent}
+                )
+
+            # Update contextual analyzer (if enabled)
+            if self.contextual_analyzer and user_id:
+                self.contextual_analyzer.add_query_to_history(
+                    query=query,
+                    user_id=user_id,
+                    routing_decision=decision.recommended_agent,
+                    confidence=decision.confidence
+                )
 
             # Log successful routing
             self.logger.info(

@@ -48,7 +48,7 @@ class AudioTranscriber:
                 / f"{video_path.stem}.json"
             )
         else:
-            # Legacy path support
+            # For testing - should migrate tests to use OutputManager
             video_id = video_path.stem
             transcript_file = output_dir / "transcripts" / f"{video_id}.json"
 

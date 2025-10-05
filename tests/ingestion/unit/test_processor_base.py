@@ -25,9 +25,9 @@ class MockTestProcessor(BaseProcessor):
         self.param1 = param1
         self.param2 = param2
 
-    def process(self, data):
+    def process(self, video_path, output_dir=None, **kwargs):
         """Mock process method."""
-        return f"processed_{data}"
+        return {"processed": str(video_path)}
 
 
 class MockTestStrategy(BaseStrategy):
@@ -47,7 +47,9 @@ class TestBaseProcessor:
         """Test that PROCESSOR_NAME is required."""
 
         class InvalidProcessor(BaseProcessor):
-            pass  # Missing PROCESSOR_NAME
+            # Missing PROCESSOR_NAME
+            def process(self, video_path, output_dir=None, **kwargs):
+                return {}
 
         with pytest.raises(ValueError, match="must define PROCESSOR_NAME"):
             InvalidProcessor(mock_logger)
@@ -161,6 +163,9 @@ class TestProcessorFactoryMethods:
                 self.required_param = required_param
                 self.optional_param = optional_param
 
+            def process(self, video_path, output_dir=None, **kwargs):
+                return {}
+
         config = {
             "required_param": "must_have",
             "optional_param": 200,
@@ -181,6 +186,9 @@ class TestProcessorFactoryMethods:
             def __init__(self, logger: logging.Logger, required_param: str):
                 super().__init__(logger)
                 self.required_param = required_param
+
+            def process(self, video_path, output_dir=None, **kwargs):
+                return {}
 
         config = {}  # Missing required_param
 

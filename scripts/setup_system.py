@@ -15,7 +15,7 @@ from typing import List
 # Add the project root to the path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.common.config import get_config, setup_environment
+from src.common.config_utils import get_config, setup_environment
 
 def create_directories():
     """Create necessary data directories."""

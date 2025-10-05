@@ -142,7 +142,7 @@ class VLMDescriptor:
                 output_manager.get_processing_dir("descriptions") / f"{video_id}.json"
             )
         else:
-            # Legacy path support
+            # For testing - should migrate tests to use OutputManager
             descriptions_file = output_dir / "descriptions" / f"{video_id}.json"
 
         # Remove caching - always regenerate descriptions

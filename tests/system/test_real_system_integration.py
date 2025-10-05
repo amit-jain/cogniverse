@@ -678,7 +678,7 @@ class TestRealEndToEndIntegration:
             os.environ['VESPA_SCHEMA'] = 'video_colpali_smol500_mv_frame'
             
             # Force config update to match environment variables (same as test manager)
-            from src.common.config import update_config
+            from src.common.config_utils import update_config
             update_config({
                 'vespa_url': "http://localhost",
                 'vespa_port': vespa_test_manager.http_port

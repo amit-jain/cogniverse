@@ -27,7 +27,7 @@ from sklearn.decomposition import PCA
 sys.path.append(str(Path(__file__).parent.parent))
 
 from src.backends.vespa.search_backend import VespaSearchBackend
-from src.common.config import get_config
+from src.common.config_utils import get_config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

@@ -95,40 +95,28 @@ class SingleVectorSegmentationStrategy(BaseStrategy):
         transcript_data: dict | None = None,
     ) -> dict[str, Any]:
         """Process video with single-vector processor."""
-        # In the new pluggable architecture, we need to check for the processor differently
-        if hasattr(pipeline_context, "processor_manager"):
-            # Try to get single_vector processor from processor manager
-            single_vector_processor = pipeline_context.processor_manager.get_processor(
-                "single_vector"
-            )
+        # Get processor from processor manager (no fallback)
+        if not hasattr(pipeline_context, "processor_manager"):
+            raise ValueError("Pipeline context missing processor_manager")
 
-            if single_vector_processor:
-                processed_data = single_vector_processor.process_video(
-                    video_path=video_path, transcript_data=transcript_data
-                )
-                # Convert VideoSegment objects to dictionaries for consistency
-                processed_data_serializable = processed_data.copy()
-                processed_data_serializable["segments"] = [
-                    seg.to_dict() for seg in processed_data["segments"]
-                ]
-                return {"single_vector_processing": processed_data_serializable}
+        single_vector_processor = pipeline_context.processor_manager.get_processor(
+            "single_vector"
+        )
 
-            # Fallback: check for old-style processor
-            elif (
-                hasattr(pipeline_context, "single_vector_processor")
-                and pipeline_context.single_vector_processor
-            ):
-                processed_data = pipeline_context.single_vector_processor.process_video(
-                    video_path=video_path, transcript_data=transcript_data
-                )
-                # Convert VideoSegment objects to dictionaries for consistency
-                processed_data_serializable = processed_data.copy()
-                processed_data_serializable["segments"] = [
-                    seg.to_dict() for seg in processed_data["segments"]
-                ]
-                return {"single_vector_processing": processed_data_serializable}
+        if not single_vector_processor:
+            raise ValueError("No single-vector processor available in processor_manager")
 
-        return {"error": "No single-vector processor configured"}
+        processed_data = single_vector_processor.process_video(
+            video_path=video_path, transcript_data=transcript_data
+        )
+
+        # Convert VideoSegment objects to dictionaries for consistency
+        processed_data_serializable = processed_data.copy()
+        processed_data_serializable["segments"] = [
+            seg.to_dict() for seg in processed_data["segments"]
+        ]
+
+        return {"single_vector_processing": processed_data_serializable}
 
 
 class AudioTranscriptionStrategy(BaseStrategy):
@@ -154,18 +142,6 @@ class VLMDescriptionStrategy(BaseStrategy):
         """VLM description requires VLM processor."""
         return {"vlm": {"model_name": self.model_name, "batch_size": self.batch_size}}
 
-    async def generate_descriptions(
-        self,
-        keyframes_data: dict[str, Any],
-        video_path: Path,
-        pipeline_context: Any,
-        cached_data: dict[str, Any],
-    ) -> dict[str, Any] | None:
-        """Generate descriptions (for backward compatibility)."""
-        # Implementation would use VLM processor through pipeline_context
-        # For now, return None to maintain compatibility
-        return None
-
 
 class NoDescriptionStrategy(BaseStrategy):
     """No descriptions needed."""
@@ -173,16 +149,6 @@ class NoDescriptionStrategy(BaseStrategy):
     def get_required_processors(self) -> dict[str, dict[str, Any]]:
         """No processors required."""
         return {}
-
-    async def generate_descriptions(
-        self,
-        keyframes_data: dict[str, Any],
-        video_path: Path,
-        pipeline_context: Any,
-        cached_data: dict[str, Any],
-    ) -> dict[str, Any] | None:
-        """No descriptions generated."""
-        return None
 
 
 class MultiVectorEmbeddingStrategy(BaseStrategy):
@@ -198,7 +164,7 @@ class MultiVectorEmbeddingStrategy(BaseStrategy):
     async def generate_embeddings_with_processor(
         self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
     ) -> dict[str, Any]:
-        """Generate embeddings (for backward compatibility)."""
+        """Generate embeddings using pipeline context."""
         # Prepare data for embedding generation
         wrapped_results = {
             "video_id": (
@@ -230,7 +196,7 @@ class SingleVectorEmbeddingStrategy(BaseStrategy):
     async def generate_embeddings_with_processor(
         self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
     ) -> dict[str, Any]:
-        """Generate embeddings (for backward compatibility)."""
+        """Generate embeddings using pipeline context."""
         # Prepare data for embedding generation
         wrapped_results = {
             "video_id": (

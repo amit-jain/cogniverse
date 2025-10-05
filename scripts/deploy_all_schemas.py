@@ -14,7 +14,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from src.backends.vespa.vespa_schema_manager import VespaSchemaManager
 from src.backends.vespa.json_schema_parser import JsonSchemaParser
-from src.common.config import get_config
+from src.common.config_utils import get_config
 from vespa.package import ApplicationPackage
 
 def main():

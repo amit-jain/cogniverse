@@ -10,7 +10,7 @@ from string import Template
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.common.config import get_config
+from src.common.config_utils import get_config
 
 
 def generate_schema(profile_name: str, profile_config: dict) -> str:
