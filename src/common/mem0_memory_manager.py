@@ -26,7 +26,6 @@ def _register_vespa_provider():
     from mem0.utils.factory import VectorStoreFactory
 
     # Import vespa_memory_config so it's available in sys.modules
-    import src.common.vespa_memory_config
 
     # Register Vespa config in the provider_configs default dict
     provider_configs = VectorStoreConfig._provider_configs.default

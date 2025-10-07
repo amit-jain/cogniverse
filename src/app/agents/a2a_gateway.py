@@ -21,13 +21,14 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from src.app.agents.multi_agent_orchestrator import (
+    MultiAgentOrchestrator,
+)
+
 # Routing imports
 from src.app.agents.routing_agent import (
     RoutingAgent,
     RoutingConfig,
-)
-from src.app.agents.multi_agent_orchestrator import (
-    MultiAgentOrchestrator,
 )
 
 # No longer need fallback routing - RoutingAgent has all features

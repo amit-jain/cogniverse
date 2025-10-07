@@ -30,28 +30,28 @@ from dspy import LM
 # Phase 1-3 component imports
 from src.app.agents.dspy_a2a_agent_base import DSPyA2AAgentBase
 
+# Production features from RoutingAgent
+from src.app.agents.memory_aware_mixin import MemoryAwareMixin
+
 # Phase 6: Advanced optimization
 from src.app.routing.advanced_optimizer import (
     AdvancedOptimizerConfig,
     AdvancedRoutingOptimizer,
 )
+from src.app.routing.contextual_analyzer import ContextualAnalyzer
+from src.app.routing.cross_modal_optimizer import CrossModalOptimizer
 from src.app.routing.dspy_relationship_router import DSPyAdvancedRoutingModule
 from src.app.routing.dspy_routing_signatures import (
     BasicQueryAnalysisSignature,
 )
+from src.app.routing.lazy_executor import LazyModalityExecutor
 
 # Phase 6.4: MLflow integration
 from src.app.routing.mlflow_integration import ExperimentConfig, MLflowIntegration
-from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
-from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
-
-# Production features from RoutingAgent
-from src.app.agents.memory_aware_mixin import MemoryAwareMixin
-from src.app.routing.contextual_analyzer import ContextualAnalyzer
-from src.app.routing.cross_modal_optimizer import CrossModalOptimizer
-from src.app.routing.lazy_executor import LazyModalityExecutor
 from src.app.routing.modality_cache import ModalityCacheManager
 from src.app.routing.parallel_executor import ParallelAgentExecutor
+from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
+from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
 from src.app.search.multi_modal_reranker import MultiModalReranker
 from src.app.telemetry.modality_metrics import ModalityMetricsTracker
 
@@ -368,8 +368,8 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin):
         try:
             # Initialize telemetry manager
             if self.enable_telemetry:
-                from src.app.telemetry.manager import TelemetryManager
                 from src.app.telemetry.config import TelemetryConfig
+                from src.app.telemetry.manager import TelemetryManager
                 telemetry_config = TelemetryConfig()
                 self.telemetry_manager = TelemetryManager(config=telemetry_config)
                 self.logger.info("📊 Telemetry manager initialized")
@@ -552,11 +552,11 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin):
                         return cached_decision
 
                 # Add contextual analysis (if enabled)
-                contextual_insights = None
                 if self.contextual_analyzer and user_id:
                     contextual_insights = self.contextual_analyzer.get_contextual_hints(
                         current_query=query
                     )
+                    self.logger.info(f"Contextual insights: {contextual_insights}")
 
                 # Phase 2: Extract relationships and entities
                 entities, relationships = await self._extract_relationships(query)

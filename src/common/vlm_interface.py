@@ -77,7 +77,7 @@ class VLMInterface:
             logger.info(f"Configured DSPy LM: {model_name} at {base_url}")
         except RuntimeError as e:
             if "can only be called from the same async task" in str(e):
-                logger.warning(f"DSPy already configured in this async context, skipping reconfiguration")
+                logger.warning("DSPy already configured in this async context, skipping reconfiguration")
             else:
                 raise
 

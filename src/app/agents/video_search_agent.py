@@ -8,20 +8,21 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional
 
 import numpy as np
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-# Enhanced query support from DSPy routing system
-from src.app.agents.routing_agent import RoutingDecision
 from src.app.agents.memory_aware_mixin import MemoryAwareMixin
 from src.app.agents.query_encoders import QueryEncoderFactory
+
+# Enhanced query support from DSPy routing system
+from src.app.agents.routing_agent import RoutingDecision
 from src.backends.vespa.vespa_search_client import VespaVideoSearchClient
 from src.common.config_utils import get_config
-from src.tools.a2a_utils import A2AMessage, DataPart, TextPart
+from src.tools.a2a_utils import DataPart, TextPart
 
 logger = logging.getLogger(__name__)
 
