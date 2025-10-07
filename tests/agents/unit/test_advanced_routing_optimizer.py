@@ -67,7 +67,10 @@ class TestAdvancedRoutingOptimizerCore:
 
     def test_optimizer_initialization_basic(self):
         """Test basic optimizer initialization without complex dependencies."""
-        config = AdvancedOptimizerConfig(min_experiences_for_training=5)
+        config = AdvancedOptimizerConfig(
+            min_experiences_for_training=5,
+            enable_persistence=False  # Disable persistence for test isolation
+        )
 
         # Advanced optimizer doesn't use SentenceTransformer directly, so no mocking needed
         optimizer = AdvancedRoutingOptimizer(config)
@@ -82,8 +85,9 @@ class TestAdvancedRoutingOptimizerCore:
     async def test_record_experience_basic(self):
         """Test basic experience recording functionality."""
         config = AdvancedOptimizerConfig(
-            min_experiences_for_training=100
-        )  # High threshold
+            min_experiences_for_training=100,  # High threshold
+            enable_persistence=False  # Disable persistence for test isolation
+        )
 
         optimizer = AdvancedRoutingOptimizer(config)
 
@@ -166,7 +170,9 @@ class TestAdvancedRoutingOptimizerCore:
 
     def test_optimization_status(self):
         """Test getting optimization status."""
-        config = AdvancedOptimizerConfig()
+        config = AdvancedOptimizerConfig(
+            enable_persistence=False  # Disable persistence for test isolation
+        )
 
         optimizer = AdvancedRoutingOptimizer(config)
 
@@ -382,55 +388,59 @@ class TestAdvancedRoutingOptimizerIntegration:
         import dspy
         from unittest.mock import MagicMock
 
-        # Configure DSPy with mock LM
+        # Configure DSPy with mock LM using context (async-safe)
         mock_lm = MagicMock()
         mock_lm.model = "test-model"
-        dspy.settings.configure(lm=mock_lm)
 
-        config = AdvancedOptimizerConfig(
-            min_experiences_for_training=10,
-            bootstrap_threshold=20,
-            simba_threshold=50,
-            mipro_threshold=100,
-            gepa_threshold=200,
-            optimizer_strategy="adaptive",
-            enable_persistence=False,  # Disable persistence for test isolation
-        )
-
-        optimizer = AdvancedRoutingOptimizer(config)
-
-        # Collect minimum experiences to init optimizer
-        for i in range(15):
-            await optimizer.record_routing_experience(
-                query=f"Query {i}",
-                entities=[],
-                relationships=[],
-                enhanced_query=f"Query {i}",
-                chosen_agent="test_agent",
-                routing_confidence=0.8,
-                search_quality=0.7,
-                agent_success=True,
+        # Use dspy.context() in async context instead of dspy.settings.configure()
+        with dspy.context(lm=mock_lm):
+            config = AdvancedOptimizerConfig(
+                min_experiences_for_training=10,
+                bootstrap_threshold=20,
+                simba_threshold=50,
+                mipro_threshold=100,
+                gepa_threshold=200,
+                optimizer_strategy="adaptive",
+                enable_persistence=False,  # Disable persistence for test isolation
             )
 
-        # Test selections at different dataset sizes
-        test_cases = [
-            (15, "bootstrap"),   # < 20: bootstrap only
-            (25, "bootstrap"),   # < 50: bootstrap (highest applicable)
-            (60, "simba"),       # >= 50, < 100: simba
-            (120, "mipro"),      # >= 100, < 200: mipro
-            (250, "gepa"),       # >= 200: gepa
-        ]
+            optimizer = AdvancedRoutingOptimizer(config)
 
-        for dataset_size, expected_optimizer in test_cases:
-            selected_optimizer, optimizer_name = optimizer.advanced_optimizer._select_optimizer(dataset_size)
-            assert optimizer_name == expected_optimizer, \
-                f"With {dataset_size} examples, expected {expected_optimizer}, got {optimizer_name}"
+            # Collect minimum experiences to init optimizer
+            for i in range(15):
+                await optimizer.record_routing_experience(
+                    query=f"Query {i}",
+                    entities=[],
+                    relationships=[],
+                    enhanced_query=f"Query {i}",
+                    chosen_agent="test_agent",
+                    routing_confidence=0.8,
+                    search_quality=0.7,
+                    agent_success=True,
+                )
+
+            # Test selections at different dataset sizes
+            test_cases = [
+                (15, "bootstrap"),   # < 20: bootstrap only
+                (25, "bootstrap"),   # < 50: bootstrap (highest applicable)
+                (60, "simba"),       # >= 50, < 100: simba
+                (120, "mipro"),      # >= 100, < 200: mipro
+                (250, "gepa"),       # >= 200: gepa
+            ]
+
+            for dataset_size, expected_optimizer in test_cases:
+                selected_optimizer, optimizer_name = optimizer.advanced_optimizer._select_optimizer(dataset_size)
+                assert optimizer_name == expected_optimizer, \
+                    f"With {dataset_size} examples, expected {expected_optimizer}, got {optimizer_name}"
 
     @pytest.mark.asyncio
     async def test_end_to_end_workflow_simulation(self):
         """Test a simulated end-to-end workflow."""
         # Create basic optimizer with low threshold for testing
-        config = AdvancedOptimizerConfig(min_experiences_for_training=3)
+        config = AdvancedOptimizerConfig(
+            min_experiences_for_training=3,
+            enable_persistence=False  # Disable persistence for test isolation
+        )
 
         optimizer = AdvancedRoutingOptimizer(config)
 

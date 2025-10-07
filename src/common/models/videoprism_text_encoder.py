@@ -184,7 +184,7 @@ class ModelPool:
         """Get a model instance from the pool"""
         model = None
         try:
-            # Try to get from pool
+            # Try to get from pool, otherwise create up to max_size
             with self._lock:
                 if self._pool:
                     model = self._pool.popleft()
@@ -198,7 +198,7 @@ class ModelPool:
             yield model
 
         finally:
-            # Return to pool if space available
+            # Always return to pool if space available
             if model is not None:
                 with self._lock:
                     if len(self._pool) < self.max_size:
@@ -296,7 +296,10 @@ class VideoPrismTextEncoder:
 
             # Map our model names to VideoPrism model names
             # Use the actual LVT model names for text encoding
-            if "lvt" in self.model_name.lower():
+            if "test" in self.model_name.lower():
+                # Test mode - use base LVT model
+                vp_model_name = "videoprism_lvt_public_v1_base"
+            elif "lvt" in self.model_name.lower():
                 if "large" in self.model_name.lower():
                     vp_model_name = "videoprism_lvt_public_v1_large"
                 else:
@@ -389,14 +392,21 @@ class VideoPrismTextEncoder:
         cache_hit = False
 
         try:
+            # Get cache info before call if available
+            cache_hits_before = 0
+            if hasattr(self._cached_encode, "cache_info"):
+                cache_hits_before = self._cached_encode.cache_info().hits
+
             # Use circuit breaker if enabled
             if self.circuit_breaker:
                 embeddings = self.circuit_breaker.call(self._cached_encode, text)
             else:
                 embeddings = self._cached_encode(text)
 
-            # Check if it was a cache hit
-            cache_hit = hasattr(self._cached_encode, "cache_info")
+            # Check if it was a cache hit by comparing hits before/after
+            if hasattr(self._cached_encode, "cache_info"):
+                cache_hits_after = self._cached_encode.cache_info().hits
+                cache_hit = cache_hits_after > cache_hits_before
 
             # Record metrics
             if self.metrics:

@@ -665,9 +665,6 @@ class TestRealModelIntegration:
         from src.app.routing import TieredRouter
 
         config_path = Path("configs/config.json")
-        if not config_path.exists():
-            pytest.skip("Config file not found")
-
         with open(config_path) as f:
             config = json.load(f)
 
@@ -678,12 +675,7 @@ class TestRealModelIntegration:
         router = TieredRouter(config["routing"])
 
         # Create optimizer with first available strategy
-        first_strategy = (
-            list(router.strategies.values())[0] if router.strategies else None
-        )
-        if not first_strategy:
-            pytest.skip("No strategies available")
-
+        first_strategy = list(router.strategies.values())[0]
         optimizer = AutoTuningOptimizer(
             first_strategy, OptimizationConfig(min_samples_for_optimization=5)
         )

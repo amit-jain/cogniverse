@@ -63,14 +63,23 @@ class VLMInterface:
                 "LLM configuration missing: model_name and base_url required"
             )
 
-        if api_key:
-            dspy.settings.configure(
-                lm=dspy.LM(model=model_name, api_base=base_url, api_key=api_key)
-            )
-        else:
-            dspy.settings.configure(lm=dspy.LM(model=model_name, api_base=base_url))
+        # Ensure model name has provider prefix for litellm (Ollama models)
+        if ("localhost:11434" in base_url or "11434" in base_url) and not model_name.startswith("ollama/"):
+            model_name = f"ollama/{model_name}"
 
-        logger.info(f"Configured DSPy LM: {model_name} at {base_url}")
+        try:
+            if api_key:
+                dspy.settings.configure(
+                    lm=dspy.LM(model=model_name, api_base=base_url, api_key=api_key)
+                )
+            else:
+                dspy.settings.configure(lm=dspy.LM(model=model_name, api_base=base_url))
+            logger.info(f"Configured DSPy LM: {model_name} at {base_url}")
+        except RuntimeError as e:
+            if "can only be called from the same async task" in str(e):
+                logger.warning(f"DSPy already configured in this async context, skipping reconfiguration")
+            else:
+                raise
 
     async def analyze_visual_content(
         self, image_paths: List[str], query: str

@@ -66,9 +66,6 @@ class TestMockBackendIngestion:
 
     def test_basic_pipeline_creation(self, mock_pipeline_config):
         """Test basic pipeline creation with mock backend."""
-        if not PipelineBuilder:
-            pytest.skip("Pipeline components not available")
-
         builder = PipelineBuilder()
         pipeline = builder.build_pipeline(mock_pipeline_config)
 
@@ -138,10 +135,6 @@ class TestVespaBackendIngestion:
     def vespa_backend(self):
         """Start Vespa Docker container, deploy schemas, yield, cleanup."""
         manager = VespaTestManager(app_name="test-ingestion", http_port=8082)
-
-        if not manager.full_setup():
-            pytest.skip("Failed to setup Vespa test environment")
-
         yield manager
 
         # Cleanup
@@ -154,7 +147,7 @@ class TestVespaBackendIngestion:
         if test_dir.exists():
             return list(test_dir.glob("*.mp4"))[:2]  # Limit to 2 videos
         else:
-            pytest.skip("Test videos not available")
+            pytest.fail("Test videos not available at data/testset/evaluation/sample_videos")
 
     def test_vespa_connection(self, vespa_backend):
         """Test basic Vespa connectivity."""
@@ -166,9 +159,6 @@ class TestVespaBackendIngestion:
     @pytest.mark.asyncio
     async def test_lightweight_vespa_ingestion(self, vespa_backend, vespa_test_videos):
         """Test lightweight ingestion to Vespa (no heavy models)."""
-        if not vespa_test_videos:
-            pytest.skip("No test videos available")
-
         # Test with basic frame extraction only
         from src.app.ingestion.pipeline import (
             PipelineConfig,
@@ -198,9 +188,6 @@ class TestVespaBackendIngestion:
     @pytest.mark.asyncio
     async def test_colpali_vespa_ingestion(self, vespa_backend, vespa_test_videos):
         """Test ColPali model ingestion to Vespa (local only)."""
-        if not vespa_test_videos:
-            pytest.skip("No test videos available")
-
         from src.app.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
@@ -227,9 +214,6 @@ class TestVespaBackendIngestion:
     @pytest.mark.asyncio
     async def test_videoprism_vespa_ingestion(self, vespa_backend, vespa_test_videos):
         """Test VideoPrism model ingestion to Vespa (local only)."""
-        if not vespa_test_videos:
-            pytest.skip("No test videos available")
-
         from src.app.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
@@ -255,9 +239,6 @@ class TestVespaBackendIngestion:
     @pytest.mark.asyncio
     async def test_colqwen_vespa_ingestion(self, vespa_backend, vespa_test_videos):
         """Test ColQwen model ingestion to Vespa (local only)."""
-        if not vespa_test_videos:
-            pytest.skip("No test videos available")
-
         from src.app.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
@@ -291,16 +272,13 @@ class TestComprehensiveIngestion:
         if test_dir.exists():
             return list(test_dir.glob("*.mp4"))
         else:
-            pytest.skip("Test videos not available")
+            pytest.fail("Test videos not available at data/testset/evaluation/sample_videos")
 
     @pytest.mark.slow
     @pytest.mark.requires_vespa
     @pytest.mark.asyncio
     async def test_multi_profile_ingestion(self, all_test_videos):
         """Test ingestion with multiple profiles."""
-        if not all_test_videos:
-            pytest.skip("No test videos available")
-
         profiles_to_test = [
             "video_colpali_smol500_mv_frame",
             "video_videoprism_base_mv_chunk_30s",
@@ -336,9 +314,6 @@ class TestComprehensiveIngestion:
     @pytest.mark.asyncio
     async def test_ingestion_performance(self, all_test_videos):
         """Benchmark ingestion performance."""
-        if not all_test_videos:
-            pytest.skip("No test videos available")
-
         import time
 
         from src.app.ingestion.pipeline import (

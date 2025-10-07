@@ -14,7 +14,6 @@ from src.app.agents.routing_agent import RoutingAgent, RoutingDecision
 
 
 @pytest.mark.unit
-@pytest.mark.skip(reason="RoutingAgent refactored to DSPy - tests need updating for new interface")
 class TestRoutingAgentLegacy:
     """Legacy test cases for old RoutingAgent interface - needs refactoring"""
 

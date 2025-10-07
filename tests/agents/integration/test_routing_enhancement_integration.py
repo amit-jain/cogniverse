@@ -72,12 +72,7 @@ class TestRoutingToEnhancedSearchIntegration:
         try:
             search_agent = VideoSearchAgent()
         except ValueError as e:
-            if "schema_name" in str(e):
-                pytest.skip(
-                    "Vespa schema not properly configured, skipping video search test"
-                )
-            else:
-                raise
+            raise
 
         # Mock routing decision with relationships
         routing_decision = RoutingDecision(

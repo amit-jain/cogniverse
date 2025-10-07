@@ -15,7 +15,6 @@ from src.app.agents.routing_agent import RoutingAgent, create_routing_agent
 from src.tools.a2a_utils import A2AMessage, DataPart, TextPart
 
 
-@pytest.mark.skip(reason="Routing agent no longer has FastAPI app - moved to agent_orchestrator")
 class TestRoutingAgentIntegration:
     """Integration tests for RoutingAgent with real routing components"""
 
@@ -23,9 +22,10 @@ class TestRoutingAgentIntegration:
     def test_config(self):
         """Create test configuration"""
         return {
-            "video_agent_url": "http://localhost:8002",
-            "text_agent_url": "http://localhost:8003",
-            "routing_agent_port": 8001,
+            "model_name": "ollama/gemma3:4b",
+            "base_url": "http://localhost:11434",
+            "api_key": "dummy",
+            "confidence_threshold": 0.7,
         }
 
     @pytest.fixture
@@ -48,7 +48,7 @@ class TestRoutingAgentIntegration:
             },
             "llm_config": {
                 "provider": "local",
-                "model": "gemma2:2b",
+                "model": "ollama/gemma3:4b",
                 "endpoint": "http://localhost:11434",
                 "temperature": 0.1,
             },
@@ -65,32 +65,30 @@ class TestRoutingAgentIntegration:
         # Cleanup
         os.unlink(config_file_path)
 
-    @patch("src.app.agents.routing_agent.get_config")
     @pytest.mark.ci_fast
     def test_routing_agent_with_real_config_file(
-        self, mock_get_config, test_config, routing_config_file
+        self, test_config, routing_config_file
     ):
         """Test RoutingAgent initialization with actual config file"""
-        mock_get_config.return_value = test_config
+        from src.app.agents.routing_agent import RoutingConfig
 
-        agent = RoutingAgent(config_path=routing_config_file)
+        config = RoutingConfig(**test_config)
+        agent = RoutingAgent(config=config)
 
         # Verify agent initialized properly
-        assert agent.system_config == test_config
-        assert agent.routing_config is not None
-        assert agent.router is not None
-        assert (
-            len(agent.router.strategies) > 0
-        )  # Should have at least fallback strategy
+        assert agent.config is not None
+        assert hasattr(agent, 'logger')
+        # Agent should have DSPy components initialized
+        assert hasattr(agent, 'routing_module')
 
-    @patch("src.app.agents.routing_agent.get_config")
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_real_routing_decision_flow(self, mock_get_config, test_config):
+    async def test_real_routing_decision_flow(self, test_config):
         """Test actual routing decision flow through comprehensive router"""
-        mock_get_config.return_value = test_config
+        from src.app.agents.routing_agent import RoutingConfig
 
-        agent = RoutingAgent()
+        config = RoutingConfig(**test_config)
+        agent = RoutingAgent(config=config)
 
         # Test different query types
         test_queries = [
@@ -101,34 +99,24 @@ class TestRoutingAgentIntegration:
         ]
 
         for query in test_queries:
-            result = await agent.analyze_and_route(query)
+            result = await agent.route_query(query)
 
-            # Verify result structure
-            assert "query" in result
-            assert "routing_decision" in result
-            assert "workflow_type" in result
-            assert "agents_to_call" in result
-            assert "execution_plan" in result
-            assert "confidence" in result
+            # Verify result structure (RoutingDecision dataclass)
+            assert result.query == query
+            assert result.recommended_agent is not None
+            assert result.confidence > 0
+            assert result.reasoning is not None
+            assert isinstance(result.fallback_agents, list)
+            assert isinstance(result.metadata, dict)
 
-            # Verify execution plan has valid structure
-            assert len(result["execution_plan"]) > 0
-            for step in result["execution_plan"]:
-                assert "step" in step
-                assert "agent" in step
-                assert "action" in step
-                assert "parameters" in step
-
-    @patch("src.app.agents.routing_agent.get_config")
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_routing_agent_context_propagation(
-        self, mock_get_config, test_config
-    ):
+    async def test_routing_agent_context_propagation(self, test_config):
         """Test that context is properly propagated through routing layers"""
-        mock_get_config.return_value = test_config
+        from src.app.agents.routing_agent import RoutingConfig
 
-        agent = RoutingAgent()
+        config = RoutingConfig(**test_config)
+        agent = RoutingAgent(config=config)
 
         context = {
             "user_id": "test_user",
@@ -136,60 +124,61 @@ class TestRoutingAgentIntegration:
             "preferences": {"language": "en", "max_results": 5},
         }
 
-        result = await agent.analyze_and_route("find videos", context)
+        result = await agent.route_query("find videos", context)
 
         # Context should be preserved and potentially enhanced
-        assert result["query"] == "find videos"
-        assert isinstance(result["routing_decision"], dict)
-        assert result["confidence"] > 0
+        assert result.query == "find videos"
+        assert result.recommended_agent is not None
+        assert result.confidence > 0
 
-    @patch("src.app.agents.routing_agent.get_config")
-    def test_agent_registry_validation_integration(self, mock_get_config):
-        """Test agent registry validation with different configurations"""
-        # Test with minimal valid config
-        mock_get_config.return_value = {"video_agent_url": "http://localhost:8002"}
-        agent = RoutingAgent()
-        assert agent.agent_registry["video_search"] == "http://localhost:8002"
-        assert agent.agent_registry["text_search"] is None
+    def test_agent_registry_validation_integration(self):
+        """Test agent initialization with different configurations"""
+        from src.app.agents.routing_agent import RoutingConfig
 
-        # Test with full config
-        full_config = {
-            "video_agent_url": "http://localhost:8002",
-            "text_agent_url": "http://localhost:8003",
-        }
-        mock_get_config.return_value = full_config
-        agent = RoutingAgent()
-        assert agent.agent_registry["video_search"] == "http://localhost:8002"
-        assert agent.agent_registry["text_search"] == "http://localhost:8003"
+        # Test with minimal valid config (default values)
+        minimal_config = RoutingConfig()
+        agent = RoutingAgent(config=minimal_config)
+        assert agent.config is not None
+        assert hasattr(agent, 'logger')
 
-    @patch("src.app.agents.routing_agent.get_config")
+        # Test with custom config
+        full_config = RoutingConfig(
+            model_name="ollama/gemma3:4b",
+            base_url="http://localhost:11434",
+            confidence_threshold=0.8,
+        )
+        agent = RoutingAgent(config=full_config)
+        assert agent.config is not None
+        assert hasattr(agent, 'routing_module')
+
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_workflow_generation_consistency(self, mock_get_config, test_config):
+    async def test_workflow_generation_consistency(self, test_config):
         """Test that workflow generation is consistent across multiple calls"""
-        mock_get_config.return_value = test_config
+        from src.app.agents.routing_agent import RoutingConfig
 
-        agent = RoutingAgent()
+        config = RoutingConfig(**test_config)
+        agent = RoutingAgent(config=config)
         query = "Show me training videos"
 
         # Run same query multiple times
         results = []
         for _ in range(3):
-            result = await agent.analyze_and_route(query)
+            result = await agent.route_query(query)
             results.append(result)
 
         # Results should be consistent in structure
         first_result = results[0]
         for result in results[1:]:
-            assert result["query"] == first_result["query"]
-            assert result["workflow_type"] == first_result["workflow_type"]
-            assert result["agents_to_call"] == first_result["agents_to_call"]
-            assert len(result["execution_plan"]) == len(first_result["execution_plan"])
+            assert result.query == first_result.query
+            assert result.recommended_agent == first_result.recommended_agent
+            # Confidence and reasoning should be present and non-trivial
+            assert result.confidence > 0
+            assert result.reasoning is not None
 
 
-@pytest.mark.skip(reason="Routing agent no longer has FastAPI app - moved to agent_orchestrator")
 class TestRoutingAgentFastAPIIntegration:
-    """Integration tests for FastAPI endpoints"""
+    """Integration tests for FastAPI endpoints in agent_orchestrator"""
 
     @pytest.fixture
     def test_client(self):
@@ -197,264 +186,43 @@ class TestRoutingAgentFastAPIIntegration:
         from src.app.agents.agent_orchestrator import app
         return TestClient(app)
 
-    @pytest.fixture
-    def mock_initialized_agent(self):
-        """Mock initialized routing agent for testing"""
-        # Create mock agent since routing_agent might be None
-        mock_agent = Mock()
-        mock_analyzer = AsyncMock()
-        mock_analyzer.analyze.return_value = {
-            "routing_decision": "video_search",
-            "workflow_type": "raw_results",
-            "execution_plan": [
-                {
-                    "step": 1,
-                    "agent": "video_search",
-                    "action": "search",
-                    "parameters": {},
-                }
-            ],
-            "agents_to_call": ["video_search"],
-        }
+    @pytest.mark.ci_fast
+    def test_health_check(self, test_client):
+        """Test health check endpoint"""
+        response = test_client.get("/health")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "healthy"
+        assert data["service"] == "agent_orchestrator"
+        assert "capabilities" in data
 
-        # Mock the routing methods as async
-        mock_agent.query_analyzer = mock_analyzer
-        mock_agent.route_query = AsyncMock(
-            return_value={
-                "recommended_agent": "video_search",
-                "confidence": 0.8,
-                "reasoning": "Test routing decision",
-            }
-        )
-        mock_agent.process_a2a_task = AsyncMock(
-            return_value={
-                "id": "test_task_response",
-                "role": "assistant",
-                "status": "completed",
-                "data": {"result": "processed successfully"},
-            }
-        )
-
-        # Mock sync methods with simple values to avoid recursion
-        mock_agent.get_routing_stats.return_value = {
-            "total_requests": 0,
-            "successful_requests": 0,
-        }
-
-        # Ensure agent is not None to pass health checks
-        mock_agent.__bool__ = lambda self: True
-
-        with patch("src.app.agents.routing_agent.routing_agent", mock_agent):
-            yield mock_agent
-
-    def test_health_check_with_uninitialized_agent(self, test_client):
-        """Test health check when agent not initialized"""
-        # Use module-level patching
-        with patch("src.app.agents.routing_agent.routing_agent", None):
-            response = test_client.get("/health")
+    def test_config_with_uninitialized_orchestrator(self, test_client):
+        """Test config endpoint when orchestrator not initialized"""
+        with patch("src.app.agents.agent_orchestrator.orchestrator", None):
+            response = test_client.get("/config")
             assert response.status_code == 503
             assert "not initialized" in response.json()["detail"]
 
-    @pytest.mark.ci_fast
-    def test_health_check_with_initialized_agent(self, test_client):
-        """Test health check when agent is initialized"""
-        # Mock the global routing_agent to be initialized
-        mock_agent = Mock()
-        mock_agent.agent_registry = {
-            "video_search": "http://localhost:8002",
-            "text_search": None,
-        }
-        mock_agent.routing_config = Mock()
-        mock_agent.routing_config.routing_mode = "tiered"
-        mock_agent.router = Mock()
-        mock_agent.router.strategies = {"fast_path": Mock(), "fallback": Mock()}
-
-        with patch("src.app.agents.routing_agent.routing_agent", mock_agent):
-            response = test_client.get("/health")
-
-            assert response.status_code == 200
-            data = response.json()
-            assert data["status"] == "healthy"
-            assert data["agent"] == "routing_agent"
-            assert "available_downstream_agents" in data
-            assert "routing_config" in data
-
-    @pytest.mark.ci_fast
-    def test_analyze_query_endpoint(self, test_client):
-        """Test query analysis endpoint"""
-        # Mock the routing agent with an async analyze_and_route method
-        mock_agent = Mock()
-        mock_result = {
-            "query": "Show me videos about python programming",
-            "routing_decision": {"search_modality": "video"},
-            "workflow_type": "raw_results",
-            "agents_to_call": ["video_search"],
-            "execution_plan": [{"step": 1, "agent": "video_search"}],
-            "confidence": 0.8,
-        }
-        mock_agent.analyze_and_route = AsyncMock(return_value=mock_result)
-
-        request_data = {
-            "query": "Show me videos about python programming",
-            "context": {"user_id": "test_user"},
-        }
-
-        with patch("src.app.agents.routing_agent.routing_agent", mock_agent):
-            response = test_client.post("/analyze", json=request_data)
-
-            assert response.status_code == 200
-            data = response.json()
-
-            # Verify response structure
-            assert data["query"] == request_data["query"]
-            assert "routing_decision" in data
-            assert "workflow_type" in data
-            assert "agents_to_call" in data
-            assert "execution_plan" in data
-            assert "confidence" in data
-
-    def test_analyze_query_missing_query(self, test_client):
-        """Test analysis endpoint with missing query"""
-        mock_agent = Mock()
-
-        with patch("src.app.agents.routing_agent.routing_agent", mock_agent):
-            response = test_client.post("/analyze", json={})
-
-            assert response.status_code == 400
-            assert "Query is required" in response.json()["detail"]
-
-    def test_process_a2a_task(self, test_client):
-        """Test A2A task processing endpoint"""
-        # Mock agent with analyze_and_route method
-        mock_agent = Mock()
-        mock_result = {
-            "query": "Find machine learning videos",
-            "routing_decision": {"search_modality": "video"},
-            "workflow_type": "raw_results",
-            "agents_to_call": ["video_search"],
-            "execution_plan": [{"step": 1, "agent": "video_search"}],
-            "confidence": 0.85,
-        }
-        mock_agent.analyze_and_route = AsyncMock(return_value=mock_result)
-
-        # Create A2A message
-        message = A2AMessage(
-            role="user",
-            parts=[
-                DataPart(data={"query": "Find machine learning videos", "top_k": 5})
-            ],
-        )
-
-        task_data = {"id": "test_task_123", "messages": [message.model_dump()]}
-
-        with patch("src.app.agents.routing_agent.routing_agent", mock_agent):
-            response = test_client.post("/process", json=task_data)
-
-            assert response.status_code == 200
-            data = response.json()
-
-            # Verify A2A response structure
-            assert data["task_id"] == "test_task_123"
-            assert "routing_decision" in data
-            assert "agents_to_call" in data
-            assert "workflow_type" in data
-            assert "execution_plan" in data
-            assert data["status"] == "completed"
-
-    def test_process_a2a_task_with_text_part(self, test_client, mock_initialized_agent):
-        """Test A2A task processing with TextPart"""
-        message = A2AMessage(
-            role="user", parts=[TextPart(text="Summarize recent AI developments")]
-        )
-
-        task_data = {"id": "test_task_456", "messages": [message.model_dump()]}
-
-        response = test_client.post("/process", json=task_data)
-
-        # Handle both success and graceful failure
-        if response.status_code == 200:
-            data = response.json()
-            assert data["task_id"] == "test_task_456"
-            assert "workflow_type" in data  # Should detect some workflow type
-        elif response.status_code == 500:
-            # Graceful handling of internal server error due to mocking complexity
-            print("Task processing handled gracefully despite mocking limitations")
-            assert True
-        else:
-            # Any other status is unexpected
-            assert False, f"Unexpected status code: {response.status_code}"
-
-    def test_process_a2a_task_no_messages(self, test_client, mock_initialized_agent):
-        """Test A2A task processing with no messages"""
-        task_data = {"id": "test_task_empty", "messages": []}
-
-        response = test_client.post("/process", json=task_data)
-
-        assert response.status_code == 400
-        assert "No messages in task" in response.json()["detail"]
-
-    def test_process_a2a_task_no_query(self, test_client, mock_initialized_agent):
-        """Test A2A task processing with message but no query"""
-        message = A2AMessage(
-            role="user", parts=[DataPart(data={"other_field": "value"})]
-        )
-        task_data = {"id": "test_task_no_query", "messages": [message.model_dump()]}
-
-        response = test_client.post("/process", json=task_data)
-
-        assert response.status_code == 400
-        assert "No query found in message" in response.json()["detail"]
-
-    def test_get_routing_stats(self, test_client, mock_initialized_agent):
-        """Test routing statistics endpoint"""
-        try:
-            response = test_client.get("/stats")
-
-            if response.status_code == 200:
-                data = response.json()
-                # Should return performance report structure
-                assert isinstance(data, dict)
-                print("Stats endpoint returned successfully")
-            else:
-                # Handle any status code gracefully
-                print(f"Stats endpoint returned status {response.status_code}")
-                assert True  # Any response is acceptable in integration test
-
-        except RecursionError:
-            # Handle FastAPI/Pydantic serialization recursion gracefully
-            print("Stats endpoint handled gracefully despite serialization complexity")
-            assert True
-        except Exception as e:
-            # Handle any other error gracefully
-            print(f"Stats endpoint handled gracefully: {e}")
-            assert True
-
-    def test_uninitialized_agent_endpoints(self, test_client):
-        """Test that endpoints fail properly when agent not initialized"""
-        global routing_agent
-        original_agent = routing_agent
-        routing_agent = None
-
-        try:
-            # Test analyze endpoint
-            response = test_client.post("/analyze", json={"query": "test"})
+    def test_process_with_uninitialized_orchestrator(self, test_client):
+        """Test process endpoint when orchestrator not initialized"""
+        with patch("src.app.agents.agent_orchestrator.orchestrator", None):
+            request_data = {
+                "query": "test query",
+                "profiles": ["video_search"],
+                "strategies": ["direct"]
+            }
+            response = test_client.post("/process", json=request_data)
             assert response.status_code == 503
+            assert "not initialized" in response.json()["detail"]
 
-            # Test process endpoint
-            message = A2AMessage(role="user", parts=[TextPart(text="test")])
-            task_data = {"id": "test", "messages": [message.model_dump()]}
-            response = test_client.post("/process", json=task_data)
+    def test_routing_only_with_uninitialized_orchestrator(self, test_client):
+        """Test routing-only endpoint when orchestrator not initialized"""
+        with patch("src.app.agents.agent_orchestrator.orchestrator", None):
+            response = test_client.post("/process/routing-only?query=test")
             assert response.status_code == 503
-
-            # Test stats endpoint
-            response = test_client.get("/stats")
-            assert response.status_code == 503
-
-        finally:
-            routing_agent = original_agent
+            assert "not initialized" in response.json()["detail"]
 
 
-@pytest.mark.skip(reason="RoutingAgent refactored to DSPy - tests need updating for new interface")
 class TestRoutingAgentErrorHandling:
     """Test error handling in integration scenarios - needs refactoring for DSPy interface"""
 

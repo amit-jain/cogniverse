@@ -283,6 +283,14 @@ class GLiNERRoutingStrategy(RoutingStrategy):
             indicator in query_lower for indicator in relationship_indicators
         )
 
+        # Check for comparison keywords that suggest needing both modalities
+        comparison_keywords = ["compare", "versus", "vs", "difference between", "both"]
+        has_comparison = any(kw in query_lower for kw in comparison_keywords)
+
+        # If comparison detected with at least one modality, override to both
+        if has_comparison and (video_score > 0 or text_score > 0):
+            search_modality = SearchModality.BOTH
+
         # Calculate confidence based on entity scores
         total_score = (
             video_score + text_score + audio_score + image_score + document_score
@@ -741,6 +749,12 @@ class KeywordRoutingStrategy(RoutingStrategy):
                 "thorough",
                 "extensive",
                 "complete analysis",
+                "compare",
+                "comparison",
+                "analyze",
+                "analysis",
+                "evaluate",
+                "assessment",
             ],
         )
 
@@ -1056,7 +1070,7 @@ class LangExtractRoutingStrategy(RoutingStrategy):
         super().__init__(config)
         cfg = config or {}
         # Use local Ollama model instead of Gemini
-        self.model_name = cfg.get("langextract_model", "smollm2:1.7b")
+        self.model_name = cfg.get("langextract_model", "gemma3:4b")
         self.ollama_url = cfg.get("ollama_url", "http://localhost:11434")
         self.extractor = None
         self.schema_prompt = """

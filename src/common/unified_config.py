@@ -45,7 +45,7 @@ class SystemConfig:
     elasticsearch_url: Optional[str] = None
 
     # LLM configuration
-    llm_model: str = "gpt-4"
+    llm_model: str = "ollama/gemma3:4b"
     base_url: str = "http://localhost:11434"
     llm_api_key: Optional[str] = None
 
@@ -139,7 +139,7 @@ class RoutingConfigUnified:
 
     # LLM configuration (Slow Path)
     llm_provider: str = "local"
-    llm_routing_model: str = "smollm3:3b"
+    llm_routing_model: str = "ollama/gemma3:4b"
     llm_endpoint: str = "http://localhost:11434"
     llm_temperature: float = 0.1
     llm_max_tokens: int = 150
@@ -215,7 +215,7 @@ class RoutingConfigUnified:
             gliner_device=data.get("gliner_device", "cpu"),
             gliner_labels=data.get("gliner_labels", []),
             llm_provider=data.get("llm_provider", "local"),
-            llm_routing_model=data.get("llm_routing_model", "smollm3:3b"),
+            llm_routing_model=data.get("llm_routing_model", "ollama/gemma3:4b"),
             llm_endpoint=data.get("llm_endpoint", "http://localhost:11434"),
             llm_temperature=data.get("llm_temperature", 0.1),
             llm_max_tokens=data.get("llm_max_tokens", 150),

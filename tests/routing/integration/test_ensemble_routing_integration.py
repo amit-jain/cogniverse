@@ -521,6 +521,7 @@ class TestLLMStrictParsing:
         # Ensemble should succeed with properly parsed LLM
         assert decision.routing_method == "ensemble"
         assert decision.search_modality == SearchModality.BOTH
+        # Should detect this as a detailed report request due to "compare" keyword
         assert decision.generation_type == GenerationType.DETAILED_REPORT
         assert decision.confidence_score > 0.0
 

@@ -11,16 +11,7 @@
       {
         "name": "embedding",
         "type": "tensor<float>(d0[768])",
-        "indexing": ["summary", "attribute", "index"],
-        "attribute": {
-          "distance-metric": "angular"
-        },
-        "index": {
-          "hnsw": {
-            "max-links-per-node": 16,
-            "neighbors-to-explore-at-insert": 200
-          }
-        }
+        "indexing": ["summary", "attribute", "index"]
       },
       {
         "name": "text",

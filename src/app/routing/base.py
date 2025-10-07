@@ -82,6 +82,18 @@ class RoutingDecision:
             in [SearchModality.TEXT, SearchModality.BOTH],
         }
 
+    def get(self, key: str, default: Any = None) -> Any:
+        """Dict-like get method for backward compatibility."""
+        return self.to_dict().get(key, default)
+
+    def __getitem__(self, key: str) -> Any:
+        """Dict-like subscription access for backward compatibility."""
+        return self.to_dict()[key]
+
+    def __contains__(self, key: str) -> bool:
+        """Dict-like 'in' operator support for backward compatibility."""
+        return key in self.to_dict()
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "RoutingDecision":
         """Create from dictionary format."""

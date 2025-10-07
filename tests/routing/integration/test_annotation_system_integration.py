@@ -46,9 +46,8 @@ def phoenix_client():
             start_time=datetime.now() - timedelta(hours=1), end_time=datetime.now()
         )
         return client
-    except Exception as e:
-        pytest.skip(f"Phoenix server not available: {e}")
-
+    except Exception:
+        pass
 
 @pytest.fixture
 def test_tenant_id():

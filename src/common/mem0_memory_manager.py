@@ -102,23 +102,21 @@ class Mem0MemoryManager:
             embedding_model: Ollama embedding model (default: nomic-embed-text)
             ollama_base_url: Ollama OpenAI-compatible API endpoint
         """
-        # Configure Mem0 with OpenAI-compatible API pointing to Ollama and Vespa
+        # Configure Mem0 with Ollama provider for both LLM and embeddings
         self.config = {
             "llm": {
-                "provider": "openai",
+                "provider": "ollama",
                 "config": {
                     "model": llm_model,
                     "temperature": 0.1,
-                    "api_key": "ollama",  # Dummy key for Ollama
-                    "openai_base_url": ollama_base_url,  # Use openai_base_url for LLM
+                    "ollama_base_url": "http://localhost:11434",
                 },
             },
             "embedder": {
-                "provider": "openai",
+                "provider": "ollama",
                 "config": {
                     "model": embedding_model,
-                    "api_key": "ollama",  # Dummy key for Ollama
-                    "openai_base_url": ollama_base_url,  # Use openai_base_url for embedder
+                    "ollama_base_url": "http://localhost:11434",
                 },
             },
             "vector_store": {
@@ -373,8 +371,8 @@ class Mem0MemoryManager:
         Args:
             memory_id: Memory ID to update
             content: New content
-            tenant_id: Tenant identifier
-            agent_name: Agent name
+            tenant_id: Tenant identifier (not used by Mem0 update API)
+            agent_name: Agent name (not used by Mem0 update API)
             metadata: Optional metadata
 
         Returns:
@@ -384,12 +382,11 @@ class Mem0MemoryManager:
             return False
 
         try:
+            # Mem0's update() only accepts memory_id and data (content)
+            # It does NOT accept user_id or agent_id
             self.memory.update(
                 memory_id,
-                content,
-                user_id=tenant_id,
-                agent_id=agent_name,
-                metadata=metadata or {},
+                data=content,
             )
 
             logger.info(f"Updated memory {memory_id} for {tenant_id}/{agent_name}")

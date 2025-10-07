@@ -375,7 +375,6 @@ class TestMultiTenantTelemetryIntegration:
 
 @pytest.mark.integration
 @pytest.mark.telemetry
-@pytest.mark.skip(reason="Requires Phoenix running on localhost:6006")
 class TestPhoenixIntegrationWithRealServer:
     """
     Integration tests with real Phoenix server.

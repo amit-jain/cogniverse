@@ -293,19 +293,31 @@ class AdvancedRoutingOptimizer:
                     if current_lm is None:
                         # Set a default LM if none configured
                         logger.warning(
-                            "No LM configured for GEPA, using default ollama:smollm2:1.7b"
+                            "No LM configured for GEPA, using default ollama:gemma3:4b"
                         )
                         current_lm = dspy.LM(
-                            "ollama/smollm2:1.7b", api_base="http://localhost:11434"
+                            "ollama/gemma3:4b", api_base="http://localhost:11434"
                         )
-                        dspy.settings.configure(lm=current_lm)
+                        try:
+                            dspy.settings.configure(lm=current_lm)
+                        except RuntimeError as re:
+                            if "can only be called from the same async task" in str(re):
+                                logger.warning("DSPy already configured in this async context, skipping reconfiguration")
+                            else:
+                                raise
                 except AttributeError:
                     # Fallback for older DSPy versions
                     logger.warning("Could not get DSPy LM, using default for GEPA")
                     current_lm = dspy.LM(
-                        "ollama/smollm2:1.7b", api_base="http://localhost:11434"
+                        "ollama/gemma3:4b", api_base="http://localhost:11434"
                     )
-                    dspy.settings.configure(lm=current_lm)
+                    try:
+                        dspy.settings.configure(lm=current_lm)
+                    except RuntimeError as re:
+                        if "can only be called from the same async task" in str(re):
+                            logger.warning("DSPy already configured in this async context, skipping reconfiguration")
+                        else:
+                            raise
 
                 # Initialize all advanced optimizers with required parameters
                 self.gepa_optimizer = GEPA(

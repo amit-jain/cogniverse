@@ -73,8 +73,6 @@ class TestCLI:
     @pytest.mark.unit
     def test_cli_verbose_flag(self, runner):
         """Test CLI with verbose flag."""
-        if cli is None:
-            pytest.skip("CLI not available")
         with patch("src.evaluation.cli.logging.getLogger") as mock_logger:
             # Need to provide a subcommand or help flag
             result = runner.invoke(cli, ["--verbose", "--help"])
@@ -85,8 +83,6 @@ class TestCLI:
     @pytest.mark.unit
     def test_evaluate_experiment_mode(self, runner, mock_task, mock_inspect_eval):
         """Test evaluate command in experiment mode."""
-        if evaluate is None:
-            pytest.skip("evaluate command not available")
         result = runner.invoke(
             evaluate,
             [

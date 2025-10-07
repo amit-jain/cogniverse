@@ -231,7 +231,7 @@ class TestModalityImprovementValidation:
             training_data=video_training_examples,
             strategy=TrainingStrategy.PURE_REAL,
         )
-        assert video_result["status"] == "completed"
+        assert video_result["status"] == "success"
 
         # Train document model
         doc_result = modality_optimizer._train_modality_model(
@@ -239,7 +239,7 @@ class TestModalityImprovementValidation:
             training_data=document_training_examples,
             strategy=TrainingStrategy.PURE_REAL,
         )
-        assert doc_result["status"] == "completed"
+        assert doc_result["status"] == "success"
 
         # Test video predictions
         video_pred = modality_optimizer.predict_agent(

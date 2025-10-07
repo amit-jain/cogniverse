@@ -32,8 +32,6 @@ class TestRealIngestionPipeline:
         """Get path to smallest test video."""
         # Use the smallest available test video
         video_path = Path("data/testset/evaluation/sample_videos/v_-6dz6tBH77I.mp4")
-        if not video_path.exists():
-            pytest.skip(f"Test video not found: {video_path}")
         return video_path
 
     @pytest.fixture
@@ -111,7 +109,6 @@ class TestRealIngestionPipeline:
         assert len(result["text"]) > 0  # Should have some transcription
         assert "language" in result
 
-    @pytest.mark.skip(reason="Embedding generation too slow for regular CI")
     def test_real_embedding_generation_colpali(self, test_video_path, temp_output_dir):
         """
         REAL TEST: Generate ColPali embeddings from actual video frames.
@@ -207,7 +204,6 @@ class TestRealIngestionPipeline:
         )
         assert strategy_set.segmentation_strategy.chunk_duration == 30.0
 
-    @pytest.mark.skip(reason="Full pipeline too slow - use for manual testing only")
     @pytest.mark.requires_vespa
     @pytest.mark.asyncio
     async def test_real_end_to_end_ingestion_to_vespa(

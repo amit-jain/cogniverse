@@ -168,24 +168,25 @@ class TestModelPool(unittest.TestCase):
     """Test model pool functionality"""
     
     def test_pool_creation(self):
-        """Test pool creates instances up to max size"""
+        """Test pool creates instances up to max size and reuses them"""
         created_count = 0
-        
+
         def factory():
             nonlocal created_count
             created_count += 1
             return f"model_{created_count}"
-        
+
         pool = ModelPool(factory, max_size=3)
-        
-        # Get multiple models
+
+        # Sequential gets should reuse the same model
         models = []
         for _ in range(3):
             with pool.get_model() as model:
                 models.append(model)
-        
-        self.assertEqual(created_count, 3)
-        self.assertEqual(models, ["model_1", "model_2", "model_3"])
+
+        # Pool reuses model_1 for all sequential gets
+        self.assertEqual(created_count, 1)
+        self.assertEqual(models, ["model_1", "model_1", "model_1"])
     
     def test_pool_reuse(self):
         """Test pool reuses returned models"""
@@ -213,13 +214,17 @@ class TestVideoPrismTextEncoder(unittest.TestCase):
     """Test VideoPrismTextEncoder functionality"""
     
     def setUp(self):
+        # Clear class-level cache before each test
+        from src.common.models.videoprism_text_encoder import VideoPrismTextEncoder
+        VideoPrismTextEncoder._model_cache.clear()
+
         # Mock VideoPrism module
         self.vp_mock = MagicMock()
         self.vp_patch = patch.dict('sys.modules', {'videoprism': self.vp_mock})
         self.vp_patch.start()
-        
+
         # Mock the global VIDEOPRISM_AVAILABLE flag
-        import src.common.models.videoprism_text_encoder_v2 as encoder_module
+        import src.common.models.videoprism_text_encoder as encoder_module
         encoder_module.VIDEOPRISM_AVAILABLE = True
         encoder_module.vp = self.vp_mock.models
         

@@ -69,9 +69,14 @@ class DynamicDSPyMixin:
             lm_params["max_tokens"] = config.llm_max_tokens
 
         lm = dspy.LM(**lm_params)
-        dspy.settings.configure(lm=lm)
-
-        logger.info(f"Configured DSPy LM: {config.llm_model}")
+        try:
+            dspy.settings.configure(lm=lm)
+            logger.info(f"Configured DSPy LM: {config.llm_model}")
+        except RuntimeError as e:
+            if "can only be called from the same async task" in str(e):
+                logger.warning(f"DSPy already configured in this async context, skipping reconfiguration")
+            else:
+                raise
 
     def register_signature(self, name: str, signature: Type[dspy.Signature]):
         """

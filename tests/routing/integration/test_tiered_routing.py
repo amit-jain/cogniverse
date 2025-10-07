@@ -322,10 +322,6 @@ class TestFullRoutingFlow:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    @pytest.mark.skipif(
-        not os.environ.get("RUN_SLOW_TESTS"),
-        reason="Skipping slow test - set RUN_SLOW_TESTS=1 to run",
-    )
     async def test_high_volume_routing(self, router):
         """Test routing under high volume."""
         queries = [

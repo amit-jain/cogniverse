@@ -18,6 +18,8 @@ from datetime import datetime
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
 
+from colpali_engine.models import ColIdefics3, ColIdefics3Processor
+
 from src.app.search.service import SearchService
 from src.common.config_utils import get_config
 from tests.test_utils import TestResultsFormatter
@@ -180,12 +182,18 @@ def test_colpali_search(output_format="table", save_results=False, num_queries=5
     return all_results
 
 
-def test_float_float_search(output_format="table", save_results=False):
+def test_float_float_search(output_format="table", save_results=False, monkeypatch=None):
     """Test pure float visual search"""
-    
+
+    # Set required environment variable for Vespa schema
+    if monkeypatch:
+        monkeypatch.setenv("VESPA_SCHEMA", "video_colpali_smol500_mv_frame")
+    else:
+        os.environ["VESPA_SCHEMA"] = "video_colpali_smol500_mv_frame"
+
     # Initialize results formatter
     formatter = TestResultsFormatter("colpali_float_float")
-    
+
     # Load config
     config = get_config()
     model_name = config.get("colpali_model", "vidore/colsmol-500m")
@@ -289,12 +297,18 @@ def test_float_float_search(output_format="table", save_results=False):
         traceback.print_exc()
 
 
-def test_hybrid_float_bm25(output_format="table", save_results=False):
+def test_hybrid_float_bm25(output_format="table", save_results=False, monkeypatch=None):
     """Test hybrid search with float embeddings - exactly like video agent"""
-    
+
+    # Set required environment variable for Vespa schema
+    if monkeypatch:
+        monkeypatch.setenv("VESPA_SCHEMA", "video_colpali_smol500_mv_frame")
+    else:
+        os.environ["VESPA_SCHEMA"] = "video_colpali_smol500_mv_frame"
+
     # Initialize results formatter
     formatter = TestResultsFormatter("colpali_hybrid_float_bm25")
-    
+
     # Load config
     config = get_config()
     model_name = config.get("colpali_model", "vidore/colsmol-500m")

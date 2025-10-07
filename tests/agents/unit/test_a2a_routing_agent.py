@@ -21,7 +21,7 @@ class TestA2ARoutingAgent:
     def mock_routing_agent(self):
         """Mock routing agent"""
         mock_agent = Mock()
-        mock_agent.analyze_and_route = AsyncMock(
+        mock_agent.route_query = AsyncMock(
             return_value={
                 "query": "test query",
                 "routing_decision": {"search_modality": "video"},
@@ -75,9 +75,15 @@ class TestA2ARoutingAgent:
         assert agent.agent_registry == mock_registry_instance
         assert agent.http_client is not None
 
-    def test_extract_query_and_context_with_data_part(self):
+    @patch("src.app.agents.agent_registry.AgentRegistry")
+    @patch("src.app.agents.a2a_routing_agent.get_config")
+    def test_extract_query_and_context_with_data_part(self, mock_get_config, mock_registry_class):
         """Test query and context extraction from DataPart"""
-        agent = A2ARoutingAgent()
+        mock_get_config.return_value = {}
+        mock_registry_class.return_value = Mock()
+        mock_routing_agent = Mock()
+
+        agent = A2ARoutingAgent(mock_routing_agent)
 
         message = A2AMessage(
             role="user",
@@ -97,9 +103,15 @@ class TestA2ARoutingAgent:
         assert context["user_id"] == "test_user"
         assert "query" not in context
 
-    def test_extract_query_and_context_with_text_part(self):
+    @patch("src.app.agents.agent_registry.AgentRegistry")
+    @patch("src.app.agents.a2a_routing_agent.get_config")
+    def test_extract_query_and_context_with_text_part(self, mock_get_config, mock_registry_class):
         """Test query extraction from TextPart"""
-        agent = A2ARoutingAgent()
+        mock_get_config.return_value = {}
+        mock_registry_class.return_value = Mock()
+
+        mock_routing_agent = Mock()
+        agent = A2ARoutingAgent(mock_routing_agent)
 
         message = A2AMessage(
             role="user", parts=[TextPart(text="find videos about machine learning")]
@@ -111,18 +123,30 @@ class TestA2ARoutingAgent:
         assert query == "find videos about machine learning"
         assert context["task_id"] == "test_task"
 
-    def test_extract_query_and_context_no_messages(self):
+    @patch("src.app.agents.agent_registry.AgentRegistry")
+    @patch("src.app.agents.a2a_routing_agent.get_config")
+    def test_extract_query_and_context_no_messages(self, mock_get_config, mock_registry_class):
         """Test extraction with no messages"""
-        agent = A2ARoutingAgent()
+        mock_get_config.return_value = {}
+        mock_registry_class.return_value = Mock()
+
+        mock_routing_agent = Mock()
+        agent = A2ARoutingAgent(mock_routing_agent)
 
         task = Task(id="test_task", messages=[])
 
         with pytest.raises(ValueError, match="Task has no messages"):
             agent._extract_query_and_context(task)
 
-    def test_extract_query_and_context_no_query(self):
+    @patch("src.app.agents.agent_registry.AgentRegistry")
+    @patch("src.app.agents.a2a_routing_agent.get_config")
+    def test_extract_query_and_context_no_query(self, mock_get_config, mock_registry_class):
         """Test extraction with no query found"""
-        agent = A2ARoutingAgent()
+        mock_get_config.return_value = {}
+        mock_registry_class.return_value = Mock()
+
+        mock_routing_agent = Mock()
+        agent = A2ARoutingAgent(mock_routing_agent)
 
         message = A2AMessage(
             role="user", parts=[DataPart(data={"other_field": "value"})]
@@ -132,9 +156,15 @@ class TestA2ARoutingAgent:
         with pytest.raises(ValueError, match="No query found in task messages"):
             agent._extract_query_and_context(task)
 
-    def test_create_agent_task(self):
+    @patch("src.app.agents.agent_registry.AgentRegistry")
+    @patch("src.app.agents.a2a_routing_agent.get_config")
+    def test_create_agent_task(self, mock_get_config, mock_registry_class):
         """Test agent task creation"""
-        agent = A2ARoutingAgent()
+        mock_get_config.return_value = {}
+        mock_registry_class.return_value = Mock()
+
+        mock_routing_agent = Mock()
+        agent = A2ARoutingAgent(mock_routing_agent)
 
         parameters = {"query": "test query", "top_k": 10}
         task_id = "main_task"
@@ -161,7 +191,8 @@ class TestA2ARoutingAgent:
         mock_get_config.return_value = {}
         mock_registry_class.return_value = Mock()
 
-        agent = A2ARoutingAgent()
+        mock_routing_agent = Mock()
+        agent = A2ARoutingAgent(mock_routing_agent)
 
         # Mock HTTP client
         mock_response = Mock()
@@ -191,7 +222,8 @@ class TestA2ARoutingAgent:
         mock_get_config.return_value = {}
         mock_registry_class.return_value = Mock()
 
-        agent = A2ARoutingAgent()
+        mock_routing_agent = Mock()
+        agent = A2ARoutingAgent(mock_routing_agent)
 
         # Mock HTTP error
         from httpx import HTTPStatusError
@@ -215,9 +247,15 @@ class TestA2ARoutingAgent:
         with pytest.raises(Exception, match="Agent test_agent returned 500"):
             await agent._send_to_agent(agent_endpoint, task)
 
-    def test_aggregate_results_raw_results(self):
+    @patch("src.app.agents.agent_registry.AgentRegistry")
+    @patch("src.app.agents.a2a_routing_agent.get_config")
+    def test_aggregate_results_raw_results(self, mock_get_config, mock_registry_class):
         """Test result aggregation for raw results workflow"""
-        agent = A2ARoutingAgent()
+        mock_get_config.return_value = {}
+        mock_registry_class.return_value = Mock()
+
+        mock_routing_agent = Mock()
+        agent = A2ARoutingAgent(mock_routing_agent)
 
         routing_analysis = {
             "query": "test query",
@@ -242,9 +280,15 @@ class TestA2ARoutingAgent:
         assert len(final_result["search_results"]) == 2
         assert final_result["search_results"][0]["title"] == "Result 1"
 
-    def test_aggregate_results_summary_with_summarizer(self):
+    @patch("src.app.agents.agent_registry.AgentRegistry")
+    @patch("src.app.agents.a2a_routing_agent.get_config")
+    def test_aggregate_results_summary_with_summarizer(self, mock_get_config, mock_registry_class):
         """Test result aggregation for summary workflow with summarizer agent"""
-        agent = A2ARoutingAgent()
+        mock_get_config.return_value = {}
+        mock_registry_class.return_value = Mock()
+
+        mock_routing_agent = Mock()
+        agent = A2ARoutingAgent(mock_routing_agent)
 
         routing_analysis = {
             "query": "summarize videos",
@@ -262,9 +306,15 @@ class TestA2ARoutingAgent:
         assert final_result["workflow_type"] == "summary"
         assert final_result["summary"] == "This is a summary of the video content."
 
-    def test_aggregate_results_summary_fallback(self):
+    @patch("src.app.agents.agent_registry.AgentRegistry")
+    @patch("src.app.agents.a2a_routing_agent.get_config")
+    def test_aggregate_results_summary_fallback(self, mock_get_config, mock_registry_class):
         """Test result aggregation for summary workflow without summarizer agent"""
-        agent = A2ARoutingAgent()
+        mock_get_config.return_value = {}
+        mock_registry_class.return_value = Mock()
+
+        mock_routing_agent = Mock()
+        agent = A2ARoutingAgent(mock_routing_agent)
 
         routing_analysis = {
             "query": "summarize videos",
@@ -287,9 +337,15 @@ class TestA2ARoutingAgent:
         assert "summary" in final_result
         assert "Found 2 results" in final_result["summary"]
 
-    def test_create_fallback_summary(self):
+    @patch("src.app.agents.agent_registry.AgentRegistry")
+    @patch("src.app.agents.a2a_routing_agent.get_config")
+    def test_create_fallback_summary(self, mock_get_config, mock_registry_class):
         """Test fallback summary creation"""
-        agent = A2ARoutingAgent()
+        mock_get_config.return_value = {}
+        mock_registry_class.return_value = Mock()
+
+        mock_routing_agent = Mock()
+        agent = A2ARoutingAgent(mock_routing_agent)
 
         search_results = [
             {"source_id": "video1", "title": "AI Tutorial"},
@@ -303,17 +359,29 @@ class TestA2ARoutingAgent:
         assert "2 sources" in summary
         assert "video1" in summary
 
-    def test_create_fallback_summary_empty(self):
+    @patch("src.app.agents.agent_registry.AgentRegistry")
+    @patch("src.app.agents.a2a_routing_agent.get_config")
+    def test_create_fallback_summary_empty(self, mock_get_config, mock_registry_class):
         """Test fallback summary with empty results"""
-        agent = A2ARoutingAgent()
+        mock_get_config.return_value = {}
+        mock_registry_class.return_value = Mock()
+
+        mock_routing_agent = Mock()
+        agent = A2ARoutingAgent(mock_routing_agent)
 
         summary = agent._create_fallback_summary([])
 
         assert summary == "No results found."
 
-    def test_create_fallback_report(self):
+    @patch("src.app.agents.agent_registry.AgentRegistry")
+    @patch("src.app.agents.a2a_routing_agent.get_config")
+    def test_create_fallback_report(self, mock_get_config, mock_registry_class):
         """Test fallback detailed report creation"""
-        agent = A2ARoutingAgent()
+        mock_get_config.return_value = {}
+        mock_registry_class.return_value = Mock()
+
+        mock_routing_agent = Mock()
+        agent = A2ARoutingAgent(mock_routing_agent)
 
         search_results = [
             {
@@ -333,9 +401,15 @@ class TestA2ARoutingAgent:
         assert "Time Range: 00:00 - 05:30" in report
         assert "document1 (document)" in report
 
-    def test_create_fallback_report_empty(self):
+    @patch("src.app.agents.agent_registry.AgentRegistry")
+    @patch("src.app.agents.a2a_routing_agent.get_config")
+    def test_create_fallback_report_empty(self, mock_get_config, mock_registry_class):
         """Test fallback report with empty results"""
-        agent = A2ARoutingAgent()
+        mock_get_config.return_value = {}
+        mock_registry_class.return_value = Mock()
+
+        mock_routing_agent = Mock()
+        agent = A2ARoutingAgent(mock_routing_agent)
 
         report = agent._create_fallback_report([])
 
@@ -364,11 +438,18 @@ class TestA2ARoutingAgentIntegration:
         mock_registry_class.return_value = mock_registry
 
         # Mock routing agent
+        from src.app.agents.routing_agent import RoutingDecision
         mock_routing_agent = Mock()
-        mock_routing_agent.analyze_and_route = AsyncMock(
-            return_value={
-                "query": "find AI videos",
-                "routing_decision": {"search_modality": "video"},
+        mock_routing_decision = RoutingDecision(
+            query="find AI videos",
+            recommended_agent="video_search_agent",
+            confidence=0.9,
+            reasoning="Test routing",
+            fallback_agents=[],
+            enhanced_query="find AI videos",
+            entities=[],
+            relationships=[],
+            metadata={
                 "workflow_type": "raw_results",
                 "agents_to_call": ["video_search"],
                 "execution_plan": [
@@ -381,6 +462,7 @@ class TestA2ARoutingAgentIntegration:
                 ],
             }
         )
+        mock_routing_agent.analyze_and_route = AsyncMock(return_value=mock_routing_decision)
 
         # Create A2A routing agent
         a2a_agent = A2ARoutingAgent(mock_routing_agent)
@@ -407,7 +489,7 @@ class TestA2ARoutingAgentIntegration:
         # Verify result
         assert result.success is True
         assert result.task_id == "test_task"
-        assert result.routing_decision["workflow_type"] == "raw_results"
+        assert result.routing_decision.metadata.get("workflow_type") == "raw_results"
         assert "video_search" in result.agent_responses
         assert len(result.final_result["search_results"]) == 1
         assert result.execution_time > 0

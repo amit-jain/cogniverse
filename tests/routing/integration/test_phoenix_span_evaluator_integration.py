@@ -41,10 +41,12 @@ async def routing_agent_with_spans():
 
     logger.info("🔄 Generating routing spans...")
     for query, expected_agent in test_queries:
-        result = await agent.analyze_and_route(query)
+        result = await agent.route_query(query, user_id="test-tenant")
+        # result is a RoutingDecision object
+        agent_name = result.recommended_agent if result else 'unknown'
         logger.info(
             f"✅ Processed query: '{query}', "
-            f"agent: {result.get('agent', 'unknown')}, "
+            f"agent: {agent_name}, "
             f"expected: {expected_agent}"
         )
 
@@ -70,7 +72,7 @@ def optimizer():
 @pytest.fixture(scope="function")
 def span_evaluator(optimizer):
     """Create PhoenixSpanEvaluator for testing - fresh for each test"""
-    return PhoenixSpanEvaluator(optimizer=optimizer, tenant_id="default")
+    return PhoenixSpanEvaluator(optimizer=optimizer, tenant_id="test-tenant")
 
 
 class TestPhoenixSpanEvaluatorIntegration:
@@ -143,9 +145,10 @@ class TestPhoenixSpanEvaluatorIntegration:
 
         logger.info("🔄 Generating unique routing spans for optimizer test...")
         for query, _ in unique_queries:
-            result = await agent.analyze_and_route(query)
+            result = await agent.route_query(query, user_id="test-tenant")
+            agent_name = result.recommended_agent if result else 'unknown'
             logger.info(
-                f"✅ Processed query: '{query}', agent: {result.get('agent', 'unknown')}"
+                f"✅ Processed query: '{query}', agent: {agent_name}"
             )
 
         # Force flush telemetry spans
@@ -168,7 +171,7 @@ class TestPhoenixSpanEvaluatorIntegration:
             ), f"Expected empty optimizer, got {initial_count} experiences"
 
             # Create span evaluator with our optimizer
-            evaluator = PhoenixSpanEvaluator(optimizer=optimizer, tenant_id="default")
+            evaluator = PhoenixSpanEvaluator(optimizer=optimizer, tenant_id="test-tenant")
 
             # Evaluate routing spans
             logger.info(f"📊 Evaluating spans from project: {evaluator.project_name}")
@@ -274,7 +277,7 @@ class TestPhoenixSpanEvaluatorIntegration:
         # 2. Process a single query
         query = "show me basketball dunks"
         logger.info(f"🔄 Processing query: '{query}'")
-        result = await agent.analyze_and_route(query)
+        result = await agent.route_query(query, user_id="test-tenant")
         logger.info(f"✅ Result: {result}")
 
         # 3. Flush telemetry
@@ -282,7 +285,7 @@ class TestPhoenixSpanEvaluatorIntegration:
         await asyncio.sleep(2)
 
         # 4. Create span evaluator
-        evaluator = PhoenixSpanEvaluator(optimizer=optimizer, tenant_id="default")
+        evaluator = PhoenixSpanEvaluator(optimizer=optimizer, tenant_id="test-tenant")
 
         # 5. Evaluate spans
         results = await evaluator.evaluate_routing_spans(lookback_hours=1)

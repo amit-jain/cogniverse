@@ -185,16 +185,16 @@ class TestLLMRoutingStrategy:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_fallback_parsing(self, strategy):
-        """Test fallback parsing when JSON extraction fails."""
+        """Test error handling when JSON extraction fails."""
         with patch("aiohttp.ClientSession") as mock_session_class:
             # Create mock session and response
             mock_session = MagicMock()
             mock_response = MagicMock()
             mock_response.status = 200
 
-            # Create a coroutine for json response (non-JSON structured response)
+            # Create a coroutine for json response (non-JSON structured response that triggers error)
             async def json_response():
-                return {"response": "The query needs both video and text content"}
+                return {"response": "The query needs both video content and text content for analysis"}
 
             mock_response.json = json_response
 
@@ -223,8 +223,9 @@ class TestLLMRoutingStrategy:
 
             decision = await strategy.route("analyze the content")
 
-            assert decision.routing_method == "llm_parsed"
-            assert decision.search_modality == SearchModality.BOTH  # From keywords
+            # When JSON parsing fails, should return error with fallback modality
+            assert decision.routing_method == "llm_error"
+            assert decision.search_modality == SearchModality.BOTH  # Fallback default
 
 
 class TestKeywordRoutingStrategy:

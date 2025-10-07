@@ -101,6 +101,40 @@ def test_vespa_manager():
         "config_url": f"http://localhost:{config_port}",
     }
 
+    # Upload all schemas once at module setup to avoid schema removal errors
+    print("\n📤 Uploading all content type schemas for the test suite...")
+    from src.backends.vespa.vespa_schema_manager import VespaSchemaManager
+
+    schema_manager = VespaSchemaManager(
+        vespa_endpoint=test_vespa["config_url"],
+        vespa_port=test_vespa["config_port"],
+    )
+
+    schema_manager.upload_content_type_schemas(
+        app_name="contenttypetest",
+        schemas=["image_content", "audio_content", "document_visual", "document_text"]
+    )
+    print("✅ All schemas uploaded successfully")
+
+    # Wait for application to be ready
+    print("\n⏳ Waiting for application to be ready...")
+    for i in range(60):
+        try:
+            response = requests.get(
+                f"{test_vespa['base_url']}/ApplicationStatus", timeout=5
+            )
+            if response.status_code == 200:
+                print(f"✅ Application ready (took {i*2}s)")
+                break
+        except Exception:
+            pass
+        time.sleep(2)
+    else:
+        # Cleanup on failure
+        subprocess.run(["docker", "stop", container_name], capture_output=True)
+        subprocess.run(["docker", "rm", container_name], capture_output=True)
+        pytest.fail("Application not ready after 120 seconds")
+
     yield test_vespa
 
     # Teardown: Stop and remove test Vespa
@@ -127,45 +161,16 @@ def test_vespa_manager():
 class TestContentTypeVespaSchemas:
     """Test content type schemas with test Vespa"""
 
-    def test_content_type_schemas_upload(self, test_vespa_manager):
-        """Test uploading both image_content and audio_content schemas together"""
+    def test_content_type_schemas_accessible(self, test_vespa_manager):
+        """Test that all content type schemas are accessible (uploaded in fixture)"""
         print("\n" + "-" * 80)
-        print("Test: Content Type Schemas Upload (Image + Audio)")
+        print("Test: Verify Content Type Schemas Accessibility")
         print("-" * 80)
 
-        schema_manager = VespaSchemaManager(
-            vespa_endpoint=test_vespa_manager["config_url"],
-            vespa_port=test_vespa_manager["config_port"],
-        )
-
-        # Upload both schemas together in one application package
-        print("\n📤 Uploading image_content and audio_content schemas...")
-        try:
-            schema_manager.upload_content_type_schemas(app_name="contenttypetest")
-            print("✅ Both schemas uploaded successfully")
-        except Exception as e:
-            pytest.fail(f"Failed to upload content type schemas: {e}")
-
-        # Wait for application to be ready
-        print("\n⏳ Waiting for application to be ready...")
         import requests
 
-        for i in range(60):
-            try:
-                response = requests.get(
-                    f"{test_vespa_manager['base_url']}/ApplicationStatus", timeout=5
-                )
-                if response.status_code == 200:
-                    print(f"✅ Application ready (took {i*2}s)")
-                    break
-            except Exception:
-                pass
-            time.sleep(2)
-        else:
-            pytest.fail("Application not ready after 120 seconds")
-
-        # Verify both schemas are accessible via search API
-        print("\n🔍 Verifying schemas are accessible...")
+        # Verify all schemas are accessible via search API
+        print("\n🔍 Verifying all schemas are accessible...")
         try:
             # Test image_content schema
             response = requests.get(
@@ -188,6 +193,28 @@ class TestContentTypeVespaSchemas:
                 response.status_code == 200
             ), f"Audio search failed: {response.status_code}"
             print("✅ audio_content schema is accessible")
+
+            # Test document_visual schema
+            response = requests.get(
+                f"{test_vespa_manager['base_url']}/search/",
+                params={"query": "test", "restrict": "document_visual"},
+                timeout=10,
+            )
+            assert (
+                response.status_code == 200
+            ), f"Document visual search failed: {response.status_code}"
+            print("✅ document_visual schema is accessible")
+
+            # Test document_text schema
+            response = requests.get(
+                f"{test_vespa_manager['base_url']}/search/",
+                params={"query": "test", "restrict": "document_text"},
+                timeout=10,
+            )
+            assert (
+                response.status_code == 200
+            ), f"Document text search failed: {response.status_code}"
+            print("✅ document_text schema is accessible")
 
         except Exception as e:
             pytest.fail(f"Failed to verify schemas: {e}")
@@ -480,73 +507,6 @@ class TestContentTypeVespaSchemas:
                 "⚠️  No search results found (document may not be indexed yet or BM25 didn't match)"
             )
             # This is okay - the important test is that schema works and document was ingested
-
-    def test_document_content_schemas_upload(self, test_vespa_manager):
-        """Test uploading document_visual and document_text schemas"""
-        print("\n" + "-" * 80)
-        print("Test: Document Content Schemas Upload (Visual + Text)")
-        print("-" * 80)
-
-        schema_manager = VespaSchemaManager(
-            vespa_endpoint=test_vespa_manager["config_url"],
-            vespa_port=test_vespa_manager["config_port"],
-        )
-
-        # Upload document schemas (visual and text)
-        print("\n📤 Uploading document_visual and document_text schemas...")
-        try:
-            schema_manager.upload_content_type_schemas(
-                app_name="documenttest", schemas=["document_visual", "document_text"]
-            )
-            print("✅ Both document schemas uploaded successfully")
-        except Exception as e:
-            pytest.fail(f"Failed to upload document schemas: {e}")
-
-        # Wait for application to be ready
-        print("\n⏳ Waiting for application to be ready...")
-        import requests
-
-        for i in range(60):
-            try:
-                response = requests.get(
-                    f"{test_vespa_manager['base_url']}/ApplicationStatus", timeout=5
-                )
-                if response.status_code == 200:
-                    print(f"✅ Application ready (took {i*2}s)")
-                    break
-            except Exception:
-                pass
-            time.sleep(2)
-        else:
-            pytest.fail("Application not ready after 120 seconds")
-
-        # Verify both schemas are accessible
-        print("\n🔍 Verifying document schemas are accessible...")
-        try:
-            # Test document_visual schema
-            response = requests.get(
-                f"{test_vespa_manager['base_url']}/search/",
-                params={"query": "test", "restrict": "document_visual"},
-                timeout=10,
-            )
-            assert (
-                response.status_code == 200
-            ), f"Visual document search failed: {response.status_code}"
-            print("✅ document_visual schema is accessible")
-
-            # Test document_text schema
-            response = requests.get(
-                f"{test_vespa_manager['base_url']}/search/",
-                params={"query": "test", "restrict": "document_text"},
-                timeout=10,
-            )
-            assert (
-                response.status_code == 200
-            ), f"Text document search failed: {response.status_code}"
-            print("✅ document_text schema is accessible")
-
-        except Exception as e:
-            pytest.fail(f"Failed to verify document schemas: {e}")
 
     def test_document_visual_ingestion(self, test_vespa_manager):
         """Test ingesting document pages with real ColPali embeddings"""

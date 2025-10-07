@@ -8,15 +8,12 @@ import numpy as np
 import pytest
 
 from src.app.agents.video_search_agent import (
-    EnhancedA2AMessage,
-    EnhancedSearchContext,
-    EnhancedTask,
     VideoSearchAgent,
     ImagePart,
     VideoPart,
     VideoProcessor,
 )
-from src.tools.a2a_utils import DataPart, TextPart
+from src.tools.a2a_utils import A2AMessage, DataPart, TextPart, Task
 
 
 @pytest.mark.unit
@@ -302,10 +299,10 @@ class TestVideoSearchAgent:
         agent = VideoSearchAgent(vespa_url="http://localhost", vespa_port=8080)
 
         # Create task with text part
-        message = EnhancedA2AMessage(
+        message = A2AMessage(
             role="user", parts=[DataPart(data={"query": "find dogs", "top_k": 5})]
         )
-        task = EnhancedTask(id="test_task", messages=[message])
+        task = Task(id="test_task", messages=[message])
 
         result = agent.process_enhanced_task(task)
 
@@ -339,12 +336,12 @@ class TestVideoSearchAgent:
             return_value=np.random.rand(128)
         )
 
-        # Create task with video part
-        message = EnhancedA2AMessage(
-            role="user",
-            parts=[VideoPart(video_data=b"fake_video", filename="test.mp4")],
-        )
-        task = EnhancedTask(id="test_task", messages=[message])
+        # Create mock task with video part
+        message = Mock()
+        message.parts = [VideoPart(video_data=b"fake_video", filename="test.mp4")]
+        task = Mock()
+        task.id = "test_task"
+        task.messages = [message]
 
         result = agent.process_enhanced_task(task)
 
@@ -378,12 +375,12 @@ class TestVideoSearchAgent:
             return_value=np.random.rand(128)
         )
 
-        # Create task with image part
-        message = EnhancedA2AMessage(
-            role="user",
-            parts=[ImagePart(image_data=b"fake_image", filename="test.jpg")],
-        )
-        task = EnhancedTask(id="test_task", messages=[message])
+        # Create mock task with image part
+        message = Mock()
+        message.parts = [ImagePart(image_data=b"fake_image", filename="test.jpg")]
+        task = Mock()
+        task.id = "test_task"
+        task.messages = [message]
 
         result = agent.process_enhanced_task(task)
 
@@ -420,16 +417,16 @@ class TestVideoSearchAgent:
             return_value=np.random.rand(128)
         )
 
-        # Create task with multiple parts
-        message = EnhancedA2AMessage(
-            role="user",
-            parts=[
-                DataPart(data={"query": "find cats", "top_k": 3}),
-                VideoPart(video_data=b"fake_video", filename="test.mp4"),
-                ImagePart(image_data=b"fake_image", filename="test.jpg"),
-            ],
-        )
-        task = EnhancedTask(id="test_task", messages=[message])
+        # Create mock task with multiple parts
+        message = Mock()
+        message.parts = [
+            DataPart(data={"query": "find cats", "top_k": 3}),
+            VideoPart(video_data=b"fake_video", filename="test.mp4"),
+            ImagePart(image_data=b"fake_image", filename="test.jpg"),
+        ]
+        task = Mock()
+        task.id = "test_task"
+        task.messages = [message]
 
         result = agent.process_enhanced_task(task)
 
@@ -457,7 +454,7 @@ class TestVideoSearchAgent:
 
         agent = VideoSearchAgent(vespa_url="http://localhost", vespa_port=8080)
 
-        task = EnhancedTask(id="test_task", messages=[])
+        task = Task(id="test_task", messages=[])
 
         with pytest.raises(ValueError, match="Task contains no messages"):
             agent.process_enhanced_task(task)
@@ -482,10 +479,10 @@ class TestVideoSearchAgent:
         agent = VideoSearchAgent(vespa_url="http://localhost", vespa_port=8080)
 
         # Create task with TextPart but no query
-        message = EnhancedA2AMessage(
+        message = A2AMessage(
             role="user", parts=[DataPart(data={"no_query": "invalid"})]
         )
-        task = EnhancedTask(id="test_task", messages=[message])
+        task = Task(id="test_task", messages=[message])
 
         result = agent.process_enhanced_task(task)
 
@@ -584,29 +581,10 @@ class TestDataModels:
         assert image_part.filename == "test.jpg"
         assert image_part.content_type == "image/jpeg"
 
-    def test_enhanced_message_validation(self):
-        """Test EnhancedA2AMessage model validation"""
-        message = EnhancedA2AMessage(
-            role="user",
-            parts=[
-                TextPart(text="test query"),
-                DataPart(data={"key": "value"}),
-                VideoPart(video_data=b"video"),
-                ImagePart(image_data=b"image"),
-            ],
-        )
-
-        assert message.role == "user"
-        assert len(message.parts) == 4
-        assert isinstance(message.parts[0], TextPart)
-        assert isinstance(message.parts[1], DataPart)
-        assert isinstance(message.parts[2], VideoPart)
-        assert isinstance(message.parts[3], ImagePart)
-
     def test_enhanced_task_validation(self):
-        """Test EnhancedTask model validation"""
-        message = EnhancedA2AMessage(role="user", parts=[TextPart(text="test")])
-        task = EnhancedTask(id="test_task", messages=[message])
+        """Test Task model validation"""
+        message = A2AMessage(role="user", parts=[TextPart(text="test")])
+        task = Task(id="test_task", messages=[message])
 
         assert task.id == "test_task"
         assert len(task.messages) == 1
@@ -729,31 +707,6 @@ class TestVideoSearchAgentAdvancedFeatures:
             configured_agent.video_processor.process_image_file.assert_called_with(
                 image_data, f"test.{format_ext}"
             )
-
-    def test_enhanced_search_context_dataclass_validation(self, configured_agent):
-        """Test EnhancedSearchContext dataclass validation"""
-        # Test complete context
-        context = EnhancedSearchContext(
-            original_query="find cats",
-            enhanced_query="find domestic cats playing",
-            entities=[{"text": "cats", "label": "ANIMAL", "confidence": 0.95}],
-            relationships=[
-                {
-                    "type": "ACTION",
-                    "subject": "cats",
-                    "action": "playing",
-                    "confidence": 0.88,
-                }
-            ],
-            routing_metadata={"source": "test", "version": "1.0"},
-            confidence=0.89,
-        )
-
-        assert context.original_query == "find cats"
-        assert context.enhanced_query == "find domestic cats playing"
-        assert len(context.entities) == 1
-        assert len(context.relationships) == 1
-        assert context.confidence == 0.89
 
     @pytest.mark.ci_fast
     def test_relationship_aware_search_params_validation(self, configured_agent):

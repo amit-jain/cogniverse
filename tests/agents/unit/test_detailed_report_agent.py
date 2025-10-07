@@ -78,22 +78,20 @@ def mock_config():
 
 
 @pytest.mark.unit
-@pytest.mark.skip(reason="DetailedVisualAnalysisSignature class removed - test needs update")
 class TestDetailedVisualAnalysisSignature:
     """Test DSPy signature for detailed visual analysis"""
 
     @pytest.mark.ci_fast
     def test_signature_structure(self):
         """Test that the signature has correct fields"""
-        pytest.skip("DetailedVisualAnalysisSignature class removed")
 
 
 @pytest.mark.unit
 class TestVLMInterface:
     """Test VLM interface with DSPy integration"""
 
-    @patch("src.app.agents.detailed_report_agent.get_config")
-    @patch("src.app.agents.detailed_report_agent.dspy.settings")
+    @patch("src.common.vlm_interface.get_config")
+    @patch("src.common.vlm_interface.dspy.settings")
     @pytest.mark.ci_fast
     def test_vlm_interface_initialization_success(
         self, mock_dspy_settings, mock_get_config
@@ -112,7 +110,7 @@ class TestVLMInterface:
         assert vlm.config is not None
         mock_dspy_settings.configure.assert_called_once()
 
-    @patch("src.app.agents.detailed_report_agent.get_config")
+    @patch("src.common.vlm_interface.get_config")
     def test_vlm_interface_initialization_missing_config(self, mock_get_config):
         """Test VLM interface initialization fails with missing config"""
         mock_get_config.return_value = {
@@ -122,9 +120,9 @@ class TestVLMInterface:
         with pytest.raises(ValueError, match="LLM configuration missing"):
             VLMInterface()
 
-    @patch("src.app.agents.detailed_report_agent.get_config")
-    @patch("src.app.agents.detailed_report_agent.dspy.settings")
-    @patch("src.app.agents.detailed_report_agent.dspy.Predict")
+    @patch("src.common.vlm_interface.get_config")
+    @patch("src.common.vlm_interface.dspy.settings")
+    @patch("src.common.vlm_interface.dspy.Predict")
     @pytest.mark.asyncio
     async def test_analyze_visual_content_detailed(
         self, mock_predict, mock_dspy_settings, mock_get_config

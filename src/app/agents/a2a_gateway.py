@@ -476,7 +476,7 @@ if __name__ == "__main__":
         # Create gateway with routing and orchestration
         gateway = create_a2a_gateway(
             routing_config=RoutingConfig(
-                model_name="smollm3:3b",
+                model_name="gemma3:4b",
                 base_url="http://localhost:11434/v1",
                 enable_relationship_extraction=True,
                 enable_query_enhancement=True,

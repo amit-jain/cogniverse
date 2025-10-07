@@ -31,8 +31,8 @@ class TestPhoenixProductionIntegration:
             # Try to connect
             _ = client.get_spans_dataframe(limit=1)
             return True
-        except Exception as e:
-            pytest.skip(f"Phoenix not available: {e}")
+        except Exception:
+            pass
 
     @pytest.fixture
     def storage(self, phoenix_required):

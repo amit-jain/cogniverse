@@ -22,11 +22,11 @@ except ImportError:
     # If Phoenix is not available, provide skip fixtures
     @pytest.fixture(scope="session")
     def phoenix_test_server():
-        pytest.skip("Phoenix not available")
+        pytest.fail("Phoenix not available - install and start Phoenix server")
 
     @pytest.fixture
     def phoenix_client():
-        pytest.skip("Phoenix not available")
+        pytest.fail("Phoenix not available - install and start Phoenix server")
 
 
 @pytest.fixture

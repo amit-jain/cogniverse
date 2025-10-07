@@ -68,7 +68,7 @@ class TestMultiAgentOrchestrator:
     def mock_routing_agent(self):
         """Mock routing agent"""
         mock_agent = Mock()
-        mock_agent.analyze_and_route = AsyncMock(
+        mock_agent.route_query = AsyncMock(
             return_value={
                 "workflow_type": "multi_agent",
                 "agents_to_call": ["video_search", "summarizer"],

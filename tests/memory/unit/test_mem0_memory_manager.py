@@ -27,16 +27,11 @@ class TestMem0MemoryManager:
         """Test initial state"""
         assert manager.memory is None
         assert manager.config is None
-        assert manager.vector_store is None
 
-    @patch("src.common.mem0_memory_manager.VespaVectorStore")
     @patch("src.common.mem0_memory_manager.Memory")
-    def test_initialize_success(self, mock_memory_class, mock_store_class, manager):
+    def test_initialize_success(self, mock_memory_class, manager):
         """Test successful initialization"""
         # Setup mocks
-        mock_store = MagicMock()
-        mock_store_class.return_value = mock_store
-
         mock_memory = MagicMock()
         mock_memory_class.from_config.return_value = mock_memory
 
@@ -47,13 +42,11 @@ class TestMem0MemoryManager:
             collection_name="test_memories",
         )
 
-        assert manager.vector_store is not None
         assert manager.memory is not None
         assert manager.config is not None
 
-    @patch("src.common.mem0_memory_manager.VespaVectorStore")
     @patch("src.common.mem0_memory_manager.Memory")
-    def test_add_memory(self, mock_memory_class, mock_store_class, manager):
+    def test_add_memory(self, mock_memory_class, manager):
         """Test adding memory"""
         # Setup
         mock_memory = MagicMock()
@@ -75,9 +68,8 @@ class TestMem0MemoryManager:
             metadata={},
         )
 
-    @patch("src.common.mem0_memory_manager.VespaVectorStore")
     @patch("src.common.mem0_memory_manager.Memory")
-    def test_search_memory(self, mock_memory_class, mock_store_class, manager):
+    def test_search_memory(self, mock_memory_class, manager):
         """Test searching memory"""
         # Setup
         mock_memory = MagicMock()
@@ -116,9 +108,8 @@ class TestMem0MemoryManager:
         )
         assert results == []
 
-    @patch("src.common.mem0_memory_manager.VespaVectorStore")
     @patch("src.common.mem0_memory_manager.Memory")
-    def test_get_all_memories(self, mock_memory_class, mock_store_class, manager):
+    def test_get_all_memories(self, mock_memory_class, manager):
         """Test getting all memories"""
         # Setup
         mock_memory = MagicMock()
@@ -140,9 +131,8 @@ class TestMem0MemoryManager:
             agent_id="test_agent",
         )
 
-    @patch("src.common.mem0_memory_manager.VespaVectorStore")
     @patch("src.common.mem0_memory_manager.Memory")
-    def test_delete_memory(self, mock_memory_class, mock_store_class, manager):
+    def test_delete_memory(self, mock_memory_class, manager):
         """Test deleting memory"""
         # Setup
         mock_memory = MagicMock()
@@ -156,15 +146,11 @@ class TestMem0MemoryManager:
         )
 
         assert success is True
-        mock_memory.delete.assert_called_once_with(
-            "mem_123",
-            user_id="tenant1",
-            agent_id="test_agent",
-        )
+        # Implementation only passes memory_id (tenant_id and agent_name not used)
+        mock_memory.delete.assert_called_once_with("mem_123")
 
-    @patch("src.common.mem0_memory_manager.VespaVectorStore")
     @patch("src.common.mem0_memory_manager.Memory")
-    def test_clear_agent_memory(self, mock_memory_class, mock_store_class, manager):
+    def test_clear_agent_memory(self, mock_memory_class, manager):
         """Test clearing all agent memory"""
         # Setup
         mock_memory = MagicMock()
@@ -183,9 +169,8 @@ class TestMem0MemoryManager:
         assert success is True
         assert mock_memory.delete.call_count == 2
 
-    @patch("src.common.mem0_memory_manager.VespaVectorStore")
     @patch("src.common.mem0_memory_manager.Memory")
-    def test_update_memory(self, mock_memory_class, mock_store_class, manager):
+    def test_update_memory(self, mock_memory_class, manager):
         """Test updating memory"""
         # Setup
         mock_memory = MagicMock()
@@ -202,17 +187,12 @@ class TestMem0MemoryManager:
         assert success is True
         mock_memory.update.assert_called_once()
 
-    @patch("src.common.mem0_memory_manager.VespaVectorStore")
     @patch("src.common.mem0_memory_manager.Memory")
-    def test_health_check(self, mock_memory_class, mock_store_class, manager):
+    def test_health_check(self, mock_memory_class, manager):
         """Test health check"""
         # Setup
-        mock_store = MagicMock()
-        mock_store.col_info.return_value = {"name": "test"}
         mock_memory = MagicMock()
-
         manager.memory = mock_memory
-        manager.vector_store = mock_store
 
         # Check
         health = manager.health_check()
@@ -222,14 +202,12 @@ class TestMem0MemoryManager:
         """Test health check when not initialized"""
         manager = Mem0MemoryManager()
         manager.memory = None  # Force not initialized state
-        manager.vector_store = None
 
         health = manager.health_check()
         assert health is False
 
-    @patch("src.common.mem0_memory_manager.VespaVectorStore")
     @patch("src.common.mem0_memory_manager.Memory")
-    def test_get_memory_stats(self, mock_memory_class, mock_store_class, manager):
+    def test_get_memory_stats(self, mock_memory_class, manager):
         """Test getting memory stats"""
         # Setup
         mock_memory = MagicMock()

@@ -349,6 +349,7 @@ class TestQueryAnalysisToolV3:
         analyzer = QueryAnalysisToolV3()
 
         confidence = analyzer._calculate_confidence(
+            "show me machine learning videos",  # query
             QueryIntent.SEARCH,  # Clear intent
             QueryComplexity.SIMPLE,  # Simple complexity
             5,  # Many entities
@@ -364,6 +365,7 @@ class TestQueryAnalysisToolV3:
         analyzer = QueryAnalysisToolV3()
 
         confidence = analyzer._calculate_confidence(
+            "complex multimodal analysis query",  # query
             QueryIntent.MULTIMODAL,  # Less clear intent
             QueryComplexity.COMPLEX,  # Complex query
             0,  # No entities
@@ -402,9 +404,16 @@ class TestQueryAnalysisToolV3:
         """Test workflow determination with routing agent integration"""
         mock_get_config.return_value = mock_config
 
-        # Mock routing agent
-        mock_routing_agent = AsyncMock()
-        mock_routing_agent.analyze_and_route.return_value = sample_routing_analysis
+        # Mock routing agent - must return dict with workflow key containing type/agents
+        routing_response = {
+            "workflow": {
+                "type": "detailed_report",
+                "agents": ["video_search", "detailed_report"],
+                "steps": []
+            }
+        }
+        mock_routing_agent = Mock()
+        mock_routing_agent.route_query = AsyncMock(return_value=routing_response)
 
         analyzer = QueryAnalysisToolV3(enable_agent_integration=True)
         analyzer.routing_agent = mock_routing_agent
@@ -419,7 +428,7 @@ class TestQueryAnalysisToolV3:
 
         assert workflow["type"] == "detailed_report"
         assert workflow["agents"] == ["video_search", "detailed_report"]
-        mock_routing_agent.analyze_and_route.assert_called_once()
+        mock_routing_agent.route_query.assert_called_once()
 
     @patch("src.app.agents.query_analysis_tool_v3.get_config")
     @pytest.mark.asyncio

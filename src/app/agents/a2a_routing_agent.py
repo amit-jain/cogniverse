@@ -164,7 +164,11 @@ class A2ARoutingAgent:
             Dictionary of agent responses
         """
         agent_responses = {}
-        execution_plan = routing_analysis.get("execution_plan", [])
+        # Handle both RoutingDecision object and dict for backward compatibility
+        if hasattr(routing_analysis, 'metadata'):
+            execution_plan = routing_analysis.metadata.get("execution_plan", [])
+        else:
+            execution_plan = routing_analysis.get("execution_plan", [])
 
         for step in execution_plan:
             agent_name = step["agent"]
@@ -258,7 +262,11 @@ class A2ARoutingAgent:
         Returns:
             Aggregated final result
         """
-        workflow_type = routing_analysis.get("workflow_type", "raw_results")
+        # Handle both RoutingDecision object and dict for backward compatibility
+        if hasattr(routing_analysis, 'metadata'):
+            workflow_type = routing_analysis.metadata.get("workflow_type", "raw_results")
+        else:
+            workflow_type = routing_analysis.get("workflow_type", "raw_results")
 
         # Collect search results
         search_results = []
@@ -267,10 +275,18 @@ class A2ARoutingAgent:
                 search_results.extend(response["results"])
 
         # Base result structure
+        # Handle both RoutingDecision object and dict for backward compatibility
+        if hasattr(routing_analysis, 'query'):
+            query = routing_analysis.query
+            routing_decision = routing_analysis.recommended_agent
+        else:
+            query = routing_analysis.get("query")
+            routing_decision = routing_analysis.get("routing_decision")
+
         final_result = {
             "workflow_type": workflow_type,
-            "query": routing_analysis.get("query"),
-            "routing_decision": routing_analysis.get("routing_decision"),
+            "query": query,
+            "routing_decision": routing_decision,
             "search_results": search_results,
             "agent_responses": agent_responses,
         }

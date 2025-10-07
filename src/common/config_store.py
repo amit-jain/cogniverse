@@ -219,6 +219,9 @@ class SQLiteConfigStore(ConfigStore):
         Returns:
             ConfigEntry or None if not found
         """
+        # Handle both enum and string scope
+        scope_value = scope.value if isinstance(scope, ConfigScope) else scope
+
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
 
@@ -231,7 +234,7 @@ class SQLiteConfigStore(ConfigStore):
                     FROM current_configurations
                     WHERE tenant_id = ? AND scope = ? AND service = ? AND config_key = ?
                     """,
-                    (tenant_id, scope.value, service, config_key),
+                    (tenant_id, scope_value, service, config_key),
                 )
             else:
                 # Get specific version
@@ -243,7 +246,7 @@ class SQLiteConfigStore(ConfigStore):
                     WHERE tenant_id = ? AND scope = ? AND service = ?
                           AND config_key = ? AND version = ?
                     """,
-                    (tenant_id, scope.value, service, config_key, version),
+                    (tenant_id, scope_value, service, config_key, version),
                 )
 
             row = cursor.fetchone()

@@ -71,10 +71,6 @@ def vespa_container():
         capture_output=True,
         text=True,
     )
-
-    if result.returncode != 0:
-        pytest.skip(f"Failed to start Vespa container: {result.stderr}")
-
     print(f"✅ Vespa container started: {result.stdout.strip()}")
 
     # Wait for Vespa to be ready (up to 120 seconds)
@@ -96,7 +92,7 @@ def vespa_container():
             # Cleanup on failure
             subprocess.run(["docker", "stop", VESPA_CONTAINER_NAME])
             subprocess.run(["docker", "rm", VESPA_CONTAINER_NAME])
-            pytest.skip("Vespa failed to start within 120 seconds")
+            pytest.fail("Vespa failed to start within 120 seconds")
 
         time.sleep(1)
 
@@ -106,7 +102,7 @@ def vespa_container():
         # Cleanup on failure
         subprocess.run(["docker", "stop", VESPA_CONTAINER_NAME])
         subprocess.run(["docker", "rm", VESPA_CONTAINER_NAME])
-        pytest.skip("Failed to deploy schema")
+        pytest.fail("Failed to deploy schema")
 
     print("✅ Schema deployed successfully")
 

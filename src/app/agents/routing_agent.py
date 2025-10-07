@@ -177,6 +177,9 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin):
         self.config = config or RoutingConfig()
         self.logger = logging.getLogger(__name__)
 
+        # Set telemetry flag BEFORE initializing production components
+        self.enable_telemetry = enable_telemetry
+
         # Initialize DSPy 3.0 with local SmolLM
         self._configure_dspy()
 
@@ -204,7 +207,6 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin):
             port=port,
         )
 
-        self.enable_telemetry = enable_telemetry
         self._routing_stats = {
             "total_queries": 0,
             "successful_routes": 0,
@@ -364,6 +366,16 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin):
     def _initialize_production_components(self) -> None:
         """Initialize production-ready components from RoutingAgent"""
         try:
+            # Initialize telemetry manager
+            if self.enable_telemetry:
+                from src.app.telemetry.manager import TelemetryManager
+                from src.app.telemetry.config import TelemetryConfig
+                telemetry_config = TelemetryConfig()
+                self.telemetry_manager = TelemetryManager(config=telemetry_config)
+                self.logger.info("📊 Telemetry manager initialized")
+            else:
+                self.telemetry_manager = None
+
             # Initialize caching
             if self.config.enable_caching:
                 self.cache_manager = ModalityCacheManager(
@@ -435,6 +447,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin):
         except Exception as e:
             self.logger.error(f"Failed to initialize production components: {e}")
             # Set defaults for graceful degradation
+            self.telemetry_manager = None
             self.cache_manager = None
             self.parallel_executor = None
             self.contextual_analyzer = None
@@ -504,140 +517,174 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin):
         self._routing_stats["total_queries"] += 1
         start_time = datetime.now()
 
-        try:
-            # Check cache first (if enabled)
-            if self.cache_manager:
-                from src.app.search.multi_modal_reranker import QueryModality
-                cached_decision = self.cache_manager.get_cached_result(
-                    query=query,
-                    modality=QueryModality.TEXT,  # Use TEXT as default for routing
-                    ttl_seconds=self.config.cache_ttl_seconds
+        # Create telemetry span context manager if available
+        span_context = None
+        if hasattr(self, 'telemetry_manager') and self.telemetry_manager:
+            from src.app.telemetry.config import SERVICE_NAME_ORCHESTRATION
+            self.logger.info(f"Creating telemetry span for user_id: {user_id or 'unknown'}")
+            span_context = self.telemetry_manager.span(
+                "cogniverse.routing",
+                tenant_id=user_id or "unknown",
+                service_name=SERVICE_NAME_ORCHESTRATION  # Use orchestration service for routing spans
+            )
+        else:
+            self.logger.debug("No telemetry manager available, using nullcontext")
+            # Create a dummy context manager that does nothing
+            from contextlib import nullcontext
+            span_context = nullcontext()
+
+        with span_context as span:
+            if span:
+                self.logger.info(f"Telemetry span created successfully: {span}")
+            else:
+                self.logger.warning("Span context returned None - no telemetry span created")
+            try:
+                # Check cache first (if enabled)
+                if self.cache_manager:
+                    from src.app.search.multi_modal_reranker import QueryModality
+                    cached_decision = self.cache_manager.get_cached_result(
+                        query=query,
+                        modality=QueryModality.TEXT,  # Use TEXT as default for routing
+                        ttl_seconds=self.config.cache_ttl_seconds
+                    )
+                    if cached_decision:
+                        self.logger.info(f"Cache hit for query: {query[:50]}...")
+                        return cached_decision
+
+                # Add contextual analysis (if enabled)
+                contextual_insights = None
+                if self.contextual_analyzer and user_id:
+                    contextual_insights = self.contextual_analyzer.get_contextual_hints(
+                        current_query=query
+                    )
+
+                # Phase 2: Extract relationships and entities
+                entities, relationships = await self._extract_relationships(query)
+
+                # Phase 3: Enhance query with relationship context
+                enhanced_query, enhancement_metadata = await self._enhance_query(
+                    query, entities, relationships
                 )
-                if cached_decision:
-                    self.logger.info(f"Cache hit for query: {query[:50]}...")
-                    return cached_decision
 
-            # Add contextual analysis (if enabled)
-            contextual_insights = None
-            if self.contextual_analyzer and user_id:
-                contextual_insights = self.contextual_analyzer.analyze_query_context(
-                    query=query,
-                    user_id=user_id
+                # Phase 1: DSPy-powered routing decision (baseline)
+                baseline_routing_result = await self._make_routing_decision(
+                    original_query=query,
+                    enhanced_query=enhanced_query,
+                    entities=entities,
+                    relationships=relationships,
+                    context=context,
                 )
 
-            # Phase 2: Extract relationships and entities
-            entities, relationships = await self._extract_relationships(query)
+                # Phase 6: Apply GRPO optimization if available
+                optimized_routing_result = await self._apply_grpo_optimization(
+                    query=query,
+                    entities=entities,
+                    relationships=relationships,
+                    enhanced_query=enhanced_query,
+                    baseline_prediction=baseline_routing_result,
+                )
 
-            # Phase 3: Enhance query with relationship context
-            enhanced_query, enhancement_metadata = await self._enhance_query(
-                query, entities, relationships
-            )
+                # Use optimized result if available, otherwise baseline
+                final_routing_result = optimized_routing_result or baseline_routing_result
 
-            # Phase 1: DSPy-powered routing decision (baseline)
-            baseline_routing_result = await self._make_routing_decision(
-                original_query=query,
-                enhanced_query=enhanced_query,
-                entities=entities,
-                relationships=relationships,
-                context=context,
-            )
+                # Determine if orchestration is needed
+                needs_orchestration = self._assess_orchestration_need(
+                    query,
+                    entities,
+                    relationships,
+                    final_routing_result,
+                    require_orchestration,
+                )
 
-            # Phase 6: Apply GRPO optimization if available
-            optimized_routing_result = await self._apply_grpo_optimization(
-                query=query,
-                entities=entities,
-                relationships=relationships,
-                enhanced_query=enhanced_query,
-                baseline_prediction=baseline_routing_result,
-            )
-
-            # Use optimized result if available, otherwise baseline
-            final_routing_result = optimized_routing_result or baseline_routing_result
-
-            # Determine if orchestration is needed
-            needs_orchestration = self._assess_orchestration_need(
-                query,
-                entities,
-                relationships,
-                final_routing_result,
-                require_orchestration,
-            )
-
-            # Create structured routing decision
-            decision = RoutingDecision(
-                query=query,
-                recommended_agent=final_routing_result.get(
-                    "recommended_agent", "video_search_agent"
-                ),
-                confidence=final_routing_result.get("confidence", 0.5),
-                reasoning=final_routing_result.get(
-                    "reasoning", "Default routing decision"
-                ),
-                fallback_agents=self._get_fallback_agents(
-                    final_routing_result.get("recommended_agent")
-                ),
-                enhanced_query=enhanced_query,
-                entities=entities,
-                relationships=relationships,
-                metadata={
-                    **enhancement_metadata,
-                    "processing_time_ms": (datetime.now() - start_time).total_seconds()
-                    * 1000,
-                    "baseline_routing_result": baseline_routing_result,
-                    "optimized_routing_result": optimized_routing_result,
-                    "grpo_applied": optimized_routing_result is not None,
-                    "user_id": user_id,
-                    "needs_orchestration": needs_orchestration,
-                    "orchestration_signals": self._get_orchestration_signals(
-                        query, entities, relationships
+                # Create structured routing decision
+                decision = RoutingDecision(
+                    query=query,
+                    recommended_agent=final_routing_result.get(
+                        "recommended_agent", "video_search_agent"
                     ),
-                },
-            )
-
-            # Update statistics
-            self._update_routing_stats(decision)
-
-            # Cache the decision (if enabled)
-            if self.cache_manager:
-                from src.app.search.multi_modal_reranker import QueryModality
-                self.cache_manager.cache_result(
-                    query=query,
-                    modality=QueryModality.TEXT,
-                    result=decision
+                    confidence=final_routing_result.get("confidence", 0.5),
+                    reasoning=final_routing_result.get(
+                        "reasoning", "Default routing decision"
+                    ),
+                    fallback_agents=self._get_fallback_agents(
+                        final_routing_result.get("recommended_agent")
+                    ),
+                    enhanced_query=enhanced_query,
+                    entities=entities,
+                    relationships=relationships,
+                    metadata={
+                        **enhancement_metadata,
+                        "processing_time_ms": (datetime.now() - start_time).total_seconds()
+                        * 1000,
+                        "baseline_routing_result": baseline_routing_result,
+                        "optimized_routing_result": optimized_routing_result,
+                        "grpo_applied": optimized_routing_result is not None,
+                        "user_id": user_id,
+                        "needs_orchestration": needs_orchestration,
+                        "orchestration_signals": self._get_orchestration_signals(
+                            query, entities, relationships
+                        ),
+                    },
                 )
 
-            # Track metrics (if enabled)
-            if self.metrics_tracker:
-                from src.app.search.multi_modal_reranker import QueryModality
-                self.metrics_tracker.record_routing_metric(
-                    modality=QueryModality.TEXT,
-                    metric_type="routing_confidence",
-                    value=decision.confidence,
-                    metadata={"agent": decision.recommended_agent}
+                # Update statistics
+                self._update_routing_stats(decision)
+
+                # Cache the decision (if enabled)
+                if self.cache_manager:
+                    from src.app.search.multi_modal_reranker import QueryModality
+                    self.cache_manager.cache_result(
+                        query=query,
+                        modality=QueryModality.TEXT,
+                        result=decision
+                    )
+
+                # Track metrics (if enabled)
+                if self.metrics_tracker:
+                    from src.app.search.multi_modal_reranker import QueryModality
+                    self.metrics_tracker.record_modality_execution(
+                        modality=QueryModality.TEXT,
+                        latency_ms=(datetime.now() - start_time).total_seconds() * 1000,
+                        success=True
+                    )
+
+                # Update contextual analyzer (if enabled)
+                if self.contextual_analyzer and user_id:
+                    self.contextual_analyzer.update_context(
+                        query=query,
+                        detected_modalities=[decision.recommended_agent],
+                        result=decision,
+                        result_count=1 if decision.confidence > 0.5 else 0
+                    )
+
+                # Log successful routing
+                self.logger.info(
+                    f"Query routed to {decision.recommended_agent} "
+                    f"(confidence: {decision.confidence:.3f}, "
+                    f"relationships: {len(relationships)}, "
+                    f"enhanced: {'yes' if enhanced_query != query else 'no'})"
                 )
 
-            # Update contextual analyzer (if enabled)
-            if self.contextual_analyzer and user_id:
-                self.contextual_analyzer.add_query_to_history(
-                    query=query,
-                    user_id=user_id,
-                    routing_decision=decision.recommended_agent,
-                    confidence=decision.confidence
-                )
+                # Update telemetry span with final attributes
+                if span and hasattr(span, 'set_attribute'):
+                    self.logger.info("Setting telemetry span attributes")
+                    span.set_attribute("routing.query", query)
+                    span.set_attribute("routing.chosen_agent", decision.recommended_agent)
+                    span.set_attribute("routing.confidence", decision.confidence)
+                    span.set_attribute("routing.processing_time", (datetime.now() - start_time).total_seconds() * 1000)
+                    span.set_attribute("routing.reasoning", decision.reasoning)
+                    span.set_attribute("routing.entities_count", len(entities))
+                    span.set_attribute("routing.relationships_count", len(relationships))
+                    span.set_attribute("routing.enhanced", enhanced_query != query)
+                    self.logger.info(f"Telemetry span attributes set for query: {query[:50]}...")
+                else:
+                    self.logger.warning(f"Cannot set span attributes - span={span}, has_set_attribute={hasattr(span, 'set_attribute') if span else False}")
 
-            # Log successful routing
-            self.logger.info(
-                f"Query routed to {decision.recommended_agent} "
-                f"(confidence: {decision.confidence:.3f}, "
-                f"relationships: {len(relationships)}, "
-                f"enhanced: {'yes' if enhanced_query != query else 'no'})"
-            )
+                return decision
 
-            return decision
-
-        except Exception as e:
-            self.logger.error(f"Routing failed for query '{query}': {e}")
-            return self._create_fallback_decision(query, str(e))
+            except Exception as e:
+                self.logger.error(f"Routing failed for query '{query}': {e}")
+                return self._create_fallback_decision(query, str(e))
 
     async def _extract_relationships(
         self, query: str

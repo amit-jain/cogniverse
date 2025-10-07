@@ -59,36 +59,23 @@ class TestRelationshipExtractionTool:
 
     def test_tool_initialization(self):
         """Test relationship extraction tool can be initialized"""
-        try:
-            tool = RelationshipExtractorTool()
-            assert tool is not None
-            assert hasattr(tool, "config")
-        except Exception:
-            # Tool may require spacy models that aren't available in CI
-            pytest.skip("RelationshipExtractorTool requires spacy models")
+        tool = RelationshipExtractorTool()
+        assert tool is not None
+        # Tool should be usable even without spaCy models
+        assert hasattr(tool, "extract_comprehensive_relationships")
 
     @pytest.mark.asyncio
     async def test_extract_relationships_basic(self):
         """Test basic relationship extraction"""
-        try:
-            tool = RelationshipExtractorTool()
+        tool = RelationshipExtractorTool()
 
-            # Mock the actual extraction to avoid model dependencies
-            with patch.object(
-                tool,
-                "_extract_with_spacy",
-                return_value=[
-                    {"subject": "person", "relation": "performs", "object": "action"}
-                ],
-            ):
-                result = await tool.extract_relationships(
-                    "A person performs an action", []
-                )
-                assert isinstance(result, list)
-                assert len(result) >= 0
-
-        except Exception:
-            pytest.skip("RelationshipExtractorTool requires dependencies")
+        # Test with actual extraction (no mocking - it should handle missing models gracefully)
+        result = await tool.extract_comprehensive_relationships(
+            "A person performs an action"
+        )
+        assert isinstance(result, dict)
+        assert "entities" in result
+        assert "relationships" in result
 
 
 class TestQueryEnhancementPipeline:
@@ -96,29 +83,19 @@ class TestQueryEnhancementPipeline:
 
     def test_pipeline_initialization(self):
         """Test query enhancement pipeline initialization"""
-        try:
-            pipeline = QueryEnhancementPipeline()
-            assert pipeline is not None
-            assert hasattr(pipeline, "config")
-        except Exception:
-            pytest.skip("QueryEnhancementPipeline requires dependencies")
+        pipeline = QueryEnhancementPipeline()
+        assert pipeline is not None
+        assert hasattr(pipeline, "enhance_query_with_relationships")
 
     @pytest.mark.asyncio
     async def test_enhance_query_basic(self):
         """Test basic query enhancement"""
-        try:
-            pipeline = QueryEnhancementPipeline()
+        pipeline = QueryEnhancementPipeline()
 
-            # Mock enhancement to avoid model dependencies
-            with patch.object(
-                pipeline, "_enhance_with_context", return_value="enhanced query"
-            ):
-                result = await pipeline.enhance_query("original query", [], [])
-                assert isinstance(result, dict)
-                assert "enhanced_query" in result
-
-        except Exception:
-            pytest.skip("QueryEnhancementPipeline requires dependencies")
+        # Test with actual enhancement (should handle gracefully)
+        result = await pipeline.enhance_query_with_relationships("original query")
+        assert isinstance(result, dict)
+        assert "enhanced_query" in result
 
 
 class TestAdaptiveThresholdLearner:
@@ -162,6 +139,11 @@ class TestAdaptiveThresholdLearner:
 class TestAdvancedRoutingOptimizer:
     """Test advanced routing optimizer"""
 
+    @pytest.fixture
+    def temp_storage(self, tmp_path):
+        """Provide temporary storage directory for optimizer"""
+        return str(tmp_path / "test_optimizer")
+
     def test_config_creation(self):
         """Test optimizer configuration"""
         config = AdvancedOptimizerConfig()
@@ -169,20 +151,20 @@ class TestAdvancedRoutingOptimizer:
         assert config.batch_size > 0
         assert config.optimizer_strategy is not None
 
-    def test_optimizer_initialization(self):
+    def test_optimizer_initialization(self, temp_storage):
         """Test optimizer initialization"""
         config = AdvancedOptimizerConfig(min_experiences_for_training=100)
-        optimizer = AdvancedRoutingOptimizer(config)
+        optimizer = AdvancedRoutingOptimizer(config, storage_dir=temp_storage)
 
         assert optimizer.config == config
         assert len(optimizer.experiences) == 0
         assert optimizer.training_step == 0
 
     @pytest.mark.asyncio
-    async def test_record_experience(self):
+    async def test_record_experience(self, temp_storage):
         """Test recording routing experience"""
         config = AdvancedOptimizerConfig(min_experiences_for_training=100)
-        optimizer = AdvancedRoutingOptimizer(config)
+        optimizer = AdvancedRoutingOptimizer(config, storage_dir=temp_storage)
 
         reward = await optimizer.record_routing_experience(
             query="test query",
@@ -199,10 +181,10 @@ class TestAdvancedRoutingOptimizer:
         assert 0 <= reward <= 1
         assert len(optimizer.experiences) == 1
 
-    def test_get_optimization_status(self):
+    def test_get_optimization_status(self, temp_storage):
         """Test getting optimization status"""
         config = AdvancedOptimizerConfig()
-        optimizer = AdvancedRoutingOptimizer(config)
+        optimizer = AdvancedRoutingOptimizer(config, storage_dir=temp_storage)
 
         status = optimizer.get_optimization_status()
         assert isinstance(status, dict)
@@ -215,72 +197,59 @@ class TestDSPyRouterModules:
 
     def test_entity_extractor_module(self):
         """Test DSPy entity extractor module"""
-        try:
-            module = DSPyEntityExtractorModule()
-            assert module is not None
-            assert hasattr(module, "forward")
-        except Exception:
-            pytest.skip("DSPyEntityExtractorModule requires DSPy setup")
+        module = DSPyEntityExtractorModule()
+        assert module is not None
+        assert hasattr(module, "forward")
 
     def test_relationship_extractor_module(self):
         """Test DSPy relationship extractor module"""
-        try:
-            module = DSPyRelationshipExtractorModule()
-            assert module is not None
-            assert hasattr(module, "forward")
-        except Exception:
-            pytest.skip("DSPyRelationshipExtractorModule requires DSPy setup")
+        module = DSPyRelationshipExtractorModule()
+        assert module is not None
+        assert hasattr(module, "forward")
 
 
 class TestDSPyRoutingIntegration:
     """Test integration between DSPy routing components"""
 
     @pytest.mark.asyncio
-    async def test_component_interaction(self):
+    async def test_component_interaction(self, tmp_path):
         """Test basic interaction between components"""
-        try:
-            # Initialize components
-            extractor = RelationshipExtractorTool()
-            pipeline = QueryEnhancementPipeline()
-            AdaptiveThresholdLearner()  # Create but don't assign to unused variable
-            optimizer = AdvancedRoutingOptimizer(
-                AdvancedOptimizerConfig(min_experiences_for_training=10)
-            )
+        # Initialize components with temporary storage
+        extractor = RelationshipExtractorTool()
+        pipeline = QueryEnhancementPipeline()
+        AdaptiveThresholdLearner()  # Create but don't assign to unused variable
+        optimizer = AdvancedRoutingOptimizer(
+            AdvancedOptimizerConfig(min_experiences_for_training=10),
+            storage_dir=str(tmp_path / "test_optimizer")
+        )
 
-            # Mock interactions to avoid model dependencies
-            with patch.object(extractor, "extract_relationships", return_value=[]):
-                with patch.object(
-                    pipeline, "enhance_query", return_value={"enhanced_query": "test"}
-                ):
+        # Test real interactions (components handle missing models gracefully)
+        # Extract relationships
+        extract_result = await extractor.extract_comprehensive_relationships(
+            "test query"
+        )
 
-                    # Test that components can work together
-                    entities = []
-                    relationships = await extractor.extract_relationships(
-                        "test query", entities
-                    )
-                    enhanced = await pipeline.enhance_query(
-                        "test query", entities, relationships
-                    )
+        # Enhance query
+        enhanced = await pipeline.enhance_query_with_relationships(
+            "test query"
+        )
 
-                    assert isinstance(relationships, list)
-                    assert isinstance(enhanced, dict)
+        assert isinstance(extract_result, dict)
+        assert isinstance(enhanced, dict)
 
-                    # Test optimizer recording
-                    await optimizer.record_routing_experience(
-                        query="test query",
-                        entities=entities,
-                        relationships=relationships,
-                        enhanced_query=enhanced.get("enhanced_query", "test"),
-                        chosen_agent="test_agent",
-                        routing_confidence=0.8,
-                        search_quality=0.7,
-                        agent_success=True,
-                    )
+        # Test optimizer recording
+        await optimizer.record_routing_experience(
+            query="test query",
+            entities=[],
+            relationships=[],
+            enhanced_query=enhanced.get("enhanced_query", "test"),
+            chosen_agent="test_agent",
+            routing_confidence=0.8,
+            search_quality=0.7,
+            agent_success=True,
+        )
 
-                    assert len(optimizer.experiences) == 1
-
-        except Exception:
-            pytest.skip("Component integration requires dependencies")
+        assert len(optimizer.experiences) == 1
 
 
 if __name__ == "__main__":

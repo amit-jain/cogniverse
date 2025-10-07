@@ -1,30 +1,43 @@
 """
-Unit tests for Phase 12 integration in RoutingAgent:
+Unit tests for cache and metrics integration in RoutingAgent:
 - Cache checking and storing
 - Metrics tracking
-- Helper methods
+- Production components
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.app.agents.routing_agent import RoutingAgent
+from src.app.agents.routing_agent import RoutingAgent, RoutingConfig
 from src.app.search.multi_modal_reranker import QueryModality
 
 
 class TestRoutingAgentCacheMetrics:
     """Test cache and metrics integration in RoutingAgent"""
 
-    @pytest.fixture
+    @pytest.fixture(scope="class")
     def routing_agent(self):
-        """Create routing agent with mocked dependencies"""
-        with patch("src.app.agents.routing_agent.get_config") as mock_config:
-            mock_config.return_value = {
-                "video_agent_url": "http://localhost:8002",
-                "optimization_dir": "/tmp/optimization",
-            }
-            agent = RoutingAgent()
+        """Create routing agent with test configuration"""
+        # Create minimal config for testing
+        config = RoutingConfig(
+            enable_caching=True,
+            enable_metrics_tracking=True,
+            enable_parallel_execution=True,
+            enable_contextual_analysis=True,
+            enable_memory=False,  # Disabled for unit tests
+            enable_mlflow_tracking=False,  # Disabled for unit tests
+            enable_advanced_optimization=False,  # Disabled for unit tests
+            enable_relationship_extraction=False,  # Disabled for faster tests
+            enable_query_enhancement=False,  # Disabled for faster tests
+        )
+
+        # Mock all external dependencies to avoid network calls and delays
+        # Use patch.object for dspy.settings.configure to avoid attribute cleanup issues
+        with patch.object(RoutingAgent, "_configure_dspy", return_value=None), \
+             patch("src.app.agents.dspy_a2a_agent_base.FastAPI"), \
+             patch("src.app.agents.dspy_a2a_agent_base.A2AClient"):
+            agent = RoutingAgent(config=config, port=8001, enable_telemetry=False)
             yield agent
 
     def test_cache_metrics_components_initialized(self, routing_agent):
@@ -39,223 +52,143 @@ class TestRoutingAgentCacheMetrics:
         assert routing_agent.lazy_executor is not None
         assert routing_agent.metrics_tracker is not None
 
-    def test_detect_primary_modality_video(self, routing_agent):
-        """Test video modality detection"""
-        query = "show me machine learning videos"
-        modality = routing_agent._detect_primary_modality_from_query(query)
-        assert modality == QueryModality.VIDEO
-
-    def test_detect_primary_modality_image(self, routing_agent):
-        """Test image modality detection"""
-        query = "find diagram of neural network"
-        modality = routing_agent._detect_primary_modality_from_query(query)
-        assert modality == QueryModality.IMAGE
-
-    def test_detect_primary_modality_audio(self, routing_agent):
-        """Test audio modality detection"""
-        query = "listen to podcast about AI"
-        modality = routing_agent._detect_primary_modality_from_query(query)
-        assert modality == QueryModality.AUDIO
-
-    def test_detect_primary_modality_document(self, routing_agent):
-        """Test document modality detection"""
-        query = "read research papers on deep learning"
-        modality = routing_agent._detect_primary_modality_from_query(query)
-        assert modality == QueryModality.DOCUMENT
-
-    def test_detect_primary_modality_default_text(self, routing_agent):
-        """Test default text modality"""
-        query = "what is machine learning"
-        modality = routing_agent._detect_primary_modality_from_query(query)
-        assert modality == QueryModality.TEXT
 
     @pytest.mark.asyncio
     async def test_cache_hit_returns_cached_result(self, routing_agent):
         """Test that cache hit returns cached result without processing"""
         query = "machine learning videos"
-        cached_result = {
-            "query": query,
-            "routing_decision": {"agent": "video_search_agent"},
-            "workflow_type": "single",
-        }
 
-        # Pre-populate cache
-        routing_agent.cache_manager.cache_result(
-            query, QueryModality.VIDEO, cached_result
+        # Create a RoutingDecision to cache
+        from src.app.agents.routing_agent import RoutingDecision
+        from datetime import datetime
+
+        cached_decision = RoutingDecision(
+            query=query,
+            recommended_agent="video_search_agent",
+            confidence=0.9,
+            reasoning="Cached routing decision",
+            enhanced_query=query,
+            entities=[],
+            relationships=[],
+            metadata={"cached": True},
+            timestamp=datetime.now()
         )
 
-        # Mock router to ensure it's not called
-        routing_agent.router.route = AsyncMock()
+        # Pre-populate cache (routing uses TEXT modality by default)
+        routing_agent.cache_manager.cache_result(
+            query, QueryModality.TEXT, cached_decision
+        )
 
-        # Call analyze_and_route
-        result = await routing_agent.analyze_and_route(query)
+        # Mock the routing module to ensure it's not called on cache hit
+        with patch.object(routing_agent.routing_module, 'forward') as mock_forward:
+            # Call route_query
+            result = await routing_agent.route_query(query)
 
-        # Verify cached result was returned
-        assert result == cached_result
+            # Verify cached result was returned
+            assert result.query == cached_decision.query
+            assert result.recommended_agent == cached_decision.recommended_agent
+            assert result.confidence == cached_decision.confidence
 
-        # Verify router was not called (cache hit)
-        routing_agent.router.route.assert_not_called()
+            # Verify routing module was not called (cache hit)
+            mock_forward.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_cache_miss_processes_query(self, routing_agent):
         """Test that cache miss processes query normally"""
         query = "deep learning tutorials"
 
-        # Mock query expander
-        routing_agent.query_expander.expand_query = AsyncMock(
-            return_value={"modality_intent": ["video"], "temporal": {}}
-        )
+        # Mock the routing module to return a prediction
+        mock_prediction = MagicMock()
+        mock_prediction.recommended_agent = "video_search_agent"
+        mock_prediction.confidence = 0.9
+        mock_prediction.reasoning = "Test routing decision"
+        mock_prediction.primary_intent = "search"
+        mock_prediction.complexity_score = 0.5
 
-        # Mock cross modal optimizer
-        routing_agent.cross_modal_optimizer.get_fusion_recommendations = MagicMock(
-            return_value=None
-        )
+        with patch.object(routing_agent.routing_module, 'forward', return_value=mock_prediction):
+            # Call route_query
+            result = await routing_agent.route_query(query)
 
-        # Mock router
-        mock_decision = MagicMock()
-        mock_decision.requires_orchestration = False
-        mock_decision.search_modality = QueryModality.VIDEO
-        mock_decision.confidence_score = 0.9
-        mock_decision.routing_method = "fast_path"
-        mock_decision.detected_modalities = ["video"]
-        mock_decision.to_dict = MagicMock(return_value={"agent": "video_search_agent"})
-        routing_agent.router.route = AsyncMock(return_value=mock_decision)
+            # Verify routing was performed
+            assert result.query == query
+            assert result.recommended_agent == "video_search_agent"
+            assert result.confidence > 0
 
-        # Mock contextual analyzer
-        routing_agent.contextual_analyzer.update_context = MagicMock()
-        routing_agent.contextual_analyzer.get_contextual_hints = MagicMock(
-            return_value=[]
-        )
-
-        # Call analyze_and_route
-        result = await routing_agent.analyze_and_route(query)
-
-        # Verify router was called
-        routing_agent.router.route.assert_called_once()
-
-        # Verify result was cached - check all modalities to see where it was cached
-        for modality in QueryModality:
-            cached = routing_agent.cache_manager.get_cached_result(query, modality)
-            if cached:
-                # Found it - verify it matches
-                assert cached is not None
-                return
-
-        # If we get here, nothing was cached
-        assert (
-            False
-        ), f"Result was not cached in any modality. Result keys: {result.keys() if result else 'None'}"
+            # Verify result was cached (routing uses TEXT modality by default)
+            cached = routing_agent.cache_manager.get_cached_result(query, QueryModality.TEXT)
+            assert cached is not None
+            assert cached.query == result.query
+            assert cached.recommended_agent == result.recommended_agent
 
     @pytest.mark.asyncio
     async def test_metrics_tracked_on_success(self, routing_agent):
         """Test that metrics are tracked on successful execution"""
         query = "machine learning"
 
-        # Mock router
-        mock_decision = MagicMock()
-        mock_decision.requires_orchestration = False
-        mock_decision.search_modality = QueryModality.VIDEO  # Use actual enum
-        mock_decision.confidence_score = 0.9
-        mock_decision.routing_method = "fast_path"
-        mock_decision.detected_modalities = ["video"]
-        mock_decision.to_dict = MagicMock(return_value={"agent": "video_search_agent"})
+        # Mock the routing module
+        mock_prediction = MagicMock()
+        mock_prediction.recommended_agent = "video_search_agent"
+        mock_prediction.confidence = 0.9
+        mock_prediction.reasoning = "Test routing decision"
+        mock_prediction.primary_intent = "search"
+        mock_prediction.complexity_score = 0.5
 
-        routing_agent.router.route = AsyncMock(return_value=mock_decision)
+        with patch.object(routing_agent.routing_module, 'forward', return_value=mock_prediction):
+            # Call route_query
+            await routing_agent.route_query(query)
 
-        # Call analyze_and_route
-        await routing_agent.analyze_and_route(query)
-
-        # Verify metrics were recorded
-        stats = routing_agent.metrics_tracker.get_summary_stats()
-        assert stats["total_requests"] > 0
+            # Verify metrics were recorded
+            stats = routing_agent.metrics_tracker.get_summary_stats()
+            assert stats["total_requests"] > 0
 
     @pytest.mark.asyncio
     async def test_metrics_tracked_on_failure(self, routing_agent):
         """Test that metrics are tracked on failed execution"""
         query = "test query"
 
-        # Mock router to raise exception
-        routing_agent.router.route = AsyncMock(side_effect=Exception("Router failed"))
+        # Mock routing module to raise exception
+        with patch.object(routing_agent.routing_module, 'forward', side_effect=Exception("Routing failed")):
+            # Call route_query (should not raise, returns fallback decision)
+            result = await routing_agent.route_query(query)
 
-        # Call analyze_and_route (should raise)
-        with pytest.raises(Exception):
-            await routing_agent.analyze_and_route(query)
+            # Verify fallback decision was returned
+            assert result is not None
+            assert result.query == query
 
-        # Verify error metrics were recorded
-        stats = routing_agent.metrics_tracker.get_summary_stats()
-        assert stats["total_requests"] > 0
+            # Routing stats are still tracked even on failure
+            stats = routing_agent.get_routing_statistics()
+            assert stats["total_queries"] > 0
 
     @pytest.mark.asyncio
     async def test_cache_stores_result_after_processing(self, routing_agent):
         """Test that result is cached after processing"""
         query = "neural networks"
 
-        # Ensure cache is empty
+        # Ensure cache is empty (routing uses TEXT modality by default)
         cached = routing_agent.cache_manager.get_cached_result(
-            query, QueryModality.VIDEO
+            query, QueryModality.TEXT
         )
         assert cached is None
 
-        # Mock query expander
-        routing_agent.query_expander.expand_query = AsyncMock(
-            return_value={"modality_intent": ["video"], "temporal": {}}
-        )
+        # Mock the routing module
+        mock_prediction = MagicMock()
+        mock_prediction.recommended_agent = "video_search_agent"
+        mock_prediction.confidence = 0.9
+        mock_prediction.reasoning = "Test routing decision"
+        mock_prediction.primary_intent = "search"
+        mock_prediction.complexity_score = 0.5
 
-        # Mock cross modal optimizer
-        routing_agent.cross_modal_optimizer.get_fusion_recommendations = MagicMock(
-            return_value=None
-        )
+        with patch.object(routing_agent.routing_module, 'forward', return_value=mock_prediction):
+            # Process query
+            result = await routing_agent.route_query(query)
 
-        # Mock router
-        mock_decision = MagicMock()
-        mock_decision.requires_orchestration = False
-        mock_decision.search_modality = QueryModality.VIDEO
-        mock_decision.confidence_score = 0.9
-        mock_decision.routing_method = "fast_path"
-        mock_decision.detected_modalities = ["video"]
-        mock_decision.to_dict = MagicMock(return_value={"agent": "video_search_agent"})
-        routing_agent.router.route = AsyncMock(return_value=mock_decision)
+            # Verify result was cached (routing uses TEXT modality by default)
+            cached = routing_agent.cache_manager.get_cached_result(query, QueryModality.TEXT)
+            assert cached is not None
+            assert cached.query == result.query
+            assert cached.recommended_agent == result.recommended_agent
+            assert cached.confidence == result.confidence
 
-        # Mock contextual analyzer
-        routing_agent.contextual_analyzer.update_context = MagicMock()
-        routing_agent.contextual_analyzer.get_contextual_hints = MagicMock(
-            return_value=[]
-        )
-
-        # Process query
-        result = await routing_agent.analyze_and_route(query)
-
-        # Verify result was cached - check all modalities
-        for modality in QueryModality:
-            cached = routing_agent.cache_manager.get_cached_result(query, modality)
-            if cached:
-                # Found it - verify it matches
-                assert cached == result
-                return
-
-        # If we get here, nothing was cached
-        assert (
-            False
-        ), f"Result was not cached in any modality. Result keys: {result.keys() if result else 'None'}"
-
-    def test_modality_detection_case_insensitive(self, routing_agent):
-        """Test modality detection is case insensitive"""
-        queries = [
-            "SHOW ME VIDEOS",
-            "Show Me Videos",
-            "show me videos",
-        ]
-
-        for query in queries:
-            modality = routing_agent._detect_primary_modality_from_query(query)
-            assert modality == QueryModality.VIDEO
-
-    def test_modality_detection_with_multiple_keywords(self, routing_agent):
-        """Test modality detection prioritizes first match"""
-        # Video keyword appears first
-        query = "watch this video and read the document"
-        modality = routing_agent._detect_primary_modality_from_query(query)
-        assert modality == QueryModality.VIDEO
 
 
 if __name__ == "__main__":

@@ -840,7 +840,7 @@ class QueryAnalysisToolV3(DSPyQueryAnalysisMixin):
         # Use routing agent if available
         if self.routing_agent and self.enable_agent_integration:
             try:
-                routing_analysis = await self.routing_agent.analyze_and_route(
+                routing_analysis = await self.routing_agent.route_query(
                     query, context={"thinking_phase": thinking_phase}
                 )
 

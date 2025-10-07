@@ -91,3 +91,9 @@ site/
 # Database and backup files
 *.db
 *.bak
+
+# Test artifacts
+failing_test_files.txt
+
+# MLflow
+mlruns/

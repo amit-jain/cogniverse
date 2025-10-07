@@ -71,7 +71,7 @@ class RoutingConfig:
     llm_config: dict[str, Any] = field(
         default_factory=lambda: {
             "provider": "local",  # "local", "modal", "langextract"
-            "model": "smollm3:3b",  # SmolLM3-3B as recommended
+            "model": "gemma3:4b",  # SmolLM3-3B as recommended
             "endpoint": "http://localhost:11434",
             "temperature": 0.1,
             "max_tokens": 150,
@@ -383,7 +383,7 @@ def create_example_config(filepath: Path = Path("configs/routing_config_example.
     # Add some example customizations
     config.routing_mode = "tiered"
     config.gliner_config["model"] = "urchade/gliner_large-v2.1"
-    config.llm_config["model"] = "smollm3:3b"
+    config.llm_config["model"] = "gemma3:4b"
     config.optimization_config["enable_auto_optimization"] = True
 
     config.save(filepath)

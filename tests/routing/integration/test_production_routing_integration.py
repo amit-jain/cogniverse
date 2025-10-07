@@ -47,18 +47,14 @@ class TestProductionRoutingIntegration:
         return LazyModalityExecutor()
 
     @pytest.fixture
-    async def routing_agent(self):
-        """Create routing agent with mocked config"""
-        with patch("src.app.agents.routing_agent.get_config") as mock_config:
-            mock_config.return_value = {
-                "video_agent_url": "http://localhost:8002",
-                "text_agent_url": "http://localhost:8003",
-                "summarizer_agent_url": "http://localhost:8004",
-                "detailed_report_agent_url": "http://localhost:8005",
-                "optimization_dir": "/tmp/optimization",
-            }
-            agent = RoutingAgent()
-            yield agent
+    async def comprehensive_router(self):
+        """Create comprehensive router for testing"""
+        from src.app.routing.router import ComprehensiveRouter
+        from src.app.routing.config import RoutingConfig
+
+        config = RoutingConfig()
+        router = ComprehensiveRouter(config)
+        yield router
 
     async def test_parallel_execution_real_workflow(
         self, parallel_executor, metrics_tracker
@@ -279,7 +275,7 @@ class TestProductionRoutingIntegration:
         assert video_stats["error_breakdown"]["timeout"] == 1
 
     async def test_complete_production_workflow_with_routing_agent(
-        self, routing_agent, cache_manager, parallel_executor, lazy_executor
+        self, comprehensive_router, cache_manager, parallel_executor, lazy_executor
     ):
         """Test complete workflow: routing → parallel execution → caching → metrics"""
 
@@ -298,7 +294,7 @@ class TestProductionRoutingIntegration:
         query = "machine learning videos"
         context = {"tenant_id": "test-tenant"}
 
-        decision = await routing_agent.router.route(query, context)
+        decision = await comprehensive_router.route(query, context)
 
         # Verify decision
         assert decision is not None

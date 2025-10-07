@@ -18,6 +18,7 @@ from collections import defaultdict
 sys.path.append(str(Path(__file__).parent.parent))
 
 from src.app.search.service import SearchService
+from src.backends.vespa.vespa_search_client import VespaVideoSearchClient
 from src.common.config_utils import get_config
 
 # Setup logging with more verbose output

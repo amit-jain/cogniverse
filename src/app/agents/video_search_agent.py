@@ -21,13 +21,13 @@ from src.app.agents.memory_aware_mixin import MemoryAwareMixin
 from src.app.agents.query_encoders import QueryEncoderFactory
 from src.backends.vespa.vespa_search_client import VespaVideoSearchClient
 from src.common.config_utils import get_config
-from src.tools.a2a_utils import DataPart, TextPart
+from src.tools.a2a_utils import A2AMessage, DataPart, TextPart
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class EnhancedSearchContext:
+class SearchContext:
     """Context for relationship-aware video search"""
 
     original_query: str
@@ -79,24 +79,6 @@ class ImagePart(BaseModel):
     image_data: bytes = Field(..., description="Raw image file bytes")
     filename: Optional[str] = Field(None, description="Original filename")
     content_type: Optional[str] = Field(None, description="MIME type")
-
-
-class EnhancedA2AMessage(BaseModel):
-    """Enhanced A2A message supporting multimedia content"""
-
-    role: str
-    parts: List[
-        Annotated[
-            Union[TextPart, DataPart, VideoPart, ImagePart], Field(discriminator="type")
-        ]
-    ]
-
-
-class EnhancedTask(BaseModel):
-    """Enhanced task supporting multimedia content"""
-
-    id: str
-    messages: List[EnhancedA2AMessage]
 
 
 # --- Video Processing Components ---
@@ -587,7 +569,7 @@ class VideoSearchAgent(MemoryAwareMixin):
 
             raise
 
-    def process_enhanced_task(self, task: EnhancedTask) -> Dict[str, Any]:
+    def process_enhanced_task(self, task: Dict[str, Any]) -> Dict[str, Any]:
         """
         Process enhanced A2A task with multimedia support.
 
@@ -677,7 +659,7 @@ class VideoSearchAgent(MemoryAwareMixin):
         )
 
         # Create enhanced search context
-        search_context = EnhancedSearchContext(
+        search_context = SearchContext(
             original_query=routing_decision.routing_metadata.get("original_query", ""),
             enhanced_query=routing_decision.enhanced_query,
             entities=routing_decision.extracted_entities,
@@ -692,7 +674,7 @@ class VideoSearchAgent(MemoryAwareMixin):
         )
 
     def search_with_relationship_context(
-        self, context: EnhancedSearchContext, top_k: int = 10, **kwargs
+        self, context: SearchContext, top_k: int = 10, **kwargs
     ) -> Dict[str, Any]:
         """
         Perform relationship-aware video search with enhanced context.
@@ -769,7 +751,7 @@ class VideoSearchAgent(MemoryAwareMixin):
             return self._fallback_search(context.original_query, top_k, **kwargs)
 
     def _build_enhanced_search_params(
-        self, context: EnhancedSearchContext, top_k: int, **kwargs
+        self, context: SearchContext, top_k: int, **kwargs
     ) -> RelationshipAwareSearchParams:
         """Build enhanced search parameters from relationship context"""
 
@@ -790,7 +772,7 @@ class VideoSearchAgent(MemoryAwareMixin):
     def _enhance_results_with_relationships(
         self,
         raw_results: List[Dict[str, Any]],
-        context: EnhancedSearchContext,
+        context: SearchContext,
         search_params: RelationshipAwareSearchParams,
     ) -> List[Dict[str, Any]]:
         """Enhance search results with relationship context and scoring"""
@@ -1096,7 +1078,7 @@ async def get_agent_card():
 
 
 @app.post("/process")
-async def process_task(task: EnhancedTask):
+async def process_task(task: Dict[str, Any]):
     """Process enhanced search task"""
     if not enhanced_video_agent:
         raise HTTPException(status_code=503, detail="Agent not initialized")
@@ -1171,7 +1153,7 @@ async def enhanced_search(params: RelationshipAwareSearchParams):
 
     try:
         # Create search context from parameters
-        search_context = EnhancedSearchContext(
+        search_context = SearchContext(
             original_query=params.original_query or params.query,
             enhanced_query=params.enhanced_query or params.query,
             entities=params.entities,
@@ -1261,8 +1243,8 @@ async def handle_enhanced_a2a_task(task: dict):
 
         # Handle standard enhanced A2A task
         else:
-            enhanced_task = EnhancedTask(**task)
-            return enhanced_video_agent.process_enhanced_task(enhanced_task)
+            # Process task directly as dict
+            return enhanced_video_agent.process_enhanced_task(task)
 
     except Exception as e:
         logger.error(f"Enhanced A2A task processing failed: {e}")
