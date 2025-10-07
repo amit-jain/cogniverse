@@ -10,11 +10,9 @@ Tests real workflows with actual components (no mocked internal logic).
 
 import asyncio
 import time
-from unittest.mock import patch
 
 import pytest
 
-from src.app.agents.routing_agent import RoutingAgent
 from src.app.routing.lazy_executor import LazyModalityExecutor
 from src.app.routing.modality_cache import ModalityCacheManager
 from src.app.routing.parallel_executor import ParallelAgentExecutor
@@ -49,8 +47,8 @@ class TestProductionRoutingIntegration:
     @pytest.fixture
     async def comprehensive_router(self):
         """Create comprehensive router for testing"""
-        from src.app.routing.router import ComprehensiveRouter
         from src.app.routing.config import RoutingConfig
+        from src.app.routing.router import ComprehensiveRouter
 
         config = RoutingConfig()
         router = ComprehensiveRouter(config)

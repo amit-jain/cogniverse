@@ -19,7 +19,6 @@ import requests
 from vespa.package import ApplicationPackage
 
 from src.app.agents.memory_aware_mixin import MemoryAwareMixin
-from src.backends.vespa.vespa_schema_manager import VespaSchemaManager
 from src.common.mem0_memory_manager import Mem0MemoryManager
 
 VESPA_CONTAINER_NAME = "vespa-memory-standalone"
@@ -146,6 +145,7 @@ def deploy_schema():
 
         # Load and parse JSON schema
         import json
+
         from src.backends.vespa.json_schema_parser import JsonSchemaParser
 
         with open(schema_path, 'r') as f:

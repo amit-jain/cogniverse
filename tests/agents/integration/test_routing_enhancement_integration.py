@@ -11,10 +11,16 @@ from src.app.agents.agent_orchestrator import (
     ProcessingRequest,
     ProcessingResult,
 )
+from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
 from src.app.agents.result_aggregator import (
     AggregatedResult,
     AggregationRequest,
     ResultAggregator,
+)
+from src.app.agents.result_enhancement_engine import (
+    EnhancedResult,
+    EnhancementContext,
+    ResultEnhancementEngine,
 )
 
 # Phase 4 imports
@@ -22,12 +28,6 @@ from src.app.agents.routing_agent import RoutingAgent, RoutingDecision
 
 # Phase 5 imports
 from src.app.agents.video_search_agent import VideoSearchAgent
-from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
-from src.app.agents.result_enhancement_engine import (
-    EnhancedResult,
-    EnhancementContext,
-    ResultEnhancementEngine,
-)
 
 
 @pytest.mark.integration
@@ -71,7 +71,7 @@ class TestRoutingToEnhancedSearchIntegration:
         # Try to create search agent with proper error handling
         try:
             search_agent = VideoSearchAgent()
-        except ValueError as e:
+        except ValueError:
             raise
 
         # Mock routing decision with relationships

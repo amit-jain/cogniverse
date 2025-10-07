@@ -11,7 +11,6 @@ from src.app.agents.query_analysis_tool_v3 import (
     QueryIntent,
     create_enhanced_query_analyzer,
 )
-from src.app.agents.routing_agent import RoutingAgent
 
 from .conftest import skip_if_no_ollama
 

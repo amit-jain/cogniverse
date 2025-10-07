@@ -280,8 +280,9 @@ class TestAdvancedRoutingOptimizerIntegration:
         4. Logging shows correct optimizer selection
         """
         import logging
+        from unittest.mock import MagicMock, patch
+
         import dspy
-        from unittest.mock import patch, MagicMock
 
         # Configure DSPy with a mock LM (required for GEPA)
         mock_lm = MagicMock()
@@ -385,8 +386,9 @@ class TestAdvancedRoutingOptimizerIntegration:
     @pytest.mark.asyncio
     async def test_optimizer_selection_thresholds(self):
         """Test that optimizer selection works correctly at each threshold."""
-        import dspy
         from unittest.mock import MagicMock
+
+        import dspy
 
         # Configure DSPy with mock LM using context (async-safe)
         mock_lm = MagicMock()

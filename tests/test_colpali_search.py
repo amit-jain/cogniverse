@@ -4,16 +4,15 @@ Test ColPali text-to-video search (semantic search from text queries)
 This tests the core functionality used by the multi-agent system
 """
 
-import requests
-import torch
-import numpy as np
-from pathlib import Path
-import sys
-import json
 import argparse
+import json
 import os
 import random
+import sys
 from datetime import datetime
+from pathlib import Path
+
+import torch
 
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -115,7 +114,7 @@ def test_colpali_search(output_format="table", save_results=False, num_queries=5
                         mrr = 1.0 / (i + 1)
                         break
                 
-                print(f"\n📊 Evaluation Metrics:")
+                print("\n📊 Evaluation Metrics:")
                 print(f"  Recall@5: {recall_at_5:.3f}")
                 print(f"  Recall@10: {recall_at_10:.3f}")
                 print(f"  MRR: {mrr:.3f}")
@@ -211,7 +210,7 @@ def test_float_float_search(output_format="table", save_results=False, monkeypat
         device = "cpu"
         dtype = torch.float32
     
-    print(f"\n\n=== Testing Float-Float Visual Search ===")
+    print("\n\n=== Testing Float-Float Visual Search ===")
     print(f"Loading ColPali model from config: {model_name}")
     print(f"Device: {device}, dtype: {dtype}")
     
@@ -251,9 +250,9 @@ def test_float_float_search(output_format="table", save_results=False, monkeypat
         "top_k": 10
     }
     
-    print(f"\n🔍 Performing Float-Float visual search...")
+    print("\n🔍 Performing Float-Float visual search...")
     print(f"   Vespa: {vespa_url}:{vespa_port}")
-    print(f"   Ranking: float_float")
+    print("   Ranking: float_float")
     
     try:
         # Use the search client with proper embedding format
@@ -326,7 +325,7 @@ def test_hybrid_float_bm25(output_format="table", save_results=False, monkeypatc
         device = "cpu"
         dtype = torch.float32
     
-    print(f"\n\n=== Testing Hybrid Float BM25 (like video agent) ===")
+    print("\n\n=== Testing Hybrid Float BM25 (like video agent) ===")
     print(f"Loading ColPali model from config: {model_name}")
     print(f"Device: {device}, dtype: {dtype}")
     
@@ -366,9 +365,9 @@ def test_hybrid_float_bm25(output_format="table", save_results=False, monkeypatc
         "top_k": 10
     }
     
-    print(f"\n🔍 Performing Hybrid Float+BM25 search...")
+    print("\n🔍 Performing Hybrid Float+BM25 search...")
     print(f"   Vespa: {vespa_url}:{vespa_port}")
-    print(f"   Ranking: hybrid_float_bm25")
+    print("   Ranking: hybrid_float_bm25")
     
     try:
         # Use the search client with proper embedding format

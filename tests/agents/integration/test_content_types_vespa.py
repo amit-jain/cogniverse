@@ -103,7 +103,6 @@ def test_vespa_manager():
 
     # Upload all schemas once at module setup to avoid schema removal errors
     print("\n📤 Uploading all content type schemas for the test suite...")
-    from src.backends.vespa.vespa_schema_manager import VespaSchemaManager
 
     schema_manager = VespaSchemaManager(
         vespa_endpoint=test_vespa["config_url"],

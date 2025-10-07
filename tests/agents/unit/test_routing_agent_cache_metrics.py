@@ -5,7 +5,7 @@ Unit tests for cache and metrics integration in RoutingAgent:
 - Production components
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -59,8 +59,9 @@ class TestRoutingAgentCacheMetrics:
         query = "machine learning videos"
 
         # Create a RoutingDecision to cache
-        from src.app.agents.routing_agent import RoutingDecision
         from datetime import datetime
+
+        from src.app.agents.routing_agent import RoutingDecision
 
         cached_decision = RoutingDecision(
             query=query,

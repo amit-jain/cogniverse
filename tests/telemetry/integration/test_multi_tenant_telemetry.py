@@ -9,13 +9,12 @@ These tests validate:
 5. Force flush across all tenants
 """
 
-import pytest
 import time
-from unittest.mock import patch, MagicMock
-import logging
 
-from src.app.telemetry.manager import TelemetryManager, NoOpSpan
-from src.app.telemetry.config import TelemetryConfig, TelemetryLevel, BatchExportConfig
+import pytest
+
+from src.app.telemetry.config import BatchExportConfig, TelemetryConfig, TelemetryLevel
+from src.app.telemetry.manager import NoOpSpan, TelemetryManager
 
 
 @pytest.mark.integration
@@ -219,7 +218,7 @@ class TestMultiTenantTelemetryIntegration:
         for i in range(5):
             tenant_id = f"tenant-{i}"
             with manager.span(
-                name=f"operation",
+                name="operation",
                 tenant_id=tenant_id,
                 attributes={"tenant_index": i},
             ) as span:

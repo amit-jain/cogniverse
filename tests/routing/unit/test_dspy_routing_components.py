@@ -5,7 +5,6 @@ Tests the routing-specific DSPy components including relationship extraction,
 query enhancement, adaptive threshold learning, and advanced optimization.
 """
 
-from unittest.mock import patch
 
 import pytest
 

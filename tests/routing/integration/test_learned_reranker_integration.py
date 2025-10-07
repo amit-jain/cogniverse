@@ -6,7 +6,6 @@ Integration tests for learned reranking with LiteLLM:
 - Config loading from config.json
 """
 
-import os
 
 import pytest
 

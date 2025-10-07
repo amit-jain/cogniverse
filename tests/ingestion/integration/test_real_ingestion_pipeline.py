@@ -9,10 +9,10 @@ These tests use ACTUAL:
 NO MOCKS - this tests the real end-to-end pipeline.
 """
 
-import pytest
 import shutil
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+
+import pytest
 
 # Mark all tests as integration and requiring models
 pytestmark = [
@@ -53,11 +53,12 @@ class TestRealIngestionPipeline:
         SKIPPED by default due to model download/inference time.
         Run with: pytest -v -m "not skip" to include this test.
         """
+        import logging
+
         from src.app.ingestion.processors.embedding_processor import EmbeddingProcessor
 
         # First extract keyframes
         from src.app.ingestion.processors.keyframe_processor import KeyframeProcessor
-        import logging
 
         logger = logging.getLogger("test")
 

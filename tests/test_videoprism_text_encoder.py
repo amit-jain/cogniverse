@@ -9,19 +9,19 @@ Tests cover:
 - Performance metrics
 """
 
-import unittest
-from unittest.mock import Mock, patch, MagicMock
-import numpy as np
 import time
-from typing import Any
+import unittest
+from unittest.mock import MagicMock, Mock, patch
+
+import numpy as np
 
 from src.common.models.videoprism_text_encoder import (
-    VideoPrismTextEncoder,
     CircuitBreaker,
     CircuitState,
-    PerformanceMetrics,
     ModelPool,
-    create_text_encoder
+    PerformanceMetrics,
+    VideoPrismTextEncoder,
+    create_text_encoder,
 )
 
 

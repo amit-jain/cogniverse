@@ -8,12 +8,12 @@ import numpy as np
 import pytest
 
 from src.app.agents.video_search_agent import (
-    VideoSearchAgent,
     ImagePart,
     VideoPart,
     VideoProcessor,
+    VideoSearchAgent,
 )
-from src.tools.a2a_utils import A2AMessage, DataPart, TextPart, Task
+from src.tools.a2a_utils import A2AMessage, DataPart, Task, TextPart
 
 
 @pytest.mark.unit

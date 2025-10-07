@@ -23,15 +23,14 @@ from src.app.agents.dspy_integration_mixin import (
     DSPyRoutingMixin,
     DSPySummaryMixin,
 )
+from src.app.agents.query_analysis_tool_v3 import QueryAnalysisToolV3
 from src.app.agents.routing_agent import RoutingAgent, RoutingDecision
+
+# Agent imports
+from src.app.agents.summarizer_agent import SummarizerAgent
 
 # Phase 5 imports for enhanced agent testing
 from src.app.agents.video_search_agent import VideoSearchAgent
-from src.app.agents.query_analysis_tool_v3 import QueryAnalysisToolV3
-
-# Agent imports
-from src.app.agents.routing_agent import RoutingAgent
-from src.app.agents.summarizer_agent import SummarizerAgent
 from src.app.routing.dspy_relationship_router import (
     DSPyAdvancedRoutingModule,
     DSPyRelationshipExtractorModule,
@@ -1733,7 +1732,7 @@ class TestDSPyEnhancementPipeline:
             # Verify quality score
             assert 0.0 <= result["quality_score"] <= 1.0
 
-        except Exception as e:
+        except Exception:
             # If relationship extraction fails due to missing models,
             # pipeline should still return fallback result
             pass
@@ -2537,7 +2536,6 @@ class TestA2AGateway:
     def test_gateway_initialization(self):
         """Test A2A Enhanced Gateway initialization"""
         from src.app.agents.a2a_gateway import A2AGateway
-        from src.app.agents.routing_agent import RoutingConfig
 
         # Test direct initialization
         gateway = A2AGateway()
@@ -3097,8 +3095,8 @@ class TestVideoSearchAgent:
     def test_enhanced_search_context(self):
         """Test SearchContext structure"""
         from src.app.agents.video_search_agent import (
-            SearchContext,
             RelationshipAwareSearchParams,
+            SearchContext,
         )
 
         RelationshipAwareSearchParams(

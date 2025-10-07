@@ -5,7 +5,6 @@ Tests the complete routing flow with real models when available.
 
 import asyncio
 import json
-import os
 import sys
 from pathlib import Path
 from unittest.mock import patch

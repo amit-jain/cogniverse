@@ -12,20 +12,20 @@ Test artifacts are organized in tests/system/resources/ (like Java test resource
 Test outputs are written to tests/system/outputs/ and excluded from git.
 """
 
-import pytest
 import asyncio
+import os
 import subprocess
 import time
-import requests
-import os
 from pathlib import Path
-from typing import Dict, List, Any, Optional
 
+import pytest
+import requests
+
+from src.app.agents.detailed_report_agent import DetailedReportAgent
 from src.app.agents.routing_agent import RoutingAgent
 from src.app.agents.summarizer_agent import SummarizerAgent
-from src.app.agents.detailed_report_agent import DetailedReportAgent
-from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
 from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
+from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
 
 
 def check_vespa_available() -> bool:
@@ -596,7 +596,9 @@ class TestRealEndToEndIntegration:
         summarizer_agent = SummarizerAgent()
         
         # Initialize relationship extractor properly
-        from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
+        from src.app.routing.relationship_extraction_tools import (
+            RelationshipExtractorTool,
+        )
         relationship_extractor = RelationshipExtractorTool()
         
         query_enhancer = QueryEnhancementPipeline()
@@ -685,7 +687,7 @@ class TestRealEndToEndIntegration:
             if enhanced_query != test_query:
                 print(f"      ✅ Query successfully enhanced (length: {len(enhanced_query)} vs {len(test_query)})")
             else:
-                print(f"      ⚠️  Query unchanged - enhancement might not be working")
+                print("      ⚠️  Query unchanged - enhancement might not be working")
                 
         except Exception as e:
             print(f"   ❌ Query enhancement failed: {e}")
@@ -709,7 +711,7 @@ class TestRealEndToEndIntegration:
             print(f"   Search results: {len(search_results)} videos found")
             
             # STRICT ASSERTION 1: Must have search results
-            assert len(search_results) > 0, f"CRITICAL: No search results found despite 28 documents ingested!"
+            assert len(search_results) > 0, "CRITICAL: No search results found despite 28 documents ingested!"
             
             # STRICT ASSERTION 2: Results must have proper structure
             for i, result in enumerate(search_results[:5]):
@@ -737,7 +739,7 @@ class TestRealEndToEndIntegration:
             # STRICT ASSERTION 5: At least some results should have meaningful scores 
             meaningful_scores = [r for r in search_results[:5] if (r.get('score', 0) > 0.001 or r.get('relevance', 0) > 0.001)]
             if len(meaningful_scores) == 0:
-                print(f"      ⚠️  WARNING: All top 5 results have near-zero scores - possible relevance issue")
+                print("      ⚠️  WARNING: All top 5 results have near-zero scores - possible relevance issue")
                 print(f"      🔧 DEBUG: Check if query '{test_query}' matches video content expectations")
             else:
                 print(f"      ✅ Found {len(meaningful_scores)} results with meaningful scores")
@@ -748,7 +750,7 @@ class TestRealEndToEndIntegration:
         except Exception as e:
             print(f"   ❌ Video search failed: {e}")
             print(f"   🔧 DEBUG: Vespa instance still running on http://localhost:{vespa_test_manager.http_port}")
-            print(f"   🔧 DEBUG: Check Vespa status manually for debugging")
+            print("   🔧 DEBUG: Check Vespa status manually for debugging")
             # Don't cleanup - leave Vespa running for debugging
             raise AssertionError(f"Video search agent failed: {e}")
         

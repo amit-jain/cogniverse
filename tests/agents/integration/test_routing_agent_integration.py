@@ -6,13 +6,12 @@ Tests real interactions with routing system and configuration
 import json
 import os
 import tempfile
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-from src.app.agents.routing_agent import RoutingAgent, create_routing_agent
-from src.tools.a2a_utils import A2AMessage, DataPart, TextPart
+from src.app.agents.routing_agent import RoutingAgent
 
 
 class TestRoutingAgentIntegration:

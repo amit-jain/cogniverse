@@ -4,7 +4,6 @@ Integration tests for Mem0 with Vespa backend
 These tests verify the complete memory system works with real Vespa instance.
 """
 
-import os
 import time
 
 import pytest
@@ -20,8 +19,8 @@ def test_vespa():
 
     Automatically starts test Vespa before tests and cleans up after.
     """
-    import subprocess
     import platform
+    import subprocess
 
     # Configuration
     test_port = 8081
@@ -78,7 +77,9 @@ def test_vespa():
     # Deploy agent_memories schema using JsonSchemaParser
     import json
     from pathlib import Path
+
     from vespa.package import ApplicationPackage
+
     from src.backends.vespa.json_schema_parser import JsonSchemaParser
 
     schema_path = Path(__file__).parent.parent.parent.parent / "configs" / "schemas" / "agent_memories_schema.json"

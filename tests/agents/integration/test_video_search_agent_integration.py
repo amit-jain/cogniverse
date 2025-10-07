@@ -8,9 +8,9 @@ import pytest
 from src.app.agents.video_search_agent import VideoSearchAgent
 from src.tools.a2a_utils import (
     A2AMessage,
-    TextPart,
     FilePart,
     Task,
+    TextPart,
 )
 
 

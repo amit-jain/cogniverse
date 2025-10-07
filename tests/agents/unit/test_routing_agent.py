@@ -6,11 +6,10 @@ Many of these tests need to be updated to test the new interface.
 Tests for the old interface (analyze_and_route, agent_registry, etc.) are skipped.
 """
 
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-from src.app.agents.routing_agent import RoutingAgent, RoutingDecision
+from src.app.agents.routing_agent import RoutingAgent
 
 
 @pytest.mark.unit

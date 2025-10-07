@@ -5,27 +5,26 @@ Tests actual document ingestion with various video processing profiles.
 """
 
 import shutil
-import subprocess
 import tempfile
 import time
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
-import requests
 
+from tests.system.vespa_test_manager import VespaTestManager
 from tests.utils.markers import (
     skip_heavy_models_in_ci,
     skip_if_ci,
     skip_if_low_memory,
 )
-from tests.system.vespa_test_manager import VespaTestManager
 
 # Import components for integration testing
 try:
+    from src.processing.unified_video_pipeline import PipelineConfig
+
     from src.app.ingestion.pipeline import VideoIngestionPipeline
     from src.app.ingestion.pipeline_builder import PipelineBuilder
-    from src.processing.unified_video_pipeline import PipelineConfig
 except ImportError:
     # Handle missing imports gracefully
     VideoIngestionPipeline = None
@@ -300,7 +299,6 @@ class TestComprehensiveIngestion:
     @pytest.mark.asyncio
     async def test_ingestion_performance(self, all_test_videos):
         """Benchmark ingestion performance."""
-        import time
 
         from src.app.ingestion.pipeline import (
             PipelineConfig,

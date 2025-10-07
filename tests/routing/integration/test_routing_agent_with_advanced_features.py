@@ -11,12 +11,10 @@ Validates:
 4. All components work together in real routing flow
 """
 
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 from src.app.agents.routing_agent import RoutingAgent
-from src.app.routing.base import GenerationType, RoutingDecision, SearchModality
 
 
 @pytest.mark.integration

@@ -10,14 +10,12 @@ Requirements:
 - Phoenix telemetry server (optional)
 """
 
-import json
 import logging
 
 import pytest
 
 # E2E tests require Ollama server with smollm3:8b model
 # Run with: pytest tests/agents/e2e/test_real_multi_agent_integration.py -v
-
 from src.app.agents.detailed_report_agent import DetailedReportAgent
 from src.app.agents.dspy_agent_optimizer import (
     DSPyAgentOptimizerPipeline,
@@ -48,7 +46,6 @@ class TestOllamaAvailability:
     def test_ollama_model_available(self):
         """Test if Ollama is running and has the required model."""
         try:
-            import requests
 
             # Check
             # Check
@@ -146,7 +143,8 @@ class TestRealAgentRoutingIntegration:
     @pytest.mark.timeout(TEST_CONFIG["test_timeout"])
     async def test_real_agent_routing_with_local_llm(self):
         """Test real agent routing decisions with local Ollama model."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         import dspy
 
         # Configure DSPy async-safe
@@ -212,9 +210,11 @@ class TestRealAgentSpecializationIntegration:
     @pytest.mark.timeout(TEST_CONFIG["test_timeout"])
     async def test_real_summarizer_agent_with_local_llm(self):
         """Test real summarization with local Ollama model."""
-        from src.app.agents.summarizer_agent import SummaryRequest
         from unittest.mock import patch
+
         import dspy
+
+        from src.app.agents.summarizer_agent import SummaryRequest
 
         # E2E test - requires real Ollama, works in production
         # Configure DSPy with correct model before creating agent
@@ -273,8 +273,9 @@ class TestRealAgentSpecializationIntegration:
     @pytest.mark.timeout(TEST_CONFIG["test_timeout"])
     async def test_real_detailed_report_agent_with_local_llm(self):
         """Test real detailed report generation with local Ollama model."""
-        from src.app.agents.detailed_report_agent import ReportRequest
         from unittest.mock import patch
+
+        from src.app.agents.detailed_report_agent import ReportRequest
 
         # E2E test - requires real Ollama, works in production
         with patch("src.app.agents.dspy_a2a_agent_base.FastAPI"), \
@@ -434,8 +435,9 @@ class TestRealEndToEndWorkflow:
     )  # Allow more time for full workflow
     async def test_real_multi_agent_workflow(self):
         """Test complete multi-agent workflow with real LLMs."""
-        from src.app.agents.summarizer_agent import SummaryRequest
         from unittest.mock import patch
+
+        from src.app.agents.summarizer_agent import SummaryRequest
 
         # Initialize all agents
         query_analyzer = QueryAnalysisToolV3(

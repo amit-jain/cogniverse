@@ -7,12 +7,10 @@ Tests the complete orchestration workflow:
 - Proper routing decisions for multi-modal queries
 """
 
-from unittest.mock import patch
 
 import pytest
 
 from src.app.agents.routing_agent import RoutingAgent
-from src.app.routing.base import GenerationType, SearchModality
 
 
 @pytest.mark.asyncio

@@ -4,22 +4,19 @@ Test script for updated Vespa search client with different ranking profiles
 Tests both with and without embeddings to validate input requirements
 """
 
-import sys
-import logging
-from pathlib import Path
-import torch
-import numpy as np
-import json
 import csv
-from datetime import datetime
+import json
+import logging
+import sys
 from collections import defaultdict
+from datetime import datetime
+from pathlib import Path
 
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from src.app.search.service import SearchService
 from src.backends.vespa.vespa_search_client import VespaVideoSearchClient
-from src.common.config_utils import get_config
 
 # Setup logging with more verbose output
 logging.basicConfig(
@@ -150,7 +147,6 @@ def test_ranking_strategies(query=None, table_output=False, show_analysis=True):
     
     # Always save results to test_results directory
     from src.common.utils.output_manager import get_output_manager
-    from datetime import datetime
     output_manager = get_output_manager()
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     auto_csv_path = output_manager.get_test_results_dir() / f"search_client_test_{timestamp}.csv"
@@ -184,8 +180,8 @@ def test_ranking_strategies(query=None, table_output=False, show_analysis=True):
         RankingStrategy.BM25_NO_DESCRIPTION.value
     ]
     
-    print(f"\n=== Testing Text-Only Strategies ===")
-    logger.info(f"\n=== Testing Text-Only Strategies ===")
+    print("\n=== Testing Text-Only Strategies ===")
+    logger.info("\n=== Testing Text-Only Strategies ===")
     for strategy in text_only_strategies:
         if not table_output:
             print(f"\n🔍 Testing {strategy}")
@@ -235,8 +231,8 @@ def test_ranking_strategies(query=None, table_output=False, show_analysis=True):
                 logger.error(error_line)
     
     # Load ColPali model for visual strategies
-    print(f"\n=== Loading ColPali Model for Visual Strategies ===")
-    logger.info(f"\n=== Loading ColPali Model for Visual Strategies ===")
+    print("\n=== Loading ColPali Model for Visual Strategies ===")
+    logger.info("\n=== Loading ColPali Model for Visual Strategies ===")
     col_model, col_processor, device = load_colpali_model()
     print("ColPali model loaded, generating embeddings...")
     embeddings = generate_test_embeddings(col_model, col_processor, device, test_query)
@@ -250,8 +246,8 @@ def test_ranking_strategies(query=None, table_output=False, show_analysis=True):
         RankingStrategy.PHASED.value
     ]
     
-    print(f"\n=== Testing Pure Visual Strategies ===")
-    logger.info(f"\n=== Testing Pure Visual Strategies ===")
+    print("\n=== Testing Pure Visual Strategies ===")
+    logger.info("\n=== Testing Pure Visual Strategies ===")
     for strategy in visual_strategies:
         if not table_output:
             print(f"\n🔍 Testing {strategy}")
@@ -312,8 +308,8 @@ def test_ranking_strategies(query=None, table_output=False, show_analysis=True):
         RankingStrategy.HYBRID_BM25_FLOAT_NO_DESC.value
     ]
     
-    print(f"\n=== Testing Hybrid Strategies ===")
-    logger.info(f"\n=== Testing Hybrid Strategies ===")
+    print("\n=== Testing Hybrid Strategies ===")
+    logger.info("\n=== Testing Hybrid Strategies ===")
     for strategy in hybrid_strategies:
         if not table_output:
             print(f"\n🔍 Testing {strategy}")
@@ -392,7 +388,7 @@ def test_ranking_strategies(query=None, table_output=False, show_analysis=True):
     
     # Test validation errors (skip in table mode)
     if not table_output:
-        logger.info(f"\n=== Testing Input Validation ===")
+        logger.info("\n=== Testing Input Validation ===")
         
         # Test missing embeddings
         try:
@@ -417,7 +413,7 @@ def test_ranking_strategies(query=None, table_output=False, show_analysis=True):
         logger.info(f"✅ Correctly caught missing text query: {e}")
     
     # Test strategy recommendation
-    logger.info(f"\n=== Testing Strategy Recommendation ===")
+    logger.info("\n=== Testing Strategy Recommendation ===")
     
     # Text-only query
     rec1 = client.recommend_strategy("find documents about machine learning", has_embeddings=False)
@@ -491,7 +487,7 @@ def test_default_ranking(query=None):
     """Test default ranking profile (should be 'default' from schema)"""
     client = VespaVideoSearchClient()
     
-    logger.info(f"\n=== Testing Default Ranking Profile ===")
+    logger.info("\n=== Testing Default Ranking Profile ===")
     
     # Use provided query or default
     test_query = query if query else "doctor explaining medical procedures"
