@@ -95,7 +95,7 @@ def verify_deployment(schema_name: str, vespa_host: str = "localhost",
         )
 
         if response.status_code == 200:
-            print(f"✅ Vespa is running and responding")
+            print("✅ Vespa is running and responding")
             return True
         else:
             print(f"⚠️  Vespa returned status {response.status_code}")

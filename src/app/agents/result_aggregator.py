@@ -5,12 +5,12 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from src.app.agents.routing_agent import RoutingDecision
 from src.app.agents.result_enhancement_engine import (
     EnhancedResult,
     EnhancementContext,
     ResultEnhancementEngine,
 )
+from src.app.agents.routing_agent import RoutingDecision
 
 logger = logging.getLogger(__name__)
 
