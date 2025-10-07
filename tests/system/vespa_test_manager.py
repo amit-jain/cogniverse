@@ -299,7 +299,9 @@ class VespaTestManager:
             original_vespa_port = os.environ.get('VESPA_PORT')  # Store original port
             original_config_path = os.environ.get('CONFIG_PATH')
             original_cogniverse_config = os.environ.get('COGNIVERSE_CONFIG')
-            
+            # Store for cleanup - ingest_test_videos runs in setup, cleanup needs this value
+            self.original_cogniverse_config = original_cogniverse_config
+
             # Store original config values for restoration
             from src.common.config_utils import get_config
             original_config_values = get_config()
@@ -315,27 +317,19 @@ class VespaTestManager:
                 
             os.environ['COGNIVERSE_CONFIG'] = str(system_test_config)
             print(f"🔧 Using organized test config: {system_test_config}")
-            
-            # CRITICAL: Force config to update with new environment variables
-            # The config singleton was loaded with old values, we need to override them
-            from src.common.config_utils import update_config
+
+            # Config will be loaded from environment variables by ConfigManager
             import json
 
-            # Load test config and update the global config with profiles
+            # Load test config to verify profiles exist
             with open(system_test_config) as f:
                 test_config = json.load(f)
 
             profiles = test_config.get('video_processing_profiles', {})
-            update_config({
-                'vespa_url': "http://localhost",
-                'vespa_port': self.http_port,
-                'video_processing_profiles': profiles,
-                'active_video_profile': test_config.get('active_video_profile', self.default_test_schema)
-            })
-            print(f"🔧 FORCED CONFIG UPDATE: vespa_url=http://localhost, vespa_port={self.http_port}")
+            print(f"🔧 Config loaded with Vespa: vespa_url=http://localhost, vespa_port={self.http_port}")
             print(f"🔧 Loaded {len(profiles)} profiles: {list(profiles.keys())}")
 
-            # Verify the config was actually updated
+            # Verify the config will be loaded from environment
             from src.common.config_utils import get_config
             current_config = get_config()
             loaded_profiles = current_config.get('video_processing_profiles', {})
@@ -440,30 +434,22 @@ class VespaTestManager:
                     os.environ['CONFIG_PATH'] = original_config_path
                 elif 'CONFIG_PATH' in os.environ:
                     del os.environ['CONFIG_PATH']
-                    
-                if original_cogniverse_config:
-                    os.environ['COGNIVERSE_CONFIG'] = original_cogniverse_config
-                elif 'COGNIVERSE_CONFIG' in os.environ:
-                    del os.environ['COGNIVERSE_CONFIG']
-                    
-                # Restore original config values
-                from src.common.config_utils import update_config
-                restore_config = {}
-                if original_config_vespa_url is not None:
-                    restore_config['vespa_url'] = original_config_vespa_url
-                if original_config_vespa_port is not None:
-                    restore_config['vespa_port'] = original_config_vespa_port
-                    
-                if restore_config:
-                    update_config(restore_config)
-                    print(f"🔧 RESTORED CONFIG: {restore_config}")
-                    
-                # Clear cached backends again to ensure they get recreated with restored config
-                from src.common.core.backend_registry import get_backend_registry
-                registry = get_backend_registry()
-                if hasattr(registry, '_backend_instances'):
-                    registry._backend_instances.clear()
-                    print(f"🔧 CLEARED cached backends to restore original config")
+
+                # DO NOT restore/clear COGNIVERSE_CONFIG here - it needs to remain set for the test
+                # The fixture cleanup will handle this later
+                # if original_cogniverse_config:
+                #     os.environ['COGNIVERSE_CONFIG'] = original_cogniverse_config
+                #     print(f"🔧 RESTORED COGNIVERSE_CONFIG: {original_cogniverse_config}")
+                # elif 'COGNIVERSE_CONFIG' in os.environ:
+                #     del os.environ['COGNIVERSE_CONFIG']
+                #     print("🔧 CLEARED COGNIVERSE_CONFIG environment variable")
+
+                # DO NOT clear cached backends - they need to remain for the test
+                # from src.common.core.backend_registry import get_backend_registry
+                # registry = get_backend_registry()
+                # if hasattr(registry, '_backend_instances'):
+                #     registry._backend_instances.clear()
+                #     print(f"🔧 CLEARED cached backends to restore original config")
             
         except Exception as e:
             print(f"❌ Error with test video ingestion: {e}")
@@ -586,6 +572,22 @@ class VespaTestManager:
 
     def cleanup(self):
         """Clean up Docker container and temporary files"""
+        # Restore original COGNIVERSE_CONFIG
+        if hasattr(self, 'original_cogniverse_config'):
+            if self.original_cogniverse_config:
+                os.environ['COGNIVERSE_CONFIG'] = self.original_cogniverse_config
+                print(f"🔧 RESTORED COGNIVERSE_CONFIG: {self.original_cogniverse_config}")
+            elif 'COGNIVERSE_CONFIG' in os.environ:
+                del os.environ['COGNIVERSE_CONFIG']
+                print("🔧 CLEARED COGNIVERSE_CONFIG environment variable")
+
+            # Clear cached backends to ensure they get recreated with restored config
+            from src.common.core.backend_registry import get_backend_registry
+            registry = get_backend_registry()
+            if hasattr(registry, '_backend_instances'):
+                registry._backend_instances.clear()
+                print(f"🔧 CLEARED cached backends to restore original config")
+
         # Stop and remove Docker container
         if self.container_name:
             try:
@@ -593,19 +595,19 @@ class VespaTestManager:
                 stop_result = subprocess.run([
                     "docker", "stop", self.container_name
                 ], capture_output=True, timeout=30)
-                
+
                 remove_result = subprocess.run([
-                    "docker", "rm", self.container_name  
+                    "docker", "rm", self.container_name
                 ], capture_output=True, timeout=30)
-                
+
                 if stop_result.returncode == 0 and remove_result.returncode == 0:
                     print("✅ Stopped and removed Docker container")
                 else:
                     print(f"⚠️  Issues stopping container: stop={stop_result.returncode}, rm={remove_result.returncode}")
-                    
+
             except Exception as e:
                 print(f"⚠️  Error stopping Docker container: {e}")
-        
+
         # Clean up temporary files
         if self.temp_dir and Path(self.temp_dir).exists():
             try:
@@ -613,7 +615,7 @@ class VespaTestManager:
                 print("✅ Cleaned up temporary files")
             except Exception as e:
                 print(f"⚠️  Failed to cleanup: {e}")
-        
+
         self.is_deployed = False
         self.container_name = None
 

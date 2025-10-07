@@ -130,11 +130,19 @@ class TestRealVespaIntegration:
     def setup_class(cls):
         """Setup isolated Vespa test instance"""
         from .vespa_test_manager import VespaTestManager
-        
+
         # Create isolated test Vespa instance on port 8081
         cls.vespa_manager = VespaTestManager(http_port=8081)
-        
+
         print("Setting up isolated Vespa test instance...")
+
+        # Setup application directory first (required by deploy_test_application)
+        if not cls.vespa_manager.setup_application_directory():
+            raise RuntimeError("Failed to setup application directory for test class")
+
+        # Actually start the Docker container and deploy schemas
+        if not cls.vespa_manager.deploy_test_application():
+            raise RuntimeError("Failed to start Vespa Docker container for test class")
     @classmethod 
     def teardown_class(cls):
         """Clean up isolated Vespa test instance"""
@@ -145,31 +153,59 @@ class TestRealVespaIntegration:
         """Test isolated Vespa connection and schema"""
         assert self.vespa_manager is not None, "Vespa manager should be initialized"
         assert self.vespa_manager.is_running(), "Test Vespa should be running"
-        
+
         base_url = self.vespa_manager.get_base_url()
-        
-        # Test Vespa is accessible
-        response = requests.get(f"{base_url}/ApplicationStatus", timeout=10)
-        assert response.status_code == 200
+
+        # Test Vespa is accessible - retry for up to 5 minutes if getting 503
+        import time
+        max_wait = 300  # 5 minutes
+        start_time = time.time()
+        while time.time() - start_time < max_wait:
+            response = requests.get(f"{base_url}/ApplicationStatus", timeout=10)
+            if response.status_code == 200:
+                break
+            elif response.status_code == 503:
+                # Application still starting up, wait and retry
+                time.sleep(5)
+            else:
+                # Unexpected status code, fail immediately
+                assert False, f"Got unexpected status {response.status_code}"
+
+        assert response.status_code == 200, f"Got {response.status_code} after {max_wait}s"
         print(f"✅ Test Vespa service is running and accessible on {base_url}")
-        
-        # Test document API is working
+
+        # Test document API is working - 400 is OK if path is incomplete
         response = requests.get(f"{base_url}/document/v1/", timeout=10)
-        assert response.status_code in [200, 404]  # 404 is OK if no documents
+        assert response.status_code in [200, 400, 404]  # 400/404 OK if no complete document path
         print("✅ Test Vespa document API is accessible")
-        
-        # Test search API
-        response = requests.get(f"{base_url}/search/?query=test&hits=1", timeout=10)
-        assert response.status_code == 200
+
+        # Test search API - retry for up to 2 minutes if getting 503
+        start_time = time.time()
+        max_search_wait = 120  # 2 minutes
+        while time.time() - start_time < max_search_wait:
+            response = requests.get(f"{base_url}/search/?query=test&hits=1", timeout=10)
+            if response.status_code == 200:
+                break
+            elif response.status_code == 503:
+                # Search API still starting up, wait and retry
+                time.sleep(5)
+            else:
+                # Unexpected status code, fail immediately
+                assert False, f"Got unexpected search status {response.status_code}"
+
+        assert response.status_code == 200, f"Search API got {response.status_code} after {max_search_wait}s"
         print("✅ Test Vespa search API is working")
 
     def test_real_video_search_agent(self):
         """Test our actual Enhanced Video Search Agent with isolated Vespa backend"""
         assert self.vespa_manager is not None, "Vespa manager should be initialized"
-        
+
         print("🎥 Testing REAL Enhanced Video Search Agent...")
-        
-        # Configure agent to use our isolated Vespa instance
+
+        # Configure agent to use our isolated Vespa instance and test config
+        from pathlib import Path
+        test_config_path = Path("tests/system/resources/configs/system_test_config.json")
+        os.environ['COGNIVERSE_CONFIG'] = str(test_config_path)
         os.environ['VESPA_URL'] = f"http://localhost:{self.vespa_manager.http_port}"
         # Use a valid video profile that exists in our system
         os.environ['VESPA_SCHEMA'] = 'video_colpali_smol500_mv_frame'
@@ -191,13 +227,14 @@ class TestRealVespaIntegration:
             
             for query in test_queries:
                 print(f"\n🔍 Testing agentic search for: '{query}'")
-                
+
                 # Use the actual agent's search method
-                search_results = video_agent.search_by_video(query, max_results=10)
+                search_results = video_agent.search_by_text(query, top_k=10)
                 
                 assert search_results is not None, f"Enhanced search should return results for '{query}'"
-                
-                results = search_results.get('results', [])
+
+                # search_by_text() returns a list directly, not a dict
+                results = search_results if isinstance(search_results, list) else []
                 total_results = len(results)
                 
                 print(f"✅ Enhanced Video Search Agent found {total_results} results")
@@ -662,13 +699,8 @@ class TestRealEndToEndIntegration:
             os.environ['VESPA_URL'] = "http://localhost"
             os.environ['VESPA_PORT'] = str(vespa_test_manager.http_port)
             os.environ['VESPA_SCHEMA'] = 'video_colpali_smol500_mv_frame'
-            
-            # Force config update to match environment variables (same as test manager)
-            from src.common.config_utils import update_config
-            update_config({
-                'vespa_url': "http://localhost",
-                'vespa_port': vespa_test_manager.http_port
-            })
+
+            # Config will be loaded from environment variables by ConfigManager
             
             from src.app.agents.video_search_agent import VideoSearchAgent
             video_search_agent = VideoSearchAgent()

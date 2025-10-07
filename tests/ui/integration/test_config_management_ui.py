@@ -74,7 +74,7 @@ class TestConfigManagementUI:
             vespa_url="http://localhost",
             vespa_port=8080,
             llm_model="gpt-4-turbo",
-            ollama_base_url="http://localhost:11434",
+            base_url="http://localhost:11434",
             llm_api_key="test-key-123",
             phoenix_url="http://localhost:6006",
             phoenix_collector_endpoint="localhost:4317",

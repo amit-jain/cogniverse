@@ -3,7 +3,10 @@ Configuration utilities for accessing ConfigManager with dict-like interface.
 Provides get_config() helper that wraps ConfigManager for convenient access.
 """
 
+import json
 import logging
+import os
+from pathlib import Path
 from typing import Any
 
 from src.common.config_manager import get_config_manager
@@ -24,6 +27,7 @@ class ConfigUtils:
         self._system_config = None
         self._routing_config = None
         self._telemetry_config = None
+        self._json_config = None  # Cache for JSON config loaded from COGNIVERSE_CONFIG
 
     def _ensure_system_config(self):
         """Lazy load system config"""
@@ -43,6 +47,29 @@ class ConfigUtils:
             self._telemetry_config = self._config_manager.get_telemetry_config(
                 self.tenant_id
             )
+
+    def _load_json_config(self):
+        """Load config from JSON file if COGNIVERSE_CONFIG is set"""
+        if self._json_config is not None:
+            return  # Already loaded
+
+        config_path = os.environ.get('COGNIVERSE_CONFIG')
+        if not config_path:
+            self._json_config = {}
+            return
+
+        try:
+            config_file = Path(config_path)
+            if config_file.exists():
+                with open(config_file, 'r') as f:
+                    self._json_config = json.load(f)
+                logger.debug(f"Loaded JSON config from {config_path}")
+            else:
+                logger.warning(f"Config file not found: {config_path}")
+                self._json_config = {}
+        except Exception as e:
+            logger.error(f"Error loading JSON config from {config_path}: {e}")
+            self._json_config = {}
 
     def get(self, key: str, default: Any = None) -> Any:
         """
@@ -108,6 +135,11 @@ class ConfigUtils:
         # Try telemetry keys
         if key in telemetry_keys:
             return telemetry_keys[key]()
+
+        # Check JSON config for keys not in ConfigManager (like video_processing_profiles)
+        self._load_json_config()
+        if key in self._json_config:
+            return self._json_config[key]
 
         # Return default if not found
         logger.warning(

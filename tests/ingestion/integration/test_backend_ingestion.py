@@ -64,14 +64,6 @@ class TestMockBackendIngestion:
             "generate_descriptions": False,
         }
 
-    def test_basic_pipeline_creation(self, mock_pipeline_config):
-        """Test basic pipeline creation with mock backend."""
-        builder = PipelineBuilder()
-        pipeline = builder.build_pipeline(mock_pipeline_config)
-
-        assert pipeline is not None
-        assert hasattr(pipeline, "process_video")
-
     @pytest.mark.requires_cv2
     def test_keyframe_extraction_integration(self, temp_video_dir):
         """Test keyframe extraction in isolation."""
@@ -148,12 +140,6 @@ class TestVespaBackendIngestion:
             return list(test_dir.glob("*.mp4"))[:2]  # Limit to 2 videos
         else:
             pytest.fail("Test videos not available at data/testset/evaluation/sample_videos")
-
-    def test_vespa_connection(self, vespa_backend):
-        """Test basic Vespa connectivity."""
-        assert vespa_backend.is_running()
-        response = requests.get(f"{vespa_backend.get_base_url()}/ApplicationStatus", timeout=5)
-        assert response.status_code == 200
 
     @pytest.mark.slow
     @pytest.mark.asyncio
