@@ -345,7 +345,7 @@ class TestRealDSPyOptimizationIntegration:
         optimizer = DSPyAgentPromptOptimizer()
 
         # Initialize with local LLM
-        success = optimizer.initialize_language_model(
+        _success = optimizer.initialize_language_model(
             api_base=TEST_CONFIG["ollama_base_url"],
             model=TEST_CONFIG["ollama_model"],
             api_key=TEST_CONFIG["openai_api_key"],

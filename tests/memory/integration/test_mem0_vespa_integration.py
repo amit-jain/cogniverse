@@ -450,7 +450,7 @@ class TestMem0VespaIntegration:
             tenant_id="test_tenant",
             agent_name="clear_test_agent",
         )
-        has_memories_before = len(memories_before) >= 1
+        _has_memories_before = len(memories_before) >= 1
 
         # Clear all
         success = memory_manager.clear_agent_memory(

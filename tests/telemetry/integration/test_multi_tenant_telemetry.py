@@ -347,7 +347,7 @@ class TestMultiTenantTelemetryIntegration:
         for i in range(5):
             with manager.span(
                 name=f"op_{i}", tenant_id="stats-tenant"
-            ) as span:
+            ) as _span:
                 pass
 
         # Get stats

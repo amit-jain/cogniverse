@@ -33,7 +33,7 @@ def check_vespa_available() -> bool:
     try:
         response = requests.get("http://localhost:8080/ApplicationStatus", timeout=5)
         return response.status_code == 200
-    except:
+    except Exception:
         return False
 
 
@@ -44,13 +44,13 @@ def check_ollama_available() -> bool:
         result = subprocess.run(["ollama", "list"], capture_output=True, timeout=10)
         if result.returncode != 0:
             return False
-        
+
         # Check if we have some basic models
         models_output = result.stdout.decode()
-        has_small_model = any(model in models_output.lower() 
+        has_small_model = any(model in models_output.lower()
                              for model in ["qwen", "smollm", "llama", "phi", "gemma"])
         return has_small_model
-    except:
+    except Exception:
         return False
 
 
@@ -412,10 +412,10 @@ class TestRealOllamaIntegration:
 
 @pytest.mark.integration
 @pytest.mark.requires_vespa
-@pytest.mark.requires_ollama  
-class TestRealEndToEndIntegration:
-    """End-to-end integration tests requiring both Vespa and Ollama"""
-    
+@pytest.mark.requires_ollama
+class TestRealPipelineIntegration:
+    """Pipeline integration tests requiring both Vespa and Ollama"""
+
     @classmethod
     def setup_class(cls):
         """Setup both services"""
@@ -528,7 +528,7 @@ class TestRealEndToEndIntegration:
         # 2. Summarizer processes results (could use real LLM)
         # 3. Reporter generates detailed report (could use real LLM)
         
-        sample_search_results = {
+        _sample_search_results = {
             "query": "sports activities",
             "results": [
                 {"video_id": "video_1", "title": "Athletic Training", "score": 0.89},
@@ -876,7 +876,7 @@ class TestServiceAvailabilityChecks:
                 if result.returncode == 0:
                     print("Available models:")
                     print(result.stdout.decode())
-            except:
+            except Exception:
                 pass
         else:
             print("⚠️  Ollama not available - would be skipped in dependent tests")

@@ -117,7 +117,7 @@ class TestCircuitBreaker(unittest.TestCase):
         for _ in range(2):
             try:
                 self.breaker.call(failing_func)
-            except:
+            except Exception:
                 pass
         
         # Should reject without calling function
@@ -134,7 +134,7 @@ class TestCircuitBreaker(unittest.TestCase):
         for _ in range(2):
             try:
                 self.breaker.call(failing_func)
-            except:
+            except Exception:
                 pass
         
         # Wait for recovery timeout
@@ -152,7 +152,7 @@ class TestCircuitBreaker(unittest.TestCase):
         for _ in range(2):
             try:
                 self.breaker.call(failing_func)
-            except:
+            except Exception:
                 pass
         
         # Wait for recovery
@@ -265,19 +265,19 @@ class TestVideoPrismTextEncoder(unittest.TestCase):
     def test_model_caching(self):
         """Test models are cached across instances"""
         # Create first encoder
-        encoder1 = VideoPrismTextEncoder("test_model", 768)
-        
+        _encoder1 = VideoPrismTextEncoder("test_model", 768)
+
         # Should load model
         self.vp_mock.models.load_text_tokenizer.assert_called_once()
         self.vp_mock.models.get_model.assert_called_once()
-        
+
         # Reset mocks
         self.vp_mock.models.load_text_tokenizer.reset_mock()
         self.vp_mock.models.get_model.reset_mock()
-        
+
         # Create second encoder with same model
-        encoder2 = VideoPrismTextEncoder("test_model", 768)
-        
+        _encoder2 = VideoPrismTextEncoder("test_model", 768)
+
         # Should not load model again
         self.vp_mock.models.load_text_tokenizer.assert_not_called()
         self.vp_mock.models.get_model.assert_not_called()

@@ -435,7 +435,7 @@ class TestVideoSearchAgentIntegration:
 
         results = agent.search_by_text("performance test")
 
-        execution_time = time.time() - start_time
+        _execution_time = time.time() - start_time
 
         # Verify results
         assert len(results) == 2

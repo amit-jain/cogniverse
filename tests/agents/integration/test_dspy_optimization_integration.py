@@ -352,7 +352,7 @@ class TestDSPyAgentIntegration:
 
                 # Test that agent can process queries
                 # The routing agent should be able to handle queries even if DSPy prompts aren't explicitly loaded
-                test_query = "Find videos about AI"
+                _test_query = "Find videos about AI"
 
                 # Basic validation that agent was created successfully
                 assert agent is not None
