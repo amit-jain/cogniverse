@@ -1,25 +1,20 @@
-# Cogniverse Study Guide: Deployment Guide
+# Deployment Guide
 
 **Last Updated:** 2025-10-08
-**Module Path:** System-wide deployment
-**Purpose:** Production deployment patterns and infrastructure setup
+**Purpose:** Deployment patterns for Cogniverse multi-agent system
 
 ---
 
-## Module Overview
+## Overview
 
-### Purpose
-Comprehensive deployment guide covering:
-- **Local Development**: Quick setup for development
-- **Docker Compose**: Simple multi-container deployment
-- **Cloud Platforms**: AWS ECS, GCP Cloud Run, Modal serverless
-- **Kubernetes**: Production-grade orchestration
+This guide covers verified, implemented deployment patterns:
+- **Local Development**: Docker-based setup for development
+- **Modal Serverless**: GPU-accelerated video processing
 - **Multi-Tenant**: Schema deployment and isolation
 
 ### Core Services
-- **Application**: Multi-agent orchestration
-- **Vespa**: Multi-tenant vector database (port 8080)
-- **Phoenix**: Telemetry and tracing (port 6006)
+- **Vespa**: Multi-tenant vector database (ports 8080, 19071)
+- **Phoenix**: Telemetry and tracing (ports 6006, 4317)
 - **Ollama**: Local LLM inference (port 11434)
 
 ---
@@ -30,15 +25,15 @@ Comprehensive deployment guide covering:
 graph TB
     Client[Client Applications]
 
-    Client --> API[Cogniverse API<br/>Port 8000]
+    Client --> API[Cogniverse API]
 
     API --> Vespa[Vespa<br/>Port 8080, 19071<br/>Vector Database]
     API --> Phoenix[Phoenix<br/>Port 6006, 4317<br/>Telemetry]
     API --> Ollama[Ollama<br/>Port 11434<br/>Local LLM]
 
-    Vespa --> VespaData[(Vespa Data<br/>Video Embeddings)]
-    Phoenix --> PhoenixData[(Phoenix Data<br/>Spans & Experiments)]
-    Ollama --> OllamaData[(Ollama Data<br/>Models)]
+    Vespa --> VespaData[(Video Embeddings)]
+    Phoenix --> PhoenixData[(Spans & Experiments)]
+    Ollama --> OllamaData[(Models)]
 
     style Client fill:#e1f5ff
     style API fill:#fff4e1
@@ -100,23 +95,19 @@ curl http://localhost:11434/api/tags         # Ollama
 | **Phoenix** | 6006 | HTTP | Telemetry & experiments dashboard |
 | **Phoenix Collector** | 4317 | gRPC | OTLP span collection |
 | **Ollama** | 11434 | HTTP | LLM inference API |
-| **Application** | 8000 | HTTP | Main API |
 
 ### Environment Configuration
 
+Create a `.env` file in the project root:
+
 ```bash
-# Create .env file
-cat > .env <<EOF
 # Environment
 ENVIRONMENT=development
 LOG_LEVEL=DEBUG
 
 # Telemetry
-TELEMETRY_ENABLED=true
-TELEMETRY_LEVEL=detailed
 PHOENIX_ENABLED=true
 PHOENIX_COLLECTOR_ENDPOINT=localhost:4317
-TELEMETRY_SYNC_EXPORT=false  # Use async batch export
 
 # Vespa
 VESPA_HOST=localhost
@@ -125,18 +116,15 @@ VESPA_PORT=8080
 # Ollama
 OLLAMA_BASE_URL=http://localhost:11434/v1
 
-# Multi-tenant
-DEFAULT_TENANT_ID=default
-
-# Performance
-VESPA_FEED_MAX_WORKERS=8
-BATCH_SIZE=50
-EOF
+# JAX (for VideoPrism)
+JAX_PLATFORM_NAME=cpu
 ```
 
 ---
 
-## Docker Compose Deployment
+## Docker Compose Deployment (Reference)
+
+While not required, Docker Compose provides a convenient way to orchestrate all services together.
 
 ### Complete Stack
 
@@ -213,6 +201,8 @@ volumes:
   model-cache:
 ```
 
+### Deploy with Docker Compose
+
 ```bash
 # Deploy stack
 docker-compose up -d
@@ -230,32 +220,14 @@ docker-compose up -d --scale cogniverse=3
 
 ---
 
-## Cloud Deployment Patterns
+## Modal Deployment (Serverless GPU)
 
-### Deployment Flow
+Modal provides serverless GPU infrastructure for video processing. See [docs/modal/](../modal/) for detailed setup.
 
-```mermaid
-sequenceDiagram
-    participant Dev as Developer
-    participant CI as CI/CD Pipeline
-    participant Registry as Container Registry
-    participant Platform as Cloud Platform
-    participant Services as Services
-
-    Dev->>CI: Push code to main branch
-    CI->>CI: Run tests
-    CI->>CI: Build Docker image
-    CI->>Registry: Push image with version tag
-    CI->>Platform: Deploy new version
-    Platform->>Services: Update Vespa, Phoenix, Ollama
-    Platform->>Services: Update Application containers
-    Platform-->>Dev: Deployment complete
-```
-
-### Modal Deployment (Serverless GPU)
+### Modal App Structure
 
 ```python
-# modal_app.py
+# scripts/modal_vlm_service.py
 import modal
 
 app = modal.App("cogniverse")
@@ -324,204 +296,76 @@ async def search(
         "results": [r.to_dict() for r in results],
         "count": len(results)
     }
-
-# FastAPI web endpoint
-@app.function(image=image)
-@modal.asgi_app()
-def web():
-    from fastapi import FastAPI
-    from src.api.routes import router
-
-    app = FastAPI(title="Cogniverse API")
-    app.include_router(router)
-
-    return app
 ```
+
+### Deploy to Modal
 
 ```bash
 # Deploy to Modal
-modal deploy modal_app.py
+modal deploy scripts/modal_vlm_service.py
 
 # Test endpoints
-modal run modal_app.py::search --query "machine learning tutorial"
-modal run modal_app.py::process_video --video-url "https://example.com/video.mp4"
+modal run scripts/modal_vlm_service.py::search --query "machine learning tutorial"
+modal run scripts/modal_vlm_service.py::process_video --video-url "https://example.com/video.mp4"
 ```
 
----
-
-## Kubernetes Deployment
-
-### Helm Chart Structure
-
-```
-helm/cogniverse/
-├── Chart.yaml
-├── values.yaml
-├── templates/
-│   ├── deployment.yaml
-│   ├── service.yaml
-│   ├── ingress.yaml
-│   ├── configmap.yaml
-│   ├── secrets.yaml
-│   ├── hpa.yaml
-│   └── servicemonitor.yaml
-└── values-production.yaml
-```
-
-### Values Configuration
-
-```yaml
-# helm/cogniverse/values.yaml
-replicaCount: 3
-
-image:
-  repository: cogniverse
-  tag: latest
-  pullPolicy: IfNotPresent
-
-service:
-  type: ClusterIP
-  port: 80
-  targetPort: 8000
-
-ingress:
-  enabled: true
-  className: nginx
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-  hosts:
-    - host: api.cogniverse.example.com
-      paths:
-        - path: /
-          pathType: Prefix
-
-resources:
-  limits:
-    cpu: 4000m
-    memory: 8Gi
-  requests:
-    cpu: 2000m
-    memory: 4Gi
-
-autoscaling:
-  enabled: true
-  minReplicas: 2
-  maxReplicas: 20
-  targetCPUUtilizationPercentage: 70
-
-# Vespa configuration
-vespa:
-  enabled: true
-  replicas: 3
-  storage: 100Gi
-  memory: 16Gi
-
-# Phoenix configuration
-phoenix:
-  enabled: true
-  storage: 50Gi
-
-# Ollama configuration
-ollama:
-  enabled: true
-  gpu:
-    enabled: true
-    count: 1
-  models:
-    - llama3.2
-    - nomic-embed-text
-
-# Environment variables
-env:
-  ENVIRONMENT: production
-  TELEMETRY_ENABLED: "true"
-  LOG_LEVEL: INFO
-```
-
-### Deploy with Helm
-
-```bash
-# Install
-helm install cogniverse cogniverse/cogniverse \
-  --namespace cogniverse \
-  --create-namespace \
-  --values values-production.yaml \
-  --wait
-
-# Upgrade
-helm upgrade cogniverse cogniverse/cogniverse \
-  --namespace cogniverse \
-  --values values-production.yaml \
-  --wait
-
-# Rollback
-helm rollback cogniverse 1 --namespace cogniverse
-```
+For detailed Modal setup, GPU recommendations, and deployment guides, see:
+- [docs/modal/deployment_guide.md](../modal/deployment_guide.md)
+- [docs/modal/gpu_recommendations.md](../modal/gpu_recommendations.md)
+- [docs/modal/setup_modal_vlm.py](../modal/setup_modal_vlm.py)
 
 ---
 
 ## Multi-Tenant Schema Deployment
 
-### Tenant Deployment Flow
-
-```mermaid
-graph LR
-    Start[New Tenant Request] --> CreateConfig[Create Tenant Config]
-
-    CreateConfig --> DeploySchema[Deploy Vespa Schema<br/>tenant-specific]
-
-    DeploySchema --> CreateProject[Create Phoenix Project<br/>tenant-specific]
-
-    CreateProject --> InitMemory[Initialize Mem0<br/>tenant namespace]
-
-    InitMemory --> VerifySetup[Verify Setup]
-
-    VerifySetup --> Ready[Tenant Ready]
-
-    style Start fill:#e1f5ff
-    style Ready fill:#e1ffe1
-```
+Cogniverse supports multi-tenant deployment with per-tenant schema isolation.
 
 ### Schema Deployment Script
 
 ```python
-# scripts/deploy_tenant_schemas.py
-"""Deploy schemas for all tenants on production Vespa"""
-import asyncio
-from src.backends.vespa.schema_manager import VespaSchemaManager
+# scripts/deploy_all_schemas.py
+from src.backends.vespa.vespa_schema_manager import VespaSchemaManager
+from src.backends.vespa.json_schema_parser import JsonSchemaParser
 
-async def deploy_all_tenant_schemas():
-    manager = VespaSchemaManager(
-        vespa_endpoint="https://vespa.prod.example.com",
-        vespa_port=443
-    )
+# Initialize the schema manager
+schema_manager = VespaSchemaManager()
 
-    tenants = ["acme", "globex", "initech"]  # Production tenants
-    base_schemas = [
-        "video_colpali_smol500_mv_frame",
-        "video_videoprism_base_mv_chunk_30s"
-    ]
+# Get all schema files
+schemas_dir = Path("configs/schemas")
+schema_files = list(schemas_dir.glob("*.json"))
 
-    for tenant in tenants:
-        for schema in base_schemas:
-            tenant_schema = f"{schema}_{tenant}"
-            if not manager.schema_exists(tenant_schema):
-                print(f"Deploying schema: {tenant_schema}")
-                manager.deploy_tenant_schema(
-                    base_schema=schema,
-                    tenant_id=tenant
-                )
-            else:
-                print(f"Schema exists: {tenant_schema}")
+# Create application package with all schemas
+app_package = ApplicationPackage(name="videosearch")
 
-if __name__ == "__main__":
-    asyncio.run(deploy_all_tenant_schemas())
+# Parse each schema and add to package
+for schema_file in schema_files:
+    parser = JsonSchemaParser()
+    schema = parser.load_schema_from_json_file(str(schema_file))
+    app_package.add_schema(schema)
+
+# Deploy all schemas at once
+schema_manager._deploy_package(app_package)
 ```
+
+### Deploy Schemas
 
 ```bash
-# Deploy tenant schemas
-uv run python scripts/deploy_tenant_schemas.py
+# Deploy all schemas from configs/schemas/
+uv run python scripts/deploy_all_schemas.py
+
+# Deploy specific schema
+JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_json_schema.py \
+  --schema-path configs/schemas/video_colpali_smol500_mv_frame.json
 ```
+
+### Available Schemas
+
+| Schema | Embedding Model | Modality | Dimensions |
+|--------|----------------|----------|------------|
+| **video_colpali_smol500_mv_frame** | ColPali SmolVLM 500M | Frame-based | 768 |
+| **video_colqwen_omni_mv_chunk_30s** | ColQwen2 Omni | Chunk-based (30s) | 768 |
+| **video_videoprism_base_mv_chunk_30s** | VideoPrism Base | Chunk-based (30s) | 768 |
+| **video_videoprism_lvt_base_sv_chunk_6s** | VideoPrism LVT | Chunk-based (6s) | 1152 |
 
 ---
 
@@ -530,148 +374,70 @@ uv run python scripts/deploy_tenant_schemas.py
 ### Phoenix Dashboard Access
 
 ```bash
-# Port-forward Phoenix in Kubernetes
-kubectl port-forward -n cogniverse svc/phoenix 6006:6006
-
-# Access dashboard
+# Access local Phoenix dashboard
 open http://localhost:6006
 
 # View tenant-specific traces
-# Navigate to project: cogniverse-{tenant_id}-video-search
+# Navigate to: cogniverse-{tenant_id}-video-search
 ```
 
-### Metrics Monitoring
+### Phoenix Telemetry Integration
 
-```mermaid
-graph TB
-    Services[Cogniverse Services]
+Phoenix telemetry is automatically enabled for:
+- Query processing spans
+- Agent routing decisions
+- Vespa search operations
+- Embedding generation
+- Multi-modal reranking
 
-    Services --> Prometheus[Prometheus<br/>Metrics Collection]
-    Services --> Phoenix[Phoenix<br/>Traces & Spans]
-
-    Prometheus --> Grafana[Grafana<br/>Dashboards]
-    Phoenix --> PhoenixUI[Phoenix UI<br/>Experiments]
-
-    Grafana --> Alerts[Alertmanager<br/>Notifications]
-
-    style Services fill:#e1f5ff
-    style Prometheus fill:#fff4e1
-    style Phoenix fill:#ffe1f5
-    style Grafana fill:#e1ffe1
-```
-
----
-
-## Backup & Disaster Recovery
-
-### Automated Backup Script
-
-```bash
-#!/bin/bash
-# scripts/backup-production.sh
-
-set -e
-
-BACKUP_DATE=$(date +%Y%m%d_%H%M%S)
-BACKUP_DIR="/backups/$BACKUP_DATE"
-S3_BUCKET="s3://cogniverse-backups-prod"
-
-mkdir -p $BACKUP_DIR
-
-# Backup Vespa data
-echo "Backing up Vespa..."
-kubectl exec -n cogniverse deployment/vespa -- \
-  vespa-backup --cluster video --outputdir /backup
-
-kubectl cp cogniverse/vespa:/backup $BACKUP_DIR/vespa/
-
-# Backup Phoenix data
-echo "Backing up Phoenix..."
-kubectl exec -n cogniverse deployment/phoenix -- \
-  tar -czf /tmp/phoenix-backup.tar.gz /data
-
-kubectl cp cogniverse/phoenix:/tmp/phoenix-backup.tar.gz \
-  $BACKUP_DIR/phoenix/phoenix-data.tar.gz
-
-# Backup configurations
-echo "Backing up configurations..."
-kubectl get configmap -n cogniverse -o yaml > $BACKUP_DIR/configmaps.yaml
-kubectl get secret -n cogniverse -o yaml > $BACKUP_DIR/secrets.yaml
-
-# Upload to S3
-echo "Uploading to S3..."
-aws s3 sync $BACKUP_DIR $S3_BUCKET/$BACKUP_DATE/ \
-  --storage-class GLACIER \
-  --sse AES256
-
-# Cleanup local backup
-rm -rf $BACKUP_DIR
-
-echo "Backup complete: $S3_BUCKET/$BACKUP_DATE/"
-```
-
-```bash
-# Schedule daily backups (cron)
-0 2 * * * /app/scripts/backup-production.sh >> /var/log/backups.log 2>&1
-```
+All traces are organized by tenant ID for isolation.
 
 ---
 
 ## Troubleshooting
 
-### Common Issues
-
-**1. Vespa Connection Timeout**
+### Vespa Connection Issues
 
 ```bash
-# Check Vespa pod status
-kubectl get pods -n cogniverse -l app=vespa
+# Check Vespa health
+curl http://localhost:8080/state/v1/health
+
+# Restart Vespa
+docker restart vespa
 
 # Check logs
-kubectl logs -n cogniverse deployment/vespa --tail=100
-
-# Test connectivity
-kubectl exec -n cogniverse deployment/cogniverse -- \
-  curl http://vespa:8080/ApplicationStatus
-
-# Restart if needed
-kubectl rollout restart deployment/vespa -n cogniverse
+docker logs vespa
 ```
 
-**2. Out of Memory (OOMKilled)**
+### Phoenix Not Recording Spans
 
 ```bash
-# Check pod events
-kubectl describe pod -n cogniverse <pod-name>
+# Check Phoenix is running
+docker ps | grep phoenix
 
-# Increase memory limits
-kubectl set resources deployment/cogniverse \
-  --limits=memory=16Gi \
-  --requests=memory=8Gi \
-  -n cogniverse
+# Verify endpoint
+echo $PHOENIX_COLLECTOR_ENDPOINT
+
+# Check Phoenix logs
+docker logs phoenix
 ```
 
-**3. Slow Phoenix Span Export**
+### Ollama Model Issues
 
 ```bash
-# Check Phoenix collector is accessible
-kubectl exec -n cogniverse deployment/cogniverse -- \
-  curl http://phoenix:4317
+# List installed models
+docker exec ollama ollama list
 
-# Check batch export configuration
-kubectl set env deployment/cogniverse \
-  TELEMETRY_SYNC_EXPORT=false \
-  -n cogniverse
+# Remove and re-pull model
+docker exec ollama ollama rm llama3.2
+docker exec ollama ollama pull llama3.2
 ```
 
 ---
 
-**Related Guides:**
-- [00_ARCHITECTURE_OVERVIEW.md](./00_ARCHITECTURE_OVERVIEW.md) - System design
-- [19_SETUP_INSTALLATION.md](./19_SETUP_INSTALLATION.md) - Installation
-- [20_CONFIGURATION_MANAGEMENT.md](./20_CONFIGURATION_MANAGEMENT.md) - Configuration
-- [22_PERFORMANCE_MONITORING.md](./22_PERFORMANCE_MONITORING.md) - Performance
+## Related Documentation
 
----
-
-**Next**: [22_PERFORMANCE_MONITORING.md](./22_PERFORMANCE_MONITORING.md)
+- [Setup & Installation](setup-installation.md) - Complete installation guide
+- [Configuration](configuration.md) - Multi-tenant configuration management
+- [Performance & Monitoring](performance-monitoring.md) - Performance targets and monitoring
+- [Modal Deployment](../modal/deployment_guide.md) - Serverless GPU deployment
