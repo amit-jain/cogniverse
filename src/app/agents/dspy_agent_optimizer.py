@@ -326,13 +326,34 @@ class DSPyAgentOptimizerPipeline:
         # Query Analysis Training Data (simplified for DSPy compatibility)
         training_data["query_analysis"] = [
             dspy.Example(
-                query="Show me videos of robots from yesterday", context=""
+                query="Show me videos of robots from yesterday",
+                context="",
+                primary_intent="video_search",
+                complexity_level="simple",
+                needs_video_search="true",
+                needs_text_search="false",
+                multimodal_query="false",
+                temporal_pattern="yesterday",
             ).with_inputs("query", "context"),
             dspy.Example(
-                query="Find documents about machine learning", context=""
+                query="Find documents about machine learning",
+                context="",
+                primary_intent="text_search",
+                complexity_level="simple",
+                needs_video_search="false",
+                needs_text_search="true",
+                multimodal_query="false",
+                temporal_pattern="none",
             ).with_inputs("query", "context"),
             dspy.Example(
-                query="Compare research papers on deep learning", context="academic"
+                query="Compare research papers on deep learning",
+                context="academic",
+                primary_intent="analysis",
+                complexity_level="complex",
+                needs_video_search="false",
+                needs_text_search="true",
+                multimodal_query="false",
+                temporal_pattern="none",
             ).with_inputs("query", "context"),
         ]
 
@@ -342,16 +363,25 @@ class DSPyAgentOptimizerPipeline:
                 query="Show me videos",
                 analysis_result="simple search",
                 available_agents="video_search",
+                recommended_workflow="direct_search",
+                primary_agent="video_search",
+                routing_confidence="0.9",
             ).with_inputs("query", "analysis_result", "available_agents"),
             dspy.Example(
                 query="Analyze data",
                 analysis_result="complex analysis",
                 available_agents="detailed_report",
+                recommended_workflow="detailed_analysis",
+                primary_agent="detailed_report",
+                routing_confidence="0.85",
             ).with_inputs("query", "analysis_result", "available_agents"),
             dspy.Example(
                 query="Summarize content",
                 analysis_result="summarization",
                 available_agents="summarizer",
+                recommended_workflow="summarization",
+                primary_agent="summarizer",
+                routing_confidence="0.95",
             ).with_inputs("query", "analysis_result", "available_agents"),
         ]
 
@@ -657,7 +687,8 @@ class DSPyAgentOptimizerPipeline:
             # Try to get few-shot examples if available
             if hasattr(module, "demos") and module.demos:
                 prompts["compiled_prompts"]["few_shot_examples"] = [
-                    str(demo) for demo in module.demos[:3]  # First 3 examples
+                    str(demo)
+                    for demo in module.demos[:3]  # First 3 examples
                 ]
 
         except Exception as e:

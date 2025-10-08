@@ -104,7 +104,9 @@ class SingleVectorSegmentationStrategy(BaseStrategy):
         )
 
         if not single_vector_processor:
-            raise ValueError("No single-vector processor available in processor_manager")
+            raise ValueError(
+                "No single-vector processor available in processor_manager"
+            )
 
         processed_data = single_vector_processor.process_video(
             video_path=video_path, transcript_data=transcript_data
@@ -154,7 +156,7 @@ class NoDescriptionStrategy(BaseStrategy):
 class MultiVectorEmbeddingStrategy(BaseStrategy):
     """Generate multi-vector embeddings."""
 
-    def __init__(self, model_name: str = "vidore/colpali-v1.2"):
+    def __init__(self, model_name: str = "vidore/colsmol-500m"):
         self.model_name = model_name
 
     def get_required_processors(self) -> dict[str, dict[str, Any]]:

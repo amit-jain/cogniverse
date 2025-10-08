@@ -20,7 +20,7 @@ class EmbeddingProcessor(BaseProcessor):
         self,
         logger: logging.Logger,
         embedding_type: str = "multi_vector",
-        model_name: str = "vidore/colpali-v1.2",
+        model_name: str = "vidore/colsmol-500m",
     ):
         """
         Initialize embedding processor.
@@ -42,7 +42,7 @@ class EmbeddingProcessor(BaseProcessor):
         return cls(
             logger=logger,
             embedding_type=config.get("type", "multi_vector"),
-            model_name=config.get("model_name", "vidore/colpali-v1.2"),
+            model_name=config.get("model_name", "vidore/colsmol-500m"),
         )
 
     def process(self, *args, **kwargs) -> Any:

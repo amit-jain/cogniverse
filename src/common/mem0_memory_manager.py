@@ -7,6 +7,7 @@ Provides simple, persistent agent memory with multi-tenant support.
 
 import logging
 import os
+import sys
 from typing import Any, Dict, List, Optional
 
 # Disable Mem0's telemetry BEFORE importing mem0
@@ -21,8 +22,6 @@ logger = logging.getLogger(__name__)
 # Register Vespa as a supported vector store provider in Mem0
 def _register_vespa_provider():
     """Register Vespa as a supported vector store provider in Mem0"""
-    import sys
-
     from mem0.utils.factory import VectorStoreFactory
 
     # Import vespa_memory_config so it's available in sys.modules
