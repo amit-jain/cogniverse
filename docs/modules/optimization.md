@@ -1421,6 +1421,176 @@ async def test_complete_optimization_cycle():
 
 ---
 
+## DSPy Training Data Requirements
+
+### Overview
+
+DSPy optimizers require properly formatted training examples with **all expected output fields** defined. Missing fields will cause `AttributeError: 'Example' object has no attribute 'field_name'` during metric evaluation.
+
+### Training Data Format
+
+Each DSPy `Example` must include:
+1. **Input fields** (marked with `.with_inputs()`)
+2. **All output fields** that metrics will access
+
+**Example Structure:**
+```python
+import dspy
+
+example = dspy.Example(
+    # Input fields
+    query="user query here",
+    context="optional context",
+
+    # Output fields (ALL fields that metrics check must be present)
+    primary_intent="search",
+    confidence=0.9,
+    recommended_agent="video_search"
+).with_inputs("query", "context")  # Specify which fields are inputs
+```
+
+### Query Analysis Training Data
+
+**Required Output Fields:**
+- `primary_intent`: Main intent category
+- `complexity_level`: "simple" | "complex"
+- `needs_video_search`: "true" | "false"
+- `needs_text_search`: "true" | "false"
+- `multimodal_query`: "true" | "false"
+- `temporal_pattern`: Temporal info or "none"
+
+**Example:**
+```python
+training_data = [
+    dspy.Example(
+        query="Show me videos of robots from yesterday",
+        context="",
+        # All output fields required for metrics
+        primary_intent="video_search",
+        complexity_level="simple",
+        needs_video_search="true",
+        needs_text_search="false",
+        multimodal_query="false",
+        temporal_pattern="yesterday",
+    ).with_inputs("query", "context"),
+
+    dspy.Example(
+        query="Compare research papers on deep learning",
+        context="academic",
+        primary_intent="analysis",
+        complexity_level="complex",
+        needs_video_search="false",
+        needs_text_search="true",
+        multimodal_query="false",
+        temporal_pattern="none",
+    ).with_inputs("query", "context"),
+]
+```
+
+### Agent Routing Training Data
+
+**Required Output Fields:**
+- `recommended_workflow`: Workflow type
+- `primary_agent`: Main agent to use
+- `routing_confidence`: Confidence score (0.0-1.0 as string)
+
+**Example:**
+```python
+training_data = [
+    dspy.Example(
+        query="Show me videos",
+        analysis_result="simple search",
+        available_agents="video_search",
+        # All output fields
+        recommended_workflow="direct_search",
+        primary_agent="video_search",
+        routing_confidence="0.9",
+    ).with_inputs("query", "analysis_result", "available_agents"),
+
+    dspy.Example(
+        query="Analyze data trends",
+        analysis_result="complex analysis",
+        available_agents="detailed_report",
+        recommended_workflow="detailed_analysis",
+        primary_agent="detailed_report",
+        routing_confidence="0.85",
+    ).with_inputs("query", "analysis_result", "available_agents"),
+]
+```
+
+### Common Errors
+
+#### Missing Output Fields
+
+**Error:**
+```python
+AttributeError: 'Example' object has no attribute 'primary_intent'
+```
+
+**Cause:** Metric function accesses `example.primary_intent` but Example doesn't have that field.
+
+**Fix:** Add the missing field to all training examples:
+```python
+example = dspy.Example(
+    query="...",
+    primary_intent="search",  # ← Add missing field
+    # ... other fields
+).with_inputs("query")
+```
+
+#### Incorrect Field Types
+
+**Error:**
+```python
+TypeError: expected str, got bool
+```
+
+**Cause:** DSPy Examples store all fields as strings internally.
+
+**Fix:** Convert to strings:
+```python
+# ❌ Bad
+needs_video_search=True
+
+# ✅ Good
+needs_video_search="true"
+```
+
+### Validation
+
+Before running optimization, validate your training data:
+
+```python
+def validate_training_data(examples, required_fields):
+    """Validate all examples have required output fields."""
+    for i, ex in enumerate(examples):
+        for field in required_fields:
+            if not hasattr(ex, field):
+                raise ValueError(
+                    f"Example {i} missing required field '{field}'"
+                )
+    print(f"✅ All {len(examples)} examples valid")
+
+# Usage
+required = ["primary_intent", "complexity_level", "needs_video_search"]
+validate_training_data(training_data, required)
+```
+
+### Best Practices
+
+1. **Define all output fields upfront** - Check what your metrics access
+2. **Use consistent field names** - Match your DSPy signature output fields
+3. **Validate before optimization** - Catch missing fields early
+4. **Use string values** - DSPy converts everything to strings
+5. **Document required fields** - Keep a reference list for your team
+
+### File References
+
+- `src/app/agents/dspy_agent_optimizer.py:327-385` - Training data loading
+- `tests/agents/integration/test_dspy_optimization_integration.py` - Example tests with proper format
+
+---
+
 ## Related Documentation
 
 - **Routing Module Study Guide**: `02_ROUTING_MODULE.md` - Tiered routing strategies
