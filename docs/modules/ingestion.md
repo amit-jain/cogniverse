@@ -684,7 +684,7 @@ profile_config = {
         },
         "embedding": {
             "class": "MultiVectorEmbeddingStrategy",
-            "params": {"model_name": "vidore/colpali-v1.2"}
+            "params": {"model_name": "vidore/colsmol-500m"}
         }
     }
 }
@@ -935,11 +935,11 @@ strategy = VLMDescriptionStrategy(
 **Purpose**: Generate multi-vector embeddings (frame-by-frame)
 
 **Parameters**:
-- `model_name`: Embedding model (e.g., "vidore/colpali-v1.2")
+- `model_name`: Embedding model (e.g., "vidore/colsmol-500m")
 
 **Usage**:
 ```python
-strategy = MultiVectorEmbeddingStrategy(model_name="vidore/colpali-v1.2")
+strategy = MultiVectorEmbeddingStrategy(model_name="vidore/colsmol-500m")
 ```
 
 **Custom Method**:
@@ -1160,7 +1160,7 @@ class VideoSegment:
    ↓
 6. EMBEDDING GENERATION (MultiVectorEmbeddingStrategy)
    • EmbeddingGenerator.generate_embeddings()
-   • Model: ColPali (vidore/colpali-v1.2)
+   • Model: ColPali (vidore/colsmol-500m)
    • Processing:
      - Load keyframe images (150 images)
      - Batch inference (batch_size=8)
@@ -1269,7 +1269,7 @@ video_processing_profiles:
       embedding:
         class: "MultiVectorEmbeddingStrategy"
         params:
-          model_name: "vidore/colpali-v1.2"
+          model_name: "vidore/colsmol-500m"
 ```
 
 ### Example 2: Batch Processing with Concurrency
@@ -1432,7 +1432,7 @@ custom_profile = {
         },
         "embedding": {
             "class": "MultiVectorEmbeddingStrategy",
-            "params": {"model_name": "vidore/colpali-v1.2"}
+            "params": {"model_name": "vidore/colsmol-500m"}
         }
     }
 }
@@ -1705,7 +1705,7 @@ async def test_concurrent_video_processing():
 def test_colpali_embedding_generation():
     generator = EmbeddingGenerator(
         config=test_config,
-        profile_config={"embedding_model": "vidore/colpali-v1.2"},
+        profile_config={"embedding_model": "vidore/colsmol-500m"},
         backend_client=mock_vespa_client
     )
 

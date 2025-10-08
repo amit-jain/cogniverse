@@ -138,7 +138,7 @@ app = modal.App("cogniverse-embeddings")
 )
 class EmbeddingService:
     def __init__(self):
-        self.colpali = ColPali.from_pretrained("vidore/colpali-v1.2")
+        self.colpali = ColPali.from_pretrained("vidore/colsmol-500m")
         self.videoprism = VideoPrism.from_pretrained("google/videoprism-base")
 
     @modal.method()
