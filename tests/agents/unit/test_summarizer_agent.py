@@ -135,7 +135,7 @@ class TestSummarizerAgent:
         mock_vlm_instance = Mock()
         mock_vlm_class.return_value = mock_vlm_instance
 
-        agent = SummarizerAgent()
+        agent = SummarizerAgent(tenant_id="test_tenant")
 
         assert agent.config is not None
         assert agent.vlm == mock_vlm_instance
@@ -198,7 +198,7 @@ class TestSummarizerAgent:
         mock_cot_instance.forward = Mock(return_value=mock_prediction)
         mock_cot.return_value = mock_cot_instance
 
-        agent = SummarizerAgent()
+        agent = SummarizerAgent(tenant_id="test_tenant")
 
         # Create A2A task
         request_data = {
@@ -246,7 +246,7 @@ class TestSummarizerAgentCoreFunctionality:
             )
             mock_vlm_class.return_value = mock_vlm
 
-            agent = SummarizerAgent()
+            agent = SummarizerAgent(tenant_id="test_tenant")
             agent.vlm = mock_vlm
             return agent
 

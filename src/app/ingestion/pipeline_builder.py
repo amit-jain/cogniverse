@@ -21,6 +21,7 @@ class VideoIngestionPipelineBuilder:
 
     def __init__(self):
         """Initialize builder with default values."""
+        self._tenant_id: str | None = None
         self._config: PipelineConfig | None = None
         self._app_config: dict[str, Any] | None = None
         self._schema_name: str | None = None
@@ -30,6 +31,11 @@ class VideoIngestionPipelineBuilder:
         self._backend: str | None = None
         self._max_frames: int | None = None
         self._max_concurrent: int = 3
+
+    def with_tenant_id(self, tenant_id: str) -> "VideoIngestionPipelineBuilder":
+        """Set tenant identifier."""
+        self._tenant_id = tenant_id
+        return self
 
     def with_config(self, config: PipelineConfig) -> "VideoIngestionPipelineBuilder":
         """Set pipeline configuration."""
@@ -79,7 +85,18 @@ class VideoIngestionPipelineBuilder:
         return self
 
     def build(self) -> VideoIngestionPipeline:
-        """Build the configured VideoIngestionPipeline."""
+        """
+        Build the configured VideoIngestionPipeline.
+
+        Raises:
+            ValueError: If tenant_id not set
+        """
+        # Validate tenant_id
+        if not self._tenant_id:
+            raise ValueError(
+                "tenant_id must be set using with_tenant_id() before building pipeline"
+            )
+
         # Build config if not provided
         if not self._config:
             config_dict = {}
@@ -104,6 +121,7 @@ class VideoIngestionPipelineBuilder:
 
         # Create pipeline instance
         pipeline = VideoIngestionPipeline(
+            tenant_id=self._tenant_id,
             config=self._config,
             app_config=app_config,
             schema_name=self._schema_name,
@@ -219,11 +237,25 @@ def create_config() -> PipelineConfigBuilder:
 
 
 def build_simple_pipeline(
-    video_dir: Path, schema: str, backend: str = "vespa", debug: bool = False
+    tenant_id: str,
+    video_dir: Path,
+    schema: str,
+    backend: str = "vespa",
+    debug: bool = False,
 ) -> VideoIngestionPipeline:
-    """Build a simple pipeline with common settings."""
+    """
+    Build a simple pipeline with common settings.
+
+    Args:
+        tenant_id: Tenant identifier (REQUIRED - no default)
+        video_dir: Directory containing videos
+        schema: Schema/profile name
+        backend: Search backend type
+        debug: Enable debug mode
+    """
     return (
         create_pipeline()
+        .with_tenant_id(tenant_id)
         .with_video_dir(video_dir)
         .with_schema(schema)
         .with_backend(backend)
@@ -233,9 +265,17 @@ def build_simple_pipeline(
 
 
 def build_test_pipeline(
-    video_dir: Path, schema: str, max_frames: int = 10
+    tenant_id: str, video_dir: Path, schema: str, max_frames: int = 10
 ) -> VideoIngestionPipeline:
-    """Build a pipeline for testing with limited frames."""
+    """
+    Build a pipeline for testing with limited frames.
+
+    Args:
+        tenant_id: Tenant identifier (REQUIRED - no default)
+        video_dir: Directory containing videos
+        schema: Schema/profile name
+        max_frames: Maximum frames per video
+    """
     config = (
         create_config()
         .video_dir(video_dir)
@@ -246,6 +286,7 @@ def build_test_pipeline(
 
     return (
         create_pipeline()
+        .with_tenant_id(tenant_id)
         .with_config(config)
         .with_schema(schema)
         .with_debug(True)

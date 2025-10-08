@@ -48,7 +48,7 @@ class TestCompleteDSPySystem:
                         mock_config.return_value = mock_config_obj
 
                         # Initialize routing agent
-                        routing_agent = RoutingAgent()
+                        routing_agent = RoutingAgent(tenant_id="test_tenant")
 
                         # Test that it can process a query
                         query = "Find videos of robots playing soccer"
@@ -135,7 +135,7 @@ class TestCompleteDSPySystem:
                     mock_encoder.create_encoder.return_value = Mock()
 
                     # Initialize agent
-                    video_agent = VideoSearchAgent()
+                    video_agent = VideoSearchAgent(tenant_id="test_tenant")
 
                     # Test that the agent can handle enhanced context
                     assert hasattr(video_agent, "vespa_client")
@@ -207,7 +207,7 @@ class TestCompleteDSPySystem:
                     "detailed_report_agent_url": "http://localhost:8004",
                 }
 
-                routing_agent = RoutingAgent()
+                routing_agent = RoutingAgent(tenant_id="test_tenant")
 
                 # Test orchestration capability detection
                 capabilities = routing_agent._get_routing_capabilities()

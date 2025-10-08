@@ -147,12 +147,29 @@ class VideoIngestionPipeline:
 
     def __init__(
         self,
+        tenant_id: str,
         config: PipelineConfig | None = None,
         app_config: dict[str, Any] | None = None,
         schema_name: str | None = None,
         debug_mode: bool = False,
     ):
-        """Initialize the video ingestion pipeline with async support"""
+        """
+        Initialize the video ingestion pipeline with async support
+
+        Args:
+            tenant_id: Tenant identifier (REQUIRED - no default)
+            config: Pipeline configuration
+            app_config: Application configuration
+            schema_name: Schema/profile name
+            debug_mode: Enable debug logging
+
+        Raises:
+            ValueError: If tenant_id is empty or None
+        """
+        if not tenant_id:
+            raise ValueError("tenant_id is required - no default tenant")
+
+        self.tenant_id = tenant_id
         self.config = config or PipelineConfig.from_config()
         self.app_config = app_config or get_config()
         self.schema_name = schema_name
@@ -384,13 +401,17 @@ class VideoIngestionPipeline:
         # Initialize embedding generator v2 directly
         try:
             self.embedding_generator = create_embedding_generator(
-                config=self.app_config, schema_name=self.schema_name, logger=self.logger
+                config=self.app_config,
+                schema_name=self.schema_name,
+                tenant_id=self.tenant_id,
+                logger=self.logger,
             )
             self.logger.info(
-                f"Initialized embedding generator v2 with backend: {self.config.search_backend}"
+                f"Initialized embedding generator for tenant {self.tenant_id} "
+                f"with backend: {self.config.search_backend}"
             )
         except Exception as e:
-            self.logger.error(f"Failed to initialize embedding generator v2: {e}")
+            self.logger.error(f"Failed to initialize embedding generator: {e}")
             self.embedding_generator = None
 
         # Set embedding generator for single vector processor if needed

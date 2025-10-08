@@ -144,7 +144,7 @@ class TestAdaptiveThresholdLearner:
     def test_learner_initialization_with_defaults(self):
         """Test threshold learner initialization with defaults."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            learner = AdaptiveThresholdLearner(storage_dir=temp_dir)
+            learner = AdaptiveThresholdLearner(tenant_id="test_tenant", base_storage_dir=temp_dir)
 
             assert learner.config is not None
             assert isinstance(learner.config, AdaptiveThresholdConfig)
@@ -158,7 +158,7 @@ class TestAdaptiveThresholdLearner:
         config = AdaptiveThresholdConfig(global_learning_rate=0.02)
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            learner = AdaptiveThresholdLearner(config, storage_dir=temp_dir)
+            learner = AdaptiveThresholdLearner(tenant_id="test_tenant", config=config, base_storage_dir=temp_dir)
 
             assert learner.config.global_learning_rate == 0.02
 
@@ -166,7 +166,7 @@ class TestAdaptiveThresholdLearner:
     async def test_record_performance_sample(self):
         """Test recording performance samples."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            learner = AdaptiveThresholdLearner(storage_dir=temp_dir)
+            learner = AdaptiveThresholdLearner(tenant_id="test_tenant", base_storage_dir=temp_dir)
 
             initial_sample_count = learner.sample_count
 
@@ -185,7 +185,7 @@ class TestAdaptiveThresholdLearner:
     def test_get_threshold_value(self):
         """Test getting current threshold values."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            learner = AdaptiveThresholdLearner(storage_dir=temp_dir)
+            learner = AdaptiveThresholdLearner(tenant_id="test_tenant", base_storage_dir=temp_dir)
 
             threshold = learner.get_threshold_value(
                 ThresholdParameter.ROUTING_CONFIDENCE
@@ -197,7 +197,7 @@ class TestAdaptiveThresholdLearner:
     def test_get_current_thresholds(self):
         """Test getting all current threshold values."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            learner = AdaptiveThresholdLearner(storage_dir=temp_dir)
+            learner = AdaptiveThresholdLearner(tenant_id="test_tenant", base_storage_dir=temp_dir)
 
             thresholds = learner.get_current_thresholds()
 
@@ -210,7 +210,7 @@ class TestAdaptiveThresholdLearner:
     def test_get_learning_status(self):
         """Test getting learning status."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            learner = AdaptiveThresholdLearner(storage_dir=temp_dir)
+            learner = AdaptiveThresholdLearner(tenant_id="test_tenant", base_storage_dir=temp_dir)
 
             status = learner.get_learning_status()
 
@@ -224,7 +224,7 @@ class TestAdaptiveThresholdLearner:
     async def test_learning_state_reset(self):
         """Test resetting learning state."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            learner = AdaptiveThresholdLearner(storage_dir=temp_dir)
+            learner = AdaptiveThresholdLearner(tenant_id="test_tenant", base_storage_dir=temp_dir)
 
             # Record some samples first
             await learner.record_performance_sample(
@@ -248,7 +248,7 @@ class TestAdaptiveThresholdLearner:
     async def test_adaptive_learning_cycle(self):
         """Test complete adaptive learning cycle."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            learner = AdaptiveThresholdLearner(storage_dir=temp_dir)
+            learner = AdaptiveThresholdLearner(tenant_id="test_tenant", base_storage_dir=temp_dir)
 
             # Simulate learning cycle with multiple samples
             for i in range(100):
@@ -274,7 +274,7 @@ class TestAdaptiveThresholdLearner:
     def test_threshold_states_access(self):
         """Test accessing threshold states."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            learner = AdaptiveThresholdLearner(storage_dir=temp_dir)
+            learner = AdaptiveThresholdLearner(tenant_id="test_tenant", base_storage_dir=temp_dir)
 
             # Access threshold states directly
             assert isinstance(learner.threshold_states, dict)
@@ -313,7 +313,7 @@ class TestAdaptiveThresholdLearnerIntegration:
     async def test_multi_parameter_learning(self):
         """Test learning across multiple threshold parameters."""
         with tempfile.TemporaryDirectory() as temp_dir:
-            learner = AdaptiveThresholdLearner(storage_dir=temp_dir)
+            learner = AdaptiveThresholdLearner(tenant_id="test_tenant", base_storage_dir=temp_dir)
 
             # Record diverse performance samples
             samples = [

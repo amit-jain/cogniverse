@@ -344,7 +344,7 @@ class TestDSPyAgentIntegration:
                 "builtins.open", mock_open(read_data=json.dumps(mock_prompts))
             ):
 
-                agent = RoutingAgent()
+                agent = RoutingAgent(tenant_id="test_tenant")
 
                 # Should have DSPy module from parent class
                 assert hasattr(agent, "dspy_module")
@@ -395,7 +395,7 @@ class TestDSPyAgentIntegration:
                         "builtins.open", mock_open(read_data=json.dumps(mock_prompts))
                     ):
 
-                        agent = SummarizerAgent()
+                        agent = SummarizerAgent(tenant_id="test_tenant")
 
                     # Should have loaded DSPy optimization
                     assert agent.dspy_enabled
@@ -446,7 +446,7 @@ class TestDSPyAgentIntegration:
                         "builtins.open", mock_open(read_data=json.dumps(mock_prompts))
                     ):
 
-                        agent = DetailedReportAgent()
+                        agent = DetailedReportAgent(tenant_id="test_tenant")
 
                     # Should have loaded DSPy optimization
                     assert agent.dspy_enabled

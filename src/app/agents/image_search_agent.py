@@ -48,6 +48,7 @@ class ImageSearchAgent(DSPyA2AAgentBase):
 
     def __init__(
         self,
+        tenant_id: str,
         vespa_endpoint: str = "http://localhost:8080",
         colpali_model: str = "vidore/colsmol-500m",
         port: int = 8005,
@@ -56,10 +57,18 @@ class ImageSearchAgent(DSPyA2AAgentBase):
         Initialize Image Search Agent
 
         Args:
+            tenant_id: Tenant identifier (REQUIRED - no default)
             vespa_endpoint: Vespa endpoint URL
             colpali_model: ColPali model name
             port: A2A server port
+
+        Raises:
+            ValueError: If tenant_id is empty or None
         """
+        if not tenant_id:
+            raise ValueError("tenant_id is required - no default tenant")
+
+        self.tenant_id = tenant_id
 
         # Create DSPy module
         class ImageSearchSignature(dspy.Signature):

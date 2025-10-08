@@ -108,7 +108,7 @@ class TestMultiAgentOrchestrator:
         mock_workflow_intel_instance = Mock()
         mock_workflow_intel.return_value = mock_workflow_intel_instance
 
-        orchestrator = MultiAgentOrchestrator()
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant")
 
         # Check initialization
         assert orchestrator.routing_agent == mock_routing_instance
@@ -136,7 +136,7 @@ class TestMultiAgentOrchestrator:
         mock_routing_instance = Mock()
         mock_routing.return_value = mock_routing_instance
 
-        orchestrator = MultiAgentOrchestrator(
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", 
             available_agents=sample_agents_config,
             max_parallel_tasks=5,
             workflow_timeout_minutes=20,
@@ -155,7 +155,7 @@ class TestMultiAgentOrchestrator:
     @pytest.mark.ci_fast
     def test_get_default_agents(self, mock_workflow_intel, mock_a2a, mock_routing):
         """Test default agent configuration"""
-        orchestrator = MultiAgentOrchestrator()
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant")
 
         default_agents = orchestrator._get_default_agents()
 
@@ -174,7 +174,7 @@ class TestMultiAgentOrchestrator:
     @patch("src.app.agents.multi_agent_orchestrator.create_workflow_intelligence")
     def test_initialize_dspy_modules(self, mock_workflow_intel, mock_a2a, mock_routing):
         """Test DSPy module initialization"""
-        orchestrator = MultiAgentOrchestrator()
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant")
 
         # DSPy modules should be initialized
         assert hasattr(orchestrator, "workflow_planner")
@@ -190,7 +190,7 @@ class TestMultiAgentOrchestrator:
         """Test basic complex query processing"""
         mock_routing.return_value = mock_routing_agent
 
-        orchestrator = MultiAgentOrchestrator()
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant")
 
         # Mock workflow intelligence
         mock_workflow_intel_instance = Mock()
@@ -238,7 +238,7 @@ class TestMultiAgentOrchestratorWorkflowExecution:
             ),
         ):
 
-            orchestrator = MultiAgentOrchestrator(enable_workflow_intelligence=False)
+            orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", enable_workflow_intelligence=False)
             return orchestrator
 
     def test_create_fallback_workflow_plan_structure(self, orchestrator_with_mocks):
@@ -300,7 +300,7 @@ class TestMultiAgentOrchestratorEdgeCases:
         self, mock_a2a, mock_routing
     ):
         """Test orchestrator when workflow intelligence is disabled"""
-        orchestrator = MultiAgentOrchestrator(enable_workflow_intelligence=False)
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", enable_workflow_intelligence=False)
 
         assert orchestrator.enable_workflow_intelligence is False
         assert orchestrator.workflow_intelligence is None
@@ -310,7 +310,7 @@ class TestMultiAgentOrchestratorEdgeCases:
     @pytest.mark.ci_fast
     def test_orchestrator_agent_utilization_tracking(self, mock_a2a, mock_routing):
         """Test agent utilization statistics"""
-        orchestrator = MultiAgentOrchestrator(enable_workflow_intelligence=False)
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", enable_workflow_intelligence=False)
 
         # Test that agent utilization dict is initialized
         stats = orchestrator.orchestration_stats["agent_utilization"]
@@ -329,7 +329,7 @@ class TestCrossModalFusion:
             patch("src.app.agents.multi_agent_orchestrator.RoutingAgent"),
             patch("src.app.agents.multi_agent_orchestrator.A2AClient"),
         ):
-            return MultiAgentOrchestrator(enable_workflow_intelligence=False)
+            return MultiAgentOrchestrator(tenant_id="test_tenant", enable_workflow_intelligence=False)
 
     @pytest.fixture
     def sample_task_results(self):

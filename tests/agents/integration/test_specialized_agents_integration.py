@@ -112,7 +112,7 @@ class TestSummarizerAgentDSPyIntegration:
             # Use dspy.context() for async tasks instead of configure()
             with dspy.context(lm=real_dspy_lm):
                 # Create agent and set real LM
-                agent = SummarizerAgent()
+                agent = SummarizerAgent(tenant_id="test_tenant")
                 agent.llm = real_dspy_lm
 
                 # Create summary request
@@ -146,7 +146,7 @@ class TestSummarizerAgentDSPyIntegration:
 
             # Use dspy.context() for async tasks instead of configure()
             with dspy.context(lm=real_dspy_lm):
-                agent = SummarizerAgent()
+                agent = SummarizerAgent(tenant_id="test_tenant")
                 agent.llm = real_dspy_lm
 
                 # Create A2A task
@@ -187,7 +187,7 @@ class TestDetailedReportAgentDSPyIntegration:
 
             # Use dspy.context() for async tasks instead of configure()
             with dspy.context(lm=real_dspy_lm):
-                agent = DetailedReportAgent()
+                agent = DetailedReportAgent(tenant_id="test_tenant")
                 agent.llm = real_dspy_lm
 
                 from src.app.agents.detailed_report_agent import ReportRequest
@@ -238,7 +238,7 @@ class TestDetailedReportAgentDSPyIntegration:
 
             # Use dspy.context() for async tasks instead of configure()
             with dspy.context(lm=real_dspy_lm):
-                agent = DetailedReportAgent()
+                agent = DetailedReportAgent(tenant_id="test_tenant")
                 agent.llm = real_dspy_lm
 
                 # Create A2A task
@@ -298,9 +298,9 @@ class TestCrossAgentDSPyIntegration:
 
             # Use dspy.context() for async tasks instead of configure()
             with dspy.context(lm=real_dspy_lm):
-                summarizer = SummarizerAgent()
+                summarizer = SummarizerAgent(tenant_id="test_tenant")
                 summarizer.llm = real_dspy_lm
-                report_agent = DetailedReportAgent()
+                report_agent = DetailedReportAgent(tenant_id="test_tenant")
                 report_agent.llm = real_dspy_lm
 
                 # Step 1: Generate summary with real DSPy.LM
@@ -382,9 +382,9 @@ class TestDSPyLMConfigurationIntegration:
             # Use dspy.context() for async tasks instead of configure()
             with dspy.context(lm=real_dspy_lm):
                 # Test with different model configurations (both using same LM for testing)
-                agent_small = SummarizerAgent()
+                agent_small = SummarizerAgent(tenant_id="test_tenant")
                 agent_small.llm = real_dspy_lm
-                agent_medium = SummarizerAgent()
+                agent_medium = SummarizerAgent(tenant_id="test_tenant")
                 agent_medium.llm = real_dspy_lm
 
                 from src.app.agents.summarizer_agent import SummaryRequest
@@ -427,7 +427,7 @@ class TestDSPyLMConfigurationIntegration:
             # 1. Fail gracefully with clear error message, or
             # 2. Initialize but fail on first LLM call
             try:
-                agent = SummarizerAgent()
+                agent = SummarizerAgent(tenant_id="test_tenant")
 
                 # If agent initializes, LLM calls should fail gracefully
                 from src.app.agents.summarizer_agent import SummaryRequest

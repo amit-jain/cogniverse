@@ -155,7 +155,7 @@ class TestRealAgentRoutingIntegration:
              patch.object(RoutingAgent, "_configure_dspy", return_value=None), \
              patch("src.app.agents.dspy_a2a_agent_base.FastAPI"), \
              patch("src.app.agents.dspy_a2a_agent_base.A2AClient"):
-            routing_agent = RoutingAgent(port=8001, enable_telemetry=False)
+            routing_agent = RoutingAgent(tenant_id="test_tenant", port=8001, enable_telemetry=False)
 
         # Test routing decisions for different query types
         test_cases = [
@@ -223,7 +223,7 @@ class TestRealAgentSpecializationIntegration:
         with dspy.context(lm=test_lm), \
              patch("src.app.agents.dspy_a2a_agent_base.FastAPI"), \
              patch("src.app.agents.dspy_a2a_agent_base.A2AClient"):
-            summarizer = SummarizerAgent()
+            summarizer = SummarizerAgent(tenant_id="test_tenant")
 
             # Test content summarization - use SummaryRequest with search_results
             test_search_results = [
@@ -280,7 +280,7 @@ class TestRealAgentSpecializationIntegration:
         # E2E test - requires real Ollama, works in production
         with patch("src.app.agents.dspy_a2a_agent_base.FastAPI"), \
              patch("src.app.agents.dspy_a2a_agent_base.A2AClient"):
-            report_agent = DetailedReportAgent()
+            report_agent = DetailedReportAgent(tenant_id="test_tenant")
 
             # Mock search results for testing
             mock_search_results = [
@@ -450,8 +450,8 @@ class TestRealEndToEndWorkflow:
         with patch.object(RoutingAgent, "_configure_dspy", return_value=None), \
              patch("src.app.agents.dspy_a2a_agent_base.FastAPI"), \
              patch("src.app.agents.dspy_a2a_agent_base.A2AClient"):
-            routing_agent = RoutingAgent(port=8001, enable_telemetry=False)
-            summarizer = SummarizerAgent()
+            routing_agent = RoutingAgent(tenant_id="test_tenant", port=8001, enable_telemetry=False)
+            summarizer = SummarizerAgent(tenant_id="test_tenant")
 
             # Test complete workflow
             test_query = (

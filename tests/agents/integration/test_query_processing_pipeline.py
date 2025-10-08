@@ -427,7 +427,7 @@ class TestAgentWorkflowIntegration:
                     "api_key": "dummy",
                 }
             }
-            summarizer = SummarizerAgent()
+            summarizer = SummarizerAgent(tenant_id="test_tenant")
 
         # Test agent exists and has required interface
         assert summarizer is not None
@@ -448,7 +448,7 @@ class TestAgentWorkflowIntegration:
                     "api_key": "dummy",
                 }
             }
-            reporter = DetailedReportAgent()
+            reporter = DetailedReportAgent(tenant_id="test_tenant")
 
         # Test agent exists and has required interface
         assert reporter is not None
@@ -508,8 +508,8 @@ class TestAgentWorkflowIntegration:
             mock_summarizer_config.return_value = config
             mock_reporter_config.return_value = config
 
-            summarizer = SummarizerAgent()
-            reporter = DetailedReportAgent()
+            summarizer = SummarizerAgent(tenant_id="test_tenant")
+            reporter = DetailedReportAgent(tenant_id="test_tenant")
 
         # Both should coexist without issues
         assert summarizer is not None
@@ -557,8 +557,8 @@ class TestSystemIntegrationReadiness:
                 mock_summarizer_config.return_value = config
                 mock_reporter_config.return_value = config
 
-                components["summarizer"] = SummarizerAgent()
-                components["reporter"] = DetailedReportAgent()
+                components["summarizer"] = SummarizerAgent(tenant_id="test_tenant")
+                components["reporter"] = DetailedReportAgent(tenant_id="test_tenant")
 
             # All should initialize successfully
             for name, component in components.items():

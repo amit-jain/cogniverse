@@ -20,13 +20,14 @@ import logging
 import pickle
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 # DSPy 3.0 imports
 import dspy
 import numpy as np
 from dspy.teleprompt import GEPA, SIMBA, BootstrapFewShot, MIPROv2
+
+from src.common.tenant_utils import get_tenant_storage_path
 
 logger = logging.getLogger(__name__)
 
@@ -141,16 +142,35 @@ class AdvancedRoutingOptimizer:
     It uses reward signals derived from search quality, agent performance, and
     user satisfaction to optimize the routing policy using advanced DSPy techniques
     including GEPA, MIPROv2, SIMBA, and BootstrapFewShot.
+
+    Each tenant gets isolated storage for experiences, models, and metrics.
     """
 
     def __init__(
         self,
+        tenant_id: str,
         config: Optional[AdvancedOptimizerConfig] = None,
-        storage_dir: str = "data/optimization",
+        base_storage_dir: str = "data/optimization",
     ):
-        """Initialize advanced routing optimizer"""
+        """
+        Initialize advanced routing optimizer
+
+        Args:
+            tenant_id: Tenant identifier (REQUIRED - no default)
+            config: Optimizer configuration
+            base_storage_dir: Base directory for storage
+
+        Raises:
+            ValueError: If tenant_id is empty or None
+        """
+        if not tenant_id:
+            raise ValueError("tenant_id is required - no default tenant")
+
+        self.tenant_id = tenant_id
         self.config = config or AdvancedOptimizerConfig()
-        self.storage_dir = Path(storage_dir)
+
+        # Tenant-specific storage directory with org/tenant structure
+        self.storage_dir = get_tenant_storage_path(base_storage_dir, tenant_id)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
         # Experience storage

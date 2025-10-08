@@ -183,7 +183,7 @@ class TestDetailedReportAgent:
         mock_vlm_instance = Mock()
         mock_vlm_class.return_value = mock_vlm_instance
 
-        agent = DetailedReportAgent()
+        agent = DetailedReportAgent(tenant_id="test_tenant")
 
         assert agent.config is not None
         assert agent.vlm == mock_vlm_instance
@@ -204,7 +204,7 @@ class TestDetailedReportAgent:
         }
         mock_vlm_class.return_value = Mock()
 
-        agent = DetailedReportAgent(
+        agent = DetailedReportAgent(tenant_id="test_tenant", 
             max_report_length=1500,
             thinking_enabled=False,
             visual_analysis_enabled=False,
@@ -289,7 +289,7 @@ class TestDetailedReportAgent:
 
         # Mock the _initialize_vlm_client to avoid DSPy config issues
         with patch.object(DetailedReportAgent, "_initialize_vlm_client"):
-            agent = DetailedReportAgent()
+            agent = DetailedReportAgent(tenant_id="test_tenant")
 
         # Create A2A task
         request_data = {
@@ -345,7 +345,7 @@ class TestDetailedReportAgent:
 
         # Mock the _initialize_vlm_client to avoid DSPy config issues
         with patch.object(DetailedReportAgent, "_initialize_vlm_client"):
-            agent = DetailedReportAgent()
+            agent = DetailedReportAgent(tenant_id="test_tenant")
 
         task = Task(id="test_task", messages=[])
 
@@ -416,7 +416,7 @@ class TestDetailedReportAgentCoreFunctionality:
             )
             mock_vlm_class.return_value = mock_vlm
 
-            agent = DetailedReportAgent()
+            agent = DetailedReportAgent(tenant_id="test_tenant")
             agent.vlm_client = mock_vlm
             return agent
 

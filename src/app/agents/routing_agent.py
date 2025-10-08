@@ -170,10 +170,27 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin):
 
     def __init__(
         self,
+        tenant_id: str,
         config: Optional[RoutingConfig] = None,
         port: int = 8001,
         enable_telemetry: bool = True,
     ):
+        """
+        Initialize Routing Agent
+
+        Args:
+            tenant_id: Tenant identifier (REQUIRED - no default)
+            config: Routing configuration
+            port: A2A server port
+            enable_telemetry: Enable telemetry tracking
+
+        Raises:
+            ValueError: If tenant_id is empty or None
+        """
+        if not tenant_id:
+            raise ValueError("tenant_id is required - no default tenant")
+
+        self.tenant_id = tenant_id
         self.config = config or RoutingConfig()
         self.logger = logging.getLogger(__name__)
 
@@ -318,10 +335,11 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin):
                     self.config.optimizer_config or AdvancedOptimizerConfig()
                 )
                 self.grpo_optimizer = AdvancedRoutingOptimizer(
+                    tenant_id=self.tenant_id,
                     config=optimizer_config,
-                    storage_dir=self.config.optimization_storage_dir,
+                    base_storage_dir=self.config.optimization_storage_dir,
                 )
-                self.logger.info("Advanced routing optimizer initialized")
+                self.logger.info(f"Advanced routing optimizer initialized for tenant: {self.tenant_id}")
             else:
                 self.grpo_optimizer = None
                 self.logger.info("Advanced optimization disabled")
@@ -399,10 +417,10 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin):
                 try:
                     # MemoryAwareMixin provides memory initialization
                     self.initialize_memory(
-                        user_id="routing_agent",
-                        session_id="default"
+                        agent_name="routing_agent",
+                        tenant_id=self.tenant_id,
                     )
-                    self.logger.info("🧠 Memory system initialized")
+                    self.logger.info(f"🧠 Memory system initialized for tenant: {self.tenant_id}")
                 except Exception as e:
                     self.logger.warning(f"Failed to initialize memory: {e}")
 

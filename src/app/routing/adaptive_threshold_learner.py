@@ -22,11 +22,12 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 from scipy import stats
+
+from src.common.tenant_utils import get_tenant_storage_path
 
 logger = logging.getLogger(__name__)
 
@@ -175,16 +176,35 @@ class AdaptiveThresholdLearner:
 
     This system automatically adjusts various threshold parameters based on
     system performance metrics and user feedback to optimize overall performance.
+
+    Each tenant gets isolated storage for threshold states and metrics.
     """
 
     def __init__(
         self,
+        tenant_id: str,
         config: Optional[AdaptiveThresholdConfig] = None,
-        storage_dir: str = "data/adaptive_learning",
+        base_storage_dir: str = "data/adaptive_learning",
     ):
-        """Initialize adaptive threshold learner"""
+        """
+        Initialize adaptive threshold learner
+
+        Args:
+            tenant_id: Tenant identifier (REQUIRED - no default)
+            config: Learner configuration
+            base_storage_dir: Base directory for storage
+
+        Raises:
+            ValueError: If tenant_id is empty or None
+        """
+        if not tenant_id:
+            raise ValueError("tenant_id is required - no default tenant")
+
+        self.tenant_id = tenant_id
         self.config = config or self._create_default_config()
-        self.storage_dir = Path(storage_dir)
+
+        # Tenant-specific storage directory with org/tenant structure
+        self.storage_dir = get_tenant_storage_path(base_storage_dir, tenant_id)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
         # Threshold states

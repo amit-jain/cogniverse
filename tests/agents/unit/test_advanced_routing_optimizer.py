@@ -73,7 +73,7 @@ class TestAdvancedRoutingOptimizerCore:
         )
 
         # Advanced optimizer doesn't use SentenceTransformer directly, so no mocking needed
-        optimizer = AdvancedRoutingOptimizer(config)
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant", config=config)
 
         assert optimizer.config == config
         assert len(optimizer.experiences) == 0
@@ -89,7 +89,7 @@ class TestAdvancedRoutingOptimizerCore:
             enable_persistence=False  # Disable persistence for test isolation
         )
 
-        optimizer = AdvancedRoutingOptimizer(config)
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant", config=config)
 
         # Record a basic experience
         reward = await optimizer.record_routing_experience(
@@ -116,7 +116,7 @@ class TestAdvancedRoutingOptimizerCore:
         """Test reward computation logic."""
         config = AdvancedOptimizerConfig()
 
-        optimizer = AdvancedRoutingOptimizer(config)
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant", config=config)
 
         # Test successful case
         reward_success = optimizer._compute_reward(
@@ -145,7 +145,7 @@ class TestAdvancedRoutingOptimizerCore:
         """Test baseline recommendation functionality."""
         config = AdvancedOptimizerConfig()
 
-        optimizer = AdvancedRoutingOptimizer(config)
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant", config=config)
 
         # Test video-related query
         recommendations = optimizer._get_baseline_recommendations(
@@ -174,7 +174,7 @@ class TestAdvancedRoutingOptimizerCore:
             enable_persistence=False  # Disable persistence for test isolation
         )
 
-        optimizer = AdvancedRoutingOptimizer(config)
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant", config=config)
 
         status = optimizer.get_optimization_status()
 
@@ -220,7 +220,7 @@ class TestAdaptiveThresholdLearner:
         """Test threshold learner can be created."""
         from src.app.routing.adaptive_threshold_learner import AdaptiveThresholdLearner
 
-        learner = AdaptiveThresholdLearner()
+        learner = AdaptiveThresholdLearner(tenant_id="test_tenant")
 
         assert learner.config is not None
         assert hasattr(learner.config, "global_learning_rate")
@@ -231,7 +231,7 @@ class TestAdaptiveThresholdLearner:
         """Test getting threshold learner status."""
         from src.app.routing.adaptive_threshold_learner import AdaptiveThresholdLearner
 
-        learner = AdaptiveThresholdLearner()
+        learner = AdaptiveThresholdLearner(tenant_id="test_tenant")
         status = learner.get_learning_status()
 
         assert isinstance(status, dict)
@@ -305,7 +305,7 @@ class TestAdvancedRoutingOptimizerIntegration:
             enable_persistence=False,  # Disable persistence for test isolation
         )
 
-        optimizer = AdvancedRoutingOptimizer(config)
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant", config=config)
 
         # Collect 210 experiences to exceed GEPA threshold
         for i in range(210):
@@ -406,7 +406,7 @@ class TestAdvancedRoutingOptimizerIntegration:
                 enable_persistence=False,  # Disable persistence for test isolation
             )
 
-            optimizer = AdvancedRoutingOptimizer(config)
+            optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant", config=config)
 
             # Collect minimum experiences to init optimizer
             for i in range(15):
@@ -444,7 +444,7 @@ class TestAdvancedRoutingOptimizerIntegration:
             enable_persistence=False  # Disable persistence for test isolation
         )
 
-        optimizer = AdvancedRoutingOptimizer(config)
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant", config=config)
 
         # Simulate multiple experiences
         queries = [

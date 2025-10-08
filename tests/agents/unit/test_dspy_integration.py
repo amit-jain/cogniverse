@@ -243,7 +243,7 @@ class TestDSPyAgentIntegration:
         mock_routing_module.return_value = mock_routing_instance
         mock_optimizer.return_value = Mock()
 
-        agent = RoutingAgent()
+        agent = RoutingAgent(tenant_id="test_tenant")
 
         # Should have DSPy capabilities (routing_module is the DSPy component)
         assert hasattr(agent, "routing_module")
@@ -266,7 +266,7 @@ class TestDSPyAgentIntegration:
             }
         }
 
-        agent = SummarizerAgent()
+        agent = SummarizerAgent(tenant_id="test_tenant")
 
         # Should have DSPy capabilities
         assert hasattr(agent, "dspy_enabled")
@@ -291,7 +291,7 @@ class TestDSPyAgentIntegration:
             }
         }
 
-        agent = DetailedReportAgent()
+        agent = DetailedReportAgent(tenant_id="test_tenant")
 
         # Should have DSPy capabilities
         assert hasattr(agent, "dspy_enabled")
@@ -2274,7 +2274,7 @@ class TestRoutingAgent:
         from src.app.agents.routing_agent import RoutingConfig
 
         # Test with default config
-        agent = RoutingAgent()
+        agent = RoutingAgent(tenant_id="test_tenant")
         assert agent is not None
         assert hasattr(agent, "config")
         assert hasattr(agent, "enhanced_system_available")
@@ -2288,14 +2288,14 @@ class TestRoutingAgent:
             enable_query_enhancement=True,
         )
 
-        custom_agent = RoutingAgent(config=custom_config)
+        custom_agent = RoutingAgent(tenant_id="test_tenant", config=custom_config)
         assert custom_agent.config.confidence_threshold == 0.8
         assert custom_agent.config.enable_relationship_extraction is True
 
     def test_orchestration_need_assessment(self):
         """Test orchestration need assessment logic"""
 
-        agent = RoutingAgent()
+        agent = RoutingAgent(tenant_id="test_tenant")
 
         # Simple query - should not need orchestration
         simple_entities = [{"text": "robot", "label": "ENTITY", "confidence": 0.9}]
@@ -2340,7 +2340,7 @@ class TestRoutingAgent:
     def test_orchestration_signals_detection(self):
         """Test orchestration signals detection"""
 
-        agent = RoutingAgent()
+        agent = RoutingAgent(tenant_id="test_tenant")
 
         entities = [
             {"text": "test", "label": "TEST", "confidence": 0.8}
@@ -2404,20 +2404,20 @@ class TestMultiAgentOrchestrator:
         from src.app.agents.workflow_intelligence import OptimizationStrategy
 
         # Test default initialization
-        orchestrator = MultiAgentOrchestrator()
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant")
         assert orchestrator is not None
         assert hasattr(orchestrator, "available_agents")
         assert hasattr(orchestrator, "active_workflows")
         assert hasattr(orchestrator, "orchestration_stats")
 
         # Test with workflow intelligence disabled
-        orchestrator_no_intelligence = MultiAgentOrchestrator(
+        orchestrator_no_intelligence = MultiAgentOrchestrator(tenant_id="test_tenant", 
             enable_workflow_intelligence=False
         )
         assert orchestrator_no_intelligence.workflow_intelligence is None
 
         # Test with custom optimization strategy
-        orchestrator_custom = MultiAgentOrchestrator(
+        orchestrator_custom = MultiAgentOrchestrator(tenant_id="test_tenant", 
             optimization_strategy=OptimizationStrategy.LATENCY_OPTIMIZED
         )
         assert orchestrator_custom.workflow_intelligence is not None
@@ -2464,7 +2464,7 @@ class TestMultiAgentOrchestrator:
             WorkflowTask,
         )
 
-        orchestrator = MultiAgentOrchestrator()
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant")
 
         # Create tasks with dependencies
         task1 = WorkflowTask(
@@ -2508,7 +2508,7 @@ class TestMultiAgentOrchestrator:
         """Test orchestration statistics tracking"""
         from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
 
-        orchestrator = MultiAgentOrchestrator()
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant")
 
         # Initial stats
         stats = orchestrator.get_orchestration_statistics()
@@ -2874,8 +2874,8 @@ class TestSystemIntegration:
         from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
 
         # Create components
-        router = RoutingAgent()
-        orchestrator = MultiAgentOrchestrator(routing_agent=router)
+        router = RoutingAgent(tenant_id="test_tenant")
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", routing_agent=router)
 
         # Test routing decision that needs orchestration
         complex_query = "find videos of robots playing soccer then analyze techniques and create comprehensive report"
@@ -2940,7 +2940,7 @@ class TestSystemIntegration:
         """Test Phase 4 components initialize in correct order without circular dependencies"""
 
         # Test 1: Enhanced Routing Agent (independent)
-        router = RoutingAgent()
+        router = RoutingAgent(tenant_id="test_tenant")
         assert router is not None
 
         # Test 2: Workflow Intelligence (independent)
@@ -2952,7 +2952,7 @@ class TestSystemIntegration:
         # Test 3: Multi-Agent Orchestrator (depends on router, uses intelligence)
         from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
 
-        orchestrator = MultiAgentOrchestrator(routing_agent=router)
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", routing_agent=router)
         assert orchestrator is not None
         assert orchestrator.routing_agent is router
 
@@ -2971,8 +2971,8 @@ class TestSystemIntegration:
         # All components should handle initialization errors gracefully
         try:
             # Test with invalid config that might cause errors
-            router = RoutingAgent()  # Should not raise exception
-            orchestrator = MultiAgentOrchestrator()  # Should not raise exception
+            router = RoutingAgent(tenant_id="test_tenant")  # Should not raise exception
+            orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant")  # Should not raise exception
             intelligence = WorkflowIntelligence(
                 enable_persistence=False
             )  # Should not raise exception
@@ -2996,12 +2996,12 @@ class TestSystemIntegration:
         from src.app.agents.workflow_intelligence import WorkflowIntelligence
 
         # All statistics should return dict with consistent structure
-        router = RoutingAgent()
+        router = RoutingAgent(tenant_id="test_tenant")
         router_stats = router.get_routing_statistics()
         assert isinstance(router_stats, dict)
         assert "total_queries" in router_stats
 
-        orchestrator = MultiAgentOrchestrator(enable_workflow_intelligence=False)
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", enable_workflow_intelligence=False)
         orch_stats = orchestrator.get_orchestration_statistics()
         assert isinstance(orch_stats, dict)
         assert "total_workflows" in orch_stats
@@ -3040,7 +3040,7 @@ class TestVideoSearchAgent:
         }
 
         # Mock the required dependencies
-        with patch("src.app.agents.video_search_agent.VespaVideoSearchClient"):
+        with patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient"):
             with patch(
                 "src.app.agents.video_search_agent.QueryEncoderFactory"
             ) as mock_encoder_factory:
@@ -3058,7 +3058,7 @@ class TestVideoSearchAgent:
                 # Mock encoder factory
                 mock_encoder_factory.create_encoder.return_value = Mock()
 
-                agent = VideoSearchAgent()
+                agent = VideoSearchAgent(tenant_id="test_tenant")
                 assert agent is not None
                 assert hasattr(agent, "vespa_client")
                 assert hasattr(agent, "config")
@@ -3120,7 +3120,7 @@ class TestVideoSearchAgent:
         assert context.routing_metadata["agent"] == "video_search_agent"
 
     @patch("src.app.agents.query_encoders.get_config")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
     @patch("src.app.agents.video_search_agent.get_config")
     def test_relevance_score_calculation(self, mock_video_config, mock_vespa_class, mock_encoder_config):
         """Test relevance score calculation with relationship context"""
@@ -3152,7 +3152,7 @@ class TestVideoSearchAgent:
             # Mock encoder factory
             mock_encoder_factory.create_encoder.return_value = Mock()
 
-            agent = VideoSearchAgent()
+            agent = VideoSearchAgent(tenant_id="test_tenant")
 
             # Test result with entity matches
             result = {
@@ -3183,7 +3183,7 @@ class TestVideoSearchAgent:
             assert relevance <= 1.0
 
     @patch("src.app.agents.query_encoders.get_config")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
     @patch("src.app.agents.video_search_agent.get_config")
     def test_entity_matching_logic(self, mock_video_config, mock_vespa_class, mock_encoder_config):
         """Test entity matching in results"""
@@ -3215,7 +3215,7 @@ class TestVideoSearchAgent:
             # Mock encoder factory
             mock_encoder_factory.create_encoder.return_value = Mock()
 
-            agent = VideoSearchAgent()
+            agent = VideoSearchAgent(tenant_id="test_tenant")
 
             # Mock the method since it might not exist in the actual implementation
             agent._find_matching_entities = Mock(
@@ -3248,7 +3248,7 @@ class TestVideoSearchAgent:
             assert "soccer" in matched_texts
 
     @patch("src.app.agents.query_encoders.get_config")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
     @patch("src.app.agents.video_search_agent.get_config")
     def test_search_result_enhancement(self, mock_video_config, mock_vespa_class, mock_encoder_config):
         """Test search result enhancement with relationships"""
@@ -3280,7 +3280,7 @@ class TestVideoSearchAgent:
             # Mock encoder factory
             mock_encoder_factory.create_encoder.return_value = Mock()
 
-            agent = VideoSearchAgent()
+            agent = VideoSearchAgent(tenant_id="test_tenant")
 
             # Mock the method since it might not exist in the actual implementation
             enhanced_results = [

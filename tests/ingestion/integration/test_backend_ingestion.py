@@ -159,7 +159,7 @@ class TestVespaBackendIngestion:
         config.generate_descriptions = False
         config.max_frames_per_video = 1
 
-        pipeline = VideoIngestionPipeline(config)
+        pipeline = VideoIngestionPipeline(tenant_id="test_tenant", config=config)
 
         # Process just one video
         result = await pipeline.process_video_async(vespa_test_videos[0])
@@ -186,7 +186,7 @@ class TestVespaBackendIngestion:
         config.active_video_profile = "video_colpali_smol500_mv_frame"
         config.max_frames_per_video = 2
 
-        pipeline = VideoIngestionPipeline(config)
+        pipeline = VideoIngestionPipeline(tenant_id="test_tenant", config=config)
         result = await pipeline.process_video_async(vespa_test_videos[0])
 
         assert result is not None
@@ -212,7 +212,7 @@ class TestVespaBackendIngestion:
         config.active_video_profile = "video_videoprism_base_mv_chunk_30s"
         config.max_frames_per_video = 1
 
-        pipeline = VideoIngestionPipeline(config)
+        pipeline = VideoIngestionPipeline(tenant_id="test_tenant", config=config)
         result = await pipeline.process_video_async(vespa_test_videos[0])
 
         assert result is not None
@@ -237,7 +237,7 @@ class TestVespaBackendIngestion:
         config.active_video_profile = "video_colqwen_omni_mv_chunk_30s"
         config.max_frames_per_video = 1
 
-        pipeline = VideoIngestionPipeline(config)
+        pipeline = VideoIngestionPipeline(tenant_id="test_tenant", config=config)
         result = await pipeline.process_video_async(vespa_test_videos[0])
 
         assert result is not None
@@ -284,7 +284,7 @@ class TestComprehensiveIngestion:
                 config.active_video_profile = profile
                 config.max_frames_per_video = 1
 
-                pipeline = VideoIngestionPipeline(config)
+                pipeline = VideoIngestionPipeline(tenant_id="test_tenant", config=config)
                 result = await pipeline.process_video_async(all_test_videos[0])
                 results[profile] = result
 
@@ -311,7 +311,7 @@ class TestComprehensiveIngestion:
         config.active_video_profile = "video_colpali_smol500_mv_frame"
         config.max_frames_per_video = 5
 
-        pipeline = VideoIngestionPipeline(config)
+        pipeline = VideoIngestionPipeline(tenant_id="test_tenant", config=config)
 
         start_time = time.time()
         result = await pipeline.process_video_async(all_test_videos[0])

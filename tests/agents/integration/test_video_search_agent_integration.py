@@ -88,7 +88,7 @@ class TestVideoSearchAgentIntegration:
         mock_video_config.return_value = mock_config_obj
         mock_vespa_client_class.return_value = mock_vespa_client
 
-        agent = VideoSearchAgent()
+        agent = VideoSearchAgent(tenant_id="test_tenant")
 
         assert agent.vespa_client == mock_vespa_client
         assert agent.video_processor is not None
@@ -130,7 +130,7 @@ class TestVideoSearchAgentIntegration:
         mock_video_config.return_value = mock_config_obj
         mock_vespa_client_class.return_value = mock_vespa_client
 
-        agent = VideoSearchAgent()
+        agent = VideoSearchAgent(tenant_id="test_tenant")
         agent.video_processor = mock_processor
 
         # Test text search
@@ -192,7 +192,7 @@ class TestVideoSearchAgentIntegration:
         mock_video_config.return_value = mock_config_obj
         mock_vespa_client_class.return_value = mock_vespa_client
 
-        agent = VideoSearchAgent()
+        agent = VideoSearchAgent(tenant_id="test_tenant")
         agent.video_processor = mock_processor
 
         # Create mixed content A2A task
@@ -257,7 +257,7 @@ class TestVideoSearchAgentIntegration:
         # Mock search service to raise exception
         mock_vespa_client.search.side_effect = Exception("Search service unavailable")
 
-        agent = VideoSearchAgent()
+        agent = VideoSearchAgent(tenant_id="test_tenant")
 
         # Test graceful error handling
         with pytest.raises(Exception) as exc_info:
@@ -301,7 +301,7 @@ class TestVideoSearchAgentIntegration:
         mock_video_config.return_value = mock_config_obj
         mock_vespa_client_class.return_value = mock_vespa_client
 
-        agent = VideoSearchAgent()
+        agent = VideoSearchAgent(tenant_id="test_tenant")
         agent.video_processor = mock_processor
 
         # Create multiple concurrent search tasks
@@ -372,7 +372,7 @@ class TestVideoSearchAgentIntegration:
 
         mock_vespa_client.search.side_effect = side_effect
 
-        agent = VideoSearchAgent()
+        agent = VideoSearchAgent(tenant_id="test_tenant")
         agent.video_processor = mock_processor
 
         # Perform different search types
@@ -426,7 +426,7 @@ class TestVideoSearchAgentIntegration:
             await asyncio.sleep(0.1)
             return mock_vespa_client.search(*args, **kwargs)
 
-        agent = VideoSearchAgent()
+        agent = VideoSearchAgent(tenant_id="test_tenant")
 
         # Measure search performance
         import time
@@ -475,8 +475,8 @@ class TestVideoSearchAgentIntegration:
         mock_vespa_client_class.return_value = mock_vespa_client
 
         # Test with different configurations
-        agent1 = VideoSearchAgent()
-        agent2 = VideoSearchAgent()
+        agent1 = VideoSearchAgent(tenant_id="test_tenant")
+        agent2 = VideoSearchAgent(tenant_id="test_tenant")
 
         # Both agents should have same client type but potentially different instances
         assert type(agent1.vespa_client) is type(agent2.vespa_client)
@@ -523,7 +523,7 @@ class TestVideoSearchAgentEdgeCasesIntegration:
         mock_video_config.return_value = mock_config_obj
         mock_vespa_client_class.return_value = mock_vespa_client
 
-        agent = VideoSearchAgent()
+        agent = VideoSearchAgent(tenant_id="test_tenant")
         agent.video_processor = mock_processor
 
         # Simulate large video file
@@ -573,7 +573,7 @@ class TestVideoSearchAgentEdgeCasesIntegration:
         mock_vespa_client_class.return_value = mock_vespa_client
         mock_vespa_client.search.return_value = []
 
-        agent = VideoSearchAgent()
+        agent = VideoSearchAgent(tenant_id="test_tenant")
 
         results = agent.search_by_text("nonexistent content")
 
@@ -615,7 +615,7 @@ class TestVideoSearchAgentEdgeCasesIntegration:
         mock_video_config.return_value = mock_config_obj
         mock_vespa_client_class.return_value = mock_vespa_client
 
-        agent = VideoSearchAgent()
+        agent = VideoSearchAgent(tenant_id="test_tenant")
 
         # Test with missing parts
         message = A2AMessage(role="user", parts=[])
@@ -666,7 +666,7 @@ class TestVideoSearchAgentEdgeCasesIntegration:
         mock_video_config.return_value = mock_config_obj
         mock_vespa_client_class.return_value = mock_vespa_client
 
-        agent = VideoSearchAgent()
+        agent = VideoSearchAgent(tenant_id="test_tenant")
         agent.video_processor = mock_processor
 
         # Perform multiple operations

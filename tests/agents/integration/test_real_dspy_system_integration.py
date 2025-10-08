@@ -150,7 +150,7 @@ class TestDSPySystemIntegration:
                 "detailed_report_agent_url": "http://localhost:8004",
             }
 
-            agent = RoutingAgent()
+            agent = RoutingAgent(tenant_id="test_tenant")
 
             # Test real routing decision logic
             test_query = "Find videos of robots playing soccer"
@@ -230,8 +230,8 @@ class TestMultiAgentSystem:
             mock_reporter_config.return_value = config
 
             # Should initialize with proper config mocking
-            summarizer = SummarizerAgent()
-            reporter = DetailedReportAgent()
+            summarizer = SummarizerAgent(tenant_id="test_tenant")
+            reporter = DetailedReportAgent(tenant_id="test_tenant")
 
             assert summarizer is not None
             assert reporter is not None
@@ -250,7 +250,7 @@ class TestMultiAgentSystem:
         os.environ["VESPA_SCHEMA"] = "video_colpali_smol500_mv_frame"
 
         try:
-            agent = VideoSearchAgent()
+            agent = VideoSearchAgent(tenant_id="test_tenant")
 
             # Should initialize with real config
             assert agent is not None

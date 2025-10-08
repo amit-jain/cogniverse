@@ -37,7 +37,7 @@ class TestMemoryAwareMixin:
         """Test mixin initialization"""
         assert agent.memory_manager is None
         assert agent.agent_name is None
-        assert agent.tenant_id == "default"
+        assert agent.tenant_id is None
         assert agent._memory_initialized is False
 
     def test_is_memory_enabled_false_by_default(self, agent):
@@ -80,7 +80,8 @@ class TestMemoryAwareMixin:
         mock_manager.initialize.assert_called_once_with(
             vespa_host="vespa.local",
             vespa_port=9090,
-            collection_name="agent_memories",
+            base_schema_name="agent_memories",
+            auto_create_schema=True,
         )
 
     def test_get_relevant_context_without_initialization(self, agent):
@@ -111,7 +112,7 @@ class TestMemoryAwareMixin:
         mock_manager_class.return_value = mock_manager
 
         # Initialize and get context
-        agent.initialize_memory("test_agent")
+        agent.initialize_memory("test_agent", "test_tenant")
         context = agent.get_relevant_context("test query")
 
         assert context is not None
@@ -129,13 +130,13 @@ class TestMemoryAwareMixin:
         mock_manager_class.return_value = mock_manager
 
         # Initialize and update
-        agent.initialize_memory("test_agent")
+        agent.initialize_memory("test_agent", "test_tenant")
         success = agent.update_memory("test content")
 
         assert success is True
         mock_manager.add_memory.assert_called_once_with(
             content="test content",
-            tenant_id="default",
+            tenant_id="test_tenant",
             agent_name="test_agent",
             metadata=None,
         )
@@ -150,7 +151,7 @@ class TestMemoryAwareMixin:
         mock_manager_class.return_value = mock_manager
 
         # Initialize and clear
-        agent.initialize_memory("test_agent")
+        agent.initialize_memory("test_agent", "test_tenant")
         assert agent._memory_initialized is True
 
         success = agent.clear_memory()
@@ -170,7 +171,7 @@ class TestMemoryAwareMixin:
         mock_manager_class.return_value = mock_manager
 
         # Initialize
-        agent.initialize_memory("test_agent")
+        agent.initialize_memory("test_agent", "test_tenant")
 
         # Inject context
         original_prompt = "Answer the query"
@@ -190,7 +191,7 @@ class TestMemoryAwareMixin:
         mock_manager_class.return_value = mock_manager
 
         # Initialize
-        agent.initialize_memory("test_agent")
+        agent.initialize_memory("test_agent", "test_tenant")
 
         # Inject context
         original_prompt = "Answer the query"
@@ -209,7 +210,7 @@ class TestMemoryAwareMixin:
         mock_manager_class.return_value = mock_manager
 
         # Initialize
-        agent.initialize_memory("test_agent")
+        agent.initialize_memory("test_agent", "test_tenant")
 
         # Remember success
         success = agent.remember_success("test query", "test result", {"key": "value"})
@@ -230,7 +231,7 @@ class TestMemoryAwareMixin:
         mock_manager_class.return_value = mock_manager
 
         # Initialize
-        agent.initialize_memory("test_agent")
+        agent.initialize_memory("test_agent", "test_tenant")
 
         # Remember failure
         success = agent.remember_failure("test query", "test error")

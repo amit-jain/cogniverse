@@ -30,6 +30,7 @@ class ProcessingRequest:
     """Request for complete processing pipeline"""
 
     query: str
+    tenant_id: str  # Tenant identifier (REQUIRED - no default)
     profiles: Optional[List[str]] = None
     strategies: Optional[List[str]] = None
     top_k: int = 20
@@ -55,10 +56,23 @@ class ProcessingResult:
 class AgentOrchestrator:
     """Orchestrates the complete multi-agent processing pipeline"""
 
-    def __init__(self, **kwargs):
-        """Initialize agent orchestrator"""
-        logger.info("Initializing AgentOrchestrator...")
+    def __init__(self, tenant_id: str, **kwargs):
+        """
+        Initialize agent orchestrator
 
+        Args:
+            tenant_id: Tenant identifier (REQUIRED - no default)
+            **kwargs: Additional configuration options
+
+        Raises:
+            ValueError: If tenant_id is empty or None
+        """
+        if not tenant_id:
+            raise ValueError("tenant_id is required - no default tenant")
+
+        logger.info(f"Initializing AgentOrchestrator for tenant: {tenant_id}...")
+
+        self.tenant_id = tenant_id
         self.config = get_config()
 
         # Initialize components
@@ -84,11 +98,11 @@ class AgentOrchestrator:
         try:
             # Initialize routing agent
             self.routing_agent = RoutingAgent(
-                enable_relationship_extraction=True,
-                enable_query_enhancement=True,
+                tenant_id=self.tenant_id,
+                enable_telemetry=kwargs.get("enable_telemetry", True),
                 **kwargs.get("routing_agent_config", {}),
             )
-            logger.info("Routing agent initialized")
+            logger.info(f"Routing agent initialized for tenant: {self.tenant_id}")
 
             # Initialize result aggregator
             self.result_aggregator = ResultAggregator(
@@ -406,21 +420,30 @@ class AgentOrchestrator:
         )
 
 
-# Global orchestrator instance
-orchestrator = None
+# Per-tenant orchestrator instances cache
+orchestrators: Dict[str, AgentOrchestrator] = {}
+
+
+def get_orchestrator(tenant_id: str) -> AgentOrchestrator:
+    """
+    Get or create orchestrator instance for tenant
+
+    Args:
+        tenant_id: Tenant identifier
+
+    Returns:
+        AgentOrchestrator instance for the tenant
+    """
+    if tenant_id not in orchestrators:
+        logger.info(f"Creating new orchestrator for tenant: {tenant_id}")
+        orchestrators[tenant_id] = AgentOrchestrator(tenant_id=tenant_id)
+    return orchestrators[tenant_id]
 
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize orchestrator on startup"""
-    global orchestrator
-
-    try:
-        orchestrator = AgentOrchestrator()
-        logger.info("Enhanced agent orchestrator initialized")
-    except Exception as e:
-        logger.error(f"Failed to initialize orchestrator: {e}")
-        raise
+    """Startup event - orchestrators created on-demand per tenant"""
+    logger.info("Enhanced agent orchestrator service started - ready for multi-tenant requests")
 
 
 @app.get("/health")
@@ -441,30 +464,42 @@ async def health_check():
 
 @app.post("/process")
 async def process_pipeline(request: ProcessingRequest):
-    """Process complete enhanced multi-agent pipeline"""
-    if not orchestrator:
-        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    """
+    Process complete enhanced multi-agent pipeline
 
+    The tenant_id can be provided in the request body.
+    If not provided, defaults to "default_tenant".
+    """
     try:
+        # Get orchestrator for the tenant
+        orchestrator = get_orchestrator(request.tenant_id)
         result = await orchestrator.process_complete_pipeline(request)
         return result
 
     except Exception as e:
-        logger.error(f"Pipeline processing error: {e}")
+        logger.error(f"Pipeline processing error for tenant {request.tenant_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/process/routing-only")
 async def process_routing_only(
     query: str,
+    tenant_id: str,
     enable_relationship_extraction: bool = True,
     enable_query_enhancement: bool = True,
 ):
-    """Process only the routing phase"""
-    if not orchestrator:
-        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+    """
+    Process only the routing phase
 
+    Args:
+        query: Query to route
+        tenant_id: Tenant identifier (REQUIRED - no default)
+        enable_relationship_extraction: Enable relationship extraction
+        enable_query_enhancement: Enable query enhancement
+    """
     try:
+        # Get orchestrator for the tenant
+        orchestrator = get_orchestrator(tenant_id)
         routing_decision = (
             await orchestrator.routing_agent.analyze_and_route_with_relationships(
                 query=query,
@@ -475,24 +510,32 @@ async def process_routing_only(
         return routing_decision
 
     except Exception as e:
-        logger.error(f"Routing processing error: {e}")
+        logger.error(f"Routing processing error for tenant {tenant_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/config")
-async def get_configuration():
-    """Get current orchestrator configuration"""
-    if not orchestrator:
-        raise HTTPException(status_code=503, detail="Orchestrator not initialized")
+async def get_configuration(tenant_id: str):
+    """
+    Get current orchestrator configuration for a tenant
 
-    return {
-        "default_profiles": orchestrator.default_profiles,
-        "default_strategies": orchestrator.default_strategies,
-        "enable_caching": orchestrator.enable_caching,
-        "cache_ttl": orchestrator.cache_ttl,
-        "components_initialized": {
-            "routing_agent": orchestrator.routing_agent is not None,
-            "result_aggregator": orchestrator.result_aggregator is not None,
-            "vespa_client": orchestrator.vespa_client is not None,
-        },
-    }
+    Args:
+        tenant_id: Tenant identifier (REQUIRED - no default)
+    """
+    try:
+        orchestrator = get_orchestrator(tenant_id)
+        return {
+            "tenant_id": tenant_id,
+            "default_profiles": orchestrator.default_profiles,
+            "default_strategies": orchestrator.default_strategies,
+            "enable_caching": orchestrator.enable_caching,
+            "cache_ttl": orchestrator.cache_ttl,
+            "components_initialized": {
+                "routing_agent": orchestrator.routing_agent is not None,
+                "result_aggregator": orchestrator.result_aggregator is not None,
+                "vespa_client": orchestrator.vespa_client is not None,
+            },
+        }
+    except Exception as e:
+        logger.error(f"Failed to get config for tenant {tenant_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

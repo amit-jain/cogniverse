@@ -16,6 +16,7 @@ class EmbeddingGeneratorFactory:
     @staticmethod
     def create(
         backend: str,
+        tenant_id: str,
         config: dict[str, Any],
         logger: logging.Logger | None = None,
         profile_config: dict[str, Any] = None,
@@ -25,17 +26,23 @@ class EmbeddingGeneratorFactory:
 
         Args:
             backend: Backend type ("vespa", "elasticsearch" in future, etc)
+            tenant_id: Tenant identifier (REQUIRED - no default)
             config: Configuration dictionary
             logger: Logger instance
             profile_config: Profile configuration containing process_type and model info
 
         Returns:
             Embedding generator instance
-        """
 
-        # Get backend client (singleton)
+        Raises:
+            ValueError: If tenant_id is empty or None
+        """
+        if not tenant_id:
+            raise ValueError("tenant_id is required - no default tenant")
+
+        # Get backend client (singleton per tenant)
         backend_client = BackendFactory.create(
-            backend_type=backend, config=config, logger=logger
+            backend_type=backend, tenant_id=tenant_id, config=config, logger=logger
         )
 
         return EmbeddingGeneratorImpl(
@@ -46,16 +53,25 @@ class EmbeddingGeneratorFactory:
 
 
 def create_embedding_generator(
-    config: dict[str, Any], schema_name: str, logger: logging.Logger | None = None
+    config: dict[str, Any],
+    schema_name: str,
+    tenant_id: str,
+    logger: logging.Logger | None = None,
 ):
     """
-    Creates an embedding generator for a specific schema.
+    Creates an embedding generator for a specific schema and tenant.
 
     Args:
         config: Main configuration dictionary
         schema_name: Schema/profile name to use
+        tenant_id: Tenant identifier (REQUIRED - no default)
         logger: Optional logger
+
+    Raises:
+        ValueError: If tenant_id is empty or None
     """
+    if not tenant_id:
+        raise ValueError("tenant_id is required - no default tenant")
 
     # Get backend from config
     backend = config.get("embedding_backend", config.get("search_backend", "vespa"))
@@ -73,5 +89,9 @@ def create_embedding_generator(
 
     # Create and return generator
     return EmbeddingGeneratorFactory.create(
-        backend=backend, config=config, logger=logger, profile_config=profile_config
+        backend=backend,
+        tenant_id=tenant_id,
+        config=config,
+        logger=logger,
+        profile_config=profile_config,
     )

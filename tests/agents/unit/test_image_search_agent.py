@@ -18,7 +18,7 @@ class TestImageSearchAgent:
 
     def setup_method(self):
         """Set up test fixtures"""
-        self.agent = ImageSearchAgent(vespa_endpoint="http://localhost:8080", port=8005)
+        self.agent = ImageSearchAgent(tenant_id="test_tenant", vespa_endpoint="http://localhost:8080", port=8005)
 
     def test_initialization(self):
         """Test agent initialization"""

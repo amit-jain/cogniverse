@@ -3,6 +3,7 @@ Mem0 Memory Manager
 
 Mem0-based memory system using Vespa backend.
 Provides simple, persistent agent memory with multi-tenant support.
+Each tenant gets dedicated Vespa schema for memory isolation.
 """
 
 import logging
@@ -15,6 +16,8 @@ os.environ["MEM0_TELEMETRY"] = "False"
 
 from mem0 import Memory
 from mem0.vector_stores.configs import VectorStoreConfig
+
+from src.backends.vespa.tenant_schema_manager import get_tenant_schema_manager
 
 logger = logging.getLogger(__name__)
 
@@ -54,54 +57,96 @@ class Mem0MemoryManager:
     Memory manager using Mem0 with Vespa vector store backend.
 
     Provides:
-    - Multi-tenant memory isolation (user_id/tenant_id)
-    - Per-agent memory namespacing
+    - Multi-tenant memory isolation via schema-per-tenant
+    - Per-agent memory namespacing within tenant
     - Persistent storage in Vespa
     - Semantic search via embeddings
     - Simple API without Letta's complexity
+
+    Each tenant gets dedicated Vespa schema: agent_memories_{tenant_id}
     """
 
-    _instance: Optional["Mem0MemoryManager"] = None
-    _initialized: bool = False
+    # Per-tenant instances cache
+    _instances: Dict[str, "Mem0MemoryManager"] = {}
+    _instances_lock = None  # Will be initialized as threading.Lock()
 
-    def __new__(cls):
-        """Singleton pattern"""
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
+    def __new__(cls, tenant_id: str):
+        """Per-tenant singleton pattern"""
+        import threading
 
-    def __init__(self):
-        """Initialize memory manager (only once)"""
+        # Initialize lock on first call
+        if cls._instances_lock is None:
+            cls._instances_lock = threading.Lock()
+
+        with cls._instances_lock:
+            if tenant_id not in cls._instances:
+                instance = super().__new__(cls)
+                instance._initialized = False
+                cls._instances[tenant_id] = instance
+                logger.info(f"Created new Mem0MemoryManager instance for tenant: {tenant_id}")
+            return cls._instances[tenant_id]
+
+    def __init__(self, tenant_id: str):
+        """Initialize memory manager for specific tenant (only once per tenant)"""
         if self._initialized:
             return
 
+        if not tenant_id:
+            raise ValueError("tenant_id is required - no default tenant")
+
+        self.tenant_id = tenant_id
         self.memory: Optional[Memory] = None
         self.config: Optional[Dict[str, Any]] = None
+        self.schema_manager = get_tenant_schema_manager()
 
         self._initialized = True
-        logger.info("Mem0MemoryManager initialized")
+        logger.info(f"Mem0MemoryManager initialized for tenant: {tenant_id}")
 
     def initialize(
         self,
         vespa_host: str = "localhost",
         vespa_port: int = 8080,
-        collection_name: str = "agent_memories",
+        base_schema_name: str = "agent_memories",
         llm_model: str = "llama3.2",
         embedding_model: str = "nomic-embed-text",
         ollama_base_url: str = "http://localhost:11434/v1",
+        auto_create_schema: bool = True,
     ) -> None:
         """
-        Initialize Mem0 with Vespa backend using Ollama via OpenAI-compatible API.
+        Initialize Mem0 with Vespa backend using tenant-specific schema.
 
         Args:
             vespa_host: Vespa endpoint host
             vespa_port: Vespa endpoint port
-            collection_name: Vespa schema name
+            base_schema_name: Base schema name (default: agent_memories)
             llm_model: Ollama model name (default: llama3.2)
             embedding_model: Ollama embedding model (default: nomic-embed-text)
             ollama_base_url: Ollama OpenAI-compatible API endpoint
+            auto_create_schema: Auto-deploy tenant schema if not exists
+
+        Raises:
+            ValueError: If tenant_id not set
         """
-        # Configure Mem0 with Ollama provider for both LLM and embeddings
+        if not self.tenant_id:
+            raise ValueError("tenant_id must be set before initialize()")
+
+        # Get tenant-specific schema name
+        tenant_schema_name = self.schema_manager.get_tenant_schema_name(
+            self.tenant_id, base_schema_name
+        )
+
+        # Deploy tenant schema if needed
+        if auto_create_schema:
+            try:
+                self.schema_manager.ensure_tenant_schema_exists(
+                    self.tenant_id, base_schema_name
+                )
+                logger.info(f"Ensured tenant schema exists: {tenant_schema_name}")
+            except Exception as e:
+                logger.warning(f"Failed to deploy tenant schema: {e}")
+                # Continue anyway - schema might already exist
+
+        # Configure Mem0 with Ollama provider and tenant-specific schema
         self.config = {
             "llm": {
                 "provider": "ollama",
@@ -121,7 +166,7 @@ class Mem0MemoryManager:
             "vector_store": {
                 "provider": "vespa",
                 "config": {
-                    "collection_name": collection_name,
+                    "collection_name": tenant_schema_name,  # Tenant-specific schema
                     "host": vespa_host,
                     "port": vespa_port,
                     "embedding_model_dims": 768,  # nomic-embed-text dimensions
@@ -133,7 +178,8 @@ class Mem0MemoryManager:
         self.memory = Memory.from_config(self.config)
 
         logger.info(
-            f"Mem0MemoryManager initialized with Vespa backend at {vespa_host}:{vespa_port}"
+            f"Mem0MemoryManager initialized for tenant {self.tenant_id} "
+            f"with schema {tenant_schema_name} at {vespa_host}:{vespa_port}"
         )
 
     def add_memory(

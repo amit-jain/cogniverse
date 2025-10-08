@@ -154,7 +154,7 @@ class TestVideoSearchAgent:
         return encoder
 
     @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
     @patch("src.app.agents.video_search_agent.get_config")
     @pytest.mark.ci_fast
     def test_enhanced_agent_initialization(
@@ -171,7 +171,7 @@ class TestVideoSearchAgent:
         mock_vespa_class.return_value = mock_vespa_client
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(vespa_url="http://localhost", vespa_port=8080)
+        agent = VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
 
         assert agent.config == mock_config
         assert agent.vespa_client == mock_vespa_client
@@ -180,7 +180,7 @@ class TestVideoSearchAgent:
         assert isinstance(agent.video_processor, VideoProcessor)
 
     @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
     @patch("src.app.agents.video_search_agent.get_config")
     @pytest.mark.ci_fast
     def test_search_by_text(
@@ -197,7 +197,7 @@ class TestVideoSearchAgent:
         mock_vespa_class.return_value = mock_vespa_client
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(vespa_url="http://localhost", vespa_port=8080)
+        agent = VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
 
         results = agent.search_by_text("find cats", top_k=5, ranking="binary_binary")
 
@@ -207,7 +207,7 @@ class TestVideoSearchAgent:
         mock_vespa_client.search.assert_called_once()
 
     @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
     @patch("src.app.agents.video_search_agent.get_config")
     @pytest.mark.ci_fast
     def test_search_by_video(
@@ -224,7 +224,7 @@ class TestVideoSearchAgent:
         mock_vespa_class.return_value = mock_vespa_client
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(vespa_url="http://localhost", vespa_port=8080)
+        agent = VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
 
         # Mock video processor
         agent.video_processor.process_video_file = Mock(
@@ -244,7 +244,7 @@ class TestVideoSearchAgent:
         mock_vespa_client.search.assert_called_once()
 
     @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
     @patch("src.app.agents.video_search_agent.get_config")
     def test_search_by_image(
         self,
@@ -260,7 +260,7 @@ class TestVideoSearchAgent:
         mock_vespa_class.return_value = mock_vespa_client
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(vespa_url="http://localhost", vespa_port=8080)
+        agent = VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
 
         # Mock video processor
         agent.video_processor.process_image_file = Mock(
@@ -280,7 +280,7 @@ class TestVideoSearchAgent:
         mock_vespa_client.search.assert_called_once()
 
     @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
     @patch("src.app.agents.video_search_agent.get_config")
     def test_process_enhanced_task_with_text(
         self,
@@ -296,7 +296,7 @@ class TestVideoSearchAgent:
         mock_vespa_class.return_value = mock_vespa_client
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(vespa_url="http://localhost", vespa_port=8080)
+        agent = VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
 
         # Create task with text part
         message = A2AMessage(
@@ -313,7 +313,7 @@ class TestVideoSearchAgent:
         assert result["total_results"] == 2
 
     @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
     @patch("src.app.agents.video_search_agent.get_config")
     def test_process_enhanced_task_with_video(
         self,
@@ -329,7 +329,7 @@ class TestVideoSearchAgent:
         mock_vespa_class.return_value = mock_vespa_client
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(vespa_url="http://localhost", vespa_port=8080)
+        agent = VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
 
         # Mock video processor
         agent.video_processor.process_video_file = Mock(
@@ -352,7 +352,7 @@ class TestVideoSearchAgent:
         assert result["total_results"] == 2
 
     @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
     @patch("src.app.agents.video_search_agent.get_config")
     def test_process_enhanced_task_with_image(
         self,
@@ -368,7 +368,7 @@ class TestVideoSearchAgent:
         mock_vespa_class.return_value = mock_vespa_client
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(vespa_url="http://localhost", vespa_port=8080)
+        agent = VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
 
         # Mock video processor
         agent.video_processor.process_image_file = Mock(
@@ -391,7 +391,7 @@ class TestVideoSearchAgent:
         assert result["total_results"] == 2
 
     @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
     @patch("src.app.agents.video_search_agent.get_config")
     def test_process_enhanced_task_with_mixed_parts(
         self,
@@ -407,7 +407,7 @@ class TestVideoSearchAgent:
         mock_vespa_class.return_value = mock_vespa_client
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(vespa_url="http://localhost", vespa_port=8080)
+        agent = VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
 
         # Mock video processor
         agent.video_processor.process_video_file = Mock(
@@ -436,7 +436,7 @@ class TestVideoSearchAgent:
         assert result["total_results"] == 6
 
     @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
     @patch("src.app.agents.video_search_agent.get_config")
     def test_process_enhanced_task_empty_messages(
         self,
@@ -452,7 +452,7 @@ class TestVideoSearchAgent:
         mock_vespa_class.return_value = mock_vespa_client
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(vespa_url="http://localhost", vespa_port=8080)
+        agent = VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
 
         task = Task(id="test_task", messages=[])
 
@@ -460,7 +460,7 @@ class TestVideoSearchAgent:
             agent.process_enhanced_task(task)
 
     @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
     @patch("src.app.agents.video_search_agent.get_config")
     def test_process_enhanced_task_no_valid_parts(
         self,
@@ -476,7 +476,7 @@ class TestVideoSearchAgent:
         mock_vespa_class.return_value = mock_vespa_client
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(vespa_url="http://localhost", vespa_port=8080)
+        agent = VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
 
         # Create task with TextPart but no query
         message = A2AMessage(
@@ -496,7 +496,7 @@ class TestVideoSearchAgent:
 class TestVideoSearchAgentEdgeCases:
     """Test edge cases and error conditions for VideoSearchAgent"""
 
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
     @patch("src.app.agents.video_search_agent.get_config")
     def test_vespa_client_initialization_failure(
         self, mock_get_config, mock_vespa_class
@@ -509,10 +509,10 @@ class TestVideoSearchAgentEdgeCases:
         mock_vespa_class.side_effect = Exception("Vespa connection failed")
 
         with pytest.raises(Exception, match="Vespa connection failed"):
-            VideoSearchAgent(vespa_url="http://localhost", vespa_port=8080)
+            VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
 
     @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
     @patch("src.app.agents.video_search_agent.get_config")
     def test_query_encoder_initialization_failure(
         self, mock_get_config, mock_vespa_class, mock_encoder_factory
@@ -528,10 +528,10 @@ class TestVideoSearchAgentEdgeCases:
         )
 
         with pytest.raises(Exception, match="Encoder creation failed"):
-            VideoSearchAgent(vespa_url="http://localhost", vespa_port=8080)
+            VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
 
     @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
     @patch("src.app.agents.video_search_agent.get_config")
     def test_search_failure_handling(
         self, mock_get_config, mock_vespa_class, mock_encoder_factory
@@ -547,7 +547,7 @@ class TestVideoSearchAgentEdgeCases:
         mock_vespa_class.return_value = mock_vespa_client
         mock_encoder_factory.create_encoder.return_value = Mock()
 
-        agent = VideoSearchAgent(vespa_url="http://localhost", vespa_port=8080)
+        agent = VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
 
         with pytest.raises(Exception, match="Search failed"):
             agent.search_by_text("test query", ranking="binary_binary")
@@ -613,7 +613,7 @@ class TestVideoSearchAgentAdvancedFeatures:
                 "src.app.agents.video_search_agent.get_config"
             ) as mock_get_config,
             patch(
-                "src.app.agents.video_search_agent.VespaVideoSearchClient"
+                "src.app.agents.video_search_agent.TenantAwareVespaSearchClient"
             ) as mock_vespa_class,
             patch(
                 "src.app.agents.video_search_agent.QueryEncoderFactory"
@@ -628,7 +628,7 @@ class TestVideoSearchAgentAdvancedFeatures:
             mock_query_encoder.encode.return_value = np.random.rand(128)
             mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-            agent = VideoSearchAgent(
+            agent = VideoSearchAgent(tenant_id="test_tenant", 
                 vespa_url="http://localhost", vespa_port=8080
             )
             return agent
@@ -670,10 +670,9 @@ class TestVideoSearchAgentAdvancedFeatures:
         assert isinstance(results, list)
         # Vespa client should be called with date parameters
         configured_agent.vespa_client.search.assert_called()
-        call_args = configured_agent.vespa_client.search.call_args
-        search_params = call_args[0][0]  # First argument
-        assert search_params["start_date"] == "2024-01-01"
-        assert search_params["end_date"] == "2024-01-31"
+        call_kwargs = configured_agent.vespa_client.search.call_args.kwargs
+        assert call_kwargs["start_date"] == "2024-01-01"
+        assert call_kwargs["end_date"] == "2024-01-31"
 
     @pytest.mark.ci_fast
     def test_video_processor_cleanup_on_error(self, configured_agent):

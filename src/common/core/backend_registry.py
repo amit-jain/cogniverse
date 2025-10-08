@@ -77,29 +77,38 @@ class BackendRegistry:
 
     @classmethod
     def get_ingestion_backend(
-        cls, name: str, config: Optional[Dict[str, Any]] = None
+        cls, name: str, tenant_id: str, config: Optional[Dict[str, Any]] = None
     ) -> IngestionBackend:
         """
-        Get an ingestion backend instance.
+        Get a tenant-specific ingestion backend instance.
 
         Args:
             name: Backend name
+            tenant_id: Tenant identifier (REQUIRED - no default)
             config: Optional configuration for initialization
 
         Returns:
             Initialized IngestionBackend instance
 
         Raises:
-            ValueError: If backend not found
+            ValueError: If backend not found or tenant_id not provided
+
+        Note:
+            Backend instances are cached per tenant for isolation.
+            Each tenant gets their own backend instance.
         """
-        # For full backends, use unified cache key
+        if not tenant_id:
+            raise ValueError("tenant_id is required - no default tenant")
+
+        # Cache key includes tenant_id for isolation
         if name in cls._full_backends:
-            instance_key = f"backend_{name}"
+            instance_key = f"backend_{name}_{tenant_id}"
         else:
-            instance_key = f"ingestion_{name}"
+            instance_key = f"ingestion_{name}_{tenant_id}"
 
         # Check if instance already exists
         if instance_key in cls._backend_instances:
+            logger.debug(f"Returning cached backend: {instance_key}")
             return cls._backend_instances[instance_key]
 
         # Try to auto-import if not registered
@@ -120,36 +129,46 @@ class BackendRegistry:
         if config:
             instance.initialize(config)
 
-        # Cache instance
+        # Cache instance with tenant_id
         cls._backend_instances[instance_key] = instance
+        logger.info(f"Created and cached backend: {instance_key}")
 
         return instance
 
     @classmethod
     def get_search_backend(
-        cls, name: str, config: Optional[Dict[str, Any]] = None
+        cls, name: str, tenant_id: str, config: Optional[Dict[str, Any]] = None
     ) -> SearchBackend:
         """
-        Get a search backend instance.
+        Get a tenant-specific search backend instance.
 
         Args:
             name: Backend name
+            tenant_id: Tenant identifier (REQUIRED - no default)
             config: Optional configuration for initialization
 
         Returns:
             Initialized SearchBackend instance
 
         Raises:
-            ValueError: If backend not found
+            ValueError: If backend not found or tenant_id not provided
+
+        Note:
+            Backend instances are cached per tenant for isolation.
+            Each tenant gets their own backend instance.
         """
-        # For full backends, use unified cache key
+        if not tenant_id:
+            raise ValueError("tenant_id is required - no default tenant")
+
+        # Cache key includes tenant_id for isolation
         if name in cls._full_backends:
-            instance_key = f"backend_{name}"
+            instance_key = f"backend_{name}_{tenant_id}"
         else:
-            instance_key = f"search_{name}"
+            instance_key = f"search_{name}_{tenant_id}"
 
         # Check if instance already exists
         if instance_key in cls._backend_instances:
+            logger.debug(f"Returning cached backend: {instance_key}")
             return cls._backend_instances[instance_key]
 
         # Try to auto-import if not registered
@@ -170,8 +189,9 @@ class BackendRegistry:
         if config:
             instance.initialize(config)
 
-        # Cache instance
+        # Cache instance with tenant_id
         cls._backend_instances[instance_key] = instance
+        logger.info(f"Created and cached backend: {instance_key}")
 
         return instance
 

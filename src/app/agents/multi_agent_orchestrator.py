@@ -116,6 +116,7 @@ class MultiAgentOrchestrator:
 
     def __init__(
         self,
+        tenant_id: str,
         routing_agent: Optional[RoutingAgent] = None,
         available_agents: Optional[Dict[str, Dict[str, Any]]] = None,
         max_parallel_tasks: int = 3,
@@ -123,10 +124,29 @@ class MultiAgentOrchestrator:
         enable_workflow_intelligence: bool = True,
         optimization_strategy: OptimizationStrategy = OptimizationStrategy.BALANCED,
     ):
+        """
+        Initialize Multi-Agent Orchestrator
+
+        Args:
+            tenant_id: Tenant identifier (REQUIRED - no default)
+            routing_agent: Optional pre-configured routing agent
+            available_agents: Dictionary of available agents
+            max_parallel_tasks: Maximum parallel task execution
+            workflow_timeout_minutes: Workflow timeout in minutes
+            enable_workflow_intelligence: Enable workflow intelligence
+            optimization_strategy: Optimization strategy
+
+        Raises:
+            ValueError: If tenant_id is empty or None
+        """
+        if not tenant_id:
+            raise ValueError("tenant_id is required - no default tenant")
+
+        self.tenant_id = tenant_id
         self.logger = logging.getLogger(__name__)
 
         # Initialize routing agent
-        self.routing_agent = routing_agent or RoutingAgent()
+        self.routing_agent = routing_agent or RoutingAgent(tenant_id=tenant_id)
 
         # Configure available agents and their capabilities
         self.available_agents = available_agents or self._get_default_agents()

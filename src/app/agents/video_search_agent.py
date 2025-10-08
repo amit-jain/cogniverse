@@ -20,7 +20,7 @@ from src.app.agents.query_encoders import QueryEncoderFactory
 
 # Enhanced query support from DSPy routing system
 from src.app.agents.routing_agent import RoutingDecision
-from src.backends.vespa.vespa_search_client import VespaVideoSearchClient
+from src.backends.vespa.tenant_aware_search_client import TenantAwareVespaSearchClient
 from src.common.config_utils import get_config
 from src.tools.a2a_utils import DataPart, TextPart
 
@@ -239,16 +239,28 @@ class VideoSearchAgent(MemoryAwareMixin):
     Enhanced with memory capabilities for learning from search patterns.
     """
 
-    def __init__(self, **kwargs):
-        """Initialize enhanced video search agent"""
+    def __init__(self, tenant_id: str, **kwargs):
+        """
+        Initialize enhanced video search agent
+
+        Args:
+            tenant_id: Tenant identifier (REQUIRED - no default)
+            **kwargs: Additional configuration options
+
+        Raises:
+            ValueError: If tenant_id is empty or None
+        """
+        if not tenant_id:
+            raise ValueError("tenant_id is required - no default tenant")
+
         super().__init__()  # Initialize MemoryAwareMixin
-        logger.info("Initializing VideoSearchAgent...")
+        logger.info(f"Initializing VideoSearchAgent for tenant: {tenant_id}...")
 
         # Initialize base configuration
         self.config = get_config()
+        self.tenant_id = tenant_id
 
         # Initialize memory for video agent
-        tenant_id = self.config.get("tenant_id", "default")
         memory_initialized = self.initialize_memory(
             agent_name="video_agent",
             tenant_id=tenant_id,
@@ -304,9 +316,10 @@ class VideoSearchAgent(MemoryAwareMixin):
             model_name = kwargs.get("model_name", "vidore/colsmol-500m")
             self.embedding_type = "frame_based"
 
-        # Initialize Vespa search client
+        # Initialize Tenant-Aware Vespa search client
         try:
             logger.info("Enhanced Video Search Agent configuration:")
+            logger.info(f"  - Tenant ID: {tenant_id}")
             logger.info(f"  - Vespa URL: {vespa_url}")
             logger.info(f"  - Vespa Port: {vespa_port}")
             logger.info(f"  - Active Profile: {active_profile}")
@@ -315,12 +328,19 @@ class VideoSearchAgent(MemoryAwareMixin):
             logger.info(f"  - Environment VESPA_PORT: {os.getenv('VESPA_PORT')}")
             logger.info(f"  - Environment VESPA_SCHEMA: {os.getenv('VESPA_SCHEMA')}")
 
-            self.vespa_client = VespaVideoSearchClient(
-                vespa_url=vespa_url, vespa_port=vespa_port
+            self.vespa_client = TenantAwareVespaSearchClient(
+                tenant_id=tenant_id,
+                base_schema_name=active_profile,
+                vespa_url=vespa_url,
+                vespa_port=vespa_port,
+                auto_create_schema=True,
             )
-            logger.info(f"Vespa client initialized at {vespa_url}:{vespa_port}")
+            logger.info(
+                f"Tenant-aware Vespa client initialized at {vespa_url}:{vespa_port} "
+                f"for tenant {tenant_id} with schema {active_profile}"
+            )
         except Exception as e:
-            logger.error(f"Failed to initialize Vespa client: {e}")
+            logger.error(f"Failed to initialize tenant-aware Vespa client: {e}")
             raise
 
         # Initialize query encoder
@@ -364,21 +384,16 @@ class VideoSearchAgent(MemoryAwareMixin):
             # Encode text query
             query_embeddings = self.query_encoder.encode(query)
 
-            # Prepare search parameters
-            search_params = {
-                "query": query,
-                "ranking": kwargs.get("ranking", "binary_binary"),
-                "top_k": top_k,
-            }
-
-            # Add optional filters
-            if "start_date" in kwargs:
-                search_params["start_date"] = kwargs["start_date"]
-            if "end_date" in kwargs:
-                search_params["end_date"] = kwargs["end_date"]
-
-            # Execute search
-            results = self.vespa_client.search(search_params, query_embeddings)
+            # Execute search with tenant-aware client
+            results = self.vespa_client.search(
+                query_text=query,
+                embeddings=query_embeddings,
+                strategy=kwargs.get("ranking", "hybrid_float_bm25"),
+                top_k=top_k,
+                start_date=kwargs.get("start_date"),
+                end_date=kwargs.get("end_date"),
+                timeout=kwargs.get("timeout", 10),
+            )
 
             logger.info(f"Text search completed: {len(results)} results")
 
@@ -393,7 +408,7 @@ class VideoSearchAgent(MemoryAwareMixin):
                     metadata={
                         "search_type": "text",
                         "top_k": top_k,
-                        "ranking": search_params["ranking"],
+                        "ranking": kwargs.get("ranking", "hybrid_float_bm25"),
                     },
                 )
                 logger.debug("💾 Stored successful text search in memory")
@@ -437,21 +452,16 @@ class VideoSearchAgent(MemoryAwareMixin):
                 video_data, filename
             )
 
-            # Prepare search parameters
-            search_params = {
-                "query": f"Video similarity search for {filename}",
-                "ranking": kwargs.get("ranking", "binary_binary"),
-                "top_k": top_k,
-            }
-
-            # Add optional filters
-            if "start_date" in kwargs:
-                search_params["start_date"] = kwargs["start_date"]
-            if "end_date" in kwargs:
-                search_params["end_date"] = kwargs["end_date"]
-
-            # Execute search
-            results = self.vespa_client.search(search_params, query_embeddings)
+            # Execute search with tenant-aware client
+            results = self.vespa_client.search(
+                query_text=f"Video similarity search for {filename}",
+                embeddings=query_embeddings,
+                strategy=kwargs.get("ranking", "hybrid_float_bm25"),
+                top_k=top_k,
+                start_date=kwargs.get("start_date"),
+                end_date=kwargs.get("end_date"),
+                timeout=kwargs.get("timeout", 10),
+            )
 
             logger.info(f"Video search completed: {len(results)} results")
 
@@ -467,7 +477,7 @@ class VideoSearchAgent(MemoryAwareMixin):
                         "search_type": "video",
                         "filename": filename,
                         "top_k": top_k,
-                        "ranking": search_params["ranking"],
+                        "ranking": kwargs.get("ranking", "hybrid_float_bm25"),
                     },
                 )
                 logger.debug("💾 Stored successful video search in memory")
@@ -515,21 +525,16 @@ class VideoSearchAgent(MemoryAwareMixin):
                 image_data, filename
             )
 
-            # Prepare search parameters
-            search_params = {
-                "query": f"Image similarity search for {filename}",
-                "ranking": kwargs.get("ranking", "binary_binary"),
-                "top_k": top_k,
-            }
-
-            # Add optional filters
-            if "start_date" in kwargs:
-                search_params["start_date"] = kwargs["start_date"]
-            if "end_date" in kwargs:
-                search_params["end_date"] = kwargs["end_date"]
-
-            # Execute search
-            results = self.vespa_client.search(search_params, query_embeddings)
+            # Execute search with tenant-aware client
+            results = self.vespa_client.search(
+                query_text=f"Image similarity search for {filename}",
+                embeddings=query_embeddings,
+                strategy=kwargs.get("ranking", "hybrid_float_bm25"),
+                top_k=top_k,
+                start_date=kwargs.get("start_date"),
+                end_date=kwargs.get("end_date"),
+                timeout=kwargs.get("timeout", 10),
+            )
 
             logger.info(f"Image search completed: {len(results)} results")
 
@@ -545,7 +550,7 @@ class VideoSearchAgent(MemoryAwareMixin):
                         "search_type": "image",
                         "filename": filename,
                         "top_k": top_k,
-                        "ranking": search_params["ranking"],
+                        "ranking": kwargs.get("ranking", "hybrid_float_bm25"),
                     },
                 )
                 logger.debug("💾 Stored successful image search in memory")
@@ -703,23 +708,19 @@ class VideoSearchAgent(MemoryAwareMixin):
             # Build relationship-aware search parameters
             search_params = self._build_enhanced_search_params(context, top_k, **kwargs)
 
-            # Execute search using enhanced query
+            # Execute search using enhanced query with tenant-aware client
             query_embeddings = self.query_encoder.encode(search_query)
-            vespa_params = {
-                "query": search_query,
-                "ranking": search_params.ranking_strategy
-                or kwargs.get("ranking", "hybrid_binary_bm25_no_description"),
-                "top_k": top_k,
-            }
 
-            # Add optional filters
-            if search_params.start_date:
-                vespa_params["start_date"] = search_params.start_date
-            if search_params.end_date:
-                vespa_params["end_date"] = search_params.end_date
-
-            # Execute search
-            raw_results = self.vespa_client.search(vespa_params, query_embeddings)
+            raw_results = self.vespa_client.search(
+                query_text=search_query,
+                embeddings=query_embeddings,
+                strategy=search_params.ranking_strategy
+                or kwargs.get("ranking", "hybrid_float_bm25"),
+                top_k=top_k,
+                start_date=search_params.start_date,
+                end_date=search_params.end_date,
+                timeout=kwargs.get("timeout", 10),
+            )
 
             # Enhance results with relationship context
             enhanced_results = self._enhance_results_with_relationships(
@@ -988,14 +989,26 @@ async def startup_event():
     """Initialize agent on startup"""
     global enhanced_video_agent
 
+    # Tenant ID is REQUIRED
+    tenant_id = os.getenv("TENANT_ID")
+    if not tenant_id:
+        error_msg = "TENANT_ID environment variable is required"
+        logger.error(error_msg)
+        # Don't raise during tests
+        if not os.getenv("PYTEST_CURRENT_TEST"):
+            raise ValueError(error_msg)
+        else:
+            logger.warning("PYTEST_CURRENT_TEST detected - using 'test_tenant' as tenant_id")
+            tenant_id = "test_tenant"
+
     agent_config = {
         "vespa_url": os.getenv("VESPA_URL", "http://localhost"),
         "vespa_port": int(os.getenv("VESPA_PORT", 8080)),
     }
 
     try:
-        enhanced_video_agent = VideoSearchAgent(**agent_config)
-        logger.info("Enhanced video search agent initialized")
+        enhanced_video_agent = VideoSearchAgent(tenant_id=tenant_id, **agent_config)
+        logger.info(f"Enhanced video search agent initialized for tenant: {tenant_id}")
     except Exception as e:
         logger.error(f"Failed to initialize enhanced agent: {e}")
         # Don't raise during tests

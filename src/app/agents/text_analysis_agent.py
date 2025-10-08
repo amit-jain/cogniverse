@@ -41,14 +41,20 @@ class TextAnalysisAgent(
     Supports dynamic reconfiguration of modules and optimizers via REST API.
     """
 
-    def __init__(self, tenant_id: str = "default"):
+    def __init__(self, tenant_id: str):
         """
         Initialize text analysis agent with dynamic configuration.
 
         Args:
-            tenant_id: Tenant identifier for multi-tenant configuration
+            tenant_id: Tenant identifier (REQUIRED - no default)
+
+        Raises:
+            ValueError: If tenant_id is empty or None
         """
-        logger.info("Initializing TextAnalysisAgent with dynamic DSPy configuration...")
+        if not tenant_id:
+            raise ValueError("tenant_id is required - no default tenant")
+
+        logger.info(f"Initializing TextAnalysisAgent for tenant: {tenant_id}...")
 
         self.tenant_id = tenant_id
         self.system_config = get_config()
@@ -157,32 +163,49 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Initialize agent
-agent = TextAnalysisAgent()
+# Per-tenant agent instances cache
+_agent_instances: Dict[str, TextAnalysisAgent] = {}
 
-# Setup configuration API endpoints with tenant support
-agent.setup_config_endpoints(app, tenant_id=agent.tenant_id)
 
-# Setup A2A endpoints
-agent.setup_a2a_endpoints(app)
+def get_agent(tenant_id: str) -> TextAnalysisAgent:
+    """
+    Get or create TextAnalysisAgent instance for tenant
 
-# Setup health check
-agent.setup_health_endpoint(app)
+    Args:
+        tenant_id: Tenant identifier (REQUIRED - no default)
+
+    Returns:
+        TextAnalysisAgent instance for the tenant
+
+    Raises:
+        ValueError: If tenant_id is empty or None
+    """
+    if not tenant_id:
+        raise ValueError("tenant_id is required - no default tenant")
+
+    if tenant_id not in _agent_instances:
+        logger.info(f"Creating new TextAnalysisAgent for tenant: {tenant_id}")
+        _agent_instances[tenant_id] = TextAnalysisAgent(tenant_id=tenant_id)
+    return _agent_instances[tenant_id]
 
 
 @app.post("/analyze")
-async def analyze_text_endpoint(text: str, analysis_type: str = "summary"):
+async def analyze_text_endpoint(
+    text: str, tenant_id: str, analysis_type: str = "summary"
+):
     """
     Analyze text using current DSPy configuration.
 
     Args:
         text: Text content to analyze
+        tenant_id: Tenant identifier (REQUIRED)
         analysis_type: Type of analysis
 
     Returns:
         Analysis result
     """
     try:
+        agent = get_agent(tenant_id)
         result = agent.analyze_text(text, analysis_type)
         return {"status": "success", "analysis": result}
     except Exception as e:

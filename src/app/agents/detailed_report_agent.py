@@ -99,11 +99,24 @@ class ReportResult:
 class DetailedReportAgent(DSPyDetailedReportMixin, A2AEndpointsMixin, HealthCheckMixin):
     """Agent for generating comprehensive detailed reports with VLM integration"""
 
-    def __init__(self, **kwargs):
-        """Initialize detailed report agent"""
-        logger.info("Initializing DetailedReportAgent...")
+    def __init__(self, tenant_id: str, **kwargs):
+        """
+        Initialize detailed report agent
+
+        Args:
+            tenant_id: Tenant identifier (REQUIRED - no default)
+            **kwargs: Additional configuration options
+
+        Raises:
+            ValueError: If tenant_id is empty or None
+        """
+        if not tenant_id:
+            raise ValueError("tenant_id is required - no default tenant")
+
+        logger.info(f"Initializing DetailedReportAgent for tenant: {tenant_id}...")
         super().__init__()
 
+        self.tenant_id = tenant_id
         self.config = get_config()
         self._initialize_vlm_client()
         self.vlm = VLMInterface()

@@ -40,13 +40,13 @@ class MemoryAwareMixin:
         """Initialize memory-aware mixin"""
         self.memory_manager: Optional[Mem0MemoryManager] = None
         self.agent_name: Optional[str] = None
-        self.tenant_id: str = "default"
+        self.tenant_id: Optional[str] = None
         self._memory_initialized: bool = False
 
     def initialize_memory(
         self,
         agent_name: str,
-        tenant_id: str = "default",
+        tenant_id: str,
         vespa_host: str = "localhost",
         vespa_port: int = 8080,
     ) -> bool:
@@ -55,26 +55,33 @@ class MemoryAwareMixin:
 
         Args:
             agent_name: Name of the agent
-            tenant_id: Tenant identifier
+            tenant_id: Tenant identifier (REQUIRED - no default)
             vespa_host: Vespa endpoint host
             vespa_port: Vespa endpoint port
 
         Returns:
             Success status
+
+        Raises:
+            ValueError: If tenant_id is empty or None
         """
+        if not tenant_id:
+            raise ValueError("tenant_id is required - no default tenant")
+
         try:
             self.agent_name = agent_name
             self.tenant_id = tenant_id
 
-            # Get memory manager singleton
-            self.memory_manager = Mem0MemoryManager()
+            # Get tenant-specific memory manager instance
+            self.memory_manager = Mem0MemoryManager(tenant_id=tenant_id)
 
             # Initialize if not already done
             if self.memory_manager.memory is None:
                 self.memory_manager.initialize(
                     vespa_host=vespa_host,
                     vespa_port=vespa_port,
-                    collection_name="agent_memories",
+                    base_schema_name="agent_memories",
+                    auto_create_schema=True,
                 )
 
             self._memory_initialized = True

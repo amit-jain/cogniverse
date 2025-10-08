@@ -45,7 +45,7 @@ class TestCompleteMultiAgentOrchestration:
             }
 
             # Initialize routing agent
-            routing_agent = RoutingAgent()
+            routing_agent = RoutingAgent(tenant_id="test_tenant")
 
             # Test video search query
             video_query = "Find videos of robots playing soccer"
@@ -82,7 +82,7 @@ class TestCompleteMultiAgentOrchestration:
 
     def test_summarization_workflow(self):
         """Test summarization agent workflow with structured data"""
-        summarizer = SummarizerAgent()
+        summarizer = SummarizerAgent(tenant_id="test_tenant")
 
         # Test with sample search results
 
@@ -95,7 +95,7 @@ class TestCompleteMultiAgentOrchestration:
 
     def test_detailed_report_workflow(self):
         """Test detailed report generation workflow"""
-        reporter = DetailedReportAgent()
+        reporter = DetailedReportAgent(tenant_id="test_tenant")
 
         # Test with comprehensive data structure
 
@@ -215,8 +215,8 @@ class TestCompleteMultiAgentOrchestration:
                 routing_agent.enable_telemetry = False
                 routing_agent.logger = logging.getLogger(__name__)
 
-            summarizer = SummarizerAgent()
-            reporter = DetailedReportAgent()
+            summarizer = SummarizerAgent(tenant_id="test_tenant")
+            reporter = DetailedReportAgent(tenant_id="test_tenant")
 
         # Verify agents have expected coordination interfaces
         agents = {
@@ -368,8 +368,8 @@ class TestCompleteMultiAgentOrchestration:
                     routing_agent.enable_telemetry = False
                     routing_agent.logger = logging.getLogger(__name__)
                     agents.append(routing_agent)
-                agents.append(SummarizerAgent())
-                agents.append(DetailedReportAgent())
+                agents.append(SummarizerAgent(tenant_id="test_tenant"))
+                agents.append(DetailedReportAgent(tenant_id="test_tenant"))
 
             # Try to create video agent (may fail due to Vespa) - skip to avoid hanging
             try:
@@ -500,8 +500,8 @@ class TestSystemScalability:
                 mock_summarizer_config.return_value = config
                 mock_reporter_config.return_value = config
 
-                summarizer = SummarizerAgent()
-                reporter = DetailedReportAgent()
+                summarizer = SummarizerAgent(tenant_id="test_tenant")
+                reporter = DetailedReportAgent(tenant_id="test_tenant")
 
                 # Simulate repeated operations
                 for i in range(10):

@@ -341,7 +341,7 @@ class TestCrossModalFusionIntegration:
         print("-" * 80)
 
         # Create orchestrator (will use mocked agents)
-        orchestrator = MultiAgentOrchestrator(enable_workflow_intelligence=False)
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", enable_workflow_intelligence=False)
 
         # Create mock workflow with completed tasks from different modalities
         print("\n🎭 Creating mock multi-modal workflow...")
@@ -465,7 +465,7 @@ class TestCrossModalFusionIntegration:
         print("Test: Fusion Strategies")
         print("-" * 80)
 
-        orchestrator = MultiAgentOrchestrator(enable_workflow_intelligence=False)
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", enable_workflow_intelligence=False)
 
         # Create sample task results
         task_results = {
@@ -529,7 +529,7 @@ class TestCrossModalFusionIntegration:
         print("Test: Fusion Quality Metrics")
         print("-" * 80)
 
-        orchestrator = MultiAgentOrchestrator(enable_workflow_intelligence=False)
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", enable_workflow_intelligence=False)
 
         # Create diverse task results
         task_results = {

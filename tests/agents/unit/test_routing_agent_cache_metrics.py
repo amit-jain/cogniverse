@@ -37,7 +37,7 @@ class TestRoutingAgentCacheMetrics:
         with patch.object(RoutingAgent, "_configure_dspy", return_value=None), \
              patch("src.app.agents.dspy_a2a_agent_base.FastAPI"), \
              patch("src.app.agents.dspy_a2a_agent_base.A2AClient"):
-            agent = RoutingAgent(config=config, port=8001, enable_telemetry=False)
+            agent = RoutingAgent(tenant_id="test_tenant", config=config, port=8001, enable_telemetry=False)
             yield agent
 
     def test_cache_metrics_components_initialized(self, routing_agent):

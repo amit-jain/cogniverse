@@ -88,7 +88,7 @@ class TestPerformanceBenchmarks:
                 "detailed_report_agent_url": "http://localhost:8004",
             }
 
-            routing_agent = RoutingAgent()
+            routing_agent = RoutingAgent(tenant_id="test_tenant")
 
             test_queries = [
                 "Find videos of robots",
@@ -250,7 +250,7 @@ class TestPerformanceBenchmarks:
         print(f"Initial memory usage: {initial_memory:.1f} MB")
 
         # Pre-initialize components to get baseline after model loading
-        routing_agent = RoutingAgent()
+        routing_agent = RoutingAgent(tenant_id="test_tenant")
         extractor = RelationshipExtractorTool()
 
         # Do one warmup operation to load models
@@ -343,7 +343,7 @@ class TestPerformanceBenchmarks:
                 "detailed_report_agent_url": "http://localhost:8004",
             }
 
-            routing_agent = RoutingAgent()
+            routing_agent = RoutingAgent(tenant_id="test_tenant")
 
             # Generate concurrent queries
             num_concurrent = 5

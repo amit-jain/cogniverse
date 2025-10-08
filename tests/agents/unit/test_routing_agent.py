@@ -41,7 +41,7 @@ class TestRoutingAgentLegacy:
         """Test RoutingAgent initialization"""
         # RoutingAgent now uses DSPy-based approach and doesn't have system_config/agent_registry
         # Test that basic initialization works
-        agent = RoutingAgent()
+        agent = RoutingAgent(tenant_id="test_tenant")
 
         assert agent.config is not None
         assert hasattr(agent, "routing_module")

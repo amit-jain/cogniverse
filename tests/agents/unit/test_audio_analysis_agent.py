@@ -22,6 +22,7 @@ class TestAudioAnalysisAgent:
     def setup_method(self):
         """Set up test fixtures"""
         self.agent = AudioAnalysisAgent(
+            tenant_id="test_tenant",
             vespa_endpoint="http://localhost:8080", whisper_model_size="base", port=8006
         )
 

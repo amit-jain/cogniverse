@@ -70,7 +70,7 @@ class TestRoutingToEnhancedSearchIntegration:
 
         # Try to create search agent with proper error handling
         try:
-            search_agent = VideoSearchAgent()
+            search_agent = VideoSearchAgent(tenant_id="test_tenant")
         except ValueError:
             raise
 
@@ -200,7 +200,7 @@ class TestRoutingToEnhancedSearchIntegration:
                     enable_relationship_extraction=True,
                     enable_query_enhancement=True,
                 )
-                routing_agent = RoutingAgent(config=config)
+                routing_agent = RoutingAgent(tenant_id="test_tenant", config=config)
 
                 routing_decision = (
                     await routing_agent.analyze_and_route_with_relationships(
@@ -235,8 +235,8 @@ class TestRoutingToEnhancedSearchIntegration:
         """Test orchestration need assessment between routing and orchestrator"""
 
         # Create components
-        routing_agent = RoutingAgent()
-        orchestrator = MultiAgentOrchestrator(routing_agent=routing_agent)
+        routing_agent = RoutingAgent(tenant_id="test_tenant")
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", routing_agent=routing_agent)
 
         # Test complex query that should trigger orchestration
         complex_routing_decision = RoutingDecision(
@@ -533,7 +533,7 @@ class TestEnhancedAgentComponentIntegration:
             # Set environment for orchestrator
             os.environ["VESPA_SCHEMA"] = "video_colpali_smol500_mv_frame"
 
-            orchestrator = AgentOrchestrator()
+            orchestrator = AgentOrchestrator(tenant_id="test_tenant")
             orchestrator.routing_agent = mock_routing_agent
             orchestrator.vespa_client = mock_vespa_client
             orchestrator.result_aggregator = mock_aggregator
@@ -698,7 +698,7 @@ class TestRoutingEnhancementErrorHandlingIntegration:
             config = RoutingConfig(
                 enable_mlflow_tracking=False, enable_relationship_extraction=True
             )
-            routing_agent = RoutingAgent(config=config)
+            routing_agent = RoutingAgent(tenant_id="test_tenant", config=config)
 
             # Test that routing falls back gracefully
             try:

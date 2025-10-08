@@ -17,7 +17,7 @@ class TestDocumentAgent:
 
     def setup_method(self):
         """Set up test fixtures"""
-        self.agent = DocumentAgent(vespa_endpoint="http://localhost:8080", port=8007)
+        self.agent = DocumentAgent(tenant_id="test_tenant", vespa_endpoint="http://localhost:8080", port=8007)
 
     def test_initialization(self):
         """Test agent initialization"""

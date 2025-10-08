@@ -110,11 +110,24 @@ class SummarizerAgent(DSPySummaryMixin, A2AEndpointsMixin, HealthCheckMixin):
     Provides comprehensive analysis and summarization of search results.
     """
 
-    def __init__(self, **kwargs):
-        """Initialize summarizer agent"""
-        logger.info("Initializing SummarizerAgent...")
+    def __init__(self, tenant_id: str, **kwargs):
+        """
+        Initialize summarizer agent
+
+        Args:
+            tenant_id: Tenant identifier (REQUIRED - no default)
+            **kwargs: Additional configuration options
+
+        Raises:
+            ValueError: If tenant_id is empty or None
+        """
+        if not tenant_id:
+            raise ValueError("tenant_id is required - no default tenant")
+
+        logger.info(f"Initializing SummarizerAgent for tenant: {tenant_id}...")
         super().__init__()  # Initialize DSPy mixin
 
+        self.tenant_id = tenant_id
         self.config = get_config()
 
         # Initialize DSPy components

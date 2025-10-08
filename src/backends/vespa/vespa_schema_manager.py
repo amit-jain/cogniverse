@@ -966,3 +966,121 @@ class VespaSchemaManager:
         except Exception as e:
             self._logger.error(f"Failed to deploy package: {str(e)}")
             raise
+
+    def upload_metadata_schemas(self, app_name: str = "metadata") -> None:
+        """
+        Deploy organization and tenant metadata schemas for multi-tenant management.
+
+        These schemas store org/tenant metadata and are used by the tenant management API.
+
+        Args:
+            app_name: Name of the application
+        """
+        try:
+            from vespa.package import (
+                ApplicationPackage,
+                Document,
+                Field,
+                Schema,
+            )
+
+            # Organization metadata schema
+            organization_metadata_schema = Schema(
+                name='organization_metadata',
+                document=Document(
+                    fields=[
+                        Field(
+                            name='org_id',
+                            type='string',
+                            indexing=['summary', 'attribute'],
+                            attribute=['fast-search']
+                        ),
+                        Field(
+                            name='org_name',
+                            type='string',
+                            indexing=['summary', 'index']
+                        ),
+                        Field(
+                            name='created_at',
+                            type='long',
+                            indexing=['summary', 'attribute']
+                        ),
+                        Field(
+                            name='created_by',
+                            type='string',
+                            indexing=['summary', 'attribute']
+                        ),
+                        Field(
+                            name='status',
+                            type='string',
+                            indexing=['summary', 'attribute'],
+                            attribute=['fast-search']
+                        ),
+                        Field(
+                            name='tenant_count',
+                            type='int',
+                            indexing=['summary', 'attribute']
+                        ),
+                    ]
+                )
+            )
+
+            # Tenant metadata schema
+            tenant_metadata_schema = Schema(
+                name='tenant_metadata',
+                document=Document(
+                    fields=[
+                        Field(
+                            name='tenant_full_id',
+                            type='string',
+                            indexing=['summary', 'attribute'],
+                            attribute=['fast-search']
+                        ),
+                        Field(
+                            name='org_id',
+                            type='string',
+                            indexing=['summary', 'attribute'],
+                            attribute=['fast-search']
+                        ),
+                        Field(
+                            name='tenant_name',
+                            type='string',
+                            indexing=['summary', 'attribute']
+                        ),
+                        Field(
+                            name='created_at',
+                            type='long',
+                            indexing=['summary', 'attribute']
+                        ),
+                        Field(
+                            name='created_by',
+                            type='string',
+                            indexing=['summary', 'attribute']
+                        ),
+                        Field(
+                            name='status',
+                            type='string',
+                            indexing=['summary', 'attribute'],
+                            attribute=['fast-search']
+                        ),
+                        Field(
+                            name='schemas_deployed',
+                            type='array<string>',
+                            indexing=['summary', 'attribute']
+                        ),
+                    ]
+                )
+            )
+
+            # Deploy both schemas together
+            app_package = ApplicationPackage(
+                name=app_name,
+                schema=[organization_metadata_schema, tenant_metadata_schema]
+            )
+            self._deploy_package(app_package)
+
+            self._logger.info("Successfully deployed organization and tenant metadata schemas")
+
+        except Exception as e:
+            self._logger.error(f"Failed to deploy metadata schemas: {str(e)}")
+            raise

@@ -15,35 +15,49 @@ class TestMem0MemoryManager:
     @pytest.fixture
     def manager(self):
         """Create manager instance"""
-        return Mem0MemoryManager()
+        return Mem0MemoryManager(tenant_id="test_tenant")
 
-    def test_singleton_pattern(self):
-        """Test singleton pattern"""
-        manager1 = Mem0MemoryManager()
-        manager2 = Mem0MemoryManager()
+    def test_per_tenant_singleton_pattern(self):
+        """Test per-tenant singleton pattern"""
+        manager1 = Mem0MemoryManager(tenant_id="tenant1")
+        manager2 = Mem0MemoryManager(tenant_id="tenant1")
+        manager3 = Mem0MemoryManager(tenant_id="tenant2")
+
+        # Same tenant returns same instance
         assert manager1 is manager2
+        # Different tenant returns different instance
+        assert manager1 is not manager3
+        assert manager2 is not manager3
 
     def test_initialization(self, manager):
         """Test initial state"""
         assert manager.memory is None
         assert manager.config is None
 
+    @patch("src.common.mem0_memory_manager.get_tenant_schema_manager")
     @patch("src.common.mem0_memory_manager.Memory")
-    def test_initialize_success(self, mock_memory_class, manager):
+    def test_initialize_success(self, mock_memory_class, mock_get_schema_manager, manager):
         """Test successful initialization"""
         # Setup mocks
         mock_memory = MagicMock()
         mock_memory_class.from_config.return_value = mock_memory
 
+        mock_schema_manager = MagicMock()
+        mock_schema_manager.get_tenant_schema_name.return_value = "agent_memories_test_tenant"
+        mock_schema_manager.ensure_tenant_schema_exists.return_value = True
+        mock_get_schema_manager.return_value = mock_schema_manager
+
         # Initialize
         manager.initialize(
             vespa_host="localhost",
             vespa_port=8080,
-            collection_name="test_memories",
+            base_schema_name="agent_memories",
         )
 
         assert manager.memory is not None
         assert manager.config is not None
+        # Verify tenant-specific schema was used
+        assert manager.config["vector_store"]["config"]["collection_name"] == "agent_memories_test_tenant"
 
     @patch("src.common.mem0_memory_manager.Memory")
     def test_add_memory(self, mock_memory_class, manager):
@@ -98,7 +112,7 @@ class TestMem0MemoryManager:
     def test_search_memory_not_initialized(self):
         """Test search when not initialized"""
         # Create fresh manager and ensure not initialized
-        manager = Mem0MemoryManager()
+        manager = Mem0MemoryManager(tenant_id="tenant1")
         manager.memory = None  # Force not initialized state
 
         results = manager.search_memory(
@@ -200,7 +214,7 @@ class TestMem0MemoryManager:
 
     def test_health_check_not_initialized(self):
         """Test health check when not initialized"""
-        manager = Mem0MemoryManager()
+        manager = Mem0MemoryManager(tenant_id="test_tenant")
         manager.memory = None  # Force not initialized state
 
         health = manager.health_check()
@@ -227,7 +241,7 @@ class TestMem0MemoryManager:
 
     def test_get_memory_stats_not_initialized(self):
         """Test stats when not initialized"""
-        manager = Mem0MemoryManager()
+        manager = Mem0MemoryManager(tenant_id="test_tenant")
         manager.memory = None  # Force not initialized state
 
         stats = manager.get_memory_stats(
