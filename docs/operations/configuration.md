@@ -1,6 +1,6 @@
 # Cogniverse Study Guide: Configuration Management
 
-**Last Updated:** 2025-10-08
+**Last Updated:** 2025-10-09
 **Module Path:** `src/common/`
 **Purpose:** Multi-tenant, versioned configuration system with pluggable storage backends
 
@@ -10,7 +10,7 @@
 
 ### Purpose
 The configuration system provides centralized management for all system configurations with:
-- **Multi-tenant isolation**: Complete configuration separation per tenant
+- **Multi-tenant isolation**: Complete configuration separation per tenant using org:tenant format
 - **Versioning**: Full history tracking with rollback capability
 - **Pluggable backends**: SQLite (default), Vespa, PostgreSQL, or custom
 - **Hot reload**: Configuration changes apply immediately without restart
@@ -18,10 +18,96 @@ The configuration system provides centralized management for all system configur
 - **DSPy integration**: Dynamic optimizer and module configuration
 
 ### Key Components
-- **ConfigManager**: Singleton access to configuration
-- **ConfigStore**: Interface for storage backends
-- **UnifiedConfig**: Type-safe configuration dataclasses
-- **ConfigWatcher**: Hot reload support
+- **ConfigManager**: Singleton access to configuration (tenant-aware)
+- **ConfigStore**: Interface for storage backends with tenant isolation
+- **UnifiedConfig**: Type-safe configuration dataclasses with tenant_id
+- **ConfigWatcher**: Hot reload support per tenant
+
+---
+
+## Multi-Tenant Configuration
+
+### Tenant ID Format
+
+All configuration is scoped to a **tenant_id** using the org:tenant format:
+
+```
+{organization}:{tenant_name}
+
+Examples:
+- acme:production
+- acme:staging
+- acme:dev
+- initech:production
+```
+
+### Validation Rules
+
+**Organization ID** (`org_id`):
+- Pattern: `^[a-zA-Z0-9_]+$`
+- Examples: `acme`, `org_123`, `ACME`
+- Invalid: `acme-corp`, `acme.com`, `acme corp`
+
+**Tenant Name** (`tenant_name`):
+- Pattern: `^[a-zA-Z0-9_-]+$`
+- Examples: `production`, `dev-2024`, `cust_1`
+- Invalid: `prod.env`, `staging:v2`, `test env`
+
+### Configuration Isolation
+
+Each tenant has completely isolated configuration:
+
+```python
+from src.common.config_manager import get_config_manager
+
+manager = get_config_manager()
+
+# Get acme:production configuration
+acme_prod_config = manager.get_system_config(tenant_id="acme:production")
+
+# Get acme:staging configuration (completely separate)
+acme_staging_config = manager.get_system_config(tenant_id="acme:staging")
+
+# Different configurations for different tenants
+assert acme_prod_config != acme_staging_config
+```
+
+### Per-Tenant Storage Paths
+
+Configuration and data organized by tenant:
+
+```
+base_dir/
+├── acme/                       # Organization
+│   ├── production/             # Tenant
+│   │   ├── config/             # Tenant-specific config
+│   │   ├── data/               # Tenant-specific data
+│   │   └── logs/               # Tenant-specific logs
+│   ├── staging/
+│   └── dev/
+├── initech/
+│   └── production/
+└── hooli/
+    └── customer_123/
+```
+
+### Telemetry Project Naming
+
+Phoenix telemetry projects automatically scoped by tenant:
+
+```python
+# Project name format: cogniverse-{tenant_id}-{component}
+# Examples:
+# - cogniverse-acme_production-video-search
+# - cogniverse-acme_staging-routing-agent
+# - cogniverse-initech_production-summarizer
+
+# Automatically set based on tenant_id
+system_config = SystemConfig(
+    tenant_id="acme:production",
+    phoenix_project_name="cogniverse-acme_production-video-search"
+)
+```
 
 ---
 
@@ -52,27 +138,27 @@ graph TB
 ## Configuration Scopes
 
 ### 1. System Configuration
-Global infrastructure settings shared across all agents:
+Global infrastructure settings per tenant:
 
 ```python
 from src.common.unified_config import SystemConfig
 
 system_config = SystemConfig(
-    tenant_id="default",
+    tenant_id="acme:production",  # REQUIRED - org:tenant format
     llm_model="gpt-4",
     llm_base_url="https://api.openai.com/v1",
     vespa_url="http://localhost:8080",
-    phoenix_project_name="default_project",
+    phoenix_project_name="cogniverse-acme_production-system",
     phoenix_enabled=True
 )
 ```
 
-**Settings Include:**
+**Settings Include (per tenant)**:
 - LLM providers and models
 - Vespa backend URLs
-- Phoenix telemetry endpoints
-- Mem0 memory configuration
-- Default resource limits
+- Phoenix telemetry endpoints (tenant-specific projects)
+- Mem0 memory configuration (tenant-isolated)
+- Resource limits per tenant
 
 ### 2. Agent Configuration
 Per-agent DSPy module and optimizer settings:
@@ -140,7 +226,7 @@ Phoenix observability settings:
 
 ### SQLite ConfigStore (Default)
 
-Local SQLite database for development and single-instance deployments.
+Local SQLite database for development and single-instance deployments with tenant isolation.
 
 ```python
 from src.common.config_manager import get_config_manager
@@ -148,17 +234,22 @@ from src.common.config_manager import get_config_manager
 # Automatically uses SQLite at data/config/config.db
 manager = get_config_manager()
 
-# Get system configuration
-system_config = manager.get_system_config(tenant_id="default")
+# Get system configuration for specific tenant
+system_config = manager.get_system_config(tenant_id="acme:production")
+print(f"Tenant: {system_config.tenant_id}")
 print(f"LLM: {system_config.llm_model}")
 print(f"Vespa: {system_config.vespa_url}")
+
+# Different tenant, different config
+staging_config = manager.get_system_config(tenant_id="acme:staging")
+assert staging_config.tenant_id != system_config.tenant_id
 ```
 
 **Features:**
 - Zero configuration setup
 - File-based persistence at `data/config/config.db`
-- Full ACID compliance
-- Migration path to PostgreSQL
+- Full ACID compliance with tenant isolation
+- Migration path to PostgreSQL while preserving tenant separation
 
 ### Vespa ConfigStore
 
@@ -362,7 +453,7 @@ video_agent_config = AgentConfig(
 )
 
 manager.set_agent_config(
-    tenant_id="default",
+    tenant_id="acme:production",
     agent_name="video_search_agent",
     agent_config=video_agent_config
 )
@@ -406,7 +497,7 @@ from src.common.config_store_interface import ConfigScope
 
 # Get configuration history
 history = manager.store.get_config_history(
-    tenant_id="default",
+    tenant_id="acme:production",
     scope=ConfigScope.SYSTEM,
     service="system",
     config_key="system_config",
@@ -423,12 +514,12 @@ for entry in history:
 
 ```python
 # Get current version
-current = manager.get_system_config("default")
+current = manager.get_system_config("acme:production")
 print(f"Current LLM: {current.llm_model}")
 
 # Rollback to specific version
 manager.rollback_config(
-    tenant_id="default",
+    tenant_id="acme:production",
     scope=ConfigScope.SYSTEM,
     service="system",
     config_key="system_config",
@@ -632,14 +723,14 @@ manager.apply_template(
 ```python
 # Check if configuration exists
 configs = manager.store.list_configs(
-    tenant_id="default",
+    tenant_id="acme:production",
     scope=ConfigScope.SYSTEM
 )
 print(f"Available configs: {configs}")
 
 # Initialize missing configuration
-if not manager.has_system_config("default"):
-    manager.set_system_config(SystemConfig(tenant_id="default"))
+if not manager.has_system_config("acme:production"):
+    manager.set_system_config(SystemConfig(tenant_id="acme:production"))
 ```
 
 ### Version Conflicts
@@ -696,11 +787,12 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/common/integration/ -v
 ---
 
 **Related Guides:**
+- [multi-tenant-management.md](multi-tenant-management.md) - Complete multi-tenant architecture guide
+- [deployment.md](deployment.md) - Multi-tenant deployment procedures
 - [00_ARCHITECTURE_OVERVIEW.md](./00_ARCHITECTURE_OVERVIEW.md) - System design
 - [03_COMMON_MODULE.md](./03_COMMON_MODULE.md) - Shared utilities
 - [19_SETUP_INSTALLATION.md](./19_SETUP_INSTALLATION.md) - Installation
-- [21_DEPLOYMENT_GUIDE.md](./21_DEPLOYMENT_GUIDE.md) - Deployment
 
 ---
 
-**Next**: [21_DEPLOYMENT_GUIDE.md](./21_DEPLOYMENT_GUIDE.md)
+**Next**: [deployment.md](deployment.md) - Multi-tenant deployment

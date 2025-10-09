@@ -253,16 +253,27 @@ image = (
 )
 async def process_video(
     video_url: str,
-    profile: str = "video_colpali_smol500_mv_frame",
-    tenant_id: str = "default"
+    tenant_id: str,  # REQUIRED - no default
+    profile: str = "video_colpali_smol500_mv_frame"
 ):
-    """Process video with ColPali/VideoPrism on GPU"""
+    """Process video with ColPali/VideoPrism on GPU
+
+    Args:
+        video_url: URL to video file
+        tenant_id: Tenant ID in org:tenant format (e.g., "acme:production")
+        profile: Embedding profile to use
+    """
     from src.app.ingestion import VideoIngestionPipeline
+
+    # Validate tenant_id
+    if not tenant_id or ":" not in tenant_id:
+        raise ValueError("tenant_id must be in org:tenant format")
 
     pipeline = VideoIngestionPipeline(profile=profile, tenant_id=tenant_id)
     result = await pipeline.process_video_from_url(video_url)
 
     return {
+        "tenant_id": tenant_id,
         "video_id": result.video_id,
         "documents_created": len(result.documents),
         "processing_time_seconds": result.processing_time
@@ -277,13 +288,25 @@ async def process_video(
 )
 async def search(
     query: str,
+    tenant_id: str,  # REQUIRED - no default
     profile: str = "video_colpali_smol500_mv_frame",
     ranking_strategy: str = "hybrid_float_bm25",
-    top_k: int = 10,
-    tenant_id: str = "default"
+    top_k: int = 10
 ):
-    """Execute search with appropriate agent"""
+    """Execute search with appropriate agent
+
+    Args:
+        query: Search query
+        tenant_id: Tenant ID in org:tenant format (e.g., "acme:production")
+        profile: Embedding profile to use
+        ranking_strategy: Vespa ranking strategy
+        top_k: Number of results to return
+    """
     from src.app.agents.video_search_agent import VideoSearchAgent
+
+    # Validate tenant_id
+    if not tenant_id or ":" not in tenant_id:
+        raise ValueError("tenant_id must be in org:tenant format")
 
     agent = VideoSearchAgent(profile=profile, tenant_id=tenant_id)
     results = await agent.search(
@@ -293,6 +316,7 @@ async def search(
     )
 
     return {
+        "tenant_id": tenant_id,
         "results": [r.to_dict() for r in results],
         "count": len(results)
     }
@@ -304,9 +328,14 @@ async def search(
 # Deploy to Modal
 modal deploy scripts/modal_vlm_service.py
 
-# Test endpoints
-modal run scripts/modal_vlm_service.py::search --query "machine learning tutorial"
-modal run scripts/modal_vlm_service.py::process_video --video-url "https://example.com/video.mp4"
+# Test endpoints with tenant_id (REQUIRED)
+modal run scripts/modal_vlm_service.py::search \
+  --query "machine learning tutorial" \
+  --tenant-id "acme:production"
+
+modal run scripts/modal_vlm_service.py::process_video \
+  --video-url "https://example.com/video.mp4" \
+  --tenant-id "acme:production"
 ```
 
 For detailed Modal setup, GPU recommendations, and deployment guides, see:
@@ -316,56 +345,125 @@ For detailed Modal setup, GPU recommendations, and deployment guides, see:
 
 ---
 
-## Multi-Tenant Schema Deployment
+## Multi-Tenant Architecture Deployment
 
-Cogniverse supports multi-tenant deployment with per-tenant schema isolation.
+Cogniverse implements schema-per-tenant architecture for complete data isolation. Each tenant receives dedicated Vespa schemas automatically.
 
-### Schema Deployment Script
+### Tenant Management API Deployment
 
-```python
-# scripts/deploy_all_schemas.py
-from src.backends.vespa.vespa_schema_manager import VespaSchemaManager
-from src.backends.vespa.json_schema_parser import JsonSchemaParser
-
-# Initialize the schema manager
-schema_manager = VespaSchemaManager()
-
-# Get all schema files
-schemas_dir = Path("configs/schemas")
-schema_files = list(schemas_dir.glob("*.json"))
-
-# Create application package with all schemas
-app_package = ApplicationPackage(name="videosearch")
-
-# Parse each schema and add to package
-for schema_file in schema_files:
-    parser = JsonSchemaParser()
-    schema = parser.load_schema_from_json_file(str(schema_file))
-    app_package.add_schema(schema)
-
-# Deploy all schemas at once
-schema_manager._deploy_package(app_package)
-```
-
-### Deploy Schemas
+Deploy the tenant management REST API for organization and tenant lifecycle management:
 
 ```bash
-# Deploy all schemas from configs/schemas/
-uv run python scripts/deploy_all_schemas.py
+# Start tenant management service
+uvicorn src.admin.tenant_manager:app --port 8001 --reload
 
-# Deploy specific schema
-JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_json_schema.py \
-  --schema-path configs/schemas/video_colpali_smol500_mv_frame.json
+# Verify service
+curl http://localhost:8001/health
 ```
 
-### Available Schemas
+**Tenant Management Endpoints**:
+- `POST /organizations` - Create organization
+- `POST /tenants` - Create tenant with automatic schema creation
+- `GET /organizations` - List all organizations
+- `GET /tenants` - List tenants (optionally by org)
+- `DELETE /tenants/{tenant_id}` - Delete tenant and all data
 
-| Schema | Embedding Model | Modality | Dimensions |
+### Tenant Lifecycle
+
+**1. Create Organization**:
+```bash
+curl -X POST http://localhost:8001/organizations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "org_id": "acme",
+    "description": "ACME Corporation"
+  }'
+```
+
+**2. Create Tenant (Automatic Schema Deployment)**:
+```bash
+curl -X POST http://localhost:8001/tenants \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tenant_id": "acme:production",
+    "description": "Production environment"
+  }'
+```
+
+**This automatically**:
+- Validates org:tenant format
+- Creates tenant metadata
+- Deploys tenant-specific Vespa schemas for all profiles
+- Creates storage directories
+
+**3. Verify Tenant Schemas**:
+```bash
+# List tenant schemas
+curl http://localhost:8001/tenants/acme:production
+
+# Response shows created schemas:
+# - video_colpali_smol500_mv_frame_acme_production
+# - video_videoprism_base_mv_chunk_30s_acme_production
+# - etc.
+```
+
+### Schema Naming Convention
+
+Tenant-specific schemas follow the pattern:
+```
+{profile}_{org}_{tenant}
+
+Examples:
+- video_colpali_smol500_mv_frame_acme_production
+- video_videoprism_base_mv_chunk_30s_acme_staging
+- video_colqwen_omni_mv_chunk_30s_initech_production
+```
+
+### Available Profiles
+
+| Profile | Embedding Model | Modality | Dimensions |
 |--------|----------------|----------|------------|
 | **video_colpali_smol500_mv_frame** | ColPali SmolVLM 500M | Frame-based | 768 |
 | **video_colqwen_omni_mv_chunk_30s** | ColQwen2 Omni | Chunk-based (30s) | 768 |
 | **video_videoprism_base_mv_chunk_30s** | VideoPrism Base | Chunk-based (30s) | 768 |
 | **video_videoprism_lvt_base_sv_chunk_6s** | VideoPrism LVT | Chunk-based (6s) | 1152 |
+
+Each tenant automatically receives all profiles with dedicated schemas.
+
+### Multi-Tenant Deployment Example
+
+```bash
+# 1. Start services
+docker-compose up -d vespa phoenix
+
+# 2. Start tenant management API
+uvicorn src.admin.tenant_manager:app --port 8001 &
+
+# 3. Create organizations
+curl -X POST http://localhost:8001/organizations \
+  -H "Content-Type: application/json" \
+  -d '{"org_id": "acme", "description": "ACME Corp"}'
+
+curl -X POST http://localhost:8001/organizations \
+  -H "Content-Type: application/json" \
+  -d '{"org_id": "initech", "description": "Initech Inc"}'
+
+# 4. Create tenants (schemas deployed automatically)
+curl -X POST http://localhost:8001/tenants \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id": "acme:production", "description": "ACME Production"}'
+
+curl -X POST http://localhost:8001/tenants \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id": "acme:staging", "description": "ACME Staging"}'
+
+curl -X POST http://localhost:8001/tenants \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id": "initech:production", "description": "Initech Production"}'
+
+# 5. Verify tenants
+curl http://localhost:8001/tenants
+```
 
 ---
 
@@ -437,7 +535,10 @@ docker exec ollama ollama pull llama3.2
 
 ## Related Documentation
 
+- [Multi-Tenant Management](multi-tenant-management.md) - Complete tenant lifecycle and architecture guide
 - [Setup & Installation](setup-installation.md) - Complete installation guide
 - [Configuration](configuration.md) - Multi-tenant configuration management
+- [Backends Module](../modules/backends.md) - TenantSchemaManager and tenant-aware search
+- [Agents Module](../modules/agents.md) - Tenant-aware agent initialization
 - [Performance & Monitoring](performance-monitoring.md) - Performance targets and monitoring
 - [Modal Deployment](../modal/deployment_guide.md) - Serverless GPU deployment
