@@ -45,6 +45,7 @@ from src.admin.models import (
 from src.backends.vespa.tenant_schema_manager import get_tenant_schema_manager
 from src.backends.vespa.vespa_search_client import VespaVideoSearchClient
 from src.common.config_utils import get_config
+from src.common.tenant_utils import parse_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -82,39 +83,6 @@ def get_schema_manager():
             vespa_port=config.get("vespa_port", 8080),
         )
     return schema_manager
-
-
-def parse_tenant_id(tenant_id: str, org_id: Optional[str] = None) -> tuple[str, str]:
-    """
-    Parse tenant_id into org_id and tenant_name.
-
-    Supports both formats:
-    - "org:tenant" → ("org", "tenant")
-    - "tenant" + org_id="org" → ("org", "tenant")
-
-    Args:
-        tenant_id: Full tenant ID or just tenant name
-        org_id: Organization ID (required if tenant_id doesn't include org)
-
-    Returns:
-        Tuple of (org_id, tenant_name)
-
-    Raises:
-        ValueError: If format is invalid
-    """
-    if ":" in tenant_id:
-        parts = tenant_id.split(":", 1)
-        if len(parts) != 2:
-            raise ValueError(
-                f"Invalid tenant_id format: {tenant_id}. Expected 'org:tenant'"
-            )
-        return parts[0], parts[1]
-    else:
-        if not org_id:
-            raise ValueError(
-                f"org_id required when tenant_id doesn't include org: {tenant_id}"
-            )
-        return org_id, tenant_id
 
 
 def validate_org_id(org_id: str) -> None:
@@ -393,7 +361,12 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
     """
     try:
         # Parse tenant_id
-        org_id, tenant_name = parse_tenant_id(request.tenant_id, request.org_id)
+        # If org_id provided separately and tenant_id is simple format, construct full ID
+        tenant_id_to_parse = request.tenant_id
+        if request.org_id and ":" not in request.tenant_id:
+            tenant_id_to_parse = f"{request.org_id}:{request.tenant_id}"
+
+        org_id, tenant_name = parse_tenant_id(tenant_id_to_parse)
 
         validate_org_id(org_id)
         validate_tenant_name(tenant_name)
