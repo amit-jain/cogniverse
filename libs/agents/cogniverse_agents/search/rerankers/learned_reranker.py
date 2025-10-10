@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from litellm import arerank, rerank
 
-from cogniverse_agents.search.multi_modal_reranker import SearchResult
+from cogniverse_agents.search.rerankers.multi_modal_reranker import SearchResult
 from cogniverse_core.config.utils import get_config_value
 
 logger = logging.getLogger(__name__)

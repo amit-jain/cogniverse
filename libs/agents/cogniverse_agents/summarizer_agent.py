@@ -13,7 +13,7 @@ import dspy
 import uvicorn
 from fastapi import FastAPI, HTTPException
 
-from cogniverse_agents.dspy_integration_mixin import DSPySummaryMixin
+from cogniverse_core.agents.dspy_integration_mixin import DSPySummaryMixin
 
 # Enhanced routing support
 from cogniverse_agents.routing_agent import RoutingDecision

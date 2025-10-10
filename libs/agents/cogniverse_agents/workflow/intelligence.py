@@ -40,7 +40,7 @@ except ImportError:
     SQLITE_AVAILABLE = False
 
 # Shared workflow types
-from cogniverse_agents.workflow_types import (
+from cogniverse_agents.workflow.types import (
     TaskStatus,
     WorkflowPlan,
     WorkflowStatus,

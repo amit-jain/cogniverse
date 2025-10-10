@@ -411,8 +411,8 @@ class ConfigurableMultiModalReranker:
         """Initialize configurable reranker from config.json"""
         import logging
 
-        from cogniverse_agents.search.hybrid_reranker import HybridReranker
-        from cogniverse_agents.search.learned_reranker import LearnedReranker
+        from cogniverse_agents.search.rerankers.hybrid_reranker import HybridReranker
+        from cogniverse_agents.search.rerankers.learned_reranker import LearnedReranker
         from cogniverse_core.config.utils import get_config_value
 
         logger = logging.getLogger(__name__)

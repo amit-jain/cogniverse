@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 import dspy
 from fastapi import FastAPI, HTTPException
 
-from cogniverse_agents.dspy_integration_mixin import DSPyDetailedReportMixin
+from cogniverse_core.agents.dspy_integration_mixin import DSPyDetailedReportMixin
 
 # Enhanced routing support
 from cogniverse_agents.routing_agent import RoutingDecision

@@ -14,8 +14,8 @@ import numpy as np
 import torch
 from PIL import Image
 
-from cogniverse_agents.dspy_a2a_agent_base import DSPyA2AAgentBase
-from cogniverse_agents.query_encoders import ColPaliQueryEncoder
+from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
+from cogniverse_agents.query.encoders import ColPaliQueryEncoder
 from cogniverse_core.common.models.model_loaders import get_or_load_model
 
 logger = logging.getLogger(__name__)

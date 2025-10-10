@@ -15,12 +15,12 @@ import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
-from cogniverse_agents.query_encoders import QueryEncoderFactory
+from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_agents.query.encoders import QueryEncoderFactory
 
 # Enhanced query support from DSPy routing system
 from cogniverse_agents.routing_agent import RoutingDecision
-from cogniverse_vespa.vespa.tenant_aware_search_client import TenantAwareVespaSearchClient
+from cogniverse_vespa.tenant_aware_search_client import TenantAwareVespaSearchClient
 from cogniverse_core.config.utils import get_config
 from cogniverse_core.common.a2a_utils import DataPart, TextPart
 

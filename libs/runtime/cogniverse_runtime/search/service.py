@@ -6,7 +6,7 @@ import numpy as np
 import os
 
 from cogniverse_core.common.models import get_or_load_model
-from cogniverse_agents.query_encoders import QueryEncoderFactory
+from cogniverse_agents.query.encoders import QueryEncoderFactory
 from cogniverse_core.registries.registry import get_registry
 from cogniverse_core.registries.backend_registry import get_backend_registry
 from .base import SearchBackend, SearchResult

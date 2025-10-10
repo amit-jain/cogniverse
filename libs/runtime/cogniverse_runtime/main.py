@@ -13,7 +13,7 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from cogniverse_core.config.manager import ConfigManager
+from cogniverse_core.config.utils import get_config
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.registries.agent_registry import AgentRegistry
 
@@ -31,10 +31,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Startup
     logger.info("Starting Cogniverse Runtime...")
 
-    # 1. Load configuration and initialize config loader
-    config_manager = ConfigManager.get_instance()
-    config = config_manager.get_config()
-    logger.info(f"Loaded configuration with {len(config)} top-level keys")
+    # 1. Load configuration
+    config = get_config()
+    logger.info(f"Loaded configuration for tenant: {config.tenant_id}")
 
     # 2. Initialize registries
     backend_registry = BackendRegistry.get_instance()
@@ -102,8 +101,7 @@ if __name__ == "__main__":
     import uvicorn
 
     # Load config to get port
-    config_manager = ConfigManager.get_instance()
-    config = config_manager.get_config()
+    config = get_config()
 
     port = config.get("runtime", {}).get("port", 8000)
     host = config.get("runtime", {}).get("host", "0.0.0.0")

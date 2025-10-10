@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 import dspy
 import numpy as np
 
-from cogniverse_agents.dspy_a2a_agent_base import DSPyA2AAgentBase
+from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
 from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
     AudioEmbeddingGenerator,
 )

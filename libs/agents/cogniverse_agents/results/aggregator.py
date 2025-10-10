@@ -5,7 +5,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from cogniverse_agents.result_enhancement_engine import (
+from cogniverse_agents.results.enhancement_engine import (
     EnhancedResult,
     EnhancementContext,
     ResultEnhancementEngine,

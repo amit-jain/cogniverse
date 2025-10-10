@@ -194,7 +194,7 @@ class CogniverseInstrumentor(BaseInstrumentor):
     def _instrument_query_encoders(self):
         """Add tracing to query encoding operations"""
         try:
-            from cogniverse_agents.query_encoders import (
+            from cogniverse_agents.query.encoders import (
                 ColPaliQueryEncoder, 
                 ColQwenQueryEncoder,
                 VideoPrismQueryEncoder
@@ -316,7 +316,7 @@ class CogniverseInstrumentor(BaseInstrumentor):
     def _instrument_backend_search(self):
         """Add tracing to backend search operations"""
         try:
-            from cogniverse_vespa.vespa.search_backend import VespaSearchBackend
+            from cogniverse_vespa.search_backend import VespaSearchBackend
             
             # Store original method
             original_search = VespaSearchBackend.search

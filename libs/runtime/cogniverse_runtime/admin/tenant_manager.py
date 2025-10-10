@@ -42,8 +42,8 @@ from cogniverse_runtime.admin.models import (
     Tenant,
     TenantListResponse,
 )
-from cogniverse_vespa.vespa.tenant_schema_manager import get_tenant_schema_manager
-from cogniverse_vespa.vespa.vespa_search_client import VespaVideoSearchClient
+from cogniverse_vespa.tenant_schema_manager import get_tenant_schema_manager
+from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
 from cogniverse_core.config.utils import get_config
 from cogniverse_core.common.tenant_utils import parse_tenant_id
 

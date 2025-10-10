@@ -12,8 +12,8 @@ Strategies:
 import logging
 from typing import Dict, List, Optional
 
-from cogniverse_agents.search.learned_reranker import LearnedReranker
-from cogniverse_agents.search.multi_modal_reranker import (
+from cogniverse_agents.search.rerankers.learned_reranker import LearnedReranker
+from cogniverse_agents.search.rerankers.multi_modal_reranker import (
     MultiModalReranker,
     QueryModality,
     SearchResult,

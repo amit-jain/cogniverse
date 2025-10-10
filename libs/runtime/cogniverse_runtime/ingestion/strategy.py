@@ -80,7 +80,7 @@ class StrategyConfig:
                 self.ranking_strategies = json.load(f)
         else:
             # Generate if missing
-            from cogniverse_vespa.vespa.ranking_strategy_extractor import (
+            from cogniverse_vespa.ranking_strategy_extractor import (
                 extract_all_ranking_strategies,
                 save_ranking_strategies,
             )

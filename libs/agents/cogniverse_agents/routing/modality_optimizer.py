@@ -26,7 +26,7 @@ from cogniverse_agents.routing.xgboost_meta_models import (
     TrainingStrategy,
     TrainingStrategyModel,
 )
-from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.search.rerankers.multi_modal_reranker import QueryModality
 
 logger = logging.getLogger(__name__)
 

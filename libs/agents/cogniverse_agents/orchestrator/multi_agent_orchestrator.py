@@ -38,7 +38,7 @@ from cogniverse_agents.workflow_intelligence import (
 )
 
 # Shared workflow types
-from cogniverse_agents.workflow_types import (
+from cogniverse_agents.workflow.types import (
     TaskStatus,
     WorkflowPlan,
     WorkflowStatus,

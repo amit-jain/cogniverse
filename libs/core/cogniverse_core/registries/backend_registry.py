@@ -240,6 +240,15 @@ class BackendRegistry:
         return list(cls._full_backends.keys())
 
     @classmethod
+    def list_backends(cls) -> list:
+        """List all registered backends (de-duplicated across all types)."""
+        all_backends = set()
+        all_backends.update(cls._ingestion_backends.keys())
+        all_backends.update(cls._search_backends.keys())
+        all_backends.update(cls._full_backends.keys())
+        return list(all_backends)
+
+    @classmethod
     def clear_instances(cls) -> None:
         """Clear all cached backend instances."""
         cls._backend_instances.clear()

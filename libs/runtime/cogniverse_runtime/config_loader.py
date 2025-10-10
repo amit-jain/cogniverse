@@ -8,7 +8,7 @@ import importlib
 import logging
 from typing import Dict, Any, Optional
 
-from cogniverse_core.config.manager import ConfigManager
+from cogniverse_core.config.utils import get_config
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.registries.agent_registry import AgentRegistry
 
@@ -40,10 +40,9 @@ class ConfigLoader:
 
     def __init__(self):
         """Initialize config loader."""
-        self.config_manager = ConfigManager.get_instance()
         self.backend_registry = BackendRegistry.get_instance()
         self.agent_registry = AgentRegistry.get_instance()
-        self.config = self.config_manager.get_config()
+        self.config = get_config()
 
     def load_backends(self) -> None:
         """Load and register backends from configuration."""
@@ -162,8 +161,7 @@ class ConfigLoader:
         logger.info("Reloading configuration...")
 
         # Reload config
-        self.config_manager.reload()
-        self.config = self.config_manager.get_config()
+        self.config = get_config()
 
         # Reload backends and agents
         self.load_backends()

@@ -83,6 +83,13 @@ class ConfigManager:
             f"ConfigManager initialized with {type(self.store).__name__}, cache size: {cache_size}"
         )
 
+    @classmethod
+    def get_instance(cls) -> "ConfigManager":
+        """Get the singleton ConfigManager instance."""
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
     # ========== System Configuration ==========
 
     def get_system_config(self, tenant_id: str = "default") -> SystemConfig:
