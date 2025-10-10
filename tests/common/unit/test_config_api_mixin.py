@@ -9,7 +9,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from cogniverse_core.common.agent_config import (
+from cogniverse_core.config.agent_config import (
     AgentConfig,
     DSPyModuleType,
     ModuleConfig,

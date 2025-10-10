@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cogniverse_agents.text_analysis_agent import TextAnalysisAgent, app
-from cogniverse_core.common.agent_config import DSPyModuleType
+from cogniverse_core.config.agent_config import DSPyModuleType
 
 
 class TestDynamicConfigIntegration:
@@ -36,7 +36,7 @@ class TestDynamicConfigIntegration:
             agent = TextAnalysisAgent()
 
             # Reset to default PREDICT module for consistent tests
-            from cogniverse_core.common.agent_config import DSPyModuleType, ModuleConfig
+            from cogniverse_core.config.agent_config import DSPyModuleType, ModuleConfig
             default_module_config = ModuleConfig(
                 module_type=DSPyModuleType.PREDICT,
                 signature="TextAnalysisSignature",
