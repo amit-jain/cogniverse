@@ -21,7 +21,7 @@ from cogniverse_agents.query_encoders import QueryEncoderFactory
 # Enhanced query support from DSPy routing system
 from cogniverse_agents.routing_agent import RoutingDecision
 from cogniverse_vespa.vespa.tenant_aware_search_client import TenantAwareVespaSearchClient
-from cogniverse_core.common.config_utils import get_config
+from cogniverse_core.config.utils import get_config
 from cogniverse_core.common.a2a_utils import DataPart, TextPart
 
 logger = logging.getLogger(__name__)

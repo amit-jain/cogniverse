@@ -44,7 +44,7 @@ from cogniverse_runtime.ingestion.strategy_factory import StrategyFactory
 
 # Cache imports removed - using pipeline_cache directly
 from cogniverse_core.common.cache.pipeline_cache import PipelineArtifactCache
-from cogniverse_core.common.config_utils import get_config
+from cogniverse_core.config.utils import get_config
 
 
 class PipelineStep(Enum):

@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 from fastapi import HTTPException
 from pydantic import BaseModel
 
-from cogniverse_core.common.agent_config import (
+from cogniverse_core.config.agent_config import (
     DSPyModuleType,
     ModuleConfig,
     OptimizerConfig,

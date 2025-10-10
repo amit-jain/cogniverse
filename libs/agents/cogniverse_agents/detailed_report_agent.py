@@ -12,7 +12,7 @@ from cogniverse_agents.dspy_integration_mixin import DSPyDetailedReportMixin
 # Enhanced routing support
 from cogniverse_agents.routing_agent import RoutingDecision
 from cogniverse_core.common.a2a_mixin import A2AEndpointsMixin
-from cogniverse_core.common.config_utils import get_config
+from cogniverse_core.config.utils import get_config
 from cogniverse_core.common.health_mixin import HealthCheckMixin
 from cogniverse_core.common.vlm_interface import VLMInterface
 from cogniverse_core.common.a2a_utils import DataPart, Task

@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Optional, Iterator, Tuple
 from pathlib import Path
 import numpy as np
 
-from cogniverse_core.registries.interfaces import Backend
+from cogniverse_core.interfaces.backend import Backend
 from cogniverse_core.common.document import Document
 from .search_backend import VespaSearchBackend
 from .vespa_schema_manager import VespaSchemaManager

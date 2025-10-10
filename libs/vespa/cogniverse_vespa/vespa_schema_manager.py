@@ -15,7 +15,7 @@ from vespa.package import (
     SecondPhaseRanking,
 )
 
-from cogniverse_core.common.config_utils import get_config
+from cogniverse_core.config.utils import get_config
 
 
 class VespaSchemaManager:

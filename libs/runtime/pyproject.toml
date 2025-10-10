@@ -43,6 +43,11 @@ vespa = ["cogniverse-vespa"]
 agents = ["cogniverse-agents"]
 all = ["cogniverse-vespa", "cogniverse-agents"]
 
+[tool.uv.sources]
+cogniverse-core = { workspace = true }
+cogniverse-vespa = { workspace = true }
+cogniverse-agents = { workspace = true }
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

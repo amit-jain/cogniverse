@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional, Type
 
 import dspy
 
-from cogniverse_core.common.agent_config import AgentConfig, ModuleConfig, OptimizerConfig
+from cogniverse_core.config.agent_config import AgentConfig, ModuleConfig, OptimizerConfig
 from cogniverse_core.common.dspy_module_registry import DSPyModuleRegistry, DSPyOptimizerRegistry
 
 logger = logging.getLogger(__name__)

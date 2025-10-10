@@ -9,7 +9,7 @@ from typing import Any
 from inspect_ai import Task, task
 from inspect_ai.dataset import Dataset, Sample
 
-from cogniverse_core.common.config_utils import get_config
+from cogniverse_core.config.utils import get_config
 
 from .scorers import VideoRetrievalScorer
 from .solvers import (

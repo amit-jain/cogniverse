@@ -14,7 +14,7 @@ from cogniverse_agents.result_aggregator import (
 )
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDecision
 from cogniverse_vespa.vespa.vespa_search_client import VespaVideoSearchClient
-from cogniverse_core.common.config_utils import get_config
+from cogniverse_core.config.utils import get_config
 
 logger = logging.getLogger(__name__)
 

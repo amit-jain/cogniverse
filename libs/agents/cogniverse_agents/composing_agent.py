@@ -15,7 +15,7 @@ from google.adk.tools import BaseTool
 logger = logging.getLogger(__name__)
 
 # Import our custom utilities
-from cogniverse_core.common.config_utils import get_config
+from cogniverse_core.config.utils import get_config
 from cogniverse_core.common.a2a_utils import A2AClient, format_search_results
 from cogniverse_core.common.tools.video_player_tool import VideoPlayerTool
 

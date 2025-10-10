@@ -10,7 +10,7 @@ import importlib
 import logging
 from typing import Any, Dict, Optional, Type
 
-from .interfaces import Backend, IngestionBackend, SearchBackend
+from cogniverse_core.interfaces.backend import Backend, IngestionBackend, SearchBackend
 
 logger = logging.getLogger(__name__)
 

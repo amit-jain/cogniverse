@@ -58,7 +58,7 @@ import asyncio
 import httpx
 
 sys.path.append(str(project_root / "src"))
-from cogniverse_core.common.config_utils import get_config
+from cogniverse_core.config.utils import get_config
 from tools.a2a_utils import A2AClient
 
 

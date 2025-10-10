@@ -9,7 +9,7 @@ without complex constructor parameters.
 from pathlib import Path
 from typing import Any
 
-from cogniverse_core.common.config_utils import get_config
+from cogniverse_core.config.utils import get_config
 
 from .pipeline import PipelineConfig, VideoIngestionPipeline
 

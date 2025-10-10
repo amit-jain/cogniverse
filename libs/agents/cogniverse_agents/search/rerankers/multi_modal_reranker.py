@@ -413,7 +413,7 @@ class ConfigurableMultiModalReranker:
 
         from cogniverse_agents.search.hybrid_reranker import HybridReranker
         from cogniverse_agents.search.learned_reranker import LearnedReranker
-        from cogniverse_core.common.config_utils import get_config_value
+        from cogniverse_core.config.utils import get_config_value
 
         logger = logging.getLogger(__name__)
 
@@ -500,7 +500,7 @@ class ConfigurableMultiModalReranker:
         Returns:
             Dictionary with reranker details
         """
-        from cogniverse_core.common.config_utils import get_config_value
+        from cogniverse_core.config.utils import get_config_value
 
         rerank_config = get_config_value("reranking", {})
 

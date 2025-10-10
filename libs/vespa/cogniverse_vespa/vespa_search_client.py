@@ -195,7 +195,7 @@ class VespaVideoSearchClient:
         import sys
         from pathlib import Path
         sys.path.append(str(Path(__file__).parent.parent.parent.parent))
-        from cogniverse_core.common.config_utils import get_config
+        from cogniverse_core.config.utils import get_config
         self.config = get_config()
         # Get schema from environment or config (required)
         self.vespa_schema = os.environ.get("VESPA_SCHEMA") or self.config.get("schema_name")
