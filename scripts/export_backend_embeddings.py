@@ -18,7 +18,7 @@ import pyarrow.parquet as pq
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.app.search.base import SearchBackend
+from cogniverse_core.interfaces.backend import SearchBackend
 from src.backends.vespa.search_backend import VespaSearchBackend
 
 # Configure logging

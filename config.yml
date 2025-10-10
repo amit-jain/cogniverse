@@ -1,0 +1,175 @@
+# Cogniverse Runtime Configuration
+# This file defines backends, agents, and runtime settings
+
+runtime:
+  host: "0.0.0.0"
+  port: 8000
+  log_level: "info"
+  enable_telemetry: true
+  default_profile: "video_colpali_smol500_mv_frame"
+
+# Backend configurations
+backends:
+  vespa:
+    type: "vespa"
+    url: "http://localhost"
+    port: 8080
+    cert_path: null
+    default_namespace: "cogniverse"
+    connection_pool:
+      max_connections: 10
+      timeout: 30
+    retry_config:
+      max_retries: 3
+      backoff_factor: 1.5
+
+  # Example: Additional backends can be added
+  # milvus:
+  #   type: "milvus"
+  #   host: "localhost"
+  #   port: 19530
+  #   collection_name: "cogniverse"
+
+# Agent configurations
+agents:
+  routing_agent:
+    enabled: true
+    model: "gpt-4"
+    confidence_threshold: 0.7
+    use_relationship_extraction: true
+
+  video_search_agent:
+    enabled: true
+    default_top_k: 10
+    reranking_enabled: true
+
+  text_analysis_agent:
+    enabled: true
+    chunk_size: 512
+
+  summarizer_agent:
+    enabled: true
+    max_length: 500
+
+  detailed_report_agent:
+    enabled: true
+    include_recommendations: true
+
+# Multi-tenant configuration
+tenants:
+  isolation_level: "namespace"  # namespace, schema, or instance
+  default_org: "default"
+  default_tenant: "default"
+
+# Video processing profiles
+video_processing_profiles:
+  # ColPali with Smol-500M (Multi-View Frame)
+  video_colpali_smol500_mv_frame:
+    type: "colpali"
+    embedding_model: "vidore/colpali-v1.2"
+    patch_size: 14
+    num_crops: 4
+    chunking_strategy: "frame_based"
+    chunk_size_frames: 1
+    embedding_dimension: 1152
+    use_binary_quantization: true
+
+  # ColQwen Omni (Multi-View Chunk 30s)
+  video_colqwen_omni_mv_chunk_30s:
+    type: "colqwen"
+    embedding_model: "vidore/colqwen2-v1.0"
+    chunking_strategy: "time_based"
+    chunk_duration_seconds: 30
+    embedding_dimension: 1152
+    use_binary_quantization: true
+
+  # VideoPrism Base (Multi-View Chunk 30s)
+  video_videoprism_base_mv_chunk_30s:
+    type: "videoprism"
+    embedding_model: "google/videoprism-base"
+    chunking_strategy: "time_based"
+    chunk_duration_seconds: 30
+    embedding_dimension: 1024
+
+  # VideoPrism LVT Base (Single-View Chunk 6s)
+  video_videoprism_lvt_base_sv_chunk_6s:
+    type: "videoprism"
+    embedding_model: "google/videoprism-lvt-base"
+    chunking_strategy: "time_based"
+    chunk_duration_seconds: 6
+    embedding_dimension: 1024
+    single_view: true
+
+# Telemetry configuration
+telemetry:
+  enabled: true
+  otlp_endpoint: "http://localhost:4317"
+  service_name: "cogniverse-runtime"
+  environment: "development"
+  export_interval_seconds: 30
+  metrics:
+    - "request_duration"
+    - "search_latency"
+    - "ingestion_throughput"
+    - "modality_accuracy"
+
+# Search configuration
+search:
+  default_strategy: "hybrid"
+  strategies:
+    semantic:
+      enabled: true
+      weight: 1.0
+    bm25:
+      enabled: true
+      weight: 0.5
+    hybrid:
+      enabled: true
+      semantic_weight: 0.7
+      bm25_weight: 0.3
+    learned:
+      enabled: true
+      model_path: "outputs/models/learned_reranker.pkl"
+    multi_modal:
+      enabled: true
+      modality_weights:
+        text: 0.4
+        video: 0.4
+        audio: 0.2
+
+# Ingestion configuration
+ingestion:
+  batch_size: 10
+  max_concurrent_videos: 3
+  retry_failed: true
+  max_retries: 3
+  cleanup_temp_files: true
+
+# Memory configuration (Mem0)
+memory:
+  enabled: true
+  vector_store: "vespa"
+  collection_name: "memories"
+  embedding_model: "text-embedding-3-small"
+
+# Evaluation configuration
+evaluation:
+  phoenix:
+    enabled: true
+    project_name: "cogniverse"
+    endpoint: "http://localhost:6006"
+
+  metrics:
+    - "mrr"
+    - "ndcg@10"
+    - "precision@5"
+    - "recall@10"
+    - "map"
+
+# Dashboard configuration
+dashboard:
+  port: 8501
+  theme: "dark"
+  enable_analytics: true
+  enable_evaluation: true
+  enable_memory_viewer: true

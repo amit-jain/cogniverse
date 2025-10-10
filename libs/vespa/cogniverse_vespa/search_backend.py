@@ -26,15 +26,15 @@ import numpy as np
 from vespa.application import Vespa
 
 from cogniverse_core.interfaces.backend import SearchBackend, SearchResult
-from src.common.document import Document, ContentType, ProcessingStatus
-from src.common.models.videoprism_text_encoder import (
+from cogniverse_core.common.document import Document, ContentType, ProcessingStatus
+from cogniverse_core.common.models.videoprism_text_encoder import (
     VideoPrismTextEncoder, create_text_encoder
 )
-from src.app.ingestion.strategy import Strategy
-from src.common.core.registry import get_registry
-from src.common.utils.retry import retry_with_backoff, RetryConfig
-from src.common.utils.output_manager import OutputManager
-from src.app.agents.query_encoders import QueryEncoderFactory, QueryEncoder
+from cogniverse_runtime.ingestion.strategy import Strategy
+from cogniverse_core.registries.registry import get_registry
+from cogniverse_core.common.utils.retry import retry_with_backoff, RetryConfig
+from cogniverse_core.common.utils.output_manager import OutputManager
+from cogniverse_agents.query.encoders import QueryEncoderFactory, QueryEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -793,7 +793,7 @@ class VespaSearchBackend(SearchBackend):
             fields = data.get("fields", {})
             
             # Create Document from fields
-            from src.common.document import Document, ContentType
+            from cogniverse_core.common.document import Document, ContentType
             
             doc = Document(
                 id=document_id,

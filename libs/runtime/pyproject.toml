@@ -1,0 +1,51 @@
+[project]
+name = "cogniverse-runtime"
+version = "0.1.0"
+description = "Unified runtime server for Cogniverse with dynamic backend loading"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+authors = [
+    {name = "Cogniverse Team"}
+]
+
+dependencies = [
+    "cogniverse-core",
+
+    # FastAPI and server
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+    "pyyaml>=6.0",
+
+    # Computer Vision for processing
+    "opencv-python>=4.12.0",
+    "pillow>=10.0.0",
+
+    # Audio processing
+    "openai-whisper>=20231117",
+    "faster-whisper>=1.2.0",
+    "librosa>=0.11.0",
+
+    # Document processing
+    "pdf2image>=1.17.0",
+    "pypdf2>=3.0.1",
+
+    # Video processing
+    "jax>=0.7.0",
+    "jaxlib>=0.7.0",
+
+    # Utilities
+    "msgpack>=1.1.1",
+]
+
+[project.optional-dependencies]
+vespa = ["cogniverse-vespa"]
+agents = ["cogniverse-agents"]
+all = ["cogniverse-vespa", "cogniverse-agents"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["cogniverse_runtime"]
