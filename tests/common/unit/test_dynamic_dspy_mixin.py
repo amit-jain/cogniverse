@@ -7,14 +7,14 @@ from unittest.mock import patch
 import dspy
 import pytest
 
-from src.common.agent_config import (
+from cogniverse_core.common.agent_config import (
     AgentConfig,
     DSPyModuleType,
     ModuleConfig,
     OptimizerConfig,
     OptimizerType,
 )
-from src.common.dynamic_dspy_mixin import DynamicDSPyMixin
+from cogniverse_core.common.dynamic_dspy_mixin import DynamicDSPyMixin
 
 
 class TestSignature(dspy.Signature):

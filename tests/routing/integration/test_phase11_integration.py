@@ -12,14 +12,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.app.routing.cross_modal_optimizer import CrossModalOptimizer
-from src.app.routing.modality_optimizer import ModalityOptimizer
-from src.app.routing.synthetic_data_generator import (
+from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
+from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
+from cogniverse_agents.routing.synthetic_data_generator import (
     ModalityExample,
     SyntheticDataGenerator,
 )
-from src.app.routing.xgboost_meta_models import TrainingStrategy
-from src.app.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.routing.xgboost_meta_models import TrainingStrategy
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 
 class TestPhase11Integration:

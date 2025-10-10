@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 from opentelemetry.sdk.trace.export import SpanExportResult
 
-from src.evaluation.data.storage import (
+from cogniverse_core.evaluation.data.storage import (
     ConnectionConfig,
     ConnectionState,
     ExportMetrics,

@@ -25,7 +25,7 @@ def test_imports():
     # Test 1: Core schemas
     total_tests += 1
     try:
-        from src.optimizer.schemas import RoutingDecision, AgenticRouter
+        from cogniverse_agents.optimizer.schemas import RoutingDecision, AgenticRouter
         print("✅ schemas: RoutingDecision, AgenticRouter")
         tests_passed += 1
     except ImportError as e:
@@ -34,7 +34,7 @@ def test_imports():
     # Test 2: Router optimizer
     total_tests += 1
     try:
-        from src.optimizer.router_optimizer import RouterModule, OptimizedRouter
+        from cogniverse_agents.optimizer.router_optimizer import RouterModule, OptimizedRouter
         print("✅ router_optimizer: RouterModule, OptimizedRouter")
         tests_passed += 1
     except ImportError as e:
@@ -43,7 +43,7 @@ def test_imports():
     # Test 3: Orchestrator
     total_tests += 1
     try:
-        from src.optimizer.orchestrator import OptimizationOrchestrator
+        from cogniverse_agents.optimizer.orchestrator import OptimizationOrchestrator
         print("✅ orchestrator: OptimizationOrchestrator")
         tests_passed += 1
     except ImportError as e:
@@ -52,7 +52,7 @@ def test_imports():
     # Test 4: Provider abstractions
     total_tests += 1
     try:
-        from src.optimizer.providers.base_provider import ProviderFactory
+        from cogniverse_agents.optimizer.providers.base_provider import ProviderFactory
         print("✅ base_provider: ProviderFactory")
         tests_passed += 1
     except ImportError as e:
@@ -61,7 +61,7 @@ def test_imports():
     # Test 5: Modal provider
     total_tests += 1
     try:
-        from src.optimizer.providers.modal_provider import ModalModelProvider
+        from cogniverse_agents.optimizer.providers.modal_provider import ModalModelProvider
         print("✅ modal_provider: ModalModelProvider")
         tests_passed += 1
     except ImportError as e:
@@ -70,7 +70,7 @@ def test_imports():
     # Test 6: Local provider
     total_tests += 1
     try:
-        from src.optimizer.providers.local_provider import LocalModelProvider
+        from cogniverse_agents.optimizer.providers.local_provider import LocalModelProvider
         print("✅ local_provider: LocalModelProvider")
         tests_passed += 1
     except ImportError as e:
@@ -80,7 +80,7 @@ def test_imports():
     total_tests += 1
     try:
         # This imports the Modal app, so it might fail without Modal setup
-        from src.inference.inference import app
+        from cogniverse_runtime.inference.inference import app
         print("✅ production_api: Modal app")
         tests_passed += 1
     except Exception as e:
@@ -91,7 +91,7 @@ def test_imports():
     # Test 8: Model service
     total_tests += 1
     try:
-        from src.inference.model_service import app as model_app
+        from cogniverse_runtime.inference.model_service import app as model_app
         print("✅ model_service: Modal app")
         tests_passed += 1
     except Exception as e:

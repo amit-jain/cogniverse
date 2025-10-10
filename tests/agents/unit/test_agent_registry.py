@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from src.app.agents.agent_registry import AgentEndpoint, AgentRegistry
+from cogniverse_agents.agent_registry import AgentEndpoint, AgentRegistry
 
 
 @pytest.mark.unit

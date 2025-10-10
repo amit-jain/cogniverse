@@ -9,13 +9,13 @@ import asyncio
 
 import pytest
 
-from src.app.agents.routing_agent import RoutingAgent
-from src.app.routing.adaptive_threshold_learner import (
+from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing.adaptive_threshold_learner import (
     AdaptiveThresholdLearner,
 )
-from src.app.routing.advanced_optimizer import AdvancedRoutingOptimizer
-from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
-from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
+from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
+from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
+from cogniverse_agents.routing.relationship_extraction_tools import RelationshipExtractorTool
 
 
 @pytest.mark.integration
@@ -207,8 +207,8 @@ class TestMultiAgentSystem:
         """Test that core agents can be initialized"""
         from unittest.mock import patch
 
-        from src.app.agents.detailed_report_agent import DetailedReportAgent
-        from src.app.agents.summarizer_agent import SummarizerAgent
+        from cogniverse_agents.detailed_report_agent import DetailedReportAgent
+        from cogniverse_agents.summarizer_agent import SummarizerAgent
 
         # Mock config to provide required LLM configuration
         with (
@@ -244,7 +244,7 @@ class TestMultiAgentSystem:
         """Test enhanced video search agent with real configuration"""
         import os
 
-        from src.app.agents.video_search_agent import VideoSearchAgent
+        from cogniverse_agents.video_search_agent import VideoSearchAgent
 
         # Set required environment for video search
         os.environ["VESPA_SCHEMA"] = "video_colpali_smol500_mv_frame"

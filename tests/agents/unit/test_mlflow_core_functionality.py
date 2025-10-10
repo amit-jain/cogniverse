@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.app.routing.mlflow_integration import ExperimentConfig, MLflowIntegration
+from cogniverse_agents.routing.mlflow_integration import ExperimentConfig, MLflowIntegration
 
 
 @pytest.mark.unit
@@ -74,7 +74,7 @@ class TestMLflowCoreIntegration:
     def test_component_imports_successfully(self):
         """Test that all MLflow components can be imported"""
         # These imports should not raise exceptions
-        from src.app.routing.mlflow_integration import (
+        from cogniverse_agents.routing.mlflow_integration import (
             ABTestConfig,
             ExperimentConfig,
             ModelVersionInfo,
@@ -127,7 +127,7 @@ class TestMLflowIntegrationReadiness:
 
     def test_factory_function_exists(self):
         """Test factory function for creating MLflow integration"""
-        from src.app.routing.mlflow_integration import create_mlflow_integration
+        from cogniverse_agents.routing.mlflow_integration import create_mlflow_integration
 
         assert callable(create_mlflow_integration)
 

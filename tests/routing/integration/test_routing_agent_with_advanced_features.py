@@ -14,7 +14,7 @@ Validates:
 
 import pytest
 
-from src.app.agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent
 
 
 @pytest.mark.integration
@@ -24,7 +24,7 @@ class TestRoutingAgentWithAdvancedFeatures:
     @pytest.fixture
     def mock_config(self):
         """Mock system configuration"""
-        from src.app.agents.routing_agent import RoutingConfig
+        from cogniverse_agents.routing_agent import RoutingConfig
 
         # Create a RoutingConfig with test values
         config = RoutingConfig()

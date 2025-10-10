@@ -15,16 +15,16 @@ import pytest
 import requests
 from PIL import Image
 
-from src.app.agents.multi_agent_orchestrator import (
+from cogniverse_agents.multi_agent_orchestrator import (
     MultiAgentOrchestrator,
 )
-from src.app.agents.workflow_types import (
+from cogniverse_agents.workflow_types import (
     TaskStatus,
     WorkflowPlan,
     WorkflowStatus,
     WorkflowTask,
 )
-from src.backends.vespa.vespa_schema_manager import VespaSchemaManager
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
 
 @pytest.fixture(scope="module")
@@ -191,7 +191,7 @@ class TestCrossModalFusionIntegration:
         import torch
         from sentence_transformers import SentenceTransformer
 
-        from src.common.models.model_loaders import get_or_load_model
+        from cogniverse_core.common.models.model_loaders import get_or_load_model
 
         # Load models
         print("\n📦 Loading models...")

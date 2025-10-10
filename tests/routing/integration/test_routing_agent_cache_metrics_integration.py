@@ -11,8 +11,8 @@ import time
 
 import pytest
 
-from src.app.agents.routing_agent import RoutingAgent
-from src.app.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 
 @pytest.mark.asyncio

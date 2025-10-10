@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 import pytest
 
-from src.app.ingestion.processors.keyframe_processor import KeyframeProcessor
+from cogniverse_runtime.ingestion.processors.keyframe_processor import KeyframeProcessor
 
 
 class TestKeyframeProcessor:

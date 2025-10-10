@@ -102,7 +102,7 @@ class TestEnhancedA2AClientTool:
         mock_a2a_client.return_value = mock_client_instance
 
         # Now import and test
-        from src.app.agents.composing_agents_main import EnhancedA2AClientTool
+        from cogniverse_agents.composing_agents_main import EnhancedA2AClientTool
 
         tool = EnhancedA2AClientTool(
             name="TestAgent",
@@ -127,7 +127,7 @@ class TestEnhancedA2AClientTool:
         mock_config.get.return_value = 60.0
         mock_get_config.return_value = mock_config
 
-        from src.app.agents.composing_agents_main import EnhancedA2AClientTool
+        from cogniverse_agents.composing_agents_main import EnhancedA2AClientTool
 
         tool = EnhancedA2AClientTool(
             name="TestAgent",
@@ -155,7 +155,7 @@ class TestEnhancedA2AClientTool:
 
         mock_format.return_value = "Formatted video results"
 
-        from src.app.agents.composing_agents_main import EnhancedA2AClientTool
+        from cogniverse_agents.composing_agents_main import EnhancedA2AClientTool
 
         tool = EnhancedA2AClientTool(
             name="TestAgent",
@@ -194,7 +194,7 @@ class TestEnhancedA2AClientTool:
 
         mock_format.return_value = "Formatted results"
 
-        from src.app.agents.composing_agents_main import EnhancedA2AClientTool
+        from cogniverse_agents.composing_agents_main import EnhancedA2AClientTool
 
         tool = EnhancedA2AClientTool(
             name="TestAgent",
@@ -232,7 +232,7 @@ class TestEnhancedA2AClientTool:
         mock_config.get.return_value = 60.0
         mock_get_config.return_value = mock_config
 
-        from src.app.agents.composing_agents_main import EnhancedA2AClientTool
+        from cogniverse_agents.composing_agents_main import EnhancedA2AClientTool
 
         tool = EnhancedA2AClientTool(
             name="TestAgent",
@@ -259,7 +259,7 @@ class TestEnhancedA2AClientTool:
         mock_config.get.return_value = 60.0
         mock_get_config.return_value = mock_config
 
-        from src.app.agents.composing_agents_main import EnhancedA2AClientTool
+        from cogniverse_agents.composing_agents_main import EnhancedA2AClientTool
 
         tool = EnhancedA2AClientTool(
             name="TestAgent",
@@ -289,7 +289,7 @@ class TestQueryAnalysisTool:
         mock_config.get.return_value = {"mode": "keyword"}
         mock_get_config.return_value = mock_config
 
-        from src.app.agents.composing_agents_main import QueryAnalysisTool
+        from cogniverse_agents.composing_agents_main import QueryAnalysisTool
 
         tool = QueryAnalysisTool()
 
@@ -309,7 +309,7 @@ class TestQueryAnalysisTool:
                 "current_gliner_model": "gliner-test-model",
             }
 
-            from src.app.agents.composing_agents_main import QueryAnalysisTool
+            from cogniverse_agents.composing_agents_main import QueryAnalysisTool
 
             tool = QueryAnalysisTool()
 
@@ -326,7 +326,7 @@ class TestQueryAnalysisTool:
         mock_config.get.return_value = {"mode": "keyword"}
         mock_get_config.return_value = mock_config
 
-        from src.app.agents.composing_agents_main import QueryAnalysisTool
+        from cogniverse_agents.composing_agents_main import QueryAnalysisTool
 
         tool = QueryAnalysisTool()
         result = await tool.execute("show me video clips of meetings")
@@ -345,7 +345,7 @@ class TestQueryAnalysisTool:
         mock_config.get.return_value = {"mode": "keyword"}
         mock_get_config.return_value = mock_config
 
-        from src.app.agents.composing_agents_main import QueryAnalysisTool
+        from cogniverse_agents.composing_agents_main import QueryAnalysisTool
 
         tool = QueryAnalysisTool()
         result = await tool.execute("find document reports about analysis")
@@ -357,7 +357,7 @@ class TestQueryAnalysisTool:
     @pytest.mark.asyncio
     async def test_keyword_based_analysis_default_both(self):
         """Test keyword-based analysis defaulting to both search types when no keywords match"""
-        from src.app.agents.composing_agents_main import QueryAnalysisTool
+        from cogniverse_agents.composing_agents_main import QueryAnalysisTool
 
         # Use a query with no specific keywords to trigger the fallback to both
         tool = QueryAnalysisTool()
@@ -375,7 +375,7 @@ class TestQueryAnalysisTool:
         mock_config.get.return_value = {"mode": "keyword"}
         mock_get_config.return_value = mock_config
 
-        from src.app.agents.composing_agents_main import QueryAnalysisTool
+        from cogniverse_agents.composing_agents_main import QueryAnalysisTool
 
         tool = QueryAnalysisTool()
         today = datetime.date.today()
@@ -394,7 +394,7 @@ class TestQueryAnalysisTool:
         mock_config.get.return_value = {"mode": "keyword"}
         mock_get_config.return_value = mock_config
 
-        from src.app.agents.composing_agents_main import QueryAnalysisTool
+        from cogniverse_agents.composing_agents_main import QueryAnalysisTool
 
         tool = QueryAnalysisTool()
 
@@ -417,7 +417,7 @@ class TestQueryAnalysisTool:
         mock_config.get.return_value = {"mode": "keyword"}
         mock_get_config.return_value = mock_config
 
-        from src.app.agents.composing_agents_main import QueryAnalysisTool
+        from cogniverse_agents.composing_agents_main import QueryAnalysisTool
 
         tool = QueryAnalysisTool()
         temporal_info = tool._extract_temporal_info("find videos about cats")
@@ -450,7 +450,7 @@ class TestRouteAndExecuteQuery:
         }
         mock_format.return_value = "Formatted results"
 
-        from src.app.agents.composing_agents_main import route_and_execute_query
+        from cogniverse_agents.composing_agents_main import route_and_execute_query
 
         result = await route_and_execute_query(
             query="test query", top_k=5, preferred_agent=preferred_agent
@@ -489,7 +489,7 @@ class TestRouteAndExecuteQuery:
             }
         )
 
-        from src.app.agents.composing_agents_main import route_and_execute_query
+        from cogniverse_agents.composing_agents_main import route_and_execute_query
 
         result = await route_and_execute_query("test video query", top_k=10)
 
@@ -525,7 +525,7 @@ class TestRouteAndExecuteQuery:
 
         mock_analyzer.execute = AsyncMock(return_value=mock_analysis)
 
-        from src.app.agents.composing_agents_main import route_and_execute_query
+        from cogniverse_agents.composing_agents_main import route_and_execute_query
 
         result = await route_and_execute_query("find text documents")
 
@@ -545,7 +545,7 @@ class TestRouteAndExecuteQuery:
 
         mock_analyzer.execute = AsyncMock(side_effect=Exception("Analysis failed"))
 
-        from src.app.agents.composing_agents_main import route_and_execute_query
+        from cogniverse_agents.composing_agents_main import route_and_execute_query
 
         result = await route_and_execute_query("test query")
 
@@ -571,7 +571,7 @@ class TestWebInterfaceAndConfiguration:
             "composing_agent_port": 8000,
         }.get(key, default)
 
-        from src.app.agents.composing_agents_main import start_web_interface
+        from cogniverse_agents.composing_agents_main import start_web_interface
 
         start_web_interface()
 
@@ -590,7 +590,7 @@ class TestWebInterfaceAndConfiguration:
             "search_backend": "Search backend must be configured",
         }
 
-        from src.app.agents.composing_agents_main import start_web_interface
+        from cogniverse_agents.composing_agents_main import start_web_interface
 
         # Should return early without starting ADK
         with patch("src.app.agents.composing_agents_main.os.system") as mock_os_system:
@@ -636,7 +636,7 @@ class TestADKIntegration:
         mock_runner.run = mock_event_generator
         mock_runner_class.return_value = mock_runner
 
-        from src.app.agents.composing_agents_main import run_query_programmatically
+        from cogniverse_agents.composing_agents_main import run_query_programmatically
 
         result = await run_query_programmatically("test query")
 
@@ -665,7 +665,7 @@ class TestPerformanceAndEdgeCases:
 
         mock_format.return_value = "Formatted results"
 
-        from src.app.agents.composing_agents_main import EnhancedA2AClientTool
+        from cogniverse_agents.composing_agents_main import EnhancedA2AClientTool
 
         tool1 = EnhancedA2AClientTool("Agent1", "Test 1", "http://localhost:8001")
         tool2 = EnhancedA2AClientTool("Agent2", "Test 2", "http://localhost:8002")
@@ -698,7 +698,7 @@ class TestPerformanceAndEdgeCases:
         mock_config.get.return_value = 60.0
         mock_get_config.return_value = mock_config
 
-        from src.app.agents.composing_agents_main import EnhancedA2AClientTool
+        from cogniverse_agents.composing_agents_main import EnhancedA2AClientTool
 
         tool = EnhancedA2AClientTool("TestAgent", "Test", "http://localhost:8001")
 
@@ -717,7 +717,7 @@ class TestPerformanceAndEdgeCases:
         mock_config.get.return_value = {"mode": "keyword"}
         mock_get_config.return_value = mock_config
 
-        from src.app.agents.composing_agents_main import QueryAnalysisTool
+        from cogniverse_agents.composing_agents_main import QueryAnalysisTool
 
         tool = QueryAnalysisTool()
 

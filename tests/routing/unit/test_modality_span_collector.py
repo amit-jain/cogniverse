@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-from src.app.routing.modality_span_collector import ModalitySpanCollector
-from src.app.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.routing.modality_span_collector import ModalitySpanCollector
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 
 class TestModalitySpanCollector:

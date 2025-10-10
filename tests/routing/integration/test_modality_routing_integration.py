@@ -15,14 +15,14 @@ from datetime import datetime, timedelta
 import phoenix as px
 import pytest
 
-from src.app.routing.base import SearchModality
-from src.app.routing.router import ComprehensiveRouter
-from src.app.telemetry.config import (
+from cogniverse_agents.routing.base import SearchModality
+from cogniverse_agents.routing.router import ComprehensiveRouter
+from cogniverse_core.telemetry.config import (
     SERVICE_NAME_ORCHESTRATION,
     SPAN_NAME_ROUTING,
     TelemetryConfig,
 )
-from src.app.telemetry.manager import TelemetryManager
+from cogniverse_core.telemetry.manager import TelemetryManager
 
 logger = logging.getLogger(__name__)
 

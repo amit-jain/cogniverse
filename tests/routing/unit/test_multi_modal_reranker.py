@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from src.app.search.multi_modal_reranker import (
+from cogniverse_agents.search.multi_modal_reranker import (
     MultiModalReranker,
     QueryModality,
     SearchResult,

@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from src.app.routing.mlflow_integration import (
+from cogniverse_agents.routing.mlflow_integration import (
     ABTestConfig,
     ExperimentConfig,
     MLflowIntegration,

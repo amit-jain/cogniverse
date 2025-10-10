@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.app.agents.workflow_intelligence import (
+from cogniverse_agents.workflow_intelligence import (
     AgentPerformance,
     OptimizationStrategy,
     TemplateGeneratorSignature,
@@ -18,7 +18,7 @@ from src.app.agents.workflow_intelligence import (
     WorkflowTemplate,
     create_workflow_intelligence,
 )
-from src.app.agents.workflow_types import WorkflowPlan, WorkflowStatus, WorkflowTask
+from cogniverse_agents.workflow_types import WorkflowPlan, WorkflowStatus, WorkflowTask
 
 
 @pytest.mark.unit

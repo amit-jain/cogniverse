@@ -9,11 +9,11 @@ import asyncio
 
 import pytest
 
-from src.app.agents.detailed_report_agent import DetailedReportAgent
-from src.app.agents.routing_agent import RoutingAgent
-from src.app.agents.summarizer_agent import SummarizerAgent
-from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
-from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
+from cogniverse_agents.detailed_report_agent import DetailedReportAgent
+from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.summarizer_agent import SummarizerAgent
+from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
+from cogniverse_agents.routing.relationship_extraction_tools import RelationshipExtractorTool
 
 
 @pytest.mark.integration
@@ -172,7 +172,7 @@ class TestQueryProcessingPipeline:
         import logging
         from unittest.mock import patch
 
-        from src.app.agents.routing_agent import RoutingConfig
+        from cogniverse_agents.routing_agent import RoutingConfig
 
         # Mock only external service URLs, not core logic
         with patch("src.common.config_utils.get_config") as mock_config:
@@ -470,7 +470,7 @@ class TestAgentWorkflowIntegration:
                 "VideoSearchAgent integration test skipped (would require Vespa connection)"
             )
             # Just verify the import works
-            from src.app.agents.video_search_agent import (
+            from cogniverse_agents.video_search_agent import (
                 VideoSearchAgent,
             )
 
@@ -574,7 +574,7 @@ class TestSystemIntegrationReadiness:
 
     def test_system_configuration_readiness(self):
         """Test system can handle different configuration states"""
-        from src.common.config_utils import get_config
+        from cogniverse_core.common.config_utils import get_config
 
         config = get_config()
 

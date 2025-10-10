@@ -10,8 +10,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from src.app.search.learned_reranker import LearnedReranker
-from src.app.search.multi_modal_reranker import SearchResult
+from cogniverse_agents.search.learned_reranker import LearnedReranker
+from cogniverse_agents.search.multi_modal_reranker import SearchResult
 
 
 class TestLearnedReranker:

@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from src.evaluation.core.simple_scorers import (
+from cogniverse_core.evaluation.core.simple_scorers import (
     get_configured_scorers,
     simple_relevance_scorer,
 )

@@ -11,7 +11,7 @@ from unittest.mock import patch
 import pytest
 
 # Import components to test
-from src.app.routing.advanced_optimizer import (
+from cogniverse_agents.routing.advanced_optimizer import (
     AdvancedOptimizerConfig,
     AdvancedRoutingOptimizer,
     RoutingExperience,
@@ -195,7 +195,7 @@ class TestSIMBAIntegration:
 
     def test_simba_config_creation(self):
         """Test SIMBA configuration creation."""
-        from src.app.routing.simba_query_enhancer import SIMBAConfig
+        from cogniverse_agents.routing.simba_query_enhancer import SIMBAConfig
 
         config = SIMBAConfig()
         assert config.similarity_threshold >= 0
@@ -203,7 +203,7 @@ class TestSIMBAIntegration:
 
     def test_simba_enhancer_creation(self):
         """Test SIMBA enhancer can be created."""
-        from src.app.routing.simba_query_enhancer import SIMBAConfig, SIMBAQueryEnhancer
+        from cogniverse_agents.routing.simba_query_enhancer import SIMBAConfig, SIMBAQueryEnhancer
 
         config = SIMBAConfig()
 
@@ -218,7 +218,7 @@ class TestAdaptiveThresholdLearner:
 
     def test_threshold_learner_creation(self):
         """Test threshold learner can be created."""
-        from src.app.routing.adaptive_threshold_learner import AdaptiveThresholdLearner
+        from cogniverse_agents.routing.adaptive_threshold_learner import AdaptiveThresholdLearner
 
         learner = AdaptiveThresholdLearner(tenant_id="test_tenant")
 
@@ -229,7 +229,7 @@ class TestAdaptiveThresholdLearner:
 
     def test_threshold_learner_status(self):
         """Test getting threshold learner status."""
-        from src.app.routing.adaptive_threshold_learner import AdaptiveThresholdLearner
+        from cogniverse_agents.routing.adaptive_threshold_learner import AdaptiveThresholdLearner
 
         learner = AdaptiveThresholdLearner(tenant_id="test_tenant")
         status = learner.get_learning_status()
@@ -243,7 +243,7 @@ class TestMLflowIntegration:
 
     def test_mlflow_integration_creation(self):
         """Test MLflow integration can be created."""
-        from src.app.routing.mlflow_integration import (
+        from cogniverse_agents.routing.mlflow_integration import (
             ExperimentConfig,
             MLflowIntegration,
         )

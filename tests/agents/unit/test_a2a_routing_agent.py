@@ -6,11 +6,11 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from src.app.agents.a2a_routing_agent import (
+from cogniverse_agents.a2a_routing_agent import (
     A2ARoutingAgent,
     AgentEndpoint,
 )
-from src.tools.a2a_utils import A2AMessage, DataPart, Task, TextPart
+from cogniverse_core.common.a2a_utils import A2AMessage, DataPart, Task, TextPart
 
 
 @pytest.mark.unit
@@ -438,7 +438,7 @@ class TestA2ARoutingAgentIntegration:
         mock_registry_class.return_value = mock_registry
 
         # Mock routing agent
-        from src.app.agents.routing_agent import RoutingDecision
+        from cogniverse_agents.routing_agent import RoutingDecision
         mock_routing_agent = Mock()
         mock_routing_decision = RoutingDecision(
             query="find AI videos",

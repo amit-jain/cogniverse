@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from src.evaluation.plugins.phoenix_experiment import (
+from cogniverse_core.evaluation.plugins.phoenix_experiment import (
     PhoenixExperimentPlugin,
     get_phoenix_evaluators,
     register,

@@ -14,11 +14,11 @@ import os
 
 import pytest
 
-from src.app.agents.detailed_report_agent import DetailedReportAgent
-from src.app.agents.routing_agent import RoutingAgent
-from src.app.agents.summarizer_agent import SummarizerAgent
-from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
-from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
+from cogniverse_agents.detailed_report_agent import DetailedReportAgent
+from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.summarizer_agent import SummarizerAgent
+from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
+from cogniverse_agents.routing.relationship_extraction_tools import RelationshipExtractorTool
 
 
 @pytest.mark.integration
@@ -159,7 +159,7 @@ class TestCompleteMultiAgentOrchestration:
         import logging
         from unittest.mock import patch
 
-        from src.app.agents.routing_agent import RoutingConfig
+        from cogniverse_agents.routing_agent import RoutingConfig
 
         with (
             patch(
@@ -244,7 +244,7 @@ class TestCompleteMultiAgentOrchestration:
         import logging
         from unittest.mock import patch
 
-        from src.app.agents.routing_agent import RoutingConfig
+        from cogniverse_agents.routing_agent import RoutingConfig
 
         with (
             patch(
@@ -309,7 +309,7 @@ class TestCompleteMultiAgentOrchestration:
         import logging
         from unittest.mock import patch
 
-        from src.app.agents.routing_agent import RoutingConfig
+        from cogniverse_agents.routing_agent import RoutingConfig
 
         agents = []
 
@@ -410,7 +410,7 @@ class TestSystemScalability:
         import logging
         from unittest.mock import patch
 
-        from src.app.agents.routing_agent import RoutingConfig
+        from cogniverse_agents.routing_agent import RoutingConfig
 
         with patch("src.common.config_utils.get_config") as mock_config:
             mock_config.return_value = {

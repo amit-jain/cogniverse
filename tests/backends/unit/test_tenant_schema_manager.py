@@ -10,7 +10,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch, mock_open
 
-from src.backends.vespa.tenant_schema_manager import (
+from cogniverse_vespa.tenant_schema_manager import (
     TenantSchemaManager,
     SchemaNotFoundException,
     SchemaDeploymentException,

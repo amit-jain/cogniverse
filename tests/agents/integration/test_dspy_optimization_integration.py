@@ -7,14 +7,14 @@ from unittest.mock import AsyncMock, Mock, mock_open, patch
 
 import pytest
 
-from src.app.agents.detailed_report_agent import DetailedReportAgent
-from src.app.agents.dspy_agent_optimizer import (
+from cogniverse_agents.detailed_report_agent import DetailedReportAgent
+from cogniverse_agents.dspy_agent_optimizer import (
     DSPyAgentOptimizerPipeline,
     DSPyAgentPromptOptimizer,
 )
-from src.app.agents.query_analysis_tool_v3 import QueryAnalysisToolV3
-from src.app.agents.routing_agent import RoutingAgent
-from src.app.agents.summarizer_agent import SummarizerAgent
+from cogniverse_agents.query_analysis_tool_v3 import QueryAnalysisToolV3
+from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.summarizer_agent import SummarizerAgent
 
 
 @pytest.fixture

@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from src.app.ingestion.processors.audio_processor import AudioProcessor
+from cogniverse_runtime.ingestion.processors.audio_processor import AudioProcessor
 
 
 @pytest.mark.unit

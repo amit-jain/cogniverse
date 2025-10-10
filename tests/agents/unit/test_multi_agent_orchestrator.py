@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from src.app.agents.multi_agent_orchestrator import (
+from cogniverse_agents.multi_agent_orchestrator import (
     FusionStrategy,
     MultiAgentOrchestrator,
     ResultAggregatorSignature,
     WorkflowPlannerSignature,
 )
-from src.app.agents.workflow_types import TaskStatus, WorkflowStatus, WorkflowTask
+from cogniverse_agents.workflow_types import TaskStatus, WorkflowStatus, WorkflowTask
 
 
 @pytest.mark.unit
@@ -266,7 +266,7 @@ class TestMultiAgentOrchestratorWorkflowExecution:
         # Create a mock workflow plan
         from datetime import datetime
 
-        from src.app.agents.workflow_types import WorkflowPlan
+        from cogniverse_agents.workflow_types import WorkflowPlan
 
         workflow_plan = WorkflowPlan(
             workflow_id="test-workflow",
@@ -578,7 +578,7 @@ class TestCrossModalFusion:
         """Test _aggregate_results with cross-modal fusion"""
         from datetime import datetime
 
-        from src.app.agents.workflow_types import WorkflowPlan
+        from cogniverse_agents.workflow_types import WorkflowPlan
 
         # Create mock workflow plan with completed tasks
         tasks = []
@@ -624,7 +624,7 @@ class TestCrossModalFusion:
         """Test _aggregate_results with no completed tasks"""
         from datetime import datetime
 
-        from src.app.agents.workflow_types import WorkflowPlan
+        from cogniverse_agents.workflow_types import WorkflowPlan
 
         workflow_plan = WorkflowPlan(
             workflow_id="test-workflow",

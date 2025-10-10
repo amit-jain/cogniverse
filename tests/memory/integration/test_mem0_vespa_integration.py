@@ -9,7 +9,7 @@ import time
 import pytest
 import requests
 
-from src.common.mem0_memory_manager import Mem0MemoryManager
+from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
 
 
 @pytest.fixture(scope="module")
@@ -80,7 +80,7 @@ def test_vespa():
 
     from vespa.package import ApplicationPackage
 
-    from src.backends.vespa.json_schema_parser import JsonSchemaParser
+    from cogniverse_vespa.json_schema_parser import JsonSchemaParser
 
     schema_path = Path(__file__).parent.parent.parent.parent / "configs" / "schemas" / "agent_memories_schema.json"
     with open(schema_path, 'r') as f:
@@ -476,7 +476,7 @@ class TestMem0MemoryAwareMixinIntegration:
 
     def test_mixin_with_real_memory(self, test_vespa):
         """Test MemoryAwareMixin with real Mem0 backend"""
-        from src.app.agents.memory_aware_mixin import MemoryAwareMixin
+        from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 
         class TestAgent(MemoryAwareMixin):
             def __init__(self):

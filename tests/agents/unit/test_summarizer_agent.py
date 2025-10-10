@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from src.app.agents.summarizer_agent import (
+from cogniverse_agents.summarizer_agent import (
     SummarizerAgent,
     SummaryGenerationSignature,
     SummaryRequest,
@@ -14,7 +14,7 @@ from src.app.agents.summarizer_agent import (
     ThinkingPhase,
     VLMInterface,
 )
-from src.tools.a2a_utils import A2AMessage, DataPart, Task
+from cogniverse_core.common.a2a_utils import A2AMessage, DataPart, Task
 
 
 @pytest.mark.unit
@@ -485,7 +485,7 @@ class TestSummarizerAgentCoreFunctionality:
         """Test summarization with routing decision context"""
         agent = agent_with_mocks
 
-        from src.app.agents.routing_agent import RoutingDecision
+        from cogniverse_agents.routing_agent import RoutingDecision
 
         routing_decision = RoutingDecision(
             query="AI overview",

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, mock_open, patch
 
 import pytest
 
-from src.evaluation.core.ground_truth import (
+from cogniverse_core.evaluation.core.ground_truth import (
     BackendGroundTruthStrategy,
     DatasetGroundTruthStrategy,
     HybridGroundTruthStrategy,

@@ -10,7 +10,7 @@ import tempfile
 import pytest
 from fastapi.testclient import TestClient
 
-from src.app.agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent
 
 
 class TestRoutingAgentIntegration:
@@ -68,7 +68,7 @@ class TestRoutingAgentIntegration:
         self, test_config, routing_config_file
     ):
         """Test RoutingAgent initialization with actual config file"""
-        from src.app.agents.routing_agent import RoutingConfig
+        from cogniverse_agents.routing_agent import RoutingConfig
 
         config = RoutingConfig(**test_config)
         agent = RoutingAgent(tenant_id="test_tenant", config=config)
@@ -83,7 +83,7 @@ class TestRoutingAgentIntegration:
     @pytest.mark.asyncio
     async def test_real_routing_decision_flow(self, test_config):
         """Test actual routing decision flow through comprehensive router"""
-        from src.app.agents.routing_agent import RoutingConfig
+        from cogniverse_agents.routing_agent import RoutingConfig
 
         config = RoutingConfig(**test_config)
         agent = RoutingAgent(tenant_id="test_tenant", config=config)
@@ -111,7 +111,7 @@ class TestRoutingAgentIntegration:
     @pytest.mark.asyncio
     async def test_routing_agent_context_propagation(self, test_config):
         """Test that context is properly propagated through routing layers"""
-        from src.app.agents.routing_agent import RoutingConfig
+        from cogniverse_agents.routing_agent import RoutingConfig
 
         config = RoutingConfig(**test_config)
         agent = RoutingAgent(tenant_id="test_tenant", config=config)
@@ -131,7 +131,7 @@ class TestRoutingAgentIntegration:
 
     def test_agent_registry_validation_integration(self):
         """Test agent initialization with different configurations"""
-        from src.app.agents.routing_agent import RoutingConfig
+        from cogniverse_agents.routing_agent import RoutingConfig
 
         # Test with minimal valid config (default values)
         minimal_config = RoutingConfig()
@@ -153,7 +153,7 @@ class TestRoutingAgentIntegration:
     @pytest.mark.asyncio
     async def test_workflow_generation_consistency(self, test_config):
         """Test that workflow generation is consistent across multiple calls"""
-        from src.app.agents.routing_agent import RoutingConfig
+        from cogniverse_agents.routing_agent import RoutingConfig
 
         config = RoutingConfig(**test_config)
         agent = RoutingAgent(tenant_id="test_tenant", config=config)
@@ -202,13 +202,13 @@ class TestRoutingAgentFastAPIIntegration:
         os.environ["VESPA_ENDPOINT"] = f"http://localhost:{vespa_backend.http_port}"
         os.environ["VESPA_SCHEMA"] = "video_colpali_smol500_mv_frame"
 
-        from src.app.agents.agent_orchestrator import app
+        from cogniverse_agents.agent_orchestrator import app
         return TestClient(app)
 
     @pytest.mark.ci_fast
     def test_health_check(self):
         """Test health check endpoint without requiring Vespa"""
-        from src.app.agents.agent_orchestrator import app
+        from cogniverse_agents.agent_orchestrator import app
         client = TestClient(app)
         response = client.get("/health")
         assert response.status_code == 200

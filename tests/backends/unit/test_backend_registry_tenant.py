@@ -7,11 +7,11 @@ Tests that backend instances are properly isolated per tenant.
 import pytest
 from unittest.mock import Mock, MagicMock, patch
 
-from src.common.core.backend_registry import (
+from cogniverse_core.common.core.backend_registry import (
     BackendRegistry,
     get_backend_registry,
 )
-from src.common.core.interfaces import SearchBackend, IngestionBackend
+from cogniverse_core.common.core.interfaces import SearchBackend, IngestionBackend
 
 
 class MockSearchBackend(SearchBackend):

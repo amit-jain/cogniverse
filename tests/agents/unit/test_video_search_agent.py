@@ -7,13 +7,13 @@ from unittest.mock import Mock, patch
 import numpy as np
 import pytest
 
-from src.app.agents.video_search_agent import (
+from cogniverse_agents.video_search_agent import (
     ImagePart,
     VideoPart,
     VideoProcessor,
     VideoSearchAgent,
 )
-from src.tools.a2a_utils import A2AMessage, DataPart, Task, TextPart
+from cogniverse_core.common.a2a_utils import A2AMessage, DataPart, Task, TextPart
 
 
 @pytest.mark.unit
@@ -710,7 +710,7 @@ class TestVideoSearchAgentAdvancedFeatures:
     @pytest.mark.ci_fast
     def test_relationship_aware_search_params_validation(self, configured_agent):
         """Test RelationshipAwareSearchParams validation"""
-        from src.app.agents.video_search_agent import (
+        from cogniverse_agents.video_search_agent import (
             RelationshipAwareSearchParams,
         )
 

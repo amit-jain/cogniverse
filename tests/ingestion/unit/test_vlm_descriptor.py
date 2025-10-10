@@ -10,7 +10,7 @@ from unittest.mock import Mock, mock_open, patch
 
 import pytest
 
-from src.app.ingestion.processors.vlm_descriptor import VLMDescriptor
+from cogniverse_runtime.ingestion.processors.vlm_descriptor import VLMDescriptor
 
 
 @pytest.mark.unit

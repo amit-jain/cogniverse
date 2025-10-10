@@ -16,14 +16,14 @@ import pytest
 
 # E2E tests require Ollama server with smollm3:8b model
 # Run with: pytest tests/agents/e2e/test_real_multi_agent_integration.py -v
-from src.app.agents.detailed_report_agent import DetailedReportAgent
-from src.app.agents.dspy_agent_optimizer import (
+from cogniverse_agents.detailed_report_agent import DetailedReportAgent
+from cogniverse_agents.dspy_agent_optimizer import (
     DSPyAgentOptimizerPipeline,
     DSPyAgentPromptOptimizer,
 )
-from src.app.agents.query_analysis_tool_v3 import QueryAnalysisToolV3
-from src.app.agents.routing_agent import RoutingAgent
-from src.app.agents.summarizer_agent import SummarizerAgent
+from cogniverse_agents.query_analysis_tool_v3 import QueryAnalysisToolV3
+from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.summarizer_agent import SummarizerAgent
 
 # Configure logging for tests
 logging.basicConfig(level=logging.INFO)
@@ -214,7 +214,7 @@ class TestRealAgentSpecializationIntegration:
 
         import dspy
 
-        from src.app.agents.summarizer_agent import SummaryRequest
+        from cogniverse_agents.summarizer_agent import SummaryRequest
 
         # E2E test - requires real Ollama, works in production
         # Configure DSPy with correct model before creating agent
@@ -275,7 +275,7 @@ class TestRealAgentSpecializationIntegration:
         """Test real detailed report generation with local Ollama model."""
         from unittest.mock import patch
 
-        from src.app.agents.detailed_report_agent import ReportRequest
+        from cogniverse_agents.detailed_report_agent import ReportRequest
 
         # E2E test - requires real Ollama, works in production
         with patch("src.app.agents.dspy_a2a_agent_base.FastAPI"), \
@@ -437,7 +437,7 @@ class TestRealEndToEndWorkflow:
         """Test complete multi-agent workflow with real LLMs."""
         from unittest.mock import patch
 
-        from src.app.agents.summarizer_agent import SummaryRequest
+        from cogniverse_agents.summarizer_agent import SummaryRequest
 
         # Initialize all agents
         query_analyzer = QueryAnalysisToolV3(

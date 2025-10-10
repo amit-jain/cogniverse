@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import numpy as np
 
-from src.common.models.videoprism_text_encoder import (
+from cogniverse_core.common.models.videoprism_text_encoder import (
     CircuitBreaker,
     CircuitState,
     ModelPool,
@@ -215,7 +215,7 @@ class TestVideoPrismTextEncoder(unittest.TestCase):
     
     def setUp(self):
         # Clear class-level cache before each test
-        from src.common.models.videoprism_text_encoder import VideoPrismTextEncoder
+        from cogniverse_core.common.models.videoprism_text_encoder import VideoPrismTextEncoder
         VideoPrismTextEncoder._model_cache.clear()
 
         # Mock VideoPrism module

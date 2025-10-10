@@ -11,7 +11,7 @@ from pathlib import Path
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.app.agents.composing_agents_main import route_and_execute_query
+from cogniverse_agents.composing_agents_main import route_and_execute_query
 
 
 async def test_manual_routing():

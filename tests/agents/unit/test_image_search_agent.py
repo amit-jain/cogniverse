@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from src.app.agents.image_search_agent import ImageResult, ImageSearchAgent
+from cogniverse_agents.image_search_agent import ImageResult, ImageSearchAgent
 
 
 class TestImageSearchAgent:

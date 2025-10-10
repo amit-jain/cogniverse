@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.app.routing.simba_query_enhancer import (
+from cogniverse_agents.routing.simba_query_enhancer import (
     QueryEnhancementPattern,
     SIMBAConfig,
     SIMBAQueryEnhancer,

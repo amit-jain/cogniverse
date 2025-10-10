@@ -10,10 +10,10 @@ from unittest.mock import Mock, patch
 import numpy as np
 import pytest
 
-from src.app.ingestion.processors.embedding_generator.embedding_generator import (
+from cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator import (
     EmbeddingResult,
 )
-from src.app.ingestion.processors.embedding_generator.embedding_generator_impl import (
+from cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator_impl import (
     EmbeddingGeneratorImpl,
 )
 

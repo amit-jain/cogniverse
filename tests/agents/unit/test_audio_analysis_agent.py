@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
-from src.app.agents.audio_analysis_agent import (
+from cogniverse_agents.audio_analysis_agent import (
     AudioAnalysisAgent,
     AudioResult,
     MusicClassification,

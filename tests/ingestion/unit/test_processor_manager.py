@@ -11,8 +11,8 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from src.app.ingestion.processor_base import BaseProcessor, BaseStrategy
-from src.app.ingestion.processor_manager import ProcessorManager
+from cogniverse_runtime.ingestion.processor_base import BaseProcessor, BaseStrategy
+from cogniverse_runtime.ingestion.processor_manager import ProcessorManager
 
 
 class MockProcessorA(BaseProcessor):

@@ -10,8 +10,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.app.routing.cross_modal_optimizer import CrossModalOptimizer
-from src.app.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 
 class TestCrossModalOptimizer:

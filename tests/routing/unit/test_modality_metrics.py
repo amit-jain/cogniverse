@@ -6,8 +6,8 @@ import time
 
 import pytest
 
-from src.app.search.multi_modal_reranker import QueryModality
-from src.app.telemetry.modality_metrics import ModalityMetricsTracker
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_core.telemetry.modality_metrics import ModalityMetricsTracker
 
 
 class TestModalityMetricsTracker:

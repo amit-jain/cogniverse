@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from src.evaluation.inspect_tasks.solvers import CogniverseRetrievalSolver
+from cogniverse_core.evaluation.inspect_tasks.solvers import CogniverseRetrievalSolver
 
 
 class TestCogniverseRetrievalSolver:
@@ -207,7 +207,7 @@ class TestResultRankingAnalyzer:
             mock_analyzer.k = 10
             MockAnalyzer.return_value = mock_analyzer
 
-            from src.evaluation.inspect_tasks.solvers import ResultRankingAnalyzer
+            from cogniverse_core.evaluation.inspect_tasks.solvers import ResultRankingAnalyzer
 
             analyzer = ResultRankingAnalyzer(metric="ndcg", k=10)
 
@@ -230,7 +230,7 @@ class TestResultRankingAnalyzer:
             mock_analyzer.metric = "ndcg"
             MockAnalyzer.return_value = mock_analyzer
 
-            from src.evaluation.inspect_tasks.solvers import ResultRankingAnalyzer
+            from cogniverse_core.evaluation.inspect_tasks.solvers import ResultRankingAnalyzer
 
             analyzer = ResultRankingAnalyzer(metric="ndcg")
 
@@ -268,7 +268,7 @@ class TestRelevanceJudgmentCollector:
             mock_collector.binary = True
             MockCollector.return_value = mock_collector
 
-            from src.evaluation.inspect_tasks.solvers import RelevanceJudgmentCollector
+            from cogniverse_core.evaluation.inspect_tasks.solvers import RelevanceJudgmentCollector
 
             collector = RelevanceJudgmentCollector(threshold=0.7, binary=True)
 
@@ -291,7 +291,7 @@ class TestRelevanceJudgmentCollector:
             mock_collector.threshold = 0.5
             MockCollector.return_value = mock_collector
 
-            from src.evaluation.inspect_tasks.solvers import RelevanceJudgmentCollector
+            from cogniverse_core.evaluation.inspect_tasks.solvers import RelevanceJudgmentCollector
 
             collector = RelevanceJudgmentCollector(threshold=0.5)
 
@@ -331,7 +331,7 @@ class TestTemporalQueryProcessor:
             mock_processor.ordering = "desc"
             MockProcessor.return_value = mock_processor
 
-            from src.evaluation.inspect_tasks.solvers import TemporalQueryProcessor
+            from cogniverse_core.evaluation.inspect_tasks.solvers import TemporalQueryProcessor
 
             processor = TemporalQueryProcessor(time_window="1h", ordering="desc")
 
@@ -357,7 +357,7 @@ class TestTemporalQueryProcessor:
             mock_processor.ordering = "asc"
             MockProcessor.return_value = mock_processor
 
-            from src.evaluation.inspect_tasks.solvers import TemporalQueryProcessor
+            from cogniverse_core.evaluation.inspect_tasks.solvers import TemporalQueryProcessor
 
             processor = TemporalQueryProcessor(ordering="asc")
 

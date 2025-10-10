@@ -6,28 +6,28 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from src.app.agents.agent_orchestrator import (
+from cogniverse_agents.agent_orchestrator import (
     AgentOrchestrator,
     ProcessingRequest,
     ProcessingResult,
 )
-from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
-from src.app.agents.result_aggregator import (
+from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
+from cogniverse_agents.result_aggregator import (
     AggregatedResult,
     AggregationRequest,
     ResultAggregator,
 )
-from src.app.agents.result_enhancement_engine import (
+from cogniverse_agents.result_enhancement_engine import (
     EnhancedResult,
     EnhancementContext,
     ResultEnhancementEngine,
 )
 
 # Phase 4 imports
-from src.app.agents.routing_agent import RoutingAgent, RoutingDecision
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDecision
 
 # Phase 5 imports
-from src.app.agents.video_search_agent import VideoSearchAgent
+from cogniverse_agents.video_search_agent import VideoSearchAgent
 
 
 @pytest.mark.integration
@@ -193,7 +193,7 @@ class TestRoutingToEnhancedSearchIntegration:
                 mock_pipeline_class.return_value = mock_pipeline
 
                 # Test complete routing with enhancement
-                from src.app.agents.routing_agent import RoutingConfig
+                from cogniverse_agents.routing_agent import RoutingConfig
 
                 config = RoutingConfig(
                     enable_mlflow_tracking=False,
@@ -693,7 +693,7 @@ class TestRoutingEnhancementErrorHandlingIntegration:
             mock_extractor_class.return_value = mock_extractor
 
             # Create routing agent
-            from src.app.agents.routing_agent import RoutingConfig
+            from cogniverse_agents.routing_agent import RoutingConfig
 
             config = RoutingConfig(
                 enable_mlflow_tracking=False, enable_relationship_extraction=True

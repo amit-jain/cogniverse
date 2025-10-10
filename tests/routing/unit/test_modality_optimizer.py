@@ -10,13 +10,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.app.routing.modality_optimizer import ModalityOptimizer
-from src.app.routing.synthetic_data_generator import ModalityExample
-from src.app.routing.xgboost_meta_models import (
+from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
+from cogniverse_agents.routing.synthetic_data_generator import ModalityExample
+from cogniverse_agents.routing.xgboost_meta_models import (
     ModelingContext,
     TrainingStrategy,
 )
-from src.app.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 
 class TestModalityOptimizer:

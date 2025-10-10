@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from src.app.ingestion.pipeline import (
+from cogniverse_runtime.ingestion.pipeline import (
     PipelineConfig,
     PipelineStep,
     VideoIngestionPipeline,

@@ -8,23 +8,23 @@ query enhancement, adaptive threshold learning, and advanced optimization.
 
 import pytest
 
-from src.app.routing.adaptive_threshold_learner import AdaptiveThresholdLearner
-from src.app.routing.advanced_optimizer import (
+from cogniverse_agents.routing.adaptive_threshold_learner import AdaptiveThresholdLearner
+from cogniverse_agents.routing.advanced_optimizer import (
     AdvancedOptimizerConfig,
     AdvancedRoutingOptimizer,
 )
-from src.app.routing.dspy_relationship_router import (
+from cogniverse_agents.routing.dspy_relationship_router import (
     DSPyEntityExtractorModule,
     DSPyRelationshipExtractorModule,
 )
-from src.app.routing.dspy_routing_signatures import (
+from cogniverse_agents.routing.dspy_routing_signatures import (
     AdvancedRoutingSignature,
     BasicQueryAnalysisSignature,
 )
-from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
+from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
 
 # DSPy routing components
-from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
+from cogniverse_agents.routing.relationship_extraction_tools import RelationshipExtractorTool
 
 
 class TestDSPyRoutingSignatures:

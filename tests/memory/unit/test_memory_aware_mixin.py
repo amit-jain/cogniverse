@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.app.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 
 
 class TestAgent(MemoryAwareMixin):

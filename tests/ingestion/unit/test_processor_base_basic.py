@@ -8,7 +8,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from src.app.ingestion.processor_base import BaseProcessor, BaseStrategy
+from cogniverse_runtime.ingestion.processor_base import BaseProcessor, BaseStrategy
 
 
 class MockProcessor(BaseProcessor):

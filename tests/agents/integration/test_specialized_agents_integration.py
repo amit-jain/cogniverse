@@ -5,9 +5,9 @@ from unittest.mock import AsyncMock, patch
 import dspy
 import pytest
 
-from src.app.agents.detailed_report_agent import DetailedReportAgent
-from src.app.agents.summarizer_agent import SummarizerAgent
-from src.tools.a2a_utils import A2AMessage, DataPart, Task
+from cogniverse_agents.detailed_report_agent import DetailedReportAgent
+from cogniverse_agents.summarizer_agent import SummarizerAgent
+from cogniverse_core.common.a2a_utils import A2AMessage, DataPart, Task
 
 
 @pytest.fixture
@@ -116,7 +116,7 @@ class TestSummarizerAgentDSPyIntegration:
                 agent.llm = real_dspy_lm
 
                 # Create summary request
-                from src.app.agents.summarizer_agent import SummaryRequest
+                from cogniverse_agents.summarizer_agent import SummaryRequest
 
                 request = SummaryRequest(
                     query="machine learning fundamentals",
@@ -190,7 +190,7 @@ class TestDetailedReportAgentDSPyIntegration:
                 agent = DetailedReportAgent(tenant_id="test_tenant")
                 agent.llm = real_dspy_lm
 
-                from src.app.agents.detailed_report_agent import ReportRequest
+                from cogniverse_agents.detailed_report_agent import ReportRequest
 
                 request = ReportRequest(
                     query="comprehensive analysis of AI trends",
@@ -304,7 +304,7 @@ class TestCrossAgentDSPyIntegration:
                 report_agent.llm = real_dspy_lm
 
                 # Step 1: Generate summary with real DSPy.LM
-                from src.app.agents.summarizer_agent import SummaryRequest
+                from cogniverse_agents.summarizer_agent import SummaryRequest
 
                 summary_request = SummaryRequest(
                     query="AI research overview",
@@ -326,7 +326,7 @@ class TestCrossAgentDSPyIntegration:
                     }
                 )
 
-                from src.app.agents.detailed_report_agent import ReportRequest
+                from cogniverse_agents.detailed_report_agent import ReportRequest
 
                 report_request = ReportRequest(
                     query="comprehensive AI research report based on summary",
@@ -387,7 +387,7 @@ class TestDSPyLMConfigurationIntegration:
                 agent_medium = SummarizerAgent(tenant_id="test_tenant")
                 agent_medium.llm = real_dspy_lm
 
-                from src.app.agents.summarizer_agent import SummaryRequest
+                from cogniverse_agents.summarizer_agent import SummaryRequest
 
                 request = SummaryRequest(
                     query="model comparison test",
@@ -430,7 +430,7 @@ class TestDSPyLMConfigurationIntegration:
                 agent = SummarizerAgent(tenant_id="test_tenant")
 
                 # If agent initializes, LLM calls should fail gracefully
-                from src.app.agents.summarizer_agent import SummaryRequest
+                from cogniverse_agents.summarizer_agent import SummaryRequest
 
                 request = SummaryRequest(
                     query="test error handling",

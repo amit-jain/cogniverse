@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from src.backends.vespa.vespa_schema_manager import VespaSchemaManager
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
 
 @pytest.fixture(scope="module")
@@ -228,7 +228,7 @@ class TestContentTypeVespaSchemas:
         import requests
         from PIL import Image
 
-        from src.common.models.model_loaders import get_or_load_model
+        from cogniverse_core.common.models.model_loaders import get_or_load_model
 
         # Create a test image (100x100 red square)
         print("\n🎨 Creating test image...")
@@ -312,10 +312,10 @@ class TestContentTypeVespaSchemas:
         import numpy as np
         import requests
 
-        from src.app.ingestion.processors.audio_embedding_generator import (
+        from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
             AudioEmbeddingGenerator,
         )
-        from src.app.ingestion.processors.audio_transcriber import AudioTranscriber
+        from cogniverse_runtime.ingestion.processors.audio_transcriber import AudioTranscriber
 
         # Create a simple test audio file (1 second of silence)
         print("\n🎵 Creating test audio file...")
@@ -517,7 +517,7 @@ class TestContentTypeVespaSchemas:
         import requests
         from PIL import Image
 
-        from src.common.models.model_loaders import get_or_load_model
+        from cogniverse_core.common.models.model_loaders import get_or_load_model
 
         # Create a test document page (simulating a PDF page)
         print("\n📄 Creating test document page...")
@@ -696,7 +696,7 @@ class TestContentTypeVespaSchemas:
 
         import requests
 
-        from src.app.agents.query_encoders import ColPaliQueryEncoder
+        from cogniverse_agents.query_encoders import ColPaliQueryEncoder
 
         # Wait for indexing to complete
         print("\n⏳ Waiting for indexing to complete...")

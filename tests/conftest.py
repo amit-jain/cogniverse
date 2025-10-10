@@ -77,7 +77,7 @@ def cleanup_vlm_state():
     yield
     # Clean up any cached VLM instances
     try:
-        from src.common.vlm_interface import VLMInterface
+        from cogniverse_core.common.vlm_interface import VLMInterface
 
         # Clear any class-level state if it exists
         if hasattr(VLMInterface, "_instance"):

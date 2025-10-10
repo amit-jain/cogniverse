@@ -13,8 +13,8 @@ import time
 
 import pytest
 
-from src.app.telemetry.config import BatchExportConfig, TelemetryConfig, TelemetryLevel
-from src.app.telemetry.manager import NoOpSpan, TelemetryManager
+from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig, TelemetryLevel
+from cogniverse_core.telemetry.manager import NoOpSpan, TelemetryManager
 
 
 @pytest.mark.integration

@@ -14,8 +14,8 @@ class TestResultsFormatter:
     """Format and export test results in various formats"""
     
     def __init__(self, test_name: str, output_dir: Optional[str] = None):
-        from src.common.utils.output_manager import get_output_manager
-        
+        from cogniverse_core.common.utils.output_manager import get_output_manager
+
         self.test_name = test_name
         self.output_manager = get_output_manager()
         

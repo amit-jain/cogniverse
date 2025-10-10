@@ -13,8 +13,8 @@ import pytest
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.app.routing.base import GenerationType, SearchModality
-from src.app.routing.router import ComprehensiveRouter
+from cogniverse_agents.routing.base import GenerationType, SearchModality
+from cogniverse_agents.routing.router import ComprehensiveRouter
 
 
 @pytest.fixture
@@ -414,7 +414,7 @@ class TestLLMStrictParsing:
     @pytest.mark.asyncio
     async def test_llm_strict_json_validation(self):
         """Test that LLM parsing strictly validates JSON responses."""
-        from src.app.routing.strategies import LLMRoutingStrategy
+        from cogniverse_agents.routing.strategies import LLMRoutingStrategy
 
         config = {
             "provider": "local",
@@ -445,7 +445,7 @@ class TestLLMStrictParsing:
     @pytest.mark.requires_models
     def test_llm_rejects_invalid_responses(self):
         """Test that LLM parsing rejects invalid responses without fallback."""
-        from src.app.routing.strategies import LLMRoutingStrategy
+        from cogniverse_agents.routing.strategies import LLMRoutingStrategy
 
         config = {
             "provider": "local",
@@ -482,7 +482,7 @@ class TestLLMStrictParsing:
     @pytest.mark.asyncio
     async def test_ensemble_with_strict_llm_parsing(self):
         """Test that ensemble routing works correctly with strict LLM parsing."""
-        from src.app.routing import ComprehensiveRouter
+        from cogniverse_agents.routing import ComprehensiveRouter
 
         # Force ALL strategies including real LLM
         config = {
@@ -535,7 +535,7 @@ class TestLLMStrictParsing:
     @pytest.mark.requires_models
     def test_llm_dspy_optimization_integration(self):
         """Test that LLM strategy integrates with DSPy optimization system."""
-        from src.app.routing.strategies import LLMRoutingStrategy
+        from cogniverse_agents.routing.strategies import LLMRoutingStrategy
 
         config = {
             "provider": "local",

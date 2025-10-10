@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from src.evaluation.core.reranking import (
+from cogniverse_core.evaluation.core.reranking import (
     ContentSimilarityRerankingStrategy,
     DiversityRerankingStrategy,
     HybridRerankingStrategy,

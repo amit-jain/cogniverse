@@ -4,14 +4,14 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from src.app.agents.detailed_report_agent import (
+from cogniverse_agents.detailed_report_agent import (
     DetailedReportAgent,
     ReportRequest,
     ReportResult,
     ThinkingPhase,
     VLMInterface,
 )
-from src.tools.a2a_utils import A2AMessage, DataPart, Task
+from cogniverse_core.common.a2a_utils import A2AMessage, DataPart, Task
 
 
 @pytest.fixture
@@ -648,7 +648,7 @@ class TestDetailedReportAgentCoreFunctionality:
         """Test enhanced report generation with routing decision"""
         agent = agent_with_mocks
 
-        from src.app.agents.routing_agent import RoutingDecision
+        from cogniverse_agents.routing_agent import RoutingDecision
 
         routing_decision = RoutingDecision(
             query="test query",
@@ -672,7 +672,7 @@ class TestDetailedReportAgentCoreFunctionality:
             mock_cot_instance.forward = Mock(return_value=mock_prediction)
             mock_cot.return_value = mock_cot_instance
 
-            from src.app.agents.detailed_report_agent import EnhancedReportRequest
+            from cogniverse_agents.detailed_report_agent import EnhancedReportRequest
 
             enhanced_request = EnhancedReportRequest(
                 original_query="test query",

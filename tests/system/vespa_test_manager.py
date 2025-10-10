@@ -16,8 +16,8 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 # Import the REAL deployment classes
-from src.backends.vespa.vespa_schema_manager import VespaSchemaManager
-from src.backends.vespa.json_schema_parser import JsonSchemaParser
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+from cogniverse_vespa.json_schema_parser import JsonSchemaParser
 from vespa.package import ApplicationPackage, Validation
 from datetime import datetime, timedelta
 
@@ -292,7 +292,7 @@ class VespaTestManager:
             print("🎬 Ingesting test videos with REAL pipeline...")
             
             # Use our actual build_test_pipeline with test configuration
-            from src.app.ingestion.pipeline_builder import build_test_pipeline
+            from cogniverse_runtime.ingestion.pipeline_builder import build_test_pipeline
             
             # Set environment to point to test Vespa and use test config
             original_vespa_url = os.environ.get('VESPA_URL')
@@ -303,7 +303,7 @@ class VespaTestManager:
             self.original_cogniverse_config = original_cogniverse_config
 
             # Store original config values for restoration
-            from src.common.config_utils import get_config
+            from cogniverse_core.common.config_utils import get_config
             original_config_values = get_config()
             original_config_vespa_url = original_config_values.get('vespa_url')
             original_config_vespa_port = original_config_values.get('vespa_port')
@@ -330,7 +330,7 @@ class VespaTestManager:
             print(f"🔧 Loaded {len(profiles)} profiles: {list(profiles.keys())}")
 
             # Verify the config will be loaded from environment
-            from src.common.config_utils import get_config
+            from cogniverse_core.common.config_utils import get_config
             current_config = get_config()
             loaded_profiles = current_config.get('video_processing_profiles', {})
             print(f"🔍 Config verification: video_processing_profiles has {len(loaded_profiles)} entries")
@@ -340,7 +340,7 @@ class VespaTestManager:
                 print(f"🔍 Profile has 'strategies': {'strategies' in profile}")
             
             # Clear any cached backend instances that might have old config
-            from src.common.core.backend_registry import get_backend_registry
+            from cogniverse_core.common.core.backend_registry import get_backend_registry
             registry = get_backend_registry()
             if hasattr(registry, '_backend_instances'):
                 old_count = len(registry._backend_instances)
@@ -364,7 +364,7 @@ class VespaTestManager:
                     print(f"   - {video.name} ({size_mb:.1f}MB)")
                 
                 # Build pipeline with test schema and explicit app_config
-                from src.app.ingestion.pipeline_builder import create_pipeline, create_config
+                from cogniverse_runtime.ingestion.pipeline_builder import create_pipeline, create_config
 
                 # Update test_config with correct Vespa port for this isolated instance
                 test_config['vespa_port'] = self.http_port
@@ -445,7 +445,7 @@ class VespaTestManager:
                 #     print("🔧 CLEARED COGNIVERSE_CONFIG environment variable")
 
                 # DO NOT clear cached backends - they need to remain for the test
-                # from src.common.core.backend_registry import get_backend_registry
+                # from cogniverse_core.common.core.backend_registry import get_backend_registry
                 # registry = get_backend_registry()
                 # if hasattr(registry, '_backend_instances'):
                 #     registry._backend_instances.clear()
@@ -460,7 +460,7 @@ class VespaTestManager:
     def _create_minimal_test_docs(self) -> bool:
         """Fallback: create minimal test documents if real ingestion fails"""
         try:
-            from src.backends.vespa.vespa_uploader import VespaUploader
+            from cogniverse_vespa.vespa_uploader import VespaUploader
             
             uploader = VespaUploader(
                 vespa_url=f"http://localhost:{self.http_port}",
@@ -582,7 +582,7 @@ class VespaTestManager:
                 print("🔧 CLEARED COGNIVERSE_CONFIG environment variable")
 
             # Clear cached backends to ensure they get recreated with restored config
-            from src.common.core.backend_registry import get_backend_registry
+            from cogniverse_core.common.core.backend_registry import get_backend_registry
             registry = get_backend_registry()
             if hasattr(registry, '_backend_instances'):
                 registry._backend_instances.clear()

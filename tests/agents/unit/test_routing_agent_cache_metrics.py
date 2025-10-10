@@ -9,8 +9,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.app.agents.routing_agent import RoutingAgent, RoutingConfig
-from src.app.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingConfig
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 
 class TestRoutingAgentCacheMetrics:
@@ -61,7 +61,7 @@ class TestRoutingAgentCacheMetrics:
         # Create a RoutingDecision to cache
         from datetime import datetime
 
-        from src.app.agents.routing_agent import RoutingDecision
+        from cogniverse_agents.routing_agent import RoutingDecision
 
         cached_decision = RoutingDecision(
             query=query,

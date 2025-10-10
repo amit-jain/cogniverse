@@ -17,8 +17,8 @@ from typing import Dict, Any, List, Optional, Tuple
 # Add the project root to the path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.common.config_utils import get_config
-from src.tools.a2a_utils import A2AClient, discover_agents
+from cogniverse_core.common.config_utils import get_config
+from cogniverse_core.common.a2a_utils import A2AClient, discover_agents
 
 class SystemTester:
     """Comprehensive system tester for the multi-agent RAG system."""
@@ -31,7 +31,7 @@ class SystemTester:
         self.passed_tests = []
         
         # Use OutputManager for test results
-        from src.common.utils.output_manager import get_output_manager
+        from cogniverse_core.common.utils.output_manager import get_output_manager
         self.output_manager = get_output_manager()
         self.results_dir = self.output_manager.get_test_results_dir()
         
@@ -440,7 +440,7 @@ class SystemTester:
         """Test complete end-to-end multi-agent system with random queries."""
         try:
             # Import here to avoid loading issues
-            from src.app.agents.composing_agents_main import query_analyzer, video_search_tool
+            from cogniverse_agents.composing_agents_main import query_analyzer, video_search_tool
             
             # Test with multiple random queries
             print("\n" + "="*60)

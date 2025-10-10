@@ -8,14 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from src.app.routing.xgboost_meta_models import (
+from cogniverse_agents.routing.xgboost_meta_models import (
     FusionBenefitModel,
     ModelingContext,
     TrainingDecisionModel,
     TrainingStrategy,
     TrainingStrategyModel,
 )
-from src.app.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 
 class TestModelingContext:

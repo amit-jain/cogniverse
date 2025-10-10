@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.evaluation.evaluators.routing_evaluator import (
+from cogniverse_core.evaluation.evaluators.routing_evaluator import (
     RoutingEvaluator,
     RoutingMetrics,
     RoutingOutcome,

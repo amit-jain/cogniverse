@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from src.app.ingestion.processors.chunk_processor import ChunkProcessor
+from cogniverse_runtime.ingestion.processors.chunk_processor import ChunkProcessor
 
 
 @pytest.fixture

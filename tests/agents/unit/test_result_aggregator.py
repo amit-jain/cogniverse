@@ -6,14 +6,14 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from src.app.agents.result_aggregator import (
+from cogniverse_agents.result_aggregator import (
     AgentResult,
     AggregatedResult,
     AggregationRequest,
     ResultAggregator,
 )
-from src.app.agents.routing_agent import RoutingDecision
-from src.app.agents.result_enhancement_engine import EnhancedResult
+from cogniverse_agents.routing_agent import RoutingDecision
+from cogniverse_agents.result_enhancement_engine import EnhancedResult
 
 
 @pytest.mark.unit

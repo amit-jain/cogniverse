@@ -42,8 +42,8 @@ from datetime import datetime
 
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
-from src.common.config_utils import get_config
-from src.app.search.service import SearchService
+from cogniverse_core.common.config_utils import get_config
+from cogniverse_agents.search.service import SearchService
 
 
 # Enhanced ground truth queries combining frame descriptions, transcripts, and human annotations

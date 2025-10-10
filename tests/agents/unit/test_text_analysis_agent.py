@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from src.app.agents.text_analysis_agent import (
+from cogniverse_agents.text_analysis_agent import (
     TextAnalysisAgent,
     _agent_instances,
     app,

@@ -12,17 +12,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.common.agent_config import (
+from cogniverse_core.common.agent_config import (
     AgentConfig,
     DSPyModuleType,
     ModuleConfig,
     OptimizerConfig,
     OptimizerType,
 )
-from src.common.config_manager import ConfigManager
-from src.common.config_store import SQLiteConfigStore
-from src.common.config_store_interface import ConfigScope
-from src.common.unified_config import (
+from cogniverse_core.common.config_manager import ConfigManager
+from cogniverse_core.common.config_store import SQLiteConfigStore
+from cogniverse_core.common.config_store_interface import ConfigScope
+from cogniverse_core.common.unified_config import (
     RoutingConfigUnified,
     SystemConfig,
     TelemetryConfigUnified,

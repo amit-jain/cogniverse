@@ -16,8 +16,8 @@ from datetime import datetime
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.app.search.service import SearchService
-from src.common.config_utils import get_config
+from cogniverse_agents.search.service import SearchService
+from cogniverse_core.common.config_utils import get_config
 import torch
 
 

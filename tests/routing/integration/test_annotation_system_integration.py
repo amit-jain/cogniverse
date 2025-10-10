@@ -21,17 +21,17 @@ from datetime import datetime, timedelta
 import phoenix as px
 import pytest
 
-from src.app.routing.advanced_optimizer import AdvancedRoutingOptimizer
-from src.app.routing.annotation_agent import AnnotationAgent, AnnotationPriority
-from src.app.routing.annotation_feedback_loop import AnnotationFeedbackLoop
-from src.app.routing.annotation_storage import AnnotationStorage
-from src.app.routing.llm_auto_annotator import AnnotationLabel, LLMAutoAnnotator
-from src.app.telemetry.config import (
+from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
+from cogniverse_agents.routing.annotation_agent import AnnotationAgent, AnnotationPriority
+from cogniverse_agents.routing.annotation_feedback_loop import AnnotationFeedbackLoop
+from cogniverse_agents.routing.annotation_storage import AnnotationStorage
+from cogniverse_agents.routing.llm_auto_annotator import AnnotationLabel, LLMAutoAnnotator
+from cogniverse_core.telemetry.config import (
     SERVICE_NAME_ORCHESTRATION,
     SPAN_NAME_ROUTING,
     TelemetryConfig,
 )
-from src.app.telemetry.manager import TelemetryManager
+from cogniverse_core.telemetry.manager import TelemetryManager
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +221,7 @@ class TestAnnotationSystemIntegration:
         else:
             logger.info("Skipping LLM annotation (no API key available)")
             # Create mock annotation for testing storage
-            from src.app.routing.llm_auto_annotator import AutoAnnotation
+            from cogniverse_agents.routing.llm_auto_annotator import AutoAnnotation
 
             auto_annotation = AutoAnnotation(
                 span_id=annotation_requests[0].span_id,
@@ -340,7 +340,7 @@ class TestAnnotationSystemIntegration:
         # Store annotation
         annotation_storage = AnnotationStorage(tenant_id=test_tenant_id)
 
-        from src.app.routing.llm_auto_annotator import AutoAnnotation
+        from cogniverse_agents.routing.llm_auto_annotator import AutoAnnotation
 
         test_annotation = AutoAnnotation(
             span_id=test_span_id,

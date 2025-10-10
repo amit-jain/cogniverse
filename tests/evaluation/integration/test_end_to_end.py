@@ -10,8 +10,8 @@ from unittest.mock import patch
 import pytest
 from inspect_ai import eval as inspect_eval
 
-from src.evaluation.cli import cli
-from src.evaluation.core.task import evaluation_task
+from cogniverse_core.evaluation.cli import cli
+from cogniverse_core.evaluation.core.task import evaluation_task
 
 
 @pytest.mark.integration

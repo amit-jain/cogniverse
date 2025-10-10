@@ -53,10 +53,10 @@ class TestRealIngestionPipeline:
         """
         import logging
 
-        from src.app.ingestion.processors.embedding_processor import EmbeddingProcessor
+        from cogniverse_runtime.ingestion.processors.embedding_processor import EmbeddingProcessor
 
         # First extract keyframes
-        from src.app.ingestion.processors.keyframe_processor import KeyframeProcessor
+        from cogniverse_runtime.ingestion.processors.keyframe_processor import KeyframeProcessor
 
         logger = logging.getLogger("test")
 
@@ -89,7 +89,7 @@ class TestRealIngestionPipeline:
 
         Tests that Strategy correctly resolves processing strategies.
         """
-        from src.app.ingestion.strategy import Strategy
+        from cogniverse_runtime.ingestion.strategy import Strategy
 
         # Create frame-based strategy config
         strategy = Strategy(

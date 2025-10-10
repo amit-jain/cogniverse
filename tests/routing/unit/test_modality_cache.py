@@ -6,8 +6,8 @@ import time
 
 import pytest
 
-from src.app.routing.modality_cache import LRUCache, ModalityCacheManager
-from src.app.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.routing.modality_cache import LRUCache, ModalityCacheManager
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 
 class TestLRUCache:

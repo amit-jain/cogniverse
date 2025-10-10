@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from src.app.agents.query_analysis_tool_v3 import (
+from cogniverse_agents.query_analysis_tool_v3 import (
     QueryAnalysisToolV3,
     QueryComplexity,
     QueryContext,

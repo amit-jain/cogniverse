@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.common.mem0_memory_manager import Mem0MemoryManager
+from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
 
 
 class TestMem0MemoryManager:

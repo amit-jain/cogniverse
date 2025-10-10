@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from src.evaluation.phoenix.monitoring import (
+from cogniverse_core.evaluation.phoenix.monitoring import (
     AlertThresholds,
     MetricWindow,
     RetrievalMonitor,

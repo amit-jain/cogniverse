@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pandas as pd
 import pytest
 
-from src.app.routing.phoenix_span_evaluator import PhoenixSpanEvaluator
+from cogniverse_agents.routing.phoenix_span_evaluator import PhoenixSpanEvaluator
 
 
 @pytest.fixture

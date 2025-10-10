@@ -9,7 +9,7 @@ import tempfile
 
 import pytest
 
-from src.app.routing.adaptive_threshold_learner import (
+from cogniverse_agents.routing.adaptive_threshold_learner import (
     AdaptationStrategy,
     AdaptiveThresholdConfig,
     AdaptiveThresholdLearner,

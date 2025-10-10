@@ -10,9 +10,9 @@ from unittest.mock import Mock, patch
 import numpy as np
 import pytest
 
-from src.app.ingestion.processing_strategy_set import ProcessingStrategySet
-from src.app.ingestion.processor_manager import ProcessorManager
-from src.app.ingestion.strategies import (
+from cogniverse_runtime.ingestion.processing_strategy_set import ProcessingStrategySet
+from cogniverse_runtime.ingestion.processor_manager import ProcessorManager
+from cogniverse_runtime.ingestion.strategies import (
     AudioTranscriptionStrategy,
     ChunkSegmentationStrategy,
     FrameSegmentationStrategy,

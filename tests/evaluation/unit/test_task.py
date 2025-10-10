@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from src.evaluation.core.task import evaluation_task
+from cogniverse_core.evaluation.core.task import evaluation_task
 
 
 class TestEvaluationTask:

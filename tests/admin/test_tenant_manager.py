@@ -42,7 +42,7 @@ class TestTenantManagerAPI:
         os.environ["VESPA_PORT"] = str(vespa_backend.http_port)
 
         # Deploy metadata schemas
-        from src.backends.vespa.vespa_schema_manager import VespaSchemaManager
+        from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
         schema_manager = VespaSchemaManager(
             vespa_endpoint=f"http://localhost",
@@ -51,14 +51,14 @@ class TestTenantManagerAPI:
         schema_manager.upload_metadata_schemas()
 
         # Import app after setting env vars
-        from src.admin.tenant_manager import app
+        from cogniverse_runtime.admin.tenant_manager import app
 
         return TestClient(app)
 
     @pytest.mark.ci_fast
     def test_health_check(self):
         """Test health check endpoint without Vespa"""
-        from src.admin.tenant_manager import app
+        from cogniverse_runtime.admin.tenant_manager import app
 
         client = TestClient(app)
         response = client.get("/health")

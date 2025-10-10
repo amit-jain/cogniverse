@@ -9,9 +9,9 @@ Integration tests for learned reranking with LiteLLM:
 
 import pytest
 
-from src.app.search.hybrid_reranker import HybridReranker
-from src.app.search.learned_reranker import LearnedReranker
-from src.app.search.multi_modal_reranker import (
+from cogniverse_agents.search.hybrid_reranker import HybridReranker
+from cogniverse_agents.search.learned_reranker import LearnedReranker
+from cogniverse_agents.search.multi_modal_reranker import (
     ConfigurableMultiModalReranker,
     MultiModalReranker,
     QueryModality,

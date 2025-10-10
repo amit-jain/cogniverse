@@ -8,7 +8,7 @@ Requires Docker to be running.
 import pytest
 import logging
 
-from src.backends.vespa.tenant_schema_manager import (
+from cogniverse_vespa.tenant_schema_manager import (
     TenantSchemaManager,
     SchemaNotFoundException,
     get_tenant_schema_manager,

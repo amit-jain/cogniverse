@@ -8,8 +8,8 @@ from unittest.mock import Mock, mock_open, patch
 import pandas as pd
 import pytest
 
-from src.evaluation.data.datasets import DatasetManager
-from src.evaluation.data.traces import TraceManager
+from cogniverse_core.evaluation.data.datasets import DatasetManager
+from cogniverse_core.evaluation.data.traces import TraceManager
 
 
 class TestDatasetManager:

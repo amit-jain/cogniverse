@@ -19,14 +19,14 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from src.app.routing.contextual_analyzer import ContextualAnalyzer
-from src.app.routing.query_expansion import QueryExpander
-from src.app.search.multi_modal_reranker import (
+from cogniverse_agents.routing.contextual_analyzer import ContextualAnalyzer
+from cogniverse_agents.routing.query_expansion import QueryExpander
+from cogniverse_agents.search.multi_modal_reranker import (
     MultiModalReranker,
     QueryModality,
     SearchResult,
 )
-from src.backends.vespa.vespa_schema_manager import VespaSchemaManager
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
 
 @pytest.fixture(scope="module")

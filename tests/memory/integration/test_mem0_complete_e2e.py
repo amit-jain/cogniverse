@@ -18,8 +18,8 @@ import pytest
 import requests
 from vespa.package import ApplicationPackage
 
-from src.app.agents.memory_aware_mixin import MemoryAwareMixin
-from src.common.mem0_memory_manager import Mem0MemoryManager
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
 
 VESPA_CONTAINER_NAME = "vespa-memory-standalone"
 VESPA_DATA_PORT = 8084
@@ -146,7 +146,7 @@ def deploy_schema():
         # Load and parse JSON schema
         import json
 
-        from src.backends.vespa.json_schema_parser import JsonSchemaParser
+        from cogniverse_vespa.json_schema_parser import JsonSchemaParser
 
         with open(schema_path, 'r') as f:
             schema_config = json.load(f)

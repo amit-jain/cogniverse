@@ -8,7 +8,7 @@ import pytest
 import numpy as np
 from unittest.mock import Mock, MagicMock, patch
 
-from src.backends.vespa.tenant_aware_search_client import TenantAwareVespaSearchClient
+from cogniverse_vespa.tenant_aware_search_client import TenantAwareVespaSearchClient
 
 
 class TestTenantAwareSearchClientInitialization:

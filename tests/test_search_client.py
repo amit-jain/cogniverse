@@ -15,8 +15,8 @@ from pathlib import Path
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.app.search.service import SearchService
-from src.backends.vespa.vespa_search_client import VespaVideoSearchClient
+from cogniverse_agents.search.service import SearchService
+from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
 
 # Setup logging with more verbose output
 logging.basicConfig(
@@ -146,7 +146,7 @@ def test_ranking_strategies(query=None, table_output=False, show_analysis=True):
     print("\n--- STARTING test_ranking_strategies ---")
     
     # Always save results to test_results directory
-    from src.common.utils.output_manager import get_output_manager
+    from cogniverse_core.common.utils.output_manager import get_output_manager
     output_manager = get_output_manager()
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     auto_csv_path = output_manager.get_test_results_dir() / f"search_client_test_{timestamp}.csv"
@@ -469,7 +469,7 @@ def save_results_to_csv(all_results, filename):
     """Save all results to CSV file"""
     # If filename doesn't include a directory, use OutputManager
     if '/' not in filename:
-        from src.common.utils.output_manager import get_output_manager
+        from cogniverse_core.common.utils.output_manager import get_output_manager
         output_manager = get_output_manager()
         filepath = output_manager.get_test_results_dir() / filename
     else:

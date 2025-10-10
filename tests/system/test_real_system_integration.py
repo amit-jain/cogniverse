@@ -21,11 +21,11 @@ from pathlib import Path
 import pytest
 import requests
 
-from src.app.agents.detailed_report_agent import DetailedReportAgent
-from src.app.agents.routing_agent import RoutingAgent
-from src.app.agents.summarizer_agent import SummarizerAgent
-from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
-from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
+from cogniverse_agents.detailed_report_agent import DetailedReportAgent
+from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.summarizer_agent import SummarizerAgent
+from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
+from cogniverse_agents.routing.relationship_extraction_tools import RelationshipExtractorTool
 
 
 def check_vespa_available() -> bool:
@@ -212,7 +212,7 @@ class TestRealVespaIntegration:
         
         try:
             # Test our actual Enhanced Video Search Agent
-            from src.app.agents.video_search_agent import VideoSearchAgent
+            from cogniverse_agents.video_search_agent import VideoSearchAgent
             
             print("Initializing Enhanced Video Search Agent...")
             video_agent = VideoSearchAgent()
@@ -264,7 +264,7 @@ class TestRealVespaIntegration:
         os.environ['VESPA_SCHEMA'] = 'video_colpali_smol500_mv_frame'
         
         try:
-            from src.app.agents.video_search_agent import VideoSearchAgent
+            from cogniverse_agents.video_search_agent import VideoSearchAgent
             
             print("Initializing VideoSearchAgent...")
             video_agent = VideoSearchAgent()
@@ -503,7 +503,7 @@ class TestRealPipelineIntegration:
                 
                 try:
                     os.environ['VESPA_SCHEMA'] = 'video_colpali_smol500_mv_frame'
-                    from src.app.agents.video_search_agent import VideoSearchAgent
+                    from cogniverse_agents.video_search_agent import VideoSearchAgent
                     video_agent = VideoSearchAgent()
                     
                     assert video_agent.vespa_client is not None
@@ -596,7 +596,7 @@ class TestRealEndToEndIntegration:
         summarizer_agent = SummarizerAgent()
         
         # Initialize relationship extractor properly
-        from src.app.routing.relationship_extraction_tools import (
+        from cogniverse_agents.routing.relationship_extraction_tools import (
             RelationshipExtractorTool,
         )
         relationship_extractor = RelationshipExtractorTool()
@@ -678,7 +678,7 @@ class TestRealEndToEndIntegration:
                 enhanced_query = enhancement_result.get('enhanced_query', test_query)
             else:
                 # Fallback to basic enhancement
-                from src.app.routing.query_enhancement_engine import QueryRewriter
+                from cogniverse_agents.routing.query_enhancement_engine import QueryRewriter
                 rewriter = QueryRewriter()
                 enhanced_query = rewriter.enhance_query(test_query)
             print(f"   ✅ Enhanced query: {enhanced_query}")
@@ -704,7 +704,7 @@ class TestRealEndToEndIntegration:
 
             # Config will be loaded from environment variables by ConfigManager
             
-            from src.app.agents.video_search_agent import VideoSearchAgent
+            from cogniverse_agents.video_search_agent import VideoSearchAgent
             video_search_agent = VideoSearchAgent()
             
             search_results = video_search_agent.search_by_text(test_query, ranking="binary_binary")
@@ -758,7 +758,7 @@ class TestRealEndToEndIntegration:
         print("5. Testing Summarizer Agent with content validation...")
         try:
             if search_success and 'search_results' in locals():
-                from src.app.agents.summarizer_agent import SummaryRequest
+                from cogniverse_agents.summarizer_agent import SummaryRequest
                 summary_request = SummaryRequest(
                     query=test_query,
                     search_results=search_results,

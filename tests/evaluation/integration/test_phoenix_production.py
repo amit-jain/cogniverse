@@ -11,7 +11,7 @@ import pandas as pd
 import phoenix as px
 import pytest
 
-from src.evaluation.data.storage import (
+from cogniverse_core.evaluation.data.storage import (
     ConnectionConfig,
     ConnectionState,
     PhoenixStorage,
