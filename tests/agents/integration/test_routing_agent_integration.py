@@ -183,6 +183,14 @@ class TestRoutingAgentFastAPIIntegration:
         """Start Vespa Docker container, deploy schemas, yield, cleanup"""
         from tests.system.vespa_test_manager import VespaTestManager
         manager = VespaTestManager(app_name="test-orchestrator", http_port=8083)
+
+        # Actually start Vespa and deploy schemas
+        if not manager.setup_application_directory():
+            pytest.skip("Failed to setup application directory")
+
+        if not manager.deploy_test_application():
+            pytest.skip("Failed to deploy Vespa test application")
+
         yield manager
         manager.cleanup()
 

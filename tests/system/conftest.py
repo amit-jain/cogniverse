@@ -19,9 +19,13 @@ def vespa_test_manager():
     """Provide a VespaTestManager for system tests."""
     from .vespa_test_manager import VespaTestManager
     manager = VespaTestManager(http_port=8081)
-    
+
+    # Actually start Vespa and ingest test data
+    if not manager.full_setup():
+        pytest.skip("Failed to setup Vespa test environment")
+
     yield manager
-    
+
     # Only cleanup if no tests failed - otherwise leave running for debugging
     global _test_failed
     if _test_failed:

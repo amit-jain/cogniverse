@@ -21,6 +21,14 @@ class TestTenantManagerAPI:
     def vespa_backend(self):
         """Start Vespa Docker container, deploy metadata schemas, yield, cleanup"""
         manager = VespaTestManager(app_name="test-tenant-manager", http_port=8084)
+
+        # Actually start Vespa and deploy schemas
+        if not manager.setup_application_directory():
+            pytest.skip("Failed to setup application directory")
+
+        if not manager.deploy_test_application():
+            pytest.skip("Failed to deploy Vespa test application")
+
         yield manager
         manager.cleanup()
 
