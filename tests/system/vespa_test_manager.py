@@ -303,7 +303,7 @@ class VespaTestManager:
             self.original_cogniverse_config = original_cogniverse_config
 
             # Store original config values for restoration
-            from cogniverse_core.common.config_utils import get_config
+            from cogniverse_core.config.utils import get_config
             original_config_values = get_config()
             original_config_vespa_url = original_config_values.get('vespa_url')
             original_config_vespa_port = original_config_values.get('vespa_port')
@@ -330,7 +330,7 @@ class VespaTestManager:
             print(f"🔧 Loaded {len(profiles)} profiles: {list(profiles.keys())}")
 
             # Verify the config will be loaded from environment
-            from cogniverse_core.common.config_utils import get_config
+            from cogniverse_core.config.utils import get_config
             current_config = get_config()
             loaded_profiles = current_config.get('video_processing_profiles', {})
             print(f"🔍 Config verification: video_processing_profiles has {len(loaded_profiles)} entries")

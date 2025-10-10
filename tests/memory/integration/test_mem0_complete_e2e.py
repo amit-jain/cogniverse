@@ -18,7 +18,7 @@ import pytest
 import requests
 from vespa.package import ApplicationPackage
 
-from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
 
 VESPA_CONTAINER_NAME = "vespa-memory-standalone"

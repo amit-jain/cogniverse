@@ -25,7 +25,7 @@ class TestDynamicConfigIntegration:
         """Create fresh TextAnalysisAgent instance with clean config"""
         from fastapi import FastAPI
 
-        from cogniverse_core.common.config_manager import ConfigManager
+        from cogniverse_core.config.config_manager import ConfigManager
 
         # Reset ConfigManager to ensure clean state
         ConfigManager._instance = None

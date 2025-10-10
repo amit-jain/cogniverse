@@ -476,7 +476,7 @@ class TestMem0MemoryAwareMixinIntegration:
 
     def test_mixin_with_real_memory(self, test_vespa):
         """Test MemoryAwareMixin with real Mem0 backend"""
-        from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
+        from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 
         class TestAgent(MemoryAwareMixin):
             def __init__(self):

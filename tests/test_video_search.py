@@ -17,7 +17,7 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
 from cogniverse_agents.search.service import SearchService
-from cogniverse_core.common.config_utils import get_config
+from cogniverse_core.config.utils import get_config
 import torch
 
 

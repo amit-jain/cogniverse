@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from cogniverse_core.common.a2a_mixin import A2AEndpointsMixin
 from cogniverse_core.config.agent_config import AgentConfig, DSPyModuleType, ModuleConfig
 from cogniverse_core.common.config_api_mixin import ConfigAPIMixin
-from cogniverse_core.common.config_manager import get_config_manager
+from cogniverse_core.config.config_manager import get_config_manager
 from cogniverse_core.config.utils import get_config
 from cogniverse_core.common.dynamic_dspy_mixin import DynamicDSPyMixin
 from cogniverse_core.common.health_mixin import HealthCheckMixin

@@ -19,7 +19,7 @@ from typing import Any
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from cogniverse_core.common.config_utils import get_config
+from cogniverse_core.config.utils import get_config
 # from cogniverse_agents.tools.query_analyzer import QueryAnalyzer  # Module removed
 
 import pytest

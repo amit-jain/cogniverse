@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 
 from cogniverse_core.config.agent_config import AgentConfig, DSPyModuleType, ModuleConfig
-from cogniverse_core.common.config_manager import ConfigManager
-from cogniverse_core.common.unified_config import (
+from cogniverse_core.config.config_manager import ConfigManager
+from cogniverse_core.config.unified_config import (
     RoutingConfigUnified,
     SystemConfig,
     TelemetryConfigUnified,

@@ -42,7 +42,7 @@ from datetime import datetime
 
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
-from cogniverse_core.common.config_utils import get_config
+from cogniverse_core.config.utils import get_config
 from cogniverse_agents.search.service import SearchService
 
 

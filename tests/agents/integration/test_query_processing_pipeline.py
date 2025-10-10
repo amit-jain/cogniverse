@@ -574,7 +574,7 @@ class TestSystemIntegrationReadiness:
 
     def test_system_configuration_readiness(self):
         """Test system can handle different configuration states"""
-        from cogniverse_core.common.config_utils import get_config
+        from cogniverse_core.config.utils import get_config
 
         config = get_config()
 
