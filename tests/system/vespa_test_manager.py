@@ -340,7 +340,7 @@ class VespaTestManager:
                 print(f"🔍 Profile has 'strategies': {'strategies' in profile}")
             
             # Clear any cached backend instances that might have old config
-            from cogniverse_core.common.core.backend_registry import get_backend_registry
+            from cogniverse_core.registries.backend_registry import get_backend_registry
             registry = get_backend_registry()
             if hasattr(registry, '_backend_instances'):
                 old_count = len(registry._backend_instances)
@@ -582,7 +582,7 @@ class VespaTestManager:
                 print("🔧 CLEARED COGNIVERSE_CONFIG environment variable")
 
             # Clear cached backends to ensure they get recreated with restored config
-            from cogniverse_core.common.core.backend_registry import get_backend_registry
+            from cogniverse_core.registries.backend_registry import get_backend_registry
             registry = get_backend_registry()
             if hasattr(registry, '_backend_instances'):
                 registry._backend_instances.clear()
