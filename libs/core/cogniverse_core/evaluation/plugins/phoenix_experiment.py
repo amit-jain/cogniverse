@@ -48,8 +48,8 @@ class PhoenixExperimentPlugin:
             )
 
             # Import search service
-            from src.app.search.service import SearchService
-            from src.common.config_utils import get_config
+            from cogniverse_agents.search.service import SearchService
+            from cogniverse_core.config.utils import get_config
 
             main_config = get_config()
             all_results = {}
@@ -153,7 +153,7 @@ class PhoenixExperimentPlugin:
             raise ValueError(f"Dataset '{dataset_name}' not found in Phoenix")
 
         # Create task that combines Inspect AI solvers with Phoenix tracking
-        from src.evaluation.core.solvers import create_retrieval_solver
+        from cogniverse_core.evaluation.core.solvers import create_retrieval_solver
 
         inspect_solver = create_retrieval_solver(profiles, strategies, config)
 
@@ -210,7 +210,7 @@ def get_phoenix_evaluators(config: dict[str, Any]) -> list[Any]:
 
     # Add visual evaluators if configured
     if config.get("enable_llm_evaluators", False):
-        from src.evaluation.evaluators.configurable_visual_judge import (
+        from cogniverse_core.evaluation.evaluators.configurable_visual_judge import (
             ConfigurableVisualJudge,
         )
 
@@ -227,7 +227,7 @@ def get_phoenix_evaluators(config: dict[str, Any]) -> list[Any]:
 
     # Add quality evaluators if configured
     if config.get("enable_quality_evaluators", False):
-        from src.evaluation.evaluators.sync_reference_free import create_sync_evaluators
+        from cogniverse_core.evaluation.evaluators.sync_reference_free import create_sync_evaluators
 
         quality_evaluators = create_sync_evaluators()
         evaluators.extend(quality_evaluators)

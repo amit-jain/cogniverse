@@ -15,9 +15,9 @@ from google.adk.tools import BaseTool
 logger = logging.getLogger(__name__)
 
 # Import our custom utilities
-from src.common.config_utils import get_config
-from src.tools.a2a_utils import A2AClient, format_search_results
-from src.tools.video_player_tool import VideoPlayerTool
+from cogniverse_core.config.utils import get_config
+from cogniverse_agents.tools.a2a_utils import A2AClient, format_search_results
+from cogniverse_agents.tools.video_player_tool import VideoPlayerTool
 
 # Initialize configuration
 config = get_config()
@@ -137,7 +137,7 @@ class QueryAnalysisTool(BaseTool):
                 self.gliner_model = None
         elif self.inference_mode == "llm":
             # Use PromptManager for LLM-based routing
-            from src.common.utils.prompt_manager import PromptManager
+            from cogniverse_core.common.utils.prompt_manager import PromptManager
 
             self.prompt_manager = PromptManager()
 

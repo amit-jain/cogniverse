@@ -7,10 +7,10 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from src.common.agent_config import AgentConfig
-from src.common.config_store import SQLiteConfigStore
-from src.common.config_store_interface import ConfigScope, ConfigStore
-from src.common.unified_config import (
+from cogniverse_core.config.agent_config import AgentConfig
+from cogniverse_core.common.config_store import SQLiteConfigStore
+from cogniverse_core.common.config_store_interface import ConfigScope, ConfigStore
+from cogniverse_core.config.unified_config import (
     AgentConfigUnified,
     RoutingConfigUnified,
     SystemConfig,

@@ -7,14 +7,14 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
 
-from src.app.agents.result_aggregator import (
+from cogniverse_agents.result_aggregator import (
     AggregatedResult,
     AggregationRequest,
     ResultAggregator,
 )
-from src.app.agents.routing_agent import RoutingAgent, RoutingDecision
-from src.backends.vespa.vespa_search_client import VespaVideoSearchClient
-from src.common.config_utils import get_config
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDecision
+from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
+from cogniverse_core.config.utils import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -282,7 +282,7 @@ class AgentOrchestrator:
         except Exception as e:
             logger.error(f"Result aggregation failed: {e}")
             # Return minimal aggregated result
-            from src.app.agents.result_aggregator import AggregatedResult
+            from cogniverse_agents.result_aggregator import AggregatedResult
 
             return AggregatedResult(
                 routing_decision=routing_decision,
@@ -394,7 +394,7 @@ class AgentOrchestrator:
         )
 
         # Create minimal aggregated result
-        from src.app.agents.result_aggregator import AggregatedResult
+        from cogniverse_agents.result_aggregator import AggregatedResult
 
         error_aggregated_result = AggregatedResult(
             routing_decision=error_routing_decision,

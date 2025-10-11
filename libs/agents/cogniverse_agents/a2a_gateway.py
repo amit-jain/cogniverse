@@ -21,12 +21,12 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from src.app.agents.multi_agent_orchestrator import (
+from cogniverse_agents.multi_agent_orchestrator import (
     MultiAgentOrchestrator,
 )
 
 # Routing imports
-from src.app.agents.routing_agent import (
+from cogniverse_agents.routing_agent import (
     RoutingAgent,
     RoutingConfig,
 )

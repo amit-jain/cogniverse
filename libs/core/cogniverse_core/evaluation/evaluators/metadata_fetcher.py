@@ -72,7 +72,7 @@ class VideoMetadataFetcher:
         """
         try:
             # Use search service instead of direct backend access
-            from src.app.search.service import SearchService
+            from cogniverse_agents.search.service import SearchService
 
             # Use search service to find the video
             # This keeps evaluation independent of backend implementation

@@ -10,10 +10,10 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from src.app.agents.routing_agent import RoutingAgent
-from src.common.agent_models import AgentEndpoint
-from src.common.config_utils import get_config
-from src.tools.a2a_utils import (
+from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_core.common.agent_models import AgentEndpoint
+from cogniverse_core.config.utils import get_config
+from cogniverse_agents.tools.a2a_utils import (
     DataPart,
     Task,
     TextPart,
@@ -55,7 +55,7 @@ class A2ARoutingAgent:
         self.http_client = httpx.AsyncClient(timeout=30.0)
 
         # Initialize agent registry
-        from src.app.agents.agent_registry import AgentRegistry
+        from cogniverse_agents.agent_registry import AgentRegistry
 
         self.agent_registry = AgentRegistry()
 

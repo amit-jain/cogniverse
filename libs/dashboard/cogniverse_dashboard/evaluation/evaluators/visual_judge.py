@@ -15,10 +15,10 @@ from phoenix.experiments.evaluators.base import Evaluator
 from phoenix.experiments.types import EvaluationResult
 from PIL import Image
 
-from src.app.agents.query_encoders import ColPaliQueryEncoder
+from cogniverse_agents.query_encoders import ColPaliQueryEncoder
 
 # Use existing model infrastructure
-from src.common.models import get_or_load_model
+from cogniverse_core.common.models import get_or_load_model
 
 logger = logging.getLogger(__name__)
 

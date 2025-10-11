@@ -7,9 +7,9 @@ from typing import Any, Dict, List, Optional
 from a2a import DataPart
 from fastapi import FastAPI, HTTPException
 
-from src.app.search.service import SearchService
-from src.common.config_utils import get_config
-from src.tools.a2a_utils import Task
+from cogniverse_agents.search.service import SearchService
+from cogniverse_core.config.utils import get_config
+from cogniverse_agents.tools.a2a_utils import Task
 
 logger = logging.getLogger(__name__)
 

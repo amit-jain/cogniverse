@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-from src.tools.config import get_config
+from cogniverse_core.config.utils import get_config
 
 # Configure logging
 logging.basicConfig(
@@ -77,7 +77,7 @@ class VideoFileServer:
         @self.app.get("/player/{video_id}")
         async def video_player(video_id: str, search_results: str = None, start_time: float = None):
             """Serve video player HTML for a specific video with search results"""
-            from src.tools.video_player_tool import VideoPlayerTool
+            from cogniverse_agents.tools.video_player_tool import VideoPlayerTool
             
             player_tool = VideoPlayerTool()
             result = await player_tool.execute(

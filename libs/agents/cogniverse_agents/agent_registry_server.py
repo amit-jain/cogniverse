@@ -8,7 +8,7 @@ from typing import Any, Dict, List
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from src.app.agents.agent_registry import AgentRegistry
+from cogniverse_agents.agent_registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 

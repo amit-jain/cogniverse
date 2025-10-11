@@ -8,13 +8,13 @@ from typing import Any, Dict, Optional
 from fastapi import HTTPException
 from pydantic import BaseModel
 
-from src.common.agent_config import (
+from cogniverse_core.config.agent_config import (
     DSPyModuleType,
     ModuleConfig,
     OptimizerConfig,
     OptimizerType,
 )
-from src.common.config_manager import get_config_manager
+from cogniverse_core.config.config_manager import get_config_manager
 
 logger = logging.getLogger(__name__)
 
@@ -283,7 +283,7 @@ class ConfigAPIMixin:
         @app.get("/config/modules/available")
         async def list_available_modules():
             """List all available DSPy module types"""
-            from src.common.dspy_module_registry import DSPyModuleRegistry
+            from cogniverse_core.common.dspy_module_registry import DSPyModuleRegistry
 
             return {
                 "status": "success",
@@ -293,7 +293,7 @@ class ConfigAPIMixin:
         @app.get("/config/optimizers/available")
         async def list_available_optimizers():
             """List all available DSPy optimizer types"""
-            from src.common.dspy_module_registry import DSPyOptimizerRegistry
+            from cogniverse_core.common.dspy_module_registry import DSPyOptimizerRegistry
 
             return {
                 "status": "success",

@@ -17,7 +17,7 @@ os.environ["MEM0_TELEMETRY"] = "False"
 from mem0 import Memory
 from mem0.vector_stores.configs import VectorStoreConfig
 
-from src.backends.vespa.tenant_schema_manager import get_tenant_schema_manager
+from cogniverse_vespa.tenant_schema_manager import get_tenant_schema_manager
 
 logger = logging.getLogger(__name__)
 

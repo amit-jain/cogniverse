@@ -8,7 +8,7 @@ only when dealing with video schemas.
 import re
 from typing import Any
 
-from src.evaluation.core.schema_analyzer import SchemaAnalyzer
+from cogniverse_core.evaluation.core.schema_analyzer import SchemaAnalyzer
 
 
 class VideoSchemaAnalyzer(SchemaAnalyzer):

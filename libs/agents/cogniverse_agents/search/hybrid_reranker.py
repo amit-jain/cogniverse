@@ -12,13 +12,13 @@ Strategies:
 import logging
 from typing import Dict, List, Optional
 
-from src.app.search.learned_reranker import LearnedReranker
-from src.app.search.multi_modal_reranker import (
+from cogniverse_agents.search.learned_reranker import LearnedReranker
+from cogniverse_agents.search.multi_modal_reranker import (
     MultiModalReranker,
     QueryModality,
     SearchResult,
 )
-from src.common.config_utils import get_config_value
+from cogniverse_core.config.utils import get_config_value
 
 logger = logging.getLogger(__name__)
 

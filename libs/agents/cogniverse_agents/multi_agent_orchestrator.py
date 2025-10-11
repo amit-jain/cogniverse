@@ -27,18 +27,18 @@ from typing import Any, Dict, List, Optional
 import dspy
 
 # Enhanced routing imports
-from src.app.agents.routing_agent import (
+from cogniverse_agents.routing_agent import (
     RoutingAgent,
 )
 
 # Workflow intelligence (import after types to avoid circular dependency)
-from src.app.agents.workflow_intelligence import (
+from cogniverse_agents.workflow_intelligence import (
     OptimizationStrategy,
     create_workflow_intelligence,
 )
 
 # Shared workflow types
-from src.app.agents.workflow_types import (
+from cogniverse_agents.workflow_types import (
     TaskStatus,
     WorkflowPlan,
     WorkflowStatus,
@@ -46,7 +46,7 @@ from src.app.agents.workflow_types import (
 )
 
 # A2A protocol imports
-from src.tools.a2a_utils import A2AClient
+from cogniverse_agents.tools.a2a_utils import A2AClient
 
 
 class FusionStrategy(Enum):

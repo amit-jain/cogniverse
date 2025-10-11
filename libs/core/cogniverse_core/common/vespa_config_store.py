@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from vespa.application import Vespa
 
-from src.common.config_store_interface import ConfigEntry, ConfigScope, ConfigStore
+from cogniverse_core.common.config_store_interface import ConfigEntry, ConfigScope, ConfigStore
 
 logger = logging.getLogger(__name__)
 

@@ -5,10 +5,10 @@ from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
 import os
 
-from src.common.models import get_or_load_model
-from src.app.agents.query_encoders import QueryEncoderFactory
-from src.common.core.registry import get_registry
-from src.common.core.backend_registry import get_backend_registry
+from cogniverse_core.common.models import get_or_load_model
+from cogniverse_agents.query_encoders import QueryEncoderFactory
+from cogniverse_core.registries.registry import get_registry
+from cogniverse_core.registries.backend_registry import get_backend_registry
 from .base import SearchBackend, SearchResult
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ class SearchService:
         self.profile = profile
         
         # Initialize new telemetry system
-        from src.app.telemetry.manager import get_telemetry_manager
+        from cogniverse_core.telemetry.manager import get_telemetry_manager
         get_telemetry_manager()  # Initialize singleton
         
         # Get strategy from registry
@@ -99,7 +99,7 @@ class SearchService:
             List of SearchResult objects
         """
         # Use new multi-tenant telemetry system
-        from src.app.telemetry.context import (
+        from cogniverse_core.telemetry.context import (
             search_span, encode_span, backend_search_span, 
             add_search_results_to_span, add_embedding_details_to_span
         )

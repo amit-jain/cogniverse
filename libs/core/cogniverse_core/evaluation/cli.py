@@ -16,8 +16,8 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from inspect_ai import eval as inspect_eval
 
-from src.evaluation.core import evaluation_task
-from src.evaluation.data import DatasetManager, TraceManager
+from cogniverse_core.evaluation.core import evaluation_task
+from cogniverse_core.evaluation.data import DatasetManager, TraceManager
 
 # Configure logging
 logging.basicConfig(

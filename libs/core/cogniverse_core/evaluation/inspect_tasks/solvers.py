@@ -8,8 +8,8 @@ from typing import Any
 
 from inspect_ai.solver import Solver, solver
 
-from src.app.search.service import SearchService
-from src.common.config_utils import get_config
+from cogniverse_agents.search.service import SearchService
+from cogniverse_core.config.utils import get_config
 
 logger = logging.getLogger(__name__)
 

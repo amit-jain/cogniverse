@@ -7,7 +7,7 @@ from elasticsearch import Elasticsearch
 from fastapi import FastAPI, HTTPException
 from sentence_transformers import SentenceTransformer
 
-from src.tools.a2a_utils import DataPart, Task
+from cogniverse_agents.tools.a2a_utils import DataPart, Task
 
 
 # --- Text Search Agent Implementation ---

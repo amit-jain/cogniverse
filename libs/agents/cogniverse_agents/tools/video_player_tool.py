@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 from google.adk.tools import BaseTool
 from google.genai.types import Part
 
-from src.common.config_utils import get_config
+from cogniverse_core.config.utils import get_config
 
 
 class VideoPlayerTool(BaseTool):

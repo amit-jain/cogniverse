@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 import numpy as np
-from src.common.document import Document
+from cogniverse_core.common.document import Document
 
 
 class SearchResult:

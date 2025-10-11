@@ -17,7 +17,7 @@ import uvicorn
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from src.tools.a2a_utils import A2AClient, AgentCard
+from cogniverse_agents.tools.a2a_utils import A2AClient, AgentCard
 
 logger = logging.getLogger(__name__)
 

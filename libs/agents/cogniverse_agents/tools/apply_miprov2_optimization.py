@@ -81,7 +81,7 @@ def apply_to_query_analyzer():
     # Example usage code
     print("\n📋 Example usage in QueryAnalyzer:")
     print("""
-from src.tools.query_analyzer import QueryAnalyzer
+from cogniverse_agents.tools.query_analyzer import QueryAnalyzer
 
 # Initialize with optimized configuration
 analyzer = QueryAnalyzer()

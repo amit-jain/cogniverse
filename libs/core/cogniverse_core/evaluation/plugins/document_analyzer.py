@@ -7,7 +7,7 @@ Example plugin showing how non-video domains work with the evaluation system.
 import re
 from typing import Any
 
-from src.evaluation.core.schema_analyzer import SchemaAnalyzer
+from cogniverse_core.evaluation.core.schema_analyzer import SchemaAnalyzer
 
 
 class DocumentSchemaAnalyzer(SchemaAnalyzer):
