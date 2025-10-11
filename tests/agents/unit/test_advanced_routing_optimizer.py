@@ -488,10 +488,10 @@ class TestAdvancedRoutingOptimizerIntegration:
     def test_components_import_successfully(self):
         """Test that all Phase 6 components can be imported."""
         try:
-            import src.app.routing.adaptive_threshold_learner as atl
-            import src.app.routing.advanced_optimizer as ao
-            import src.app.routing.mlflow_integration as mli
-            import src.app.routing.simba_query_enhancer as sqe
+            import cogniverse_agents.routing.adaptive_threshold_learner as atl
+            import cogniverse_agents.routing.advanced_optimizer as ao
+            import cogniverse_agents.routing.mlflow_integration as mli
+            import cogniverse_agents.routing.simba_query_enhancer as sqe
 
             # Verify key components exist
             assert hasattr(atl, "AdaptiveThresholdLearner")

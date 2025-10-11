@@ -224,7 +224,7 @@ class TestVideoPrismTextEncoder(unittest.TestCase):
         self.vp_patch.start()
 
         # Mock the global VIDEOPRISM_AVAILABLE flag
-        import src.common.models.videoprism_text_encoder as encoder_module
+        import cogniverse_core.common.models.videoprism_text_encoder as encoder_module
         encoder_module.VIDEOPRISM_AVAILABLE = True
         encoder_module.vp = self.vp_mock.models
         

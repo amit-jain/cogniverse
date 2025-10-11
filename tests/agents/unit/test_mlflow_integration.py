@@ -386,7 +386,7 @@ class TestMLflowIntegrationIntegration:
     def test_component_imports_successfully(self):
         """Test that MLflow integration components can be imported."""
         try:
-            import src.app.routing.mlflow_integration as mli
+            import cogniverse_agents.routing.mlflow_integration as mli
 
             # Verify key components exist
             assert hasattr(mli, "ABTestConfig")

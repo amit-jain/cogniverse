@@ -293,7 +293,7 @@ class TestAdaptiveThresholdLearnerIntegration:
     def test_component_imports_successfully(self):
         """Test that adaptive threshold learner components can be imported."""
         try:
-            import src.app.routing.adaptive_threshold_learner as atl
+            import cogniverse_agents.routing.adaptive_threshold_learner as atl
 
             # Verify key components exist
             assert hasattr(atl, "AdaptationStrategy")

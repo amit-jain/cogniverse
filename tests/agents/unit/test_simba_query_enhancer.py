@@ -220,7 +220,7 @@ class TestSIMBAIntegration:
     def test_component_imports_successfully(self):
         """Test that SIMBA components can be imported."""
         try:
-            import src.app.routing.simba_query_enhancer as sqe
+            import cogniverse_agents.routing.simba_query_enhancer as sqe
 
             # Verify key components exist
             assert hasattr(sqe, "QueryEnhancementPattern")
