@@ -62,9 +62,9 @@ class TestEndToEndVideoProcessing:
             embedding=embedding_strategy,
         )
 
-    @patch("src.app.ingestion.processors.keyframe_processor.KeyframeProcessor")
-    @patch("src.app.ingestion.processors.audio_processor.AudioProcessor")
-    @patch("src.app.ingestion.processors.embedding_processor.EmbeddingProcessor")
+    @patch("cogniverse_core.ingestion.processors.keyframe_processor.KeyframeProcessor")
+    @patch("cogniverse_core.ingestion.processors.audio_processor.AudioProcessor")
+    @patch("cogniverse_core.ingestion.processors.embedding_processor.EmbeddingProcessor")
     def test_complete_frame_based_pipeline(
         self,
         mock_embedding_class,
@@ -169,9 +169,9 @@ class TestEndToEndVideoProcessing:
             mock_audio.transcribe_audio.assert_called_once_with(sample_video_path)
             mock_embedding.generate_embeddings.assert_called_once()
 
-    @patch("src.app.ingestion.processors.chunk_processor.ChunkProcessor")
-    @patch("src.app.ingestion.processors.audio_processor.AudioProcessor")
-    @patch("src.app.ingestion.processors.embedding_processor.EmbeddingProcessor")
+    @patch("cogniverse_core.ingestion.processors.chunk_processor.ChunkProcessor")
+    @patch("cogniverse_core.ingestion.processors.audio_processor.AudioProcessor")
+    @patch("cogniverse_core.ingestion.processors.embedding_processor.EmbeddingProcessor")
     def test_complete_chunk_based_pipeline(
         self,
         mock_embedding_class,
@@ -406,9 +406,9 @@ class TestEndToEndVideoProcessing:
             with pytest.raises(Exception, match="Audio processing failed"):
                 audio_processor.transcribe_audio(sample_video_path)
 
-    @patch("src.app.ingestion.processors.keyframe_processor.KeyframeProcessor")
-    @patch("src.app.ingestion.processors.audio_processor.AudioProcessor")
-    @patch("src.app.ingestion.processors.embedding_processor.EmbeddingProcessor")
+    @patch("cogniverse_core.ingestion.processors.keyframe_processor.KeyframeProcessor")
+    @patch("cogniverse_core.ingestion.processors.audio_processor.AudioProcessor")
+    @patch("cogniverse_core.ingestion.processors.embedding_processor.EmbeddingProcessor")
     def test_pipeline_data_flow_validation(
         self,
         mock_embedding_class,

@@ -234,8 +234,8 @@ class TestDSPySpecializedMixins:
 class TestDSPyAgentIntegration:
     """Test DSPy integration with actual agent classes."""
 
-    @patch("src.app.agents.routing_agent.DSPyAdvancedRoutingModule")
-    @patch("src.app.agents.routing_agent.AdvancedRoutingOptimizer")
+    @patch("cogniverse_agents.routing_agent.DSPyAdvancedRoutingModule")
+    @patch("cogniverse_agents.routing_agent.AdvancedRoutingOptimizer")
     def test_routing_agent_dspy_integration(self, mock_optimizer, mock_routing_module):
         """Test DSPy integration in RoutingAgent."""
         # Mock the routing modules to avoid loading models
@@ -253,8 +253,8 @@ class TestDSPyAgentIntegration:
         assert hasattr(agent, "route_query")
         assert hasattr(agent, "get_routing_statistics")
 
-    @patch("src.app.agents.summarizer_agent.get_config")
-    @patch("src.app.agents.summarizer_agent.VLMInterface")
+    @patch("cogniverse_agents.summarizer_agent.get_config")
+    @patch("cogniverse_agents.summarizer_agent.VLMInterface")
     def test_summarizer_agent_dspy_integration(self, mock_vlm, mock_config):
         """Test DSPy integration in SummarizerAgent."""
         mock_vlm.return_value = Mock()
@@ -278,8 +278,8 @@ class TestDSPyAgentIntegration:
         assert "enabled" in metadata
         assert metadata["agent_type"] in ["summary_generation", "query_analysis"]
 
-    @patch("src.app.agents.detailed_report_agent.get_config")
-    @patch("src.app.agents.detailed_report_agent.VLMInterface")
+    @patch("cogniverse_agents.detailed_report_agent.get_config")
+    @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     def test_detailed_report_agent_dspy_integration(self, mock_vlm, mock_config):
         """Test DSPy integration in DetailedReportAgent."""
         mock_vlm.return_value = Mock()
@@ -303,7 +303,7 @@ class TestDSPyAgentIntegration:
         assert "enabled" in metadata
         assert metadata["agent_type"] in ["detailed_report", "query_analysis"]
 
-    @patch("src.app.agents.query_analysis_tool_v3.RoutingAgent")
+    @patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent")
     def test_query_analysis_tool_dspy_integration(self, mock_routing_agent):
         """Test DSPy integration in QueryAnalysisToolV3."""
         mock_routing_agent.return_value = Mock()
@@ -3024,8 +3024,8 @@ class TestSystemIntegration:
 class TestVideoSearchAgent:
     """Unit tests for Enhanced Video Search Agent"""
 
-    @patch("src.app.agents.query_encoders.get_config")
-    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.query_encoders.get_config")
+    @patch("cogniverse_agents.video_search_agent.get_config")
     def test_video_search_agent_initialization(self, mock_video_config, mock_encoder_config):
         """Test Enhanced Video Search Agent initialization"""
 
@@ -3119,9 +3119,9 @@ class TestVideoSearchAgent:
         assert context.confidence == 0.8
         assert context.routing_metadata["agent"] == "video_search_agent"
 
-    @patch("src.app.agents.query_encoders.get_config")
-    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
-    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.query_encoders.get_config")
+    @patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient")
+    @patch("cogniverse_agents.video_search_agent.get_config")
     def test_relevance_score_calculation(self, mock_video_config, mock_vespa_class, mock_encoder_config):
         """Test relevance score calculation with relationship context"""
 
@@ -3182,9 +3182,9 @@ class TestVideoSearchAgent:
             assert relevance > 0.0
             assert relevance <= 1.0
 
-    @patch("src.app.agents.query_encoders.get_config")
-    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
-    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.query_encoders.get_config")
+    @patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient")
+    @patch("cogniverse_agents.video_search_agent.get_config")
     def test_entity_matching_logic(self, mock_video_config, mock_vespa_class, mock_encoder_config):
         """Test entity matching in results"""
 
@@ -3247,9 +3247,9 @@ class TestVideoSearchAgent:
             assert "robots" in matched_texts
             assert "soccer" in matched_texts
 
-    @patch("src.app.agents.query_encoders.get_config")
-    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
-    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.query_encoders.get_config")
+    @patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient")
+    @patch("cogniverse_agents.video_search_agent.get_config")
     def test_search_result_enhancement(self, mock_video_config, mock_vespa_class, mock_encoder_config):
         """Test search result enhancement with relationships"""
 

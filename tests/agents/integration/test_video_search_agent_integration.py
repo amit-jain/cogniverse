@@ -53,10 +53,10 @@ def mock_processor():
 class TestVideoSearchAgentIntegration:
     """Integration tests for Enhanced Video Search Agent functionality"""
 
-    @patch("src.app.agents.query_encoders.get_config")
-    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.query_encoders.get_config")
+    @patch("cogniverse_agents.video_search_agent.get_config")
     @pytest.mark.ci_fast
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("cogniverse_agents.video_search_agent.VespaVideoSearchClient")
     def test_agent_initialization_with_real_config(
         self, mock_vespa_client_class, mock_video_config, mock_encoder_config, mock_vespa_client
     ):
@@ -94,9 +94,9 @@ class TestVideoSearchAgentIntegration:
         assert agent.video_processor is not None
         mock_vespa_client_class.assert_called_once()
 
-    @patch("src.app.agents.query_encoders.get_config")
-    @patch("src.app.agents.video_search_agent.get_config")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("cogniverse_agents.query_encoders.get_config")
+    @patch("cogniverse_agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.VespaVideoSearchClient")
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_multimodal_search_workflow_integration(
@@ -156,9 +156,9 @@ class TestVideoSearchAgentIntegration:
             image_data, "test.jpg"
         )
 
-    @patch("src.app.agents.query_encoders.get_config")
-    @patch("src.app.agents.video_search_agent.get_config")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("cogniverse_agents.query_encoders.get_config")
+    @patch("cogniverse_agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.VespaVideoSearchClient")
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_a2a_message_processing_integration(
@@ -218,9 +218,9 @@ class TestVideoSearchAgentIntegration:
         assert mock_vespa_client.search.call_count >= 1
         # Video and image processing happens in background, may or may not be called in test
 
-    @patch("src.app.agents.query_encoders.get_config")
-    @patch("src.app.agents.video_search_agent.get_config")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("cogniverse_agents.query_encoders.get_config")
+    @patch("cogniverse_agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.VespaVideoSearchClient")
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_error_handling_integration(
@@ -265,9 +265,9 @@ class TestVideoSearchAgentIntegration:
 
         assert "Search service unavailable" in str(exc_info.value)
 
-    @patch("src.app.agents.query_encoders.get_config")
-    @patch("src.app.agents.video_search_agent.get_config")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("cogniverse_agents.query_encoders.get_config")
+    @patch("cogniverse_agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.VespaVideoSearchClient")
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_concurrent_search_operations(
@@ -320,9 +320,9 @@ class TestVideoSearchAgentIntegration:
         # Verify search service called for each query
         assert mock_vespa_client.search.call_count == 5
 
-    @patch("src.app.agents.query_encoders.get_config")
-    @patch("src.app.agents.video_search_agent.get_config")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("cogniverse_agents.query_encoders.get_config")
+    @patch("cogniverse_agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.VespaVideoSearchClient")
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_search_result_aggregation(
@@ -385,9 +385,9 @@ class TestVideoSearchAgentIntegration:
         assert video_results[0]["id"] == "video_result"
         assert image_results[0]["id"] == "image_result"
 
-    @patch("src.app.agents.query_encoders.get_config")
-    @patch("src.app.agents.video_search_agent.get_config")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("cogniverse_agents.query_encoders.get_config")
+    @patch("cogniverse_agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.VespaVideoSearchClient")
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_performance_monitoring_integration(
@@ -440,9 +440,9 @@ class TestVideoSearchAgentIntegration:
         # Verify results
         assert len(results) == 2
 
-    @patch("src.app.agents.query_encoders.get_config")
-    @patch("src.app.agents.video_search_agent.get_config")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("cogniverse_agents.query_encoders.get_config")
+    @patch("cogniverse_agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.VespaVideoSearchClient")
     def test_configuration_integration(
         self, mock_vespa_client_class, mock_video_config, mock_encoder_config, mock_vespa_client
     ):
@@ -487,9 +487,9 @@ class TestVideoSearchAgentIntegration:
 class TestVideoSearchAgentEdgeCasesIntegration:
     """Integration tests for edge cases and error scenarios"""
 
-    @patch("src.app.agents.query_encoders.get_config")
-    @patch("src.app.agents.video_search_agent.get_config")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("cogniverse_agents.query_encoders.get_config")
+    @patch("cogniverse_agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.VespaVideoSearchClient")
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_large_file_handling_integration(
@@ -536,9 +536,9 @@ class TestVideoSearchAgentEdgeCasesIntegration:
             large_video_data, "large_video.mp4"
         )
 
-    @patch("src.app.agents.query_encoders.get_config")
-    @patch("src.app.agents.video_search_agent.get_config")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("cogniverse_agents.query_encoders.get_config")
+    @patch("cogniverse_agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.VespaVideoSearchClient")
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_empty_results_handling(
@@ -579,9 +579,9 @@ class TestVideoSearchAgentEdgeCasesIntegration:
 
         assert results == []
 
-    @patch("src.app.agents.query_encoders.get_config")
-    @patch("src.app.agents.video_search_agent.get_config")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("cogniverse_agents.query_encoders.get_config")
+    @patch("cogniverse_agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.VespaVideoSearchClient")
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_malformed_a2a_message_handling(
@@ -630,9 +630,9 @@ class TestVideoSearchAgentEdgeCasesIntegration:
         assert result["results"] == []
         assert result["total_results"] == 0
 
-    @patch("src.app.agents.query_encoders.get_config")
-    @patch("src.app.agents.video_search_agent.get_config")
-    @patch("src.app.agents.video_search_agent.VespaVideoSearchClient")
+    @patch("cogniverse_agents.query_encoders.get_config")
+    @patch("cogniverse_agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.VespaVideoSearchClient")
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_resource_cleanup_integration(

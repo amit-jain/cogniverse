@@ -51,7 +51,7 @@ class TestEmbeddingGeneratorImpl:
             "embedding_type": "frame_based",  # Will NOT load model
         }
 
-    @patch("src.common.models.get_or_load_model")
+    @patch("cogniverse_core.common.models.get_or_load_model")
     def test_initialization_with_model_load(
         self, mock_get_model, basic_config, mock_logger, mock_backend_client
     ):
@@ -74,7 +74,7 @@ class TestEmbeddingGeneratorImpl:
 
         mock_get_model.assert_called_once_with("test_model", basic_config, mock_logger)
 
-    @patch("src.common.models.get_or_load_model")
+    @patch("cogniverse_core.common.models.get_or_load_model")
     def test_initialization_frame_based_no_model_load(
         self, mock_get_model, frame_based_config, mock_logger, mock_backend_client
     ):
@@ -90,7 +90,7 @@ class TestEmbeddingGeneratorImpl:
         # Model should not be loaded for frame_based
         mock_get_model.assert_not_called()
 
-    @patch("src.common.models.get_or_load_model")
+    @patch("cogniverse_core.common.models.get_or_load_model")
     def test_initialization_videoprism_model(
         self, mock_get_model, mock_logger, mock_backend_client
     ):
@@ -109,7 +109,7 @@ class TestEmbeddingGeneratorImpl:
         assert generator.videoprism_loader == mock_loader
         assert generator.model is None
 
-    @patch("src.common.models.get_or_load_model")
+    @patch("cogniverse_core.common.models.get_or_load_model")
     def test_load_model_error_handling(
         self, mock_get_model, basic_config, mock_logger, mock_backend_client
     ):

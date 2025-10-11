@@ -153,9 +153,9 @@ class TestVideoSearchAgent:
         encoder.encode_image = Mock(return_value=np.random.rand(128))
         return encoder
 
-    @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
-    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient")
+    @patch("cogniverse_agents.video_search_agent.get_config")
     @pytest.mark.ci_fast
     def test_enhanced_agent_initialization(
         self,
@@ -179,9 +179,9 @@ class TestVideoSearchAgent:
         assert agent.embedding_type == "frame_based"
         assert isinstance(agent.video_processor, VideoProcessor)
 
-    @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
-    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient")
+    @patch("cogniverse_agents.video_search_agent.get_config")
     @pytest.mark.ci_fast
     def test_search_by_text(
         self,
@@ -206,9 +206,9 @@ class TestVideoSearchAgent:
         mock_query_encoder.encode.assert_called_once_with("find cats")
         mock_vespa_client.search.assert_called_once()
 
-    @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
-    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient")
+    @patch("cogniverse_agents.video_search_agent.get_config")
     @pytest.mark.ci_fast
     def test_search_by_video(
         self,
@@ -243,9 +243,9 @@ class TestVideoSearchAgent:
         )
         mock_vespa_client.search.assert_called_once()
 
-    @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
-    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient")
+    @patch("cogniverse_agents.video_search_agent.get_config")
     def test_search_by_image(
         self,
         mock_get_config,
@@ -279,9 +279,9 @@ class TestVideoSearchAgent:
         )
         mock_vespa_client.search.assert_called_once()
 
-    @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
-    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient")
+    @patch("cogniverse_agents.video_search_agent.get_config")
     def test_process_enhanced_task_with_text(
         self,
         mock_get_config,
@@ -312,9 +312,9 @@ class TestVideoSearchAgent:
         assert len(result["results"]) == 2
         assert result["total_results"] == 2
 
-    @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
-    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient")
+    @patch("cogniverse_agents.video_search_agent.get_config")
     def test_process_enhanced_task_with_video(
         self,
         mock_get_config,
@@ -351,9 +351,9 @@ class TestVideoSearchAgent:
         assert len(result["results"]) == 2
         assert result["total_results"] == 2
 
-    @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
-    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient")
+    @patch("cogniverse_agents.video_search_agent.get_config")
     def test_process_enhanced_task_with_image(
         self,
         mock_get_config,
@@ -390,9 +390,9 @@ class TestVideoSearchAgent:
         assert len(result["results"]) == 2
         assert result["total_results"] == 2
 
-    @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
-    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient")
+    @patch("cogniverse_agents.video_search_agent.get_config")
     def test_process_enhanced_task_with_mixed_parts(
         self,
         mock_get_config,
@@ -435,9 +435,9 @@ class TestVideoSearchAgent:
         # Should have results from all three searches (2 each = 6 total)
         assert result["total_results"] == 6
 
-    @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
-    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient")
+    @patch("cogniverse_agents.video_search_agent.get_config")
     def test_process_enhanced_task_empty_messages(
         self,
         mock_get_config,
@@ -459,9 +459,9 @@ class TestVideoSearchAgent:
         with pytest.raises(ValueError, match="Task contains no messages"):
             agent.process_enhanced_task(task)
 
-    @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
-    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient")
+    @patch("cogniverse_agents.video_search_agent.get_config")
     def test_process_enhanced_task_no_valid_parts(
         self,
         mock_get_config,
@@ -496,8 +496,8 @@ class TestVideoSearchAgent:
 class TestVideoSearchAgentEdgeCases:
     """Test edge cases and error conditions for VideoSearchAgent"""
 
-    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
-    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient")
+    @patch("cogniverse_agents.video_search_agent.get_config")
     def test_vespa_client_initialization_failure(
         self, mock_get_config, mock_vespa_class
     ):
@@ -511,9 +511,9 @@ class TestVideoSearchAgentEdgeCases:
         with pytest.raises(Exception, match="Vespa connection failed"):
             VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
 
-    @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
-    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient")
+    @patch("cogniverse_agents.video_search_agent.get_config")
     def test_query_encoder_initialization_failure(
         self, mock_get_config, mock_vespa_class, mock_encoder_factory
     ):
@@ -530,9 +530,9 @@ class TestVideoSearchAgentEdgeCases:
         with pytest.raises(Exception, match="Encoder creation failed"):
             VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
 
-    @patch("src.app.agents.video_search_agent.QueryEncoderFactory")
-    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
-    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient")
+    @patch("cogniverse_agents.video_search_agent.get_config")
     def test_search_failure_handling(
         self, mock_get_config, mock_vespa_class, mock_encoder_factory
     ):

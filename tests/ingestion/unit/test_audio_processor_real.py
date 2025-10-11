@@ -120,7 +120,7 @@ class TestAudioProcessor:
         processor.logger.error.assert_called()
 
     @patch("whisper.load_model")
-    @patch("src.common.utils.output_manager.get_output_manager")
+    @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
     @patch("builtins.open", create=True)
     @patch("json.dump")
     def test_transcribe_audio_success(
@@ -195,7 +195,7 @@ class TestAudioProcessor:
         assert saved_data["full_text"] == "This is a test transcription."
 
     @patch("whisper.load_model")
-    @patch("src.common.utils.output_manager.get_output_manager")
+    @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
     def test_transcribe_audio_with_auto_language(
         self,
         mock_output_manager,
@@ -257,7 +257,7 @@ class TestAudioProcessor:
         )
 
     @patch("whisper.load_model")
-    @patch("src.common.utils.output_manager.get_output_manager")
+    @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
     def test_transcribe_audio_with_cache_miss_and_save(
         self,
         mock_output_manager,

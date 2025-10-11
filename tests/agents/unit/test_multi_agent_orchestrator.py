@@ -93,9 +93,9 @@ class TestMultiAgentOrchestrator:
             },
         }
 
-    @patch("src.app.agents.multi_agent_orchestrator.RoutingAgent")
-    @patch("src.app.agents.multi_agent_orchestrator.A2AClient")
-    @patch("src.app.agents.multi_agent_orchestrator.create_workflow_intelligence")
+    @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
+    @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")
+    @patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence")
     @pytest.mark.ci_fast
     def test_orchestrator_initialization_default(
         self, mock_workflow_intel, mock_a2a, mock_routing
@@ -126,8 +126,8 @@ class TestMultiAgentOrchestrator:
         assert stats["failed_workflows"] == 0
         assert stats["average_execution_time"] == 0.0
 
-    @patch("src.app.agents.multi_agent_orchestrator.RoutingAgent")
-    @patch("src.app.agents.multi_agent_orchestrator.A2AClient")
+    @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
+    @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")
     @pytest.mark.ci_fast
     def test_orchestrator_initialization_custom_config(
         self, mock_a2a, mock_routing, sample_agents_config
@@ -149,9 +149,9 @@ class TestMultiAgentOrchestrator:
         assert orchestrator.enable_workflow_intelligence is False
         assert orchestrator.workflow_intelligence is None
 
-    @patch("src.app.agents.multi_agent_orchestrator.RoutingAgent")
-    @patch("src.app.agents.multi_agent_orchestrator.A2AClient")
-    @patch("src.app.agents.multi_agent_orchestrator.create_workflow_intelligence")
+    @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
+    @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")
+    @patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence")
     @pytest.mark.ci_fast
     def test_get_default_agents(self, mock_workflow_intel, mock_a2a, mock_routing):
         """Test default agent configuration"""
@@ -169,9 +169,9 @@ class TestMultiAgentOrchestrator:
         assert "endpoint" in video_agent
         assert "timeout_seconds" in video_agent
 
-    @patch("src.app.agents.multi_agent_orchestrator.RoutingAgent")
-    @patch("src.app.agents.multi_agent_orchestrator.A2AClient")
-    @patch("src.app.agents.multi_agent_orchestrator.create_workflow_intelligence")
+    @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
+    @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")
+    @patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence")
     def test_initialize_dspy_modules(self, mock_workflow_intel, mock_a2a, mock_routing):
         """Test DSPy module initialization"""
         orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant")
@@ -180,9 +180,9 @@ class TestMultiAgentOrchestrator:
         assert hasattr(orchestrator, "workflow_planner")
         assert hasattr(orchestrator, "result_aggregator")
 
-    @patch("src.app.agents.multi_agent_orchestrator.RoutingAgent")
-    @patch("src.app.agents.multi_agent_orchestrator.A2AClient")
-    @patch("src.app.agents.multi_agent_orchestrator.create_workflow_intelligence")
+    @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
+    @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")
+    @patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence")
     @pytest.mark.asyncio
     async def test_process_complex_query_basic(
         self, mock_workflow_intel, mock_a2a, mock_routing, mock_routing_agent
@@ -294,8 +294,8 @@ class TestMultiAgentOrchestratorWorkflowExecution:
 class TestMultiAgentOrchestratorEdgeCases:
     """Test edge cases and error handling"""
 
-    @patch("src.app.agents.multi_agent_orchestrator.RoutingAgent")
-    @patch("src.app.agents.multi_agent_orchestrator.A2AClient")
+    @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
+    @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")
     def test_orchestrator_with_disabled_workflow_intelligence(
         self, mock_a2a, mock_routing
     ):
@@ -305,8 +305,8 @@ class TestMultiAgentOrchestratorEdgeCases:
         assert orchestrator.enable_workflow_intelligence is False
         assert orchestrator.workflow_intelligence is None
 
-    @patch("src.app.agents.multi_agent_orchestrator.RoutingAgent")
-    @patch("src.app.agents.multi_agent_orchestrator.A2AClient")
+    @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
+    @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")
     @pytest.mark.ci_fast
     def test_orchestrator_agent_utilization_tracking(self, mock_a2a, mock_routing):
         """Test agent utilization statistics"""

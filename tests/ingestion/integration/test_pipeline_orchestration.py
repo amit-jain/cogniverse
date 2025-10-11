@@ -110,7 +110,7 @@ class TestPipelineOrchestration:
         requirements = strategy_set.get_all_required_processors()
         assert "keyframe" in requirements
 
-    @patch("src.app.ingestion.processors.keyframe_processor.KeyframeProcessor")
+    @patch("cogniverse_core.ingestion.processors.keyframe_processor.KeyframeProcessor")
     def test_end_to_end_frame_processing_workflow(
         self,
         mock_keyframe_class,
@@ -161,7 +161,7 @@ class TestPipelineOrchestration:
                 sample_video_path, temp_dir
             )
 
-    @patch("src.app.ingestion.processors.chunk_processor.ChunkProcessor")
+    @patch("cogniverse_core.ingestion.processors.chunk_processor.ChunkProcessor")
     def test_end_to_end_chunk_processing_workflow(
         self,
         mock_chunk_class,

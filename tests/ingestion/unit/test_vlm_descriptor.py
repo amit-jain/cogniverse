@@ -244,7 +244,7 @@ class TestVLMDescriptor:
 
         assert result == {}
 
-    @patch("src.common.utils.output_manager.get_output_manager")
+    @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
     @patch("pathlib.Path.mkdir")
     @patch("builtins.open", new_callable=mock_open)
     @patch("json.dump")
@@ -320,7 +320,7 @@ class TestVLMDescriptor:
             assert result["video_id"] == "test_video_123"
             assert result["descriptions"] == expected_descriptions
 
-    @patch("src.common.utils.output_manager.get_output_manager")
+    @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
     @patch("pathlib.Path.mkdir")
     @patch("builtins.open", new_callable=mock_open)
     @patch("json.dump")
@@ -615,7 +615,7 @@ class TestVLMDescriptor:
 
         assert result.startswith("Error:")
 
-    @patch("src.common.utils.output_manager.get_output_manager")
+    @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
     @patch("pathlib.Path.mkdir")
     @patch("builtins.open", new_callable=mock_open)
     @patch("json.dump")

@@ -104,7 +104,7 @@ class TestMLflowCoreIntegration:
 class TestMLflowIntegrationReadiness:
     """Test that MLflow integration is ready for use in the DSPy system"""
 
-    @patch("src.app.routing.mlflow_integration.mlflow")
+    @patch("cogniverse_agents.routing.mlflow_integration.mlflow")
     def test_integration_with_dspy_system(self, mock_mlflow):
         """Test MLflow integration can work with DSPy routing system"""
         with tempfile.TemporaryDirectory() as temp_dir:

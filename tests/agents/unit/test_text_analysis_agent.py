@@ -18,10 +18,10 @@ from cogniverse_agents.text_analysis_agent import (
 class TestTextAnalysisAgent:
     """Test TextAnalysisAgent initialization and core functionality"""
 
-    @patch("src.app.agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
-    @patch("src.app.agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy")
-    @patch("src.app.agents.text_analysis_agent.get_config_manager")
-    @patch("src.app.agents.text_analysis_agent.get_config")
+    @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
+    @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy")
+    @patch("cogniverse_agents.text_analysis_agent.get_config_manager")
+    @patch("cogniverse_agents.text_analysis_agent.get_config")
     def test_initialization(
         self,
         mock_get_config,
@@ -56,8 +56,8 @@ class TestTextAnalysisAgent:
         mock_initialize_dspy.assert_called_once()
         mock_register_signature.assert_called_once()
 
-    @patch("src.app.agents.text_analysis_agent.get_config_manager")
-    @patch("src.app.agents.text_analysis_agent.get_config")
+    @patch("cogniverse_agents.text_analysis_agent.get_config_manager")
+    @patch("cogniverse_agents.text_analysis_agent.get_config")
     def test_initialization_without_tenant_id_raises_error(
         self, mock_get_config, mock_get_config_manager
     ):
@@ -68,10 +68,10 @@ class TestTextAnalysisAgent:
         with pytest.raises(ValueError, match="tenant_id is required"):
             TextAnalysisAgent(tenant_id=None)
 
-    @patch("src.app.agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
-    @patch("src.app.agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy")
-    @patch("src.app.agents.text_analysis_agent.get_config_manager")
-    @patch("src.app.agents.text_analysis_agent.get_config")
+    @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
+    @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy")
+    @patch("cogniverse_agents.text_analysis_agent.get_config_manager")
+    @patch("cogniverse_agents.text_analysis_agent.get_config")
     def test_analyze_text(
         self,
         mock_get_config,
@@ -109,10 +109,10 @@ class TestTextAnalysisAgent:
             assert result["analysis_type"] == "summary"
             mock_module.assert_called_once_with(text="Test text", analysis_type="summary")
 
-    @patch("src.app.agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
-    @patch("src.app.agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy")
-    @patch("src.app.agents.text_analysis_agent.get_config_manager")
-    @patch("src.app.agents.text_analysis_agent.get_config")
+    @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
+    @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy")
+    @patch("cogniverse_agents.text_analysis_agent.get_config_manager")
+    @patch("cogniverse_agents.text_analysis_agent.get_config")
     def test_get_agent_factory(
         self,
         mock_get_config,
@@ -165,10 +165,10 @@ class TestTextAnalysisEndpoints:
         """Clear agent cache before each test"""
         _agent_instances.clear()
 
-    @patch("src.app.agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
-    @patch("src.app.agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy")
-    @patch("src.app.agents.text_analysis_agent.get_config_manager")
-    @patch("src.app.agents.text_analysis_agent.get_config")
+    @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
+    @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy")
+    @patch("cogniverse_agents.text_analysis_agent.get_config_manager")
+    @patch("cogniverse_agents.text_analysis_agent.get_config")
     def test_analyze_endpoint(
         self,
         mock_get_config,
@@ -218,8 +218,8 @@ class TestTextAnalysisEndpoints:
             # Verify analyze_text was called
             mock_analyze.assert_called_once_with("Test text to analyze", "summary")
 
-    @patch("src.app.agents.text_analysis_agent.get_config_manager")
-    @patch("src.app.agents.text_analysis_agent.get_config")
+    @patch("cogniverse_agents.text_analysis_agent.get_config_manager")
+    @patch("cogniverse_agents.text_analysis_agent.get_config")
     def test_analyze_endpoint_without_tenant_id_fails(
         self, mock_get_config, mock_get_config_manager
     ):
@@ -252,10 +252,10 @@ class TestTextAnalysisEndpoints:
             error["loc"] == ["query", "tenant_id"] for error in error_detail
         ), "Should have validation error for missing tenant_id"
 
-    @patch("src.app.agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
-    @patch("src.app.agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy")
-    @patch("src.app.agents.text_analysis_agent.get_config_manager")
-    @patch("src.app.agents.text_analysis_agent.get_config")
+    @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
+    @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy")
+    @patch("cogniverse_agents.text_analysis_agent.get_config_manager")
+    @patch("cogniverse_agents.text_analysis_agent.get_config")
     def test_analyze_endpoint_error_handling(
         self,
         mock_get_config,

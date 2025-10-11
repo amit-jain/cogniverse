@@ -59,8 +59,8 @@ class TestA2ARoutingAgent:
         )
         return Task(id="test_task_123", messages=[message])
 
-    @patch("src.app.agents.agent_registry.AgentRegistry")
-    @patch("src.app.agents.a2a_routing_agent.get_config")
+    @patch("cogniverse_agents.agent_registry.AgentRegistry")
+    @patch("cogniverse_agents.a2a_routing_agent.get_config")
     def test_a2a_routing_agent_initialization(
         self, mock_get_config, mock_registry_class, mock_routing_agent
     ):
@@ -75,8 +75,8 @@ class TestA2ARoutingAgent:
         assert agent.agent_registry == mock_registry_instance
         assert agent.http_client is not None
 
-    @patch("src.app.agents.agent_registry.AgentRegistry")
-    @patch("src.app.agents.a2a_routing_agent.get_config")
+    @patch("cogniverse_agents.agent_registry.AgentRegistry")
+    @patch("cogniverse_agents.a2a_routing_agent.get_config")
     def test_extract_query_and_context_with_data_part(self, mock_get_config, mock_registry_class):
         """Test query and context extraction from DataPart"""
         mock_get_config.return_value = {}
@@ -103,8 +103,8 @@ class TestA2ARoutingAgent:
         assert context["user_id"] == "test_user"
         assert "query" not in context
 
-    @patch("src.app.agents.agent_registry.AgentRegistry")
-    @patch("src.app.agents.a2a_routing_agent.get_config")
+    @patch("cogniverse_agents.agent_registry.AgentRegistry")
+    @patch("cogniverse_agents.a2a_routing_agent.get_config")
     def test_extract_query_and_context_with_text_part(self, mock_get_config, mock_registry_class):
         """Test query extraction from TextPart"""
         mock_get_config.return_value = {}
@@ -123,8 +123,8 @@ class TestA2ARoutingAgent:
         assert query == "find videos about machine learning"
         assert context["task_id"] == "test_task"
 
-    @patch("src.app.agents.agent_registry.AgentRegistry")
-    @patch("src.app.agents.a2a_routing_agent.get_config")
+    @patch("cogniverse_agents.agent_registry.AgentRegistry")
+    @patch("cogniverse_agents.a2a_routing_agent.get_config")
     def test_extract_query_and_context_no_messages(self, mock_get_config, mock_registry_class):
         """Test extraction with no messages"""
         mock_get_config.return_value = {}
@@ -138,8 +138,8 @@ class TestA2ARoutingAgent:
         with pytest.raises(ValueError, match="Task has no messages"):
             agent._extract_query_and_context(task)
 
-    @patch("src.app.agents.agent_registry.AgentRegistry")
-    @patch("src.app.agents.a2a_routing_agent.get_config")
+    @patch("cogniverse_agents.agent_registry.AgentRegistry")
+    @patch("cogniverse_agents.a2a_routing_agent.get_config")
     def test_extract_query_and_context_no_query(self, mock_get_config, mock_registry_class):
         """Test extraction with no query found"""
         mock_get_config.return_value = {}
@@ -156,8 +156,8 @@ class TestA2ARoutingAgent:
         with pytest.raises(ValueError, match="No query found in task messages"):
             agent._extract_query_and_context(task)
 
-    @patch("src.app.agents.agent_registry.AgentRegistry")
-    @patch("src.app.agents.a2a_routing_agent.get_config")
+    @patch("cogniverse_agents.agent_registry.AgentRegistry")
+    @patch("cogniverse_agents.a2a_routing_agent.get_config")
     def test_create_agent_task(self, mock_get_config, mock_registry_class):
         """Test agent task creation"""
         mock_get_config.return_value = {}
@@ -183,8 +183,8 @@ class TestA2ARoutingAgent:
         assert isinstance(data_part, DataPart)
         assert data_part.data == parameters
 
-    @patch("src.app.agents.agent_registry.AgentRegistry")
-    @patch("src.app.agents.a2a_routing_agent.get_config")
+    @patch("cogniverse_agents.agent_registry.AgentRegistry")
+    @patch("cogniverse_agents.a2a_routing_agent.get_config")
     @pytest.mark.asyncio
     async def test_send_to_agent_success(self, mock_get_config, mock_registry_class):
         """Test successful agent communication"""
@@ -214,8 +214,8 @@ class TestA2ARoutingAgent:
         assert result == {"status": "success", "results": []}
         agent.http_client.post.assert_called_once()
 
-    @patch("src.app.agents.a2a_routing_agent.get_config")
-    @patch("src.app.agents.agent_registry.AgentRegistry")
+    @patch("cogniverse_agents.a2a_routing_agent.get_config")
+    @patch("cogniverse_agents.agent_registry.AgentRegistry")
     @pytest.mark.asyncio
     async def test_send_to_agent_http_error(self, mock_registry_class, mock_get_config):
         """Test agent communication with HTTP error"""
@@ -247,8 +247,8 @@ class TestA2ARoutingAgent:
         with pytest.raises(Exception, match="Agent test_agent returned 500"):
             await agent._send_to_agent(agent_endpoint, task)
 
-    @patch("src.app.agents.agent_registry.AgentRegistry")
-    @patch("src.app.agents.a2a_routing_agent.get_config")
+    @patch("cogniverse_agents.agent_registry.AgentRegistry")
+    @patch("cogniverse_agents.a2a_routing_agent.get_config")
     def test_aggregate_results_raw_results(self, mock_get_config, mock_registry_class):
         """Test result aggregation for raw results workflow"""
         mock_get_config.return_value = {}
@@ -280,8 +280,8 @@ class TestA2ARoutingAgent:
         assert len(final_result["search_results"]) == 2
         assert final_result["search_results"][0]["title"] == "Result 1"
 
-    @patch("src.app.agents.agent_registry.AgentRegistry")
-    @patch("src.app.agents.a2a_routing_agent.get_config")
+    @patch("cogniverse_agents.agent_registry.AgentRegistry")
+    @patch("cogniverse_agents.a2a_routing_agent.get_config")
     def test_aggregate_results_summary_with_summarizer(self, mock_get_config, mock_registry_class):
         """Test result aggregation for summary workflow with summarizer agent"""
         mock_get_config.return_value = {}
@@ -306,8 +306,8 @@ class TestA2ARoutingAgent:
         assert final_result["workflow_type"] == "summary"
         assert final_result["summary"] == "This is a summary of the video content."
 
-    @patch("src.app.agents.agent_registry.AgentRegistry")
-    @patch("src.app.agents.a2a_routing_agent.get_config")
+    @patch("cogniverse_agents.agent_registry.AgentRegistry")
+    @patch("cogniverse_agents.a2a_routing_agent.get_config")
     def test_aggregate_results_summary_fallback(self, mock_get_config, mock_registry_class):
         """Test result aggregation for summary workflow without summarizer agent"""
         mock_get_config.return_value = {}
@@ -337,8 +337,8 @@ class TestA2ARoutingAgent:
         assert "summary" in final_result
         assert "Found 2 results" in final_result["summary"]
 
-    @patch("src.app.agents.agent_registry.AgentRegistry")
-    @patch("src.app.agents.a2a_routing_agent.get_config")
+    @patch("cogniverse_agents.agent_registry.AgentRegistry")
+    @patch("cogniverse_agents.a2a_routing_agent.get_config")
     def test_create_fallback_summary(self, mock_get_config, mock_registry_class):
         """Test fallback summary creation"""
         mock_get_config.return_value = {}
@@ -359,8 +359,8 @@ class TestA2ARoutingAgent:
         assert "2 sources" in summary
         assert "video1" in summary
 
-    @patch("src.app.agents.agent_registry.AgentRegistry")
-    @patch("src.app.agents.a2a_routing_agent.get_config")
+    @patch("cogniverse_agents.agent_registry.AgentRegistry")
+    @patch("cogniverse_agents.a2a_routing_agent.get_config")
     def test_create_fallback_summary_empty(self, mock_get_config, mock_registry_class):
         """Test fallback summary with empty results"""
         mock_get_config.return_value = {}
@@ -373,8 +373,8 @@ class TestA2ARoutingAgent:
 
         assert summary == "No results found."
 
-    @patch("src.app.agents.agent_registry.AgentRegistry")
-    @patch("src.app.agents.a2a_routing_agent.get_config")
+    @patch("cogniverse_agents.agent_registry.AgentRegistry")
+    @patch("cogniverse_agents.a2a_routing_agent.get_config")
     def test_create_fallback_report(self, mock_get_config, mock_registry_class):
         """Test fallback detailed report creation"""
         mock_get_config.return_value = {}
@@ -401,8 +401,8 @@ class TestA2ARoutingAgent:
         assert "Time Range: 00:00 - 05:30" in report
         assert "document1 (document)" in report
 
-    @patch("src.app.agents.agent_registry.AgentRegistry")
-    @patch("src.app.agents.a2a_routing_agent.get_config")
+    @patch("cogniverse_agents.agent_registry.AgentRegistry")
+    @patch("cogniverse_agents.a2a_routing_agent.get_config")
     def test_create_fallback_report_empty(self, mock_get_config, mock_registry_class):
         """Test fallback report with empty results"""
         mock_get_config.return_value = {}
@@ -420,8 +420,8 @@ class TestA2ARoutingAgent:
 class TestA2ARoutingAgentIntegration:
     """Integration tests for A2ARoutingAgent workflow execution"""
 
-    @patch("src.app.agents.a2a_routing_agent.get_config")
-    @patch("src.app.agents.agent_registry.AgentRegistry")
+    @patch("cogniverse_agents.a2a_routing_agent.get_config")
+    @patch("cogniverse_agents.agent_registry.AgentRegistry")
     @pytest.mark.asyncio
     async def test_process_task_success(self, mock_registry_class, mock_get_config):
         """Test successful task processing end-to-end"""
@@ -494,8 +494,8 @@ class TestA2ARoutingAgentIntegration:
         assert len(result.final_result["search_results"]) == 1
         assert result.execution_time > 0
 
-    @patch("src.app.agents.a2a_routing_agent.get_config")
-    @patch("src.app.agents.agent_registry.AgentRegistry")
+    @patch("cogniverse_agents.a2a_routing_agent.get_config")
+    @patch("cogniverse_agents.agent_registry.AgentRegistry")
     @pytest.mark.asyncio
     async def test_process_task_routing_failure(
         self, mock_registry_class, mock_get_config

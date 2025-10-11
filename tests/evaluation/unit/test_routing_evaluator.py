@@ -356,7 +356,7 @@ class TestPerAgentMetrics:
 class TestPhoenixQuery:
     """Test Phoenix span querying functionality"""
 
-    @patch("src.evaluation.evaluators.routing_evaluator.px.Client")
+    @patch("cogniverse_core.evaluation.evaluators.routing_evaluator.px.Client")
     def test_query_routing_spans_success(self, mock_client_class):
         """Test successful query of routing spans from Phoenix"""
         import pandas as pd
@@ -384,7 +384,7 @@ class TestPhoenixQuery:
         assert len(spans) == 1
         assert spans[0]["name"] == "cogniverse.routing"
 
-    @patch("src.evaluation.evaluators.routing_evaluator.px.Client")
+    @patch("cogniverse_core.evaluation.evaluators.routing_evaluator.px.Client")
     def test_query_routing_spans_empty_result(self, mock_client_class):
         """Test query with no matching spans"""
         import pandas as pd
@@ -398,7 +398,7 @@ class TestPhoenixQuery:
 
         assert spans == []
 
-    @patch("src.evaluation.evaluators.routing_evaluator.px.Client")
+    @patch("cogniverse_core.evaluation.evaluators.routing_evaluator.px.Client")
     def test_query_routing_spans_with_time_range(self, mock_client_class):
         """Test query with time range filters"""
         import pandas as pd
@@ -420,7 +420,7 @@ class TestPhoenixQuery:
             end_time=end
         )
 
-    @patch("src.evaluation.evaluators.routing_evaluator.px.Client")
+    @patch("cogniverse_core.evaluation.evaluators.routing_evaluator.px.Client")
     def test_query_routing_spans_failure_raises_error(self, mock_client_class):
         """Test that query failure raises RuntimeError"""
         mock_client = MagicMock()

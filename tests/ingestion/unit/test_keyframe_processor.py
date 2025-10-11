@@ -264,7 +264,7 @@ class TestKeyframeProcessor:
         # (we can't easily test the actual creation without more complex mocking)
         assert result["video_id"] == "test_video"
 
-    @patch("src.common.utils.output_manager.get_output_manager")
+    @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
     def test_extract_keyframes_uses_output_manager(
         self, mock_get_output_manager, processor, sample_video_path
     ):

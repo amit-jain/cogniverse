@@ -221,7 +221,7 @@ class TestResultAggregator:
         assert aggregator.enable_fallbacks is False
 
     @pytest.mark.ci_fast
-    @patch("src.app.agents.result_aggregator.ResultEnhancementEngine")
+    @patch("cogniverse_agents.result_aggregator.ResultEnhancementEngine")
     @pytest.mark.asyncio
     async def test_aggregate_and_enhance_basic(
         self, mock_enhancement_engine, sample_routing_decision, sample_search_results

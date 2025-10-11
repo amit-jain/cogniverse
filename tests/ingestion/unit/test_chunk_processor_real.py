@@ -146,7 +146,7 @@ class TestChunkProcessor:
         assert success is False
         processor.logger.error.assert_called()
 
-    @patch("src.common.utils.output_manager.get_output_manager")
+    @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
     @patch("builtins.open", create=True)
     @patch("json.dump")
     def test_extract_chunks_success(
@@ -208,7 +208,7 @@ class TestChunkProcessor:
         assert saved_metadata["chunk_overlap"] == 2.0
         assert saved_metadata["chunks_extracted"] == 4
 
-    @patch("src.common.utils.output_manager.get_output_manager")
+    @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
     def test_extract_chunks_no_overlap(
         self, mock_output_manager, no_overlap_processor, temp_dir, sample_video_path
     ):
@@ -258,7 +258,7 @@ class TestChunkProcessor:
         # Should log error
         processor.logger.error.assert_called()
 
-    @patch("src.common.utils.output_manager.get_output_manager")
+    @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
     def test_extract_chunks_with_failed_extraction(
         self, mock_output_manager, processor, temp_dir, sample_video_path
     ):

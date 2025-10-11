@@ -92,7 +92,7 @@ class TestAgentRegistry:
             capabilities=["search", "analyze"],
         )
 
-    @patch("src.app.agents.agent_registry.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     @pytest.mark.ci_fast
     def test_registry_initialization(self, mock_get_config, mock_config):
         """Test AgentRegistry initialization"""
@@ -110,7 +110,7 @@ class TestAgentRegistry:
         assert video_agent.url == "http://localhost:8002"
         assert "video_search" in video_agent.capabilities
 
-    @patch("src.app.agents.agent_registry.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     @pytest.mark.ci_fast
     def test_registry_initialization_minimal_config(self, mock_get_config):
         """Test initialization with minimal config"""
@@ -122,7 +122,7 @@ class TestAgentRegistry:
         assert "text_search" not in registry.agents
         assert "routing_agent" in registry.agents
 
-    @patch("src.app.agents.agent_registry.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     @pytest.mark.ci_fast
     def test_register_agent(self, mock_get_config, sample_agent):
         """Test agent registration"""
@@ -139,7 +139,7 @@ class TestAgentRegistry:
         assert "search" in registry.capabilities
         assert "test_agent" in registry.capabilities["search"]
 
-    @patch("src.app.agents.agent_registry.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     def test_register_agent_invalid(self, mock_get_config):
         """Test registration with invalid agent"""
         mock_get_config.return_value = {}
@@ -153,7 +153,7 @@ class TestAgentRegistry:
         result = registry.register_agent(invalid_agent)
         assert result is False
 
-    @patch("src.app.agents.agent_registry.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     def test_unregister_agent(self, mock_get_config, sample_agent):
         """Test agent unregistration"""
         mock_get_config.return_value = {}
@@ -173,7 +173,7 @@ class TestAgentRegistry:
         if "search" in registry.capabilities:
             assert "test_agent" not in registry.capabilities["search"]
 
-    @patch("src.app.agents.agent_registry.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     def test_unregister_nonexistent_agent(self, mock_get_config):
         """Test unregistering non-existent agent"""
         mock_get_config.return_value = {}
@@ -182,7 +182,7 @@ class TestAgentRegistry:
         result = registry.unregister_agent("nonexistent")
         assert result is False
 
-    @patch("src.app.agents.agent_registry.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     @pytest.mark.ci_fast
     def test_list_agents(self, mock_get_config, sample_agent):
         """Test listing agents"""
@@ -195,7 +195,7 @@ class TestAgentRegistry:
         assert "test_agent" in agent_names
         assert isinstance(agent_names, list)
 
-    @patch("src.app.agents.agent_registry.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     def test_find_agents_by_capability(self, mock_get_config):
         """Test finding agents by capability"""
         mock_get_config.return_value = {}
@@ -223,7 +223,7 @@ class TestAgentRegistry:
         nonexistent_agents = registry.find_agents_by_capability("nonexistent")
         assert len(nonexistent_agents) == 0
 
-    @patch("src.app.agents.agent_registry.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     def test_get_healthy_agents(self, mock_get_config):
         """Test getting healthy agents"""
         mock_get_config.return_value = {}
@@ -251,7 +251,7 @@ class TestAgentRegistry:
         assert "agent3" in healthy_names
         assert "agent2" not in healthy_names
 
-    @patch("src.app.agents.agent_registry.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     def test_get_agents_for_workflow(self, mock_get_config):
         """Test getting agents for specific workflows"""
         mock_get_config.return_value = {}
@@ -297,7 +297,7 @@ class TestAgentRegistry:
         assert "text_agent" in report_names
         assert "analysis_agent" in report_names
 
-    @patch("src.app.agents.agent_registry.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     @pytest.mark.asyncio
     async def test_health_check_agent_success(self, mock_get_config):
         """Test successful agent health check"""
@@ -319,7 +319,7 @@ class TestAgentRegistry:
         assert agent.health_status == "healthy"
         assert agent.last_health_check is not None
 
-    @patch("src.app.agents.agent_registry.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     @pytest.mark.asyncio
     async def test_health_check_agent_failure(self, mock_get_config):
         """Test failed agent health check"""
@@ -341,7 +341,7 @@ class TestAgentRegistry:
         assert agent.health_status == "unhealthy"
         assert agent.last_health_check is not None
 
-    @patch("src.app.agents.agent_registry.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     @pytest.mark.asyncio
     async def test_health_check_agent_timeout(self, mock_get_config):
         """Test agent health check timeout"""
@@ -363,7 +363,7 @@ class TestAgentRegistry:
         assert agent.health_status == "unreachable"
         assert agent.last_health_check is not None
 
-    @patch("src.app.agents.agent_registry.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     @pytest.mark.asyncio
     async def test_health_check_nonexistent_agent(self, mock_get_config):
         """Test health check for non-existent agent"""
@@ -373,7 +373,7 @@ class TestAgentRegistry:
         result = await registry.health_check_agent("nonexistent")
         assert result is False
 
-    @patch("src.app.agents.agent_registry.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     def test_get_load_balanced_agent(self, mock_get_config):
         """Test load-balanced agent selection"""
         mock_get_config.return_value = {}
@@ -402,7 +402,7 @@ class TestAgentRegistry:
         selected = registry.get_load_balanced_agent("nonexistent")
         assert selected is None
 
-    @patch("src.app.agents.agent_registry.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     def test_get_registry_stats(self, mock_get_config):
         """Test registry statistics"""
         mock_get_config.return_value = {}

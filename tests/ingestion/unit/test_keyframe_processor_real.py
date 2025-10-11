@@ -61,7 +61,7 @@ class TestKeyframeProcessor:
         assert processor.fps == 0.5
         assert processor.extraction_mode == "fps"
 
-    @patch("src.common.utils.output_manager.get_output_manager")
+    @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
     @patch("cv2.VideoCapture")
     @patch("cv2.imwrite")
     @patch("builtins.open", create=True)
@@ -139,7 +139,7 @@ class TestKeyframeProcessor:
             assert "filename" in keyframe
             assert "path" in keyframe
 
-    @patch("src.common.utils.output_manager.get_output_manager")
+    @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
     @patch("cv2.VideoCapture")
     @patch("cv2.calcHist")
     @patch("cv2.compareHist")

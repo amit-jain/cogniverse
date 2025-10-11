@@ -33,7 +33,7 @@ class TestAudioAnalysisAgent:
         assert self.agent._whisper_model_size == "base"
         assert self.agent._vespa_endpoint == "http://localhost:8080"
 
-    @patch("src.app.agents.audio_analysis_agent.AudioTranscriber")
+    @patch("cogniverse_agents.audio_analysis_agent.AudioTranscriber")
     def test_audio_transcriber_lazy_loading(self, mock_transcriber_class):
         """Test AudioTranscriber is lazy loaded on first access"""
         mock_transcriber = MagicMock()
