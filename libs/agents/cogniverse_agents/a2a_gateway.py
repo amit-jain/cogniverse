@@ -130,6 +130,7 @@ class A2AGateway:
 
     def __init__(
         self,
+        tenant_id: str = "default",
         routing_config: Optional[RoutingConfig] = None,
         enable_orchestration: bool = True,
         port: int = 8000,
@@ -137,6 +138,7 @@ class A2AGateway:
         self.logger = logging.getLogger(__name__)
 
         # Configuration
+        self.tenant_id = tenant_id
         self.enable_orchestration = enable_orchestration
         self.port = port
 
@@ -163,6 +165,7 @@ class A2AGateway:
         try:
             # Initialize routing agent
             self.router = RoutingAgent(
+                tenant_id=self.tenant_id,
                 config=config or RoutingConfig(),
                 port=self.port + 1,  # Use different port to avoid conflicts
                 enable_telemetry=True,
@@ -171,6 +174,7 @@ class A2AGateway:
             # Initialize multi-agent orchestrator
             if self.enable_orchestration:
                 self.orchestrator = MultiAgentOrchestrator(
+                    tenant_id=self.tenant_id,
                     routing_agent=self.router
                 )
 
@@ -456,12 +460,14 @@ class A2AGateway:
 
 
 def create_a2a_gateway(
+    tenant_id: str = "default",
     routing_config: Optional[RoutingConfig] = None,
     enable_orchestration: bool = True,
     port: int = 8000,
 ) -> A2AGateway:
     """Factory function to create A2A Gateway"""
     return A2AGateway(
+        tenant_id=tenant_id,
         routing_config=routing_config,
         enable_orchestration=enable_orchestration,
         port=port,
