@@ -42,7 +42,7 @@ class TestPipelineOrchestration:
     def test_processor_manager_strategy_integration(self, mock_logger, strategy_set):
         """Test that ProcessorManager correctly integrates with strategies."""
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_core.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -138,7 +138,7 @@ class TestPipelineOrchestration:
         mock_keyframe_class.from_config = Mock(return_value=mock_keyframe)
 
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_core.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -187,7 +187,7 @@ class TestPipelineOrchestration:
         mock_chunk_class.from_config = Mock(return_value=mock_chunk)
 
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_core.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -231,7 +231,7 @@ class TestPipelineOrchestration:
     ):
         """Test error handling when processors fail in the pipeline."""
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_core.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -264,7 +264,7 @@ class TestPipelineOrchestration:
     ):
         """Test that processor caching works consistently across the pipeline."""
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_core.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -289,7 +289,7 @@ class TestPipelineOrchestration:
         import threading
 
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_core.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 

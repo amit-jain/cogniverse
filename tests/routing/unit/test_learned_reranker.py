@@ -41,7 +41,7 @@ class TestLearnedReranker:
 
     def test_reranker_initialization_from_config(self):
         """Test reranker loads model from config"""
-        with patch("src.app.search.learned_reranker.get_config_value") as mock_config:
+        with patch("cogniverse_agents.search.learned_reranker.get_config_value") as mock_config:
             mock_config.return_value = {
                 "model": "cohere",
                 "supported_models": {"cohere": "cohere/rerank-english-v3.0"},
@@ -61,7 +61,7 @@ class TestLearnedReranker:
 
     def test_reranker_raises_on_heuristic_model(self):
         """Test reranker raises error if model is heuristic"""
-        with patch("src.app.search.learned_reranker.get_config_value") as mock_config:
+        with patch("cogniverse_agents.search.learned_reranker.get_config_value") as mock_config:
             mock_config.return_value = {
                 "model": "heuristic",
                 "supported_models": {},
@@ -72,7 +72,7 @@ class TestLearnedReranker:
 
     def test_reranker_raises_on_unknown_model(self):
         """Test reranker raises error for unknown model key"""
-        with patch("src.app.search.learned_reranker.get_config_value") as mock_config:
+        with patch("cogniverse_agents.search.learned_reranker.get_config_value") as mock_config:
             mock_config.return_value = {
                 "model": "unknown_model",
                 "supported_models": {"cohere": "cohere/rerank-english-v3.0"},
@@ -91,7 +91,7 @@ class TestLearnedReranker:
     @pytest.mark.asyncio
     async def test_rerank_calls_litellm(self, sample_results):
         """Test rerank calls LiteLLM arerank"""
-        with patch("src.app.search.learned_reranker.arerank") as mock_arerank:
+        with patch("cogniverse_agents.search.learned_reranker.arerank") as mock_arerank:
             # Mock LiteLLM response
             mock_response = Mock()
             mock_result_item = Mock()
@@ -119,14 +119,14 @@ class TestLearnedReranker:
     @pytest.mark.asyncio
     async def test_rerank_limits_max_results(self, sample_results):
         """Test rerank limits results to max_results_to_rerank"""
-        with patch("src.app.search.learned_reranker.get_config_value") as mock_config:
+        with patch("cogniverse_agents.search.learned_reranker.get_config_value") as mock_config:
             mock_config.return_value = {
                 "model": "cohere",
                 "supported_models": {"cohere": "cohere/rerank-english-v3.0"},
                 "max_results_to_rerank": 1,  # Limit to 1
             }
 
-            with patch("src.app.search.learned_reranker.arerank") as mock_arerank:
+            with patch("cogniverse_agents.search.learned_reranker.arerank") as mock_arerank:
                 mock_response = Mock()
                 mock_response.results = []
                 mock_arerank.return_value = mock_response
@@ -141,7 +141,7 @@ class TestLearnedReranker:
     @pytest.mark.asyncio
     async def test_rerank_handles_litellm_error(self, sample_results):
         """Test rerank returns original results on LiteLLM error"""
-        with patch("src.app.search.learned_reranker.arerank") as mock_arerank:
+        with patch("cogniverse_agents.search.learned_reranker.arerank") as mock_arerank:
             mock_arerank.side_effect = Exception("LiteLLM API error")
 
             reranker = LearnedReranker(model="cohere/rerank-english-v3.0")
@@ -153,7 +153,7 @@ class TestLearnedReranker:
 
     def test_rerank_sync_version(self, sample_results):
         """Test synchronous rerank_sync method"""
-        with patch("src.app.search.learned_reranker.rerank") as mock_rerank:
+        with patch("cogniverse_agents.search.learned_reranker.rerank") as mock_rerank:
             mock_response = Mock()
             mock_result_item = Mock()
             mock_result_item.index = 0
@@ -170,7 +170,7 @@ class TestLearnedReranker:
 
     def test_get_model_info(self):
         """Test get_model_info returns correct information"""
-        with patch("src.app.search.learned_reranker.get_config_value") as mock_config:
+        with patch("cogniverse_agents.search.learned_reranker.get_config_value") as mock_config:
             mock_config.return_value = {
                 "model": "cohere",
                 "supported_models": {"cohere": "cohere/rerank-english-v3.0"},

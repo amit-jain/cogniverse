@@ -29,14 +29,14 @@ class TestCompleteDSPySystem:
 
         # Mock the dependencies for testing
         with patch(
-            "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
+            "cogniverse_agents.routing.relationship_extraction_tools.RelationshipExtractorTool"
         ):
-            with patch("src.common.config_utils.get_config") as mock_config:
+            with patch("cogniverse_core.config.utils.get_config") as mock_config:
                 with patch(
-                    "src.app.agents.video_search_agent.VespaVideoSearchClient"
+                    "cogniverse_agents.video_search_agent.VespaVideoSearchClient"
                 ):
                     with patch(
-                        "src.app.agents.video_search_agent.QueryEncoderFactory"
+                        "cogniverse_agents.video_search_agent.QueryEncoderFactory"
                     ):
 
                         # Mock configuration
@@ -110,12 +110,12 @@ class TestCompleteDSPySystem:
 
         from cogniverse_agents.video_search_agent import VideoSearchAgent
 
-        with patch("src.app.agents.video_search_agent.VespaVideoSearchClient"):
+        with patch("cogniverse_agents.video_search_agent.VespaVideoSearchClient"):
             with patch(
-                "src.app.agents.video_search_agent.get_config"
+                "cogniverse_agents.video_search_agent.get_config"
             ) as mock_config:
                 with patch(
-                    "src.app.agents.video_search_agent.QueryEncoderFactory"
+                    "cogniverse_agents.video_search_agent.QueryEncoderFactory"
                 ) as mock_encoder:
 
                     # Mock configuration as a dict (not object)
@@ -196,9 +196,9 @@ class TestCompleteDSPySystem:
 
         from cogniverse_agents.routing_agent import RoutingAgent
 
-        with patch("src.common.config_utils.get_config") as mock_config:
+        with patch("cogniverse_core.config.utils.get_config") as mock_config:
             with patch(
-                "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
+                "cogniverse_agents.routing.relationship_extraction_tools.RelationshipExtractorTool"
             ):
 
                 mock_config.return_value = {

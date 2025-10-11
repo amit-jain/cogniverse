@@ -290,7 +290,7 @@ class TestAdvancedRoutingOptimizerIntegration:
         dspy.settings.configure(lm=mock_lm)
 
         # Enable logging to capture optimizer selection
-        logger = logging.getLogger("src.app.routing.advanced_optimizer")
+        logger = logging.getLogger("cogniverse_agents.routing.advanced_optimizer")
         logger.setLevel(logging.INFO)
 
         # Create config with GEPA threshold at 200

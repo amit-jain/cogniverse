@@ -30,10 +30,10 @@ class TestQueryProcessingPipeline:
         # Mock the services to avoid real connections
         with (
             patch(
-                "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
+                "cogniverse_agents.routing.relationship_extraction_tools.RelationshipExtractorTool"
             ) as mock_extractor_class,
             patch(
-                "src.app.routing.query_enhancement_engine.QueryEnhancementPipeline"
+                "cogniverse_agents.routing.query_enhancement_engine.QueryEnhancementPipeline"
             ) as mock_pipeline_class,
         ):
             # Create mock instances
@@ -175,7 +175,7 @@ class TestQueryProcessingPipeline:
         from cogniverse_agents.routing_agent import RoutingConfig
 
         # Mock only external service URLs, not core logic
-        with patch("src.common.config_utils.get_config") as mock_config:
+        with patch("cogniverse_core.config.utils.get_config") as mock_config:
             mock_config.return_value = {
                 "video_agent_url": "http://localhost:8002",
                 "summarizer_agent_url": "http://localhost:8003",
@@ -185,22 +185,22 @@ class TestQueryProcessingPipeline:
             # Mock RoutingAgent initialization to avoid hangs
             with (
                 patch(
-                    "src.app.agents.routing_agent.RoutingAgent._configure_dspy"
+                    "cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"
                 ),
                 patch(
-                    "src.app.agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
+                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
                 ),
                 patch(
-                    "src.app.agents.routing_agent.RoutingAgent._initialize_routing_module"
+                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_routing_module"
                 ),
                 patch(
-                    "src.app.agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
+                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
                 ),
                 patch(
-                    "src.app.agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
+                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
                 ),
                 patch(
-                    "src.app.agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
+                    "cogniverse_agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
                     return_value=None,
                 ),
             ):
@@ -259,7 +259,7 @@ class TestQueryProcessingPipeline:
         from unittest.mock import AsyncMock, patch
 
         with patch(
-            "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
+            "cogniverse_agents.routing.relationship_extraction_tools.RelationshipExtractorTool"
         ) as mock_extractor_class:
             # Create mock instance
             mock_extractor = AsyncMock()
@@ -349,10 +349,10 @@ class TestQueryProcessingPipeline:
         # Mock the tools to avoid real service connections
         with (
             patch(
-                "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
+                "cogniverse_agents.routing.relationship_extraction_tools.RelationshipExtractorTool"
             ) as mock_extractor_class,
             patch(
-                "src.app.routing.query_enhancement_engine.QueryEnhancementPipeline"
+                "cogniverse_agents.routing.query_enhancement_engine.QueryEnhancementPipeline"
             ) as mock_pipeline_class,
         ):
             # Create mock instances
@@ -419,7 +419,7 @@ class TestAgentWorkflowIntegration:
         """Test summarizer agent with real data structures"""
         from unittest.mock import patch
 
-        with patch("src.app.agents.summarizer_agent.get_config") as mock_config:
+        with patch("cogniverse_agents.summarizer_agent.get_config") as mock_config:
             mock_config.return_value = {
                 "llm": {
                     "model_name": "smollm3:3b",
@@ -440,7 +440,7 @@ class TestAgentWorkflowIntegration:
         """Test detailed report agent with real data structures"""
         from unittest.mock import patch
 
-        with patch("src.app.agents.detailed_report_agent.get_config") as mock_config:
+        with patch("cogniverse_agents.detailed_report_agent.get_config") as mock_config:
             mock_config.return_value = {
                 "llm": {
                     "model_name": "smollm3:3b",
@@ -492,10 +492,10 @@ class TestAgentWorkflowIntegration:
         # Test that we can create multiple agents without conflicts
         with (
             patch(
-                "src.app.agents.summarizer_agent.get_config"
+                "cogniverse_agents.summarizer_agent.get_config"
             ) as mock_summarizer_config,
             patch(
-                "src.app.agents.detailed_report_agent.get_config"
+                "cogniverse_agents.detailed_report_agent.get_config"
             ) as mock_reporter_config,
         ):
             config = {
@@ -541,10 +541,10 @@ class TestSystemIntegrationReadiness:
             # Agents with proper mocking
             with (
                 patch(
-                    "src.app.agents.summarizer_agent.get_config"
+                    "cogniverse_agents.summarizer_agent.get_config"
                 ) as mock_summarizer_config,
                 patch(
-                    "src.app.agents.detailed_report_agent.get_config"
+                    "cogniverse_agents.detailed_report_agent.get_config"
                 ) as mock_reporter_config,
             ):
                 config = {

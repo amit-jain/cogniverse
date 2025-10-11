@@ -32,7 +32,7 @@ class TestCLI:
     @pytest.fixture
     def mock_task(self):
         """Mock evaluation task."""
-        with patch("src.evaluation.cli.evaluation_task") as mock:
+        with patch("cogniverse_core.evaluation.cli.evaluation_task") as mock:
             # Create a mock task object
             task = Mock()
             task.name = "test_task"
@@ -42,7 +42,7 @@ class TestCLI:
     @pytest.fixture
     def mock_inspect_eval(self):
         """Mock inspect_eval function."""
-        with patch("src.evaluation.cli.inspect_eval") as mock:
+        with patch("cogniverse_core.evaluation.cli.inspect_eval") as mock:
             # Create mock results
             results = Mock()
             results.samples = []
@@ -52,7 +52,7 @@ class TestCLI:
     @pytest.fixture
     def mock_dataset_manager(self):
         """Mock DatasetManager."""
-        with patch("src.evaluation.cli.DatasetManager") as mock_cls:
+        with patch("cogniverse_core.evaluation.cli.DatasetManager") as mock_cls:
             manager = Mock()
             manager.create_from_csv.return_value = "dataset_123"
             manager.create_from_queries.return_value = "dataset_456"
@@ -63,7 +63,7 @@ class TestCLI:
     @pytest.fixture
     def mock_trace_manager(self):
         """Mock TraceManager."""
-        with patch("src.evaluation.cli.TraceManager") as mock_cls:
+        with patch("cogniverse_core.evaluation.cli.TraceManager") as mock_cls:
             manager = Mock()
             manager.get_recent_traces.return_value = pd.DataFrame()
             manager.extract_trace_data.return_value = []
@@ -73,7 +73,7 @@ class TestCLI:
     @pytest.mark.unit
     def test_cli_verbose_flag(self, runner):
         """Test CLI with verbose flag."""
-        with patch("src.evaluation.cli.logging.getLogger") as mock_logger:
+        with patch("cogniverse_core.evaluation.cli.logging.getLogger") as mock_logger:
             # Need to provide a subcommand or help flag
             result = runner.invoke(cli, ["--verbose", "--help"])
             assert result.exit_code == 0
@@ -512,7 +512,7 @@ class TestCLI:
     @pytest.mark.unit
     def test_main_entry_point(self):
         """Test main entry point."""
-        with patch("src.evaluation.cli.cli") as mock_cli:
+        with patch("cogniverse_core.evaluation.cli.cli") as mock_cli:
             from cogniverse_core.evaluation.cli import main
 
             main()

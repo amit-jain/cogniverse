@@ -18,7 +18,7 @@ class TestModalitySpanCollector:
     @pytest.fixture
     def collector(self):
         """Create collector instance with mocked Phoenix client"""
-        with patch("src.app.routing.modality_span_collector.px.Client"):
+        with patch("cogniverse_agents.routing.modality_span_collector.px.Client"):
             collector = ModalitySpanCollector(tenant_id="test-tenant")
             return collector
 

@@ -280,7 +280,7 @@ class TestKeyframeProcessor:
             patch("cv2.normalize") as mock_normalize,
             patch("cv2.imwrite"),
             patch(
-                "src.common.utils.output_manager.get_output_manager"
+                "cogniverse_core.common.utils.output_manager.get_output_manager"
             ) as mock_output_manager,
             patch("builtins.open", create=True),
             patch("json.dump"),
@@ -314,7 +314,7 @@ class TestKeyframeProcessor:
         mock_cv2_cap.return_value = mock_cap
 
         with patch(
-            "src.common.utils.output_manager.get_output_manager"
+            "cogniverse_core.common.utils.output_manager.get_output_manager"
         ) as mock_output_manager:
             mock_manager = Mock()
             mock_manager.get_processing_dir.return_value = temp_dir

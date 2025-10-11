@@ -37,7 +37,7 @@ class TestCompleteMultiAgentOrchestration:
         """Test routing decision leading to video search workflow"""
         from unittest.mock import patch
 
-        with patch("src.common.config_utils.get_config") as mock_config:
+        with patch("cogniverse_core.config.utils.get_config") as mock_config:
             mock_config.return_value = {
                 "video_agent_url": "http://localhost:8002",
                 "summarizer_agent_url": "http://localhost:8003",
@@ -163,10 +163,10 @@ class TestCompleteMultiAgentOrchestration:
 
         with (
             patch(
-                "src.app.agents.summarizer_agent.get_config"
+                "cogniverse_agents.summarizer_agent.get_config"
             ) as mock_summarizer_config,
             patch(
-                "src.app.agents.detailed_report_agent.get_config"
+                "cogniverse_agents.detailed_report_agent.get_config"
             ) as mock_reporter_config,
         ):
 
@@ -183,22 +183,22 @@ class TestCompleteMultiAgentOrchestration:
             # Initialize all core agents with mocked routing agent
             with (
                 patch(
-                    "src.app.agents.routing_agent.RoutingAgent._configure_dspy"
+                    "cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"
                 ),
                 patch(
-                    "src.app.agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
+                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
                 ),
                 patch(
-                    "src.app.agents.routing_agent.RoutingAgent._initialize_routing_module"
+                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_routing_module"
                 ),
                 patch(
-                    "src.app.agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
+                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
                 ),
                 patch(
-                    "src.app.agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
+                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
                 ),
                 patch(
-                    "src.app.agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
+                    "cogniverse_agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
                     return_value=None,
                 ),
             ):
@@ -248,22 +248,22 @@ class TestCompleteMultiAgentOrchestration:
 
         with (
             patch(
-                "src.app.agents.routing_agent.RoutingAgent._configure_dspy"
+                "cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"
             ),
             patch(
-                "src.app.agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
+                "cogniverse_agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
             ),
             patch(
-                "src.app.agents.routing_agent.RoutingAgent._initialize_routing_module"
+                "cogniverse_agents.routing_agent.RoutingAgent._initialize_routing_module"
             ),
             patch(
-                "src.app.agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
+                "cogniverse_agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
             ),
             patch(
-                "src.app.agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
+                "cogniverse_agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
             ),
             patch(
-                "src.app.agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
+                "cogniverse_agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
                 return_value=None,
             ),
         ):
@@ -316,10 +316,10 @@ class TestCompleteMultiAgentOrchestration:
         try:
             with (
                 patch(
-                    "src.app.agents.summarizer_agent.get_config"
+                    "cogniverse_agents.summarizer_agent.get_config"
                 ) as mock_summarizer_config,
                 patch(
-                    "src.app.agents.detailed_report_agent.get_config"
+                    "cogniverse_agents.detailed_report_agent.get_config"
                 ) as mock_reporter_config,
             ):
 
@@ -336,22 +336,22 @@ class TestCompleteMultiAgentOrchestration:
                 # Create multiple agents simultaneously with mocked routing agent
                 with (
                     patch(
-                        "src.app.agents.routing_agent.RoutingAgent._configure_dspy"
+                        "cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"
                     ),
                     patch(
-                        "src.app.agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
+                        "cogniverse_agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
                     ),
                     patch(
-                        "src.app.agents.routing_agent.RoutingAgent._initialize_routing_module"
+                        "cogniverse_agents.routing_agent.RoutingAgent._initialize_routing_module"
                     ),
                     patch(
-                        "src.app.agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
+                        "cogniverse_agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
                     ),
                     patch(
-                        "src.app.agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
+                        "cogniverse_agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
                     ),
                     patch(
-                        "src.app.agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
+                        "cogniverse_agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
                         return_value=None,
                     ),
                 ):
@@ -412,7 +412,7 @@ class TestSystemScalability:
 
         from cogniverse_agents.routing_agent import RoutingConfig
 
-        with patch("src.common.config_utils.get_config") as mock_config:
+        with patch("cogniverse_core.config.utils.get_config") as mock_config:
             mock_config.return_value = {
                 "video_agent_url": "http://localhost:8002",
                 "summarizer_agent_url": "http://localhost:8003",
@@ -421,22 +421,22 @@ class TestSystemScalability:
 
             with (
                 patch(
-                    "src.app.agents.routing_agent.RoutingAgent._configure_dspy"
+                    "cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"
                 ),
                 patch(
-                    "src.app.agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
+                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
                 ),
                 patch(
-                    "src.app.agents.routing_agent.RoutingAgent._initialize_routing_module"
+                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_routing_module"
                 ),
                 patch(
-                    "src.app.agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
+                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
                 ),
                 patch(
-                    "src.app.agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
+                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
                 ),
                 patch(
-                    "src.app.agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
+                    "cogniverse_agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
                     return_value=None,
                 ),
             ):
@@ -485,10 +485,10 @@ class TestSystemScalability:
         from unittest.mock import patch
 
         with patch(
-            "src.app.agents.summarizer_agent.get_config"
+            "cogniverse_agents.summarizer_agent.get_config"
         ) as mock_summarizer_config:
             with patch(
-                "src.app.agents.detailed_report_agent.get_config"
+                "cogniverse_agents.detailed_report_agent.get_config"
             ) as mock_reporter_config:
                 config = {
                     "llm": {

@@ -27,7 +27,7 @@ class TestCrossModalOptimizer:
     @pytest.fixture
     def mock_fusion_model(self):
         """Create mocked FusionBenefitModel"""
-        with patch("src.app.routing.cross_modal_optimizer.FusionBenefitModel") as mock:
+        with patch("cogniverse_agents.routing.cross_modal_optimizer.FusionBenefitModel") as mock:
             model = MagicMock()
             model.is_trained = False
             model.predict_benefit = MagicMock(return_value=0.6)

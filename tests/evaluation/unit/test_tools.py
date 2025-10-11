@@ -26,8 +26,8 @@ class TestVideoSearchTool:
     async def test_video_search_tool_execution(self):
         """Test video search tool execution."""
         with (
-            patch("src.app.search.service.SearchService") as mock_service_cls,
-            patch("src.common.config_utils.get_config") as mock_config,
+            patch("cogniverse_agents.search.service.SearchService") as mock_service_cls,
+            patch("cogniverse_core.config.utils.get_config") as mock_config,
         ):
 
             # Setup mocks
@@ -76,8 +76,8 @@ class TestVideoSearchTool:
     async def test_video_search_tool_no_source_id(self):
         """Test video search tool when source_id is missing."""
         with (
-            patch("src.app.search.service.SearchService") as mock_service_cls,
-            patch("src.common.config_utils.get_config") as mock_config,
+            patch("cogniverse_agents.search.service.SearchService") as mock_service_cls,
+            patch("cogniverse_core.config.utils.get_config") as mock_config,
         ):
 
             mock_config.return_value = {"test": "config"}
@@ -100,8 +100,8 @@ class TestVideoSearchTool:
     async def test_video_search_tool_no_score(self):
         """Test video search tool when score is missing."""
         with (
-            patch("src.app.search.service.SearchService") as mock_service_cls,
-            patch("src.common.config_utils.get_config") as mock_config,
+            patch("cogniverse_agents.search.service.SearchService") as mock_service_cls,
+            patch("cogniverse_core.config.utils.get_config") as mock_config,
         ):
 
             mock_config.return_value = {"test": "config"}
@@ -132,8 +132,8 @@ class TestVideoSearchTool:
     async def test_video_search_tool_error_handling(self):
         """Test video search tool error handling."""
         with (
-            patch("src.app.search.service.SearchService") as mock_service_cls,
-            patch("src.common.config_utils.get_config") as mock_config,
+            patch("cogniverse_agents.search.service.SearchService") as mock_service_cls,
+            patch("cogniverse_core.config.utils.get_config") as mock_config,
         ):
 
             mock_config.return_value = {"test": "config"}

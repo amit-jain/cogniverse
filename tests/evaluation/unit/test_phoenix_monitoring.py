@@ -132,7 +132,7 @@ class TestRetrievalMonitor:
     @pytest.fixture
     def mock_phoenix(self):
         """Mock Phoenix client."""
-        with patch("src.evaluation.phoenix.monitoring.px") as mock_px:
+        with patch("cogniverse_core.evaluation.phoenix.monitoring.px") as mock_px:
             mock_client = Mock()
             mock_px.Client.return_value = mock_client
             yield mock_client
@@ -160,7 +160,7 @@ class TestRetrievalMonitor:
     @pytest.mark.unit
     def test_start_monitoring(self):
         """Test starting monitoring."""
-        with patch("src.evaluation.phoenix.monitoring.px") as mock_px:
+        with patch("cogniverse_core.evaluation.phoenix.monitoring.px") as mock_px:
             mock_px.launch_app.return_value = Mock(url="http://localhost:6006")
 
             monitor = RetrievalMonitor()
@@ -179,7 +179,7 @@ class TestRetrievalMonitor:
     @pytest.mark.unit
     def test_stop_monitoring(self):
         """Test stopping monitoring."""
-        with patch("src.evaluation.phoenix.monitoring.px") as mock_px:
+        with patch("cogniverse_core.evaluation.phoenix.monitoring.px") as mock_px:
             mock_px.launch_app.return_value = Mock()
 
             monitor = RetrievalMonitor()
@@ -197,7 +197,7 @@ class TestRetrievalMonitor:
     @pytest.mark.unit
     def test_log_retrieval_event(self):
         """Test logging retrieval events."""
-        with patch("src.evaluation.phoenix.monitoring.px"):
+        with patch("cogniverse_core.evaluation.phoenix.monitoring.px"):
             monitor = RetrievalMonitor()
 
             # Log an event

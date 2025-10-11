@@ -142,7 +142,7 @@ class TestDSPySystemIntegration:
         # Mock only external dependencies, not core logic
         from unittest.mock import patch
 
-        with patch("src.common.config_utils.get_config") as mock_config:
+        with patch("cogniverse_core.config.utils.get_config") as mock_config:
             # Provide real config structure
             mock_config.return_value = {
                 "video_agent_url": "http://localhost:8002",
@@ -213,10 +213,10 @@ class TestMultiAgentSystem:
         # Mock config to provide required LLM configuration
         with (
             patch(
-                "src.app.agents.summarizer_agent.get_config"
+                "cogniverse_agents.summarizer_agent.get_config"
             ) as mock_summarizer_config,
             patch(
-                "src.app.agents.detailed_report_agent.get_config"
+                "cogniverse_agents.detailed_report_agent.get_config"
             ) as mock_reporter_config,
         ):
             config = {

@@ -18,9 +18,9 @@ class TestExperimentTracker:
     def mock_dependencies(self):
         """Mock all external dependencies."""
         with (
-            patch("src.evaluation.core.experiment_tracker.DatasetManager") as mock_dm,
-            patch("src.evaluation.core.experiment_tracker.RetrievalMonitor") as mock_pm,
-            patch("src.evaluation.core.experiment_tracker.register_plugin") as mock_reg,
+            patch("cogniverse_core.evaluation.core.experiment_tracker.DatasetManager") as mock_dm,
+            patch("cogniverse_core.evaluation.core.experiment_tracker.RetrievalMonitor") as mock_pm,
+            patch("cogniverse_core.evaluation.core.experiment_tracker.register_plugin") as mock_reg,
         ):
 
             yield {
@@ -78,7 +78,7 @@ class TestExperimentTracker:
     def test_register_evaluator_plugins_quality(self, mock_dependencies):
         """Test registering quality evaluator plugins."""
         # Mock the entire module since VideoAnalyzerPlugin may not exist
-        with patch("src.evaluation.plugins.video_analyzer") as mock_module:
+        with patch("cogniverse_core.evaluation.plugins.video_analyzer") as mock_module:
             mock_plugin = Mock()
             mock_module.VideoAnalyzerPlugin = Mock(return_value=mock_plugin)
 
@@ -89,7 +89,7 @@ class TestExperimentTracker:
     @pytest.mark.unit
     def test_register_evaluator_plugins_llm(self, mock_dependencies):
         """Test registering LLM evaluator plugins."""
-        with patch("src.evaluation.plugins.visual_evaluator.VisualEvaluatorPlugin"):
+        with patch("cogniverse_core.evaluation.plugins.visual_evaluator.VisualEvaluatorPlugin"):
             ExperimentTracker(enable_llm_evaluators=True)
 
             mock_dependencies["register_plugin"].assert_called()
@@ -99,7 +99,7 @@ class TestExperimentTracker:
         """Test handling import errors when registering plugins."""
         # Mock the import to fail
         with patch(
-            "src.evaluation.core.experiment_tracker.register_plugin"
+            "cogniverse_core.evaluation.core.experiment_tracker.register_plugin"
         ) as mock_reg:
             mock_reg.side_effect = ImportError("Module not found")
 
@@ -110,7 +110,7 @@ class TestExperimentTracker:
     @pytest.mark.unit
     def test_get_experiment_configurations_default(self, tracker):
         """Test getting experiment configurations with defaults."""
-        with patch("src.common.core.registry.get_registry") as mock_get_registry:
+        with patch("cogniverse_core.common.core.registry.get_registry") as mock_get_registry:
             mock_registry = Mock()
             mock_registry.list_profiles.return_value = ["profile1", "profile2"]
             mock_registry.list_ranking_strategies.return_value = [
@@ -135,7 +135,7 @@ class TestExperimentTracker:
     @pytest.mark.unit
     def test_get_experiment_configurations_specific_profiles(self, tracker):
         """Test getting configurations for specific profiles."""
-        with patch("src.common.core.registry.get_registry") as mock_get_registry:
+        with patch("cogniverse_core.common.core.registry.get_registry") as mock_get_registry:
             mock_registry = Mock()
             mock_registry.list_ranking_strategies.return_value = [
                 "binary_binary",
@@ -151,7 +151,7 @@ class TestExperimentTracker:
     @pytest.mark.unit
     def test_get_experiment_configurations_specific_strategies(self, tracker):
         """Test getting configurations for specific strategies."""
-        with patch("src.common.core.registry.get_registry") as mock_get_registry:
+        with patch("cogniverse_core.common.core.registry.get_registry") as mock_get_registry:
             mock_registry = Mock()
             mock_registry.list_profiles.return_value = ["profile1"]
             mock_registry.list_ranking_strategies.return_value = [
@@ -172,7 +172,7 @@ class TestExperimentTracker:
     @pytest.mark.unit
     def test_get_experiment_configurations_all_strategies(self, tracker):
         """Test getting configurations with all strategies."""
-        with patch("src.common.core.registry.get_registry") as mock_get_registry:
+        with patch("cogniverse_core.common.core.registry.get_registry") as mock_get_registry:
             mock_registry = Mock()
             mock_registry.list_profiles.return_value = ["profile1"]
             mock_registry.list_ranking_strategies.return_value = [
@@ -191,7 +191,7 @@ class TestExperimentTracker:
     @pytest.mark.unit
     def test_get_experiment_configurations_registry_error(self, tracker):
         """Test handling registry errors gracefully."""
-        with patch("src.common.core.registry.get_registry") as mock_get_registry:
+        with patch("cogniverse_core.common.core.registry.get_registry") as mock_get_registry:
             mock_registry = Mock()
             mock_registry.list_profiles.return_value = ["profile1"]
             mock_registry.list_ranking_strategies.side_effect = Exception(
@@ -212,7 +212,7 @@ class TestExperimentTracker:
         mock_result.scores = {"mrr": Mock(value=0.85), "recall": Mock(value=0.75)}
 
         with (
-            patch("src.evaluation.core.experiment_tracker.evaluation_task"),
+            patch("cogniverse_core.evaluation.core.experiment_tracker.evaluation_task"),
             patch("inspect_ai.eval", new_callable=AsyncMock) as mock_eval,
         ):
 
@@ -239,7 +239,7 @@ class TestExperimentTracker:
     async def test_run_experiment_async_failure(self, tracker):
         """Test experiment execution failure."""
         with (
-            patch("src.evaluation.core.experiment_tracker.evaluation_task"),
+            patch("cogniverse_core.evaluation.core.experiment_tracker.evaluation_task"),
             patch("inspect_ai.eval", side_effect=Exception("Evaluation failed")),
         ):
 
@@ -509,7 +509,7 @@ class TestExperimentTracker:
         mock_args.force_new = False
 
         with patch(
-            "src.evaluation.core.experiment_tracker.ExperimentTracker"
+            "cogniverse_core.evaluation.core.experiment_tracker.ExperimentTracker"
         ) as mock_tracker_class:
             mock_tracker = Mock()
             mock_tracker_class.return_value = mock_tracker
@@ -531,7 +531,7 @@ class TestExperimentTracker:
         from cogniverse_core.evaluation.core.experiment_tracker import main
 
         with patch(
-            "src.evaluation.core.experiment_tracker.ExperimentTracker"
+            "cogniverse_core.evaluation.core.experiment_tracker.ExperimentTracker"
         ) as mock_tracker_class:
             mock_tracker = Mock()
             mock_tracker_class.return_value = mock_tracker

@@ -85,7 +85,7 @@ class TestMockBackendIngestion:
             mock_cap_instance.read.return_value = (False, None)  # No frames
             mock_cap.return_value = mock_cap_instance
 
-            with patch("src.common.utils.output_manager.get_output_manager"):
+            with patch("cogniverse_core.common.utils.output_manager.get_output_manager"):
                 result = processor.extract_keyframes(video_file)
 
                 assert "video_id" in result
@@ -109,7 +109,7 @@ class TestMockBackendIngestion:
             # Mock ffprobe for duration
             mock_subprocess.return_value.stdout = "60.0\n"
 
-            with patch("src.common.utils.output_manager.get_output_manager"):
+            with patch("cogniverse_core.common.utils.output_manager.get_output_manager"):
                 result = processor.extract_chunks(video_file)
 
                 assert "video_id" in result

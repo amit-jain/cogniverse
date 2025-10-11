@@ -38,13 +38,13 @@ class TestRoutingToEnhancedSearchIntegration:
     def mock_dependencies(self):
         """Mock external dependencies for testing"""
         with patch(
-            "src.app.agents.video_search_agent.get_config"
+            "cogniverse_agents.video_search_agent.get_config"
         ) as mock_search_config:
             with patch(
-                "src.backends.vespa.vespa_search_client.VespaVideoSearchClient"
+                "cogniverse_vespa.vespa.vespa_search_client.VespaVideoSearchClient"
             ) as mock_vespa:
                 with patch(
-                    "src.app.agents.query_encoders.QueryEncoderFactory"
+                    "cogniverse_agents.query_encoders.QueryEncoderFactory"
                 ) as mock_encoder_factory:
                     mock_search_config.return_value = {
                         "vespa_url": "http://localhost:8080",
@@ -130,10 +130,10 @@ class TestRoutingToEnhancedSearchIntegration:
 
         # Mock relationship extraction and query enhancement
         with patch(
-            "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
+            "cogniverse_agents.routing.relationship_extraction_tools.RelationshipExtractorTool"
         ) as mock_extractor_class:
             with patch(
-                "src.app.routing.query_enhancement_engine.QueryEnhancementPipeline"
+                "cogniverse_agents.routing.query_enhancement_engine.QueryEnhancementPipeline"
             ) as mock_pipeline_class:
 
                 # Mock relationship extractor
@@ -306,12 +306,12 @@ class TestEnhancedAgentComponentIntegration:
     @pytest.fixture
     def mock_dependencies(self):
         """Mock external dependencies for testing"""
-        with patch("src.app.agents.result_enhancement_engine.logger"):
+        with patch("cogniverse_agents.result_enhancement_engine.logger"):
             with patch(
-                "src.app.agents.result_aggregator.ResultEnhancementEngine"
+                "cogniverse_agents.result_aggregator.ResultEnhancementEngine"
             ):
                 with patch(
-                    "src.app.agents.agent_orchestrator.RoutingAgent"
+                    "cogniverse_agents.agent_orchestrator.RoutingAgent"
                 ):
                     # Mock the actual imports that exist
                     yield
@@ -446,7 +446,7 @@ class TestEnhancedAgentComponentIntegration:
 
         # Mock all dependencies
         with patch(
-            "src.app.agents.agent_orchestrator.ResultAggregator"
+            "cogniverse_agents.agent_orchestrator.ResultAggregator"
         ) as mock_aggregator_class:
 
             # Mock routing agent
@@ -684,7 +684,7 @@ class TestRoutingEnhancementErrorHandlingIntegration:
 
         # Mock failed routing but successful enhancement
         with patch(
-            "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
+            "cogniverse_agents.routing.relationship_extraction_tools.RelationshipExtractorTool"
         ) as mock_extractor_class:
             mock_extractor = Mock()
             mock_extractor.extract_comprehensive_relationships = AsyncMock(
@@ -766,7 +766,7 @@ class TestRoutingEnhancementErrorHandlingIntegration:
     async def test_agent_failure_to_aggregation_resilience(self, mock_dependencies):
         """Test aggregation resilience when individual agents fail"""
 
-        with patch("src.app.agents.result_aggregator.ResultEnhancementEngine"):
+        with patch("cogniverse_agents.result_aggregator.ResultEnhancementEngine"):
             aggregator = ResultAggregator(enable_fallbacks=True)
 
             # Mock failing agent invocation

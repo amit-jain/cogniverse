@@ -614,7 +614,7 @@ class TestDSPyEndToEndIntegration:
         }
 
         # Test QueryAnalysisToolV3 with direct prompt setting
-        with patch("src.app.agents.query_analysis_tool_v3.RoutingAgent"):
+        with patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent"):
             tool = QueryAnalysisToolV3(enable_agent_integration=False)
 
             # Manually set the optimization data
@@ -2149,7 +2149,7 @@ class TestDSPyComponentsIntegration:
         }
 
         with patch(
-            "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
+            "cogniverse_agents.routing.relationship_extraction_tools.RelationshipExtractorTool"
         ) as mock_extractor_class:
             mock_extractor_instance = Mock()
             mock_extractor_instance.extract_comprehensive_relationships = AsyncMock(
@@ -2208,7 +2208,7 @@ class TestDSPyComponentsIntegration:
         }
 
         with patch(
-            "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
+            "cogniverse_agents.routing.relationship_extraction_tools.RelationshipExtractorTool"
         ) as mock_extractor_class:
             mock_extractor_instance = Mock()
             mock_extractor_instance.extract_comprehensive_relationships = AsyncMock(
@@ -3040,9 +3040,9 @@ class TestVideoSearchAgent:
         }
 
         # Mock the required dependencies
-        with patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient"):
+        with patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient"):
             with patch(
-                "src.app.agents.video_search_agent.QueryEncoderFactory"
+                "cogniverse_agents.video_search_agent.QueryEncoderFactory"
             ) as mock_encoder_factory:
                 # Create a mock config that returns profiles dict
                 mock_video_config.return_value = {
@@ -3136,7 +3136,7 @@ class TestVideoSearchAgent:
         }
 
         with patch(
-            "src.app.agents.video_search_agent.QueryEncoderFactory"
+            "cogniverse_agents.video_search_agent.QueryEncoderFactory"
         ) as mock_encoder_factory:
             # Create a mock config that returns profiles dict
             mock_video_config.return_value = {
@@ -3199,7 +3199,7 @@ class TestVideoSearchAgent:
         }
 
         with patch(
-            "src.app.agents.video_search_agent.QueryEncoderFactory"
+            "cogniverse_agents.video_search_agent.QueryEncoderFactory"
         ) as mock_encoder_factory:
             # Create a mock config that returns profiles dict
             mock_video_config.return_value = {
@@ -3264,7 +3264,7 @@ class TestVideoSearchAgent:
         }
 
         with patch(
-            "src.app.agents.video_search_agent.QueryEncoderFactory"
+            "cogniverse_agents.video_search_agent.QueryEncoderFactory"
         ) as mock_encoder_factory:
             # Create a mock config that returns profiles dict
             mock_video_config.return_value = {

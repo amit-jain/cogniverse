@@ -266,7 +266,7 @@ class TestResultAggregator:
     ):
         """Test aggregation with no agents to invoke"""
         with patch(
-            "src.app.agents.result_aggregator.ResultEnhancementEngine"
+            "cogniverse_agents.result_aggregator.ResultEnhancementEngine"
         ) as mock_engine_class:
             mock_engine = Mock()
             mock_engine_class.return_value = mock_engine
@@ -348,7 +348,7 @@ class TestResultAggregatorEdgeCases:
     async def test_aggregate_empty_search_results(self, minimal_routing_decision):
         """Test aggregation with empty search results"""
         with patch(
-            "src.app.agents.result_aggregator.ResultEnhancementEngine"
+            "cogniverse_agents.result_aggregator.ResultEnhancementEngine"
         ) as mock_engine_class:
             mock_engine = Mock()
             mock_engine_class.return_value = mock_engine
@@ -370,7 +370,7 @@ class TestResultAggregatorEdgeCases:
     async def test_aggregate_with_agent_failures(self, minimal_routing_decision):
         """Test aggregation when agents fail"""
         with patch(
-            "src.app.agents.result_aggregator.ResultEnhancementEngine"
+            "cogniverse_agents.result_aggregator.ResultEnhancementEngine"
         ) as mock_engine_class:
             mock_engine = Mock()
             mock_engine_class.return_value = mock_engine
@@ -397,7 +397,7 @@ class TestResultAggregatorEdgeCases:
     async def test_max_results_processing_limit(self, minimal_routing_decision):
         """Test that max_results_to_process is respected during aggregation"""
         with patch(
-            "src.app.agents.result_aggregator.ResultEnhancementEngine"
+            "cogniverse_agents.result_aggregator.ResultEnhancementEngine"
         ) as mock_engine_class:
             mock_engine = Mock()
             mock_engine_class.return_value = mock_engine
@@ -424,7 +424,7 @@ class TestResultAggregatorEdgeCases:
     async def test_enhancement_statistics_in_result(self, minimal_routing_decision):
         """Test that enhancement statistics are included in aggregated results"""
         with patch(
-            "src.app.agents.result_aggregator.ResultEnhancementEngine"
+            "cogniverse_agents.result_aggregator.ResultEnhancementEngine"
         ) as mock_engine_class:
             mock_engine = Mock()
             mock_engine_class.return_value = mock_engine

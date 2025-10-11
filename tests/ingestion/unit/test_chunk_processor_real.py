@@ -361,7 +361,7 @@ class TestChunkProcessor:
             patch.object(processor, "_get_video_duration", return_value=80.0),
             patch.object(processor, "_extract_chunk", return_value=True),
             patch(
-                "src.common.utils.output_manager.get_output_manager"
+                "cogniverse_core.common.utils.output_manager.get_output_manager"
             ) as mock_output_manager,
             patch("builtins.open", create=True),
             patch("json.dump"),

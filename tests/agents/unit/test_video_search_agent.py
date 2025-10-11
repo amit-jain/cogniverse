@@ -610,13 +610,13 @@ class TestVideoSearchAgentAdvancedFeatures:
 
         with (
             patch(
-                "src.app.agents.video_search_agent.get_config"
+                "cogniverse_agents.video_search_agent.get_config"
             ) as mock_get_config,
             patch(
-                "src.app.agents.video_search_agent.TenantAwareVespaSearchClient"
+                "cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient"
             ) as mock_vespa_class,
             patch(
-                "src.app.agents.video_search_agent.QueryEncoderFactory"
+                "cogniverse_agents.video_search_agent.QueryEncoderFactory"
             ) as mock_encoder_factory,
         ):
             mock_get_config.return_value = mock_config

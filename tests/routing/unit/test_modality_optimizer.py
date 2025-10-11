@@ -34,19 +34,19 @@ class TestModalityOptimizer:
         """Create mocked components"""
         with (
             patch(
-                "src.app.routing.modality_optimizer.ModalitySpanCollector"
+                "cogniverse_agents.routing.modality_optimizer.ModalitySpanCollector"
             ) as mock_collector,
             patch(
-                "src.app.routing.modality_optimizer.ModalityEvaluator"
+                "cogniverse_agents.routing.modality_optimizer.ModalityEvaluator"
             ) as mock_evaluator,
             patch(
-                "src.app.routing.modality_optimizer.SyntheticDataGenerator"
+                "cogniverse_agents.routing.modality_optimizer.SyntheticDataGenerator"
             ) as mock_generator,
             patch(
-                "src.app.routing.modality_optimizer.TrainingDecisionModel"
+                "cogniverse_agents.routing.modality_optimizer.TrainingDecisionModel"
             ) as mock_decision,
             patch(
-                "src.app.routing.modality_optimizer.TrainingStrategyModel"
+                "cogniverse_agents.routing.modality_optimizer.TrainingStrategyModel"
             ) as mock_strategy,
         ):
 

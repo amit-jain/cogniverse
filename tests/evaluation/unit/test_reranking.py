@@ -55,7 +55,7 @@ class TestDiversityRerankingStrategy:
     async def test_rerank_diversity(self, strategy, sample_results):
         """Test diversity reranking."""
         with patch(
-            "src.evaluation.core.reranking.get_schema_analyzer"
+            "cogniverse_core.evaluation.core.reranking.get_schema_analyzer"
         ) as mock_analyzer:
             analyzer = Mock()
             analyzer.extract_item_id = lambda x: x.get("id")
@@ -97,7 +97,7 @@ class TestDiversityRerankingStrategy:
         }
 
         with patch(
-            "src.evaluation.core.reranking.get_schema_analyzer"
+            "cogniverse_core.evaluation.core.reranking.get_schema_analyzer"
         ) as mock_analyzer:
             analyzer = Mock()
             analyzer.extract_item_id = lambda x: x.get("id")
@@ -164,7 +164,7 @@ class TestDiversityRerankingStrategy:
     async def test_rerank_with_analyzer_error(self, strategy, sample_results):
         """Test reranking when analyzer fails."""
         with patch(
-            "src.evaluation.core.reranking.get_schema_analyzer"
+            "cogniverse_core.evaluation.core.reranking.get_schema_analyzer"
         ) as mock_analyzer:
             mock_analyzer.side_effect = Exception("Analyzer error")
 
@@ -199,7 +199,7 @@ class TestContentSimilarityRerankingStrategy:
         query = "machine learning"
 
         with patch(
-            "src.evaluation.core.reranking.get_schema_analyzer"
+            "cogniverse_core.evaluation.core.reranking.get_schema_analyzer"
         ) as mock_analyzer:
             analyzer = Mock()
             analyzer.extract_content_text = lambda x: x.get("content", "")
@@ -225,7 +225,7 @@ class TestContentSimilarityRerankingStrategy:
         config = {"use_embeddings": True}
 
         with patch(
-            "src.evaluation.core.reranking.get_schema_analyzer"
+            "cogniverse_core.evaluation.core.reranking.get_schema_analyzer"
         ) as mock_analyzer:
             analyzer = Mock()
             analyzer.extract_embedding = lambda x: x.get("embedding")
@@ -400,7 +400,7 @@ class TestTemporalRerankingStrategy:
         config = {"temporal_strategy": "recency_first"}
 
         with patch(
-            "src.evaluation.core.reranking.get_schema_analyzer"
+            "cogniverse_core.evaluation.core.reranking.get_schema_analyzer"
         ) as mock_analyzer:
             analyzer = Mock()
             analyzer.extract_temporal_info = lambda x: {"timestamp": x.get("timestamp")}
@@ -452,7 +452,7 @@ class TestHybridRerankingStrategy:
     async def test_hybrid_rerank_default(self, strategy, sample_results):
         """Test hybrid reranking with default settings."""
         with patch(
-            "src.evaluation.core.reranking.get_schema_analyzer"
+            "cogniverse_core.evaluation.core.reranking.get_schema_analyzer"
         ) as mock_analyzer:
             analyzer = Mock()
             analyzer.extract_item_id = lambda x: x.get("id")
@@ -478,7 +478,7 @@ class TestHybridRerankingStrategy:
         }
 
         with patch(
-            "src.evaluation.core.reranking.get_schema_analyzer"
+            "cogniverse_core.evaluation.core.reranking.get_schema_analyzer"
         ) as mock_analyzer:
             analyzer = Mock()
             analyzer.extract_item_id = lambda x: x.get("id")
@@ -500,7 +500,7 @@ class TestHybridRerankingStrategy:
         config = {"strategies": {"content": {"weight": 1.0}}}
 
         with patch(
-            "src.evaluation.core.reranking.get_schema_analyzer"
+            "cogniverse_core.evaluation.core.reranking.get_schema_analyzer"
         ) as mock_analyzer:
             analyzer = Mock()
             analyzer.extract_content_text = lambda x: x.get("content", "")
@@ -523,7 +523,7 @@ class TestHybridRerankingStrategy:
         }
 
         with patch(
-            "src.evaluation.core.reranking.get_schema_analyzer"
+            "cogniverse_core.evaluation.core.reranking.get_schema_analyzer"
         ) as mock_analyzer:
             analyzer = Mock()
             analyzer.extract_item_id = lambda x: x.get("id")
@@ -541,7 +541,7 @@ class TestHybridRerankingStrategy:
     async def test_hybrid_empty_config(self, strategy, sample_results):
         """Test hybrid with empty config."""
         with patch(
-            "src.evaluation.core.reranking.get_schema_analyzer"
+            "cogniverse_core.evaluation.core.reranking.get_schema_analyzer"
         ) as mock_analyzer:
             analyzer = Mock()
             analyzer.extract_item_id = lambda x: x.get("id")
@@ -580,7 +580,7 @@ class TestRerankingHelpers:
 
         # Should handle gracefully
         with patch(
-            "src.evaluation.core.reranking.get_schema_analyzer"
+            "cogniverse_core.evaluation.core.reranking.get_schema_analyzer"
         ) as mock_analyzer:
             analyzer = Mock()
             analyzer.extract_item_id = lambda x: x.get("id", "")

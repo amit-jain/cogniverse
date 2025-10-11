@@ -224,8 +224,8 @@ class TestSummarizerAgentCoreFunctionality:
     def agent_with_mocks(self):
         """Create agent with properly mocked dependencies"""
         with (
-            patch("src.app.agents.summarizer_agent.get_config") as mock_config,
-            patch("src.app.agents.summarizer_agent.VLMInterface") as mock_vlm_class,
+            patch("cogniverse_agents.summarizer_agent.get_config") as mock_config,
+            patch("cogniverse_agents.summarizer_agent.VLMInterface") as mock_vlm_class,
             patch.object(SummarizerAgent, "_initialize_vlm_client"),
         ):
 

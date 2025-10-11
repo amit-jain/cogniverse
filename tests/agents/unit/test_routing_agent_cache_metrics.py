@@ -35,8 +35,8 @@ class TestRoutingAgentCacheMetrics:
         # Mock all external dependencies to avoid network calls and delays
         # Use patch.object for dspy.settings.configure to avoid attribute cleanup issues
         with patch.object(RoutingAgent, "_configure_dspy", return_value=None), \
-             patch("src.app.agents.dspy_a2a_agent_base.FastAPI"), \
-             patch("src.app.agents.dspy_a2a_agent_base.A2AClient"):
+             patch("cogniverse_agents.dspy_a2a_agent_base.FastAPI"), \
+             patch("cogniverse_agents.dspy_a2a_agent_base.A2AClient"):
             agent = RoutingAgent(tenant_id="test_tenant", config=config, port=8001, enable_telemetry=False)
             yield agent
 

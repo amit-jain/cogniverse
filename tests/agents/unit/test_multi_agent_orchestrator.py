@@ -231,10 +231,10 @@ class TestMultiAgentOrchestratorWorkflowExecution:
     def orchestrator_with_mocks(self):
         """Create orchestrator with mocked dependencies"""
         with (
-            patch("src.app.agents.multi_agent_orchestrator.RoutingAgent"),
-            patch("src.app.agents.multi_agent_orchestrator.A2AClient"),
+            patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent"),
+            patch("cogniverse_agents.multi_agent_orchestrator.A2AClient"),
             patch(
-                "src.app.agents.multi_agent_orchestrator.create_workflow_intelligence"
+                "cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence"
             ),
         ):
 
@@ -326,8 +326,8 @@ class TestCrossModalFusion:
     def orchestrator(self):
         """Create orchestrator for testing fusion"""
         with (
-            patch("src.app.agents.multi_agent_orchestrator.RoutingAgent"),
-            patch("src.app.agents.multi_agent_orchestrator.A2AClient"),
+            patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent"),
+            patch("cogniverse_agents.multi_agent_orchestrator.A2AClient"),
         ):
             return MultiAgentOrchestrator(tenant_id="test_tenant", enable_workflow_intelligence=False)
 

@@ -317,7 +317,7 @@ class TestModalityImprovementValidation:
         context = {"modality_prediction": prediction}
 
         # Create router and test routing with modality prediction
-        with patch("src.app.routing.router.ComprehensiveRouter") as MockRouter:
+        with patch("cogniverse_agents.routing.router.ComprehensiveRouter") as MockRouter:
             mock_router_instance = MockRouter.return_value
             mock_router_instance.route = AsyncMock(
                 return_value=RoutingDecision(

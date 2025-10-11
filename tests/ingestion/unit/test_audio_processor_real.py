@@ -311,7 +311,7 @@ class TestAudioProcessor:
         mock_model.transcribe.side_effect = Exception("Whisper transcription failed")
         mock_load_model.return_value = mock_model
 
-        with patch("src.common.utils.output_manager.get_output_manager"):
+        with patch("cogniverse_core.common.utils.output_manager.get_output_manager"):
             result = processor.transcribe_audio(sample_video_path)
 
         # Should return error result instead of raising

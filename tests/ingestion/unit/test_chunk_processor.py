@@ -210,7 +210,7 @@ class TestChunkProcessorIntegration:
         """Test processor uses OutputManager when no output_dir specified."""
         processor = ChunkProcessor(logger=mock_logger)
 
-        with patch("src.common.utils.output_manager.get_output_manager") as mock_get_om:
+        with patch("cogniverse_core.common.utils.output_manager.get_output_manager") as mock_get_om:
             mock_om = MagicMock()
             mock_get_om.return_value = mock_om
             mock_om.get_processing_dir.return_value = tmp_path / "output"

@@ -130,7 +130,7 @@ class TestEndToEndVideoProcessing:
 
         # Create processor manager with mocked processors
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_core.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -232,7 +232,7 @@ class TestEndToEndVideoProcessing:
 
         # Create processor manager
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_core.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -315,7 +315,7 @@ class TestEndToEndVideoProcessing:
                 return {"embeddings": {"frame_embeddings": []}}
 
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_core.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -383,7 +383,7 @@ class TestEndToEndVideoProcessing:
                 return {"embeddings": {"frame_embeddings": []}}
 
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_core.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -461,7 +461,7 @@ class TestEndToEndVideoProcessing:
         mock_embedding_class.from_config = Mock(return_value=mock_embedding)
 
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_core.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -517,7 +517,7 @@ class TestEndToEndVideoProcessing:
         strategy_set = ProcessingStrategySet(segmentation=frame_strategy)
 
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_core.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -606,7 +606,7 @@ class TestEndToEndVideoProcessing:
                 return {"embeddings": {"frame_embeddings": []}}
 
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_core.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 

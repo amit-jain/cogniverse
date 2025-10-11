@@ -59,7 +59,7 @@ class TestLearnedRerankingIntegration:
         """Test learned reranker with mocked LiteLLM (no API key needed)"""
         from unittest.mock import Mock, patch
 
-        with patch("src.app.search.learned_reranker.arerank") as mock_arerank:
+        with patch("cogniverse_agents.search.learned_reranker.arerank") as mock_arerank:
             # Mock LiteLLM response
             mock_response = Mock()
             mock_items = [
@@ -91,7 +91,7 @@ class TestLearnedRerankingIntegration:
         from unittest.mock import Mock, patch
 
         # Mock the reranking API call to use local model
-        with patch("src.app.search.learned_reranker.arerank") as mock_arerank:
+        with patch("cogniverse_agents.search.learned_reranker.arerank") as mock_arerank:
             mock_response = Mock()
             mock_response.results = [
                 Mock(index=1, relevance_score=0.95),
@@ -124,7 +124,7 @@ class TestHybridRerankingIntegration:
         from unittest.mock import Mock, patch
 
         # Mock LiteLLM
-        with patch("src.app.search.learned_reranker.arerank") as mock_arerank:
+        with patch("cogniverse_agents.search.learned_reranker.arerank") as mock_arerank:
             mock_response = Mock()
             mock_response.results = [
                 Mock(index=i, relevance_score=0.9 - i * 0.1)
@@ -162,7 +162,7 @@ class TestHybridRerankingIntegration:
         """Test hybrid reranking with cascade strategy"""
         from unittest.mock import Mock, patch
 
-        with patch("src.app.search.learned_reranker.arerank") as mock_arerank:
+        with patch("cogniverse_agents.search.learned_reranker.arerank") as mock_arerank:
             mock_response = Mock()
             mock_response.results = [Mock(index=0, relevance_score=0.95)]
             mock_arerank.return_value = mock_response
@@ -189,7 +189,7 @@ class TestHybridRerankingIntegration:
         """Test hybrid reranking with consensus strategy"""
         from unittest.mock import Mock, patch
 
-        with patch("src.app.search.learned_reranker.arerank") as mock_arerank:
+        with patch("cogniverse_agents.search.learned_reranker.arerank") as mock_arerank:
             mock_response = Mock()
             mock_response.results = [
                 Mock(index=i, relevance_score=0.9 - i * 0.1)
@@ -226,7 +226,7 @@ class TestOllamaReranking:
         """Test Ollama reranking using LiteLLM OpenAI compatibility"""
         from unittest.mock import Mock, patch
 
-        with patch("src.app.search.learned_reranker.arerank") as mock_arerank:
+        with patch("cogniverse_agents.search.learned_reranker.arerank") as mock_arerank:
             # Mock LiteLLM response with Ollama model
             mock_response = Mock()
             mock_items = [
@@ -267,7 +267,7 @@ class TestConfigurableMultiModalReranker:
         from unittest.mock import patch
 
         # Patch where get_config_value is imported and used
-        with patch("src.common.config_utils.get_config_value") as mock_config:
+        with patch("cogniverse_core.config.utils.get_config_value") as mock_config:
             mock_config.return_value = {"enabled": False}
 
             reranker = ConfigurableMultiModalReranker()
@@ -288,7 +288,7 @@ class TestConfigurableMultiModalReranker:
         from unittest.mock import patch
 
         # Patch where get_config_value is imported and used
-        with patch("src.common.config_utils.get_config_value") as mock_config:
+        with patch("cogniverse_core.config.utils.get_config_value") as mock_config:
             mock_config.return_value = {
                 "enabled": True,
                 "model": "heuristic",

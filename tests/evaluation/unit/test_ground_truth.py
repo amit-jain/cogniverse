@@ -128,7 +128,7 @@ class TestSchemaAwareGroundTruthStrategy:
     ):
         """Test successful ground truth extraction."""
         with patch(
-            "src.evaluation.core.ground_truth.get_schema_analyzer",
+            "cogniverse_core.evaluation.core.ground_truth.get_schema_analyzer",
             return_value=mock_analyzer,
         ):
             trace_data = {
@@ -174,7 +174,7 @@ class TestSchemaAwareGroundTruthStrategy:
         backend.search = AsyncMock(side_effect=Exception("Backend error"))
 
         with patch(
-            "src.evaluation.core.ground_truth.get_schema_analyzer",
+            "cogniverse_core.evaluation.core.ground_truth.get_schema_analyzer",
             return_value=mock_analyzer,
         ):
             trace_data = {
@@ -318,7 +318,7 @@ class TestBackendGroundTruthStrategy:
         )
 
         with patch(
-            "src.evaluation.core.ground_truth.get_schema_analyzer"
+            "cogniverse_core.evaluation.core.ground_truth.get_schema_analyzer"
         ) as mock_analyzer:
             analyzer = Mock()
             analyzer.analyze_query.return_value = {"query_type": "keyword"}
@@ -381,7 +381,7 @@ class TestHybridGroundTruthStrategy:
         )
 
         with patch(
-            "src.evaluation.core.ground_truth.get_schema_analyzer"
+            "cogniverse_core.evaluation.core.ground_truth.get_schema_analyzer"
         ) as mock_analyzer:
             analyzer = Mock()
             analyzer.analyze_query.return_value = {"query_type": "keyword"}
@@ -790,7 +790,7 @@ class TestHybridGroundTruthStrategyExtended:
         )
 
         with patch(
-            "src.evaluation.core.ground_truth.get_schema_analyzer"
+            "cogniverse_core.evaluation.core.ground_truth.get_schema_analyzer"
         ) as mock_analyzer:
             analyzer = Mock()
             analyzer.analyze_query.return_value = {"query_type": "exact"}

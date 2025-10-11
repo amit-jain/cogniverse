@@ -126,7 +126,7 @@ class TestMLflowIntegration:
         """Test MLflow integration when MLflow is not available."""
         config = ExperimentConfig(experiment_name="test_experiment")
 
-        with patch("src.app.routing.mlflow_integration.MLFLOW_AVAILABLE", False):
+        with patch("cogniverse_agents.routing.mlflow_integration.MLFLOW_AVAILABLE", False):
             with pytest.raises(ImportError, match="MLflow not available"):
                 MLflowIntegration(config)
 

@@ -33,7 +33,7 @@ def mock_phoenix_client():
 def span_evaluator(mock_optimizer, mock_phoenix_client):
     """Create PhoenixSpanEvaluator with mocked dependencies"""
     with patch(
-        "src.app.routing.phoenix_span_evaluator.px.Client",
+        "cogniverse_agents.routing.phoenix_span_evaluator.px.Client",
         return_value=mock_phoenix_client,
     ):
         evaluator = PhoenixSpanEvaluator(
@@ -48,7 +48,7 @@ class TestPhoenixSpanEvaluatorInit:
     def test_initialization_default_tenant(self, mock_optimizer, mock_phoenix_client):
         """Test initialization with default tenant"""
         with patch(
-            "src.app.routing.phoenix_span_evaluator.px.Client",
+            "cogniverse_agents.routing.phoenix_span_evaluator.px.Client",
             return_value=mock_phoenix_client,
         ):
             evaluator = PhoenixSpanEvaluator(optimizer=mock_optimizer)
@@ -61,7 +61,7 @@ class TestPhoenixSpanEvaluatorInit:
     def test_initialization_custom_tenant(self, mock_optimizer, mock_phoenix_client):
         """Test initialization with custom tenant"""
         with patch(
-            "src.app.routing.phoenix_span_evaluator.px.Client",
+            "cogniverse_agents.routing.phoenix_span_evaluator.px.Client",
             return_value=mock_phoenix_client,
         ):
             evaluator = PhoenixSpanEvaluator(

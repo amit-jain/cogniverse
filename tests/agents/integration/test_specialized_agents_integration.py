@@ -106,7 +106,7 @@ class TestSummarizerAgentDSPyIntegration:
         self, dspy_config, sample_search_results, real_dspy_lm, mock_ollama_server
     ):
         """Test SummarizerAgent with small model via real DSPy.LM"""
-        with patch("src.app.agents.summarizer_agent.get_config") as mock_config:
+        with patch("cogniverse_agents.summarizer_agent.get_config") as mock_config:
             mock_config.return_value = dspy_config
 
             # Use dspy.context() for async tasks instead of configure()
@@ -141,7 +141,7 @@ class TestSummarizerAgentDSPyIntegration:
         self, dspy_config, sample_search_results, real_dspy_lm, mock_ollama_server
     ):
         """Test SummarizerAgent A2A processing with real DSPy.LM"""
-        with patch("src.app.agents.summarizer_agent.get_config") as mock_config:
+        with patch("cogniverse_agents.summarizer_agent.get_config") as mock_config:
             mock_config.return_value = dspy_config
 
             # Use dspy.context() for async tasks instead of configure()
@@ -182,7 +182,7 @@ class TestDetailedReportAgentDSPyIntegration:
         self, dspy_config, sample_search_results, real_dspy_lm, mock_ollama_server
     ):
         """Test DetailedReportAgent with real DSPy.LM"""
-        with patch("src.app.agents.detailed_report_agent.get_config") as mock_config:
+        with patch("cogniverse_agents.detailed_report_agent.get_config") as mock_config:
             mock_config.return_value = dspy_config
 
             # Use dspy.context() for async tasks instead of configure()
@@ -233,7 +233,7 @@ class TestDetailedReportAgentDSPyIntegration:
         self, dspy_config, sample_search_results, real_dspy_lm, mock_ollama_server
     ):
         """Test DetailedReportAgent A2A processing with real DSPy.LM"""
-        with patch("src.app.agents.detailed_report_agent.get_config") as mock_config:
+        with patch("cogniverse_agents.detailed_report_agent.get_config") as mock_config:
             mock_config.return_value = dspy_config
 
             # Use dspy.context() for async tasks instead of configure()
@@ -289,8 +289,8 @@ class TestCrossAgentDSPyIntegration:
     ):
         """Test workflow from summarizer to detailed report using real DSPy.LM"""
         with (
-            patch("src.app.agents.summarizer_agent.get_config") as mock_config1,
-            patch("src.app.agents.detailed_report_agent.get_config") as mock_config2,
+            patch("cogniverse_agents.summarizer_agent.get_config") as mock_config1,
+            patch("cogniverse_agents.detailed_report_agent.get_config") as mock_config2,
         ):
 
             mock_config1.return_value = dspy_config
@@ -376,7 +376,7 @@ class TestDSPyLMConfigurationIntegration:
         self, dspy_config, sample_search_results, real_dspy_lm, mock_ollama_server
     ):
         """Test switching between different models via real DSPy.LM"""
-        with patch("src.app.agents.summarizer_agent.get_config") as mock_config:
+        with patch("cogniverse_agents.summarizer_agent.get_config") as mock_config:
             mock_config.return_value = dspy_config
 
             # Use dspy.context() for async tasks instead of configure()
@@ -420,7 +420,7 @@ class TestDSPyLMConfigurationIntegration:
             }
         }
 
-        with patch("src.app.agents.summarizer_agent.get_config") as mock_config:
+        with patch("cogniverse_agents.summarizer_agent.get_config") as mock_config:
             mock_config.return_value = bad_config
 
             # Agent initialization should either:

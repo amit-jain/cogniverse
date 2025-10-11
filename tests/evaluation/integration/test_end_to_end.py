@@ -22,15 +22,15 @@ class TestEndToEnd:
     def test_experiment_mode_e2e(self, mock_phoenix_client, mock_search_service):
         """Test complete experiment mode workflow."""
         with patch(
-            "src.evaluation.core.task.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.core.task.px.Client", return_value=mock_phoenix_client
         ):
             # Patch SearchService at the module level where it's imported
             with patch(
-                "src.app.search.service.SearchService", return_value=mock_search_service
+                "cogniverse_agents.search.service.SearchService", return_value=mock_search_service
             ):
                 # Patch get_config where it's imported
                 with patch(
-                    "src.common.config_utils.get_config",
+                    "cogniverse_core.config.utils.get_config",
                     return_value={"vespa_url": "http://localhost", "vespa_port": 8080}
                 ):
                     # Create evaluation task
@@ -93,7 +93,7 @@ class TestEndToEnd:
     def test_batch_mode_e2e(self, mock_phoenix_client):
         """Test complete batch mode workflow."""
         with patch(
-            "src.evaluation.core.task.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.core.task.px.Client", return_value=mock_phoenix_client
         ):
             # Create evaluation task for batch mode
             task = evaluation_task(
@@ -117,13 +117,13 @@ class TestEndToEnd:
         from click.testing import CliRunner
 
         with patch(
-            "src.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
         ):
             with patch(
-                "src.evaluation.core.task.px.Client", return_value=mock_phoenix_client
+                "cogniverse_core.evaluation.core.task.px.Client", return_value=mock_phoenix_client
             ):
                 with patch(
-                    "src.app.search.service.SearchService",
+                    "cogniverse_agents.search.service.SearchService",
                     return_value=mock_search_service,
                 ):
                     runner = CliRunner()
@@ -158,7 +158,7 @@ class TestEndToEnd:
         from click.testing import CliRunner
 
         with patch(
-            "src.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
         ):
             runner = CliRunner()
 
@@ -180,15 +180,15 @@ class TestEndToEnd:
             from click.testing import CliRunner
 
             with patch(
-                "src.evaluation.data.storage.px.Client",
+                "cogniverse_core.evaluation.data.storage.px.Client",
                 return_value=mock_phoenix_client,
             ):
                 with patch(
-                    "src.evaluation.core.task.px.Client",
+                    "cogniverse_core.evaluation.core.task.px.Client",
                     return_value=mock_phoenix_client,
                 ):
                     with patch(
-                        "src.app.search.service.SearchService",
+                        "cogniverse_agents.search.service.SearchService",
                         return_value=mock_search_service,
                     ):
                         runner = CliRunner()
@@ -244,15 +244,15 @@ class TestEndToEnd:
             from click.testing import CliRunner
 
             with patch(
-                "src.evaluation.data.storage.px.Client",
+                "cogniverse_core.evaluation.data.storage.px.Client",
                 return_value=mock_phoenix_client,
             ):
                 with patch(
-                    "src.evaluation.core.task.px.Client",
+                    "cogniverse_core.evaluation.core.task.px.Client",
                     return_value=mock_phoenix_client,
                 ):
                     with patch(
-                        "src.app.search.service.SearchService",
+                        "cogniverse_agents.search.service.SearchService",
                         return_value=mock_search_service,
                     ):
                         runner = CliRunner()
@@ -282,10 +282,10 @@ class TestEndToEnd:
     ):
         """Test evaluation with multiple profiles and strategies."""
         with patch(
-            "src.evaluation.core.task.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.core.task.px.Client", return_value=mock_phoenix_client
         ):
             with patch(
-                "src.app.search.service.SearchService", return_value=mock_search_service
+                "cogniverse_agents.search.service.SearchService", return_value=mock_search_service
             ):
                 task = evaluation_task(
                     mode="experiment",
@@ -308,7 +308,7 @@ class TestEndToEnd:
         mock_phoenix_client.get_dataset.return_value = None
 
         with patch(
-            "src.evaluation.core.task.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.core.task.px.Client", return_value=mock_phoenix_client
         ):
             with pytest.raises(ValueError, match="Dataset 'nonexistent' not found"):
                 evaluation_task(

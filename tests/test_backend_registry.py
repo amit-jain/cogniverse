@@ -318,7 +318,7 @@ class TestBackendRegistry(unittest.TestCase):
         self.registry._try_import_backend("test_auto")
         
         # Should have tried to import
-        mock_import.assert_any_call("src.backends.test_auto")
+        mock_import.assert_any_call("cogniverse_vespa.test_auto")
     
     def test_vespa_backend_registration(self):
         """Test that real Vespa backend registers correctly."""

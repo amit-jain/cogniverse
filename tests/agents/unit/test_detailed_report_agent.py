@@ -391,9 +391,9 @@ class TestDetailedReportAgentCoreFunctionality:
     def agent_with_mocks(self):
         """Create agent with properly mocked dependencies"""
         with (
-            patch("src.app.agents.detailed_report_agent.get_config") as mock_config,
+            patch("cogniverse_agents.detailed_report_agent.get_config") as mock_config,
             patch(
-                "src.app.agents.detailed_report_agent.VLMInterface"
+                "cogniverse_agents.detailed_report_agent.VLMInterface"
             ) as mock_vlm_class,
             patch.object(DetailedReportAgent, "_initialize_vlm_client"),
         ):
