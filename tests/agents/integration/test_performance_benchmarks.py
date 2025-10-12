@@ -16,13 +16,16 @@ from unittest.mock import patch
 
 import psutil
 import pytest
-
 from cogniverse_agents.detailed_report_agent import DetailedReportAgent
+from cogniverse_agents.routing.adaptive_threshold_learner import (
+    AdaptiveThresholdLearner,
+)
+from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
+from cogniverse_agents.routing.relationship_extraction_tools import (
+    RelationshipExtractorTool,
+)
 from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_agents.summarizer_agent import SummarizerAgent
-from cogniverse_agents.routing.adaptive_threshold_learner import AdaptiveThresholdLearner
-from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
-from cogniverse_agents.routing.relationship_extraction_tools import RelationshipExtractorTool
 
 
 @pytest.mark.integration

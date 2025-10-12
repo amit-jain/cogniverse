@@ -8,12 +8,13 @@ routing -> relationship extraction -> query enhancement -> search execution
 import asyncio
 
 import pytest
-
 from cogniverse_agents.detailed_report_agent import DetailedReportAgent
+from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
+from cogniverse_agents.routing.relationship_extraction_tools import (
+    RelationshipExtractorTool,
+)
 from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_agents.summarizer_agent import SummarizerAgent
-from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
-from cogniverse_agents.routing.relationship_extraction_tools import RelationshipExtractorTool
 
 
 @pytest.mark.integration
@@ -23,88 +24,48 @@ class TestQueryProcessingPipeline:
     @pytest.mark.ci_fast
     def test_simple_video_query_processing(self):
         """Test processing a simple video search query"""
-        from unittest.mock import AsyncMock, patch
-
         query = "Find videos of robots playing soccer"
 
-        # Mock the services to avoid real connections
-        with (
-            patch(
-                "cogniverse_agents.routing.relationship_extraction_tools.RelationshipExtractorTool"
-            ) as mock_extractor_class,
-            patch(
-                "cogniverse_agents.routing.query_enhancement_engine.QueryEnhancementPipeline"
-            ) as mock_pipeline_class,
-        ):
-            # Create mock instances
-            mock_extractor = AsyncMock()
-            mock_pipeline = AsyncMock()
-            mock_extractor_class.return_value = mock_extractor
-            mock_pipeline_class.return_value = mock_pipeline
+        # Step 1: Relationship Extraction - use real components
+        extractor = RelationshipExtractorTool()
+        result = asyncio.run(extractor.extract_comprehensive_relationships(query))
+        entities = result.get("entities", [])
+        relationships = result.get("relationships", [])
 
-            # Step 1: Relationship Extraction
-            mock_extractor.extract_comprehensive_relationships.return_value = {
-                "entities": [
-                    {"text": "robots", "label": "ENTITY"},
-                    {"text": "videos", "label": "ENTITY"},
-                ],
-                "relationships": [
-                    {
-                        "subject": "robots",
-                        "relation": "action",
-                        "object": "playing soccer",
-                    }
-                ],
-            }
+        # Should extract some entities even with basic fallback
+        assert isinstance(entities, list)
+        assert isinstance(relationships, list)
+        assert len(entities) > 0
+        assert len(relationships) > 0
 
-            extractor = RelationshipExtractorTool()
-            result = asyncio.run(extractor.extract_comprehensive_relationships(query))
-            entities = result.get("entities", [])
-            relationships = result.get("relationships", [])
+        print(f"Extracted entities: {entities}")
+        print(f"Extracted relationships: {relationships}")
 
-            # Should extract some entities even with basic fallback
-            assert isinstance(entities, list)
-            assert isinstance(relationships, list)
-            assert len(entities) > 0
-            assert len(relationships) > 0
-
-            print(f"Extracted entities: {entities}")
-            print(f"Extracted relationships: {relationships}")
-
-            # Step 2: Query Enhancement
-            mock_pipeline.enhance_query_with_relationships.return_value = {
-                "enhanced_query": "Find videos of robots playing soccer with improved context and enhanced search terms",
-                "metadata": {
-                    "method": "relationship_enhancement",
-                    "entities_count": len(entities),
-                    "relationships_count": len(relationships),
-                },
-            }
-
-            pipeline = QueryEnhancementPipeline()
-            enhancement_result = asyncio.run(
-                pipeline.enhance_query_with_relationships(
-                    query, entities=entities, relationships=relationships
-                )
+        # Step 2: Query Enhancement - use real components
+        pipeline = QueryEnhancementPipeline()
+        enhancement_result = asyncio.run(
+            pipeline.enhance_query_with_relationships(
+                query, entities=entities, relationships=relationships
             )
+        )
 
-            enhanced_query = enhancement_result.get("enhanced_query", query)
-            enhancement_metadata = enhancement_result.get("metadata", {})
+        enhanced_query = enhancement_result.get("enhanced_query", query)
+        enhancement_metadata = enhancement_result.get("metadata", {})
 
-            # Should return enhanced query and metadata
-            assert isinstance(enhanced_query, str)
-            assert isinstance(enhancement_metadata, dict)
-            assert len(enhanced_query) > 0
+        # Should return enhanced query and metadata
+        assert isinstance(enhanced_query, str)
+        assert isinstance(enhancement_metadata, dict)
+        assert len(enhanced_query) > 0
 
-            print(f"Enhanced query: {enhanced_query}")
-            print(f"Enhancement metadata: {enhancement_metadata}")
+        print(f"Enhanced query: {enhanced_query}")
+        print(f"Enhancement metadata: {enhancement_metadata}")
 
-            # Step 3: Verify pipeline results
-            assert enhanced_query is not None
-            assert len(enhanced_query) >= len(
-                query
-            )  # Enhanced should be same or longer
-            assert isinstance(enhancement_metadata, dict)
+        # Step 3: Verify pipeline results
+        assert enhanced_query is not None
+        assert len(enhanced_query) >= len(
+            query
+        )  # Enhanced should be same or longer
+        assert isinstance(enhancement_metadata, dict)
 
     def test_complex_research_query_processing(self):
         """Test processing a complex research query"""
@@ -587,7 +548,7 @@ class TestSystemIntegrationReadiness:
         if isinstance(config, dict):
             print(f"System configuration available: {len(config)} keys")
         else:
-            print(f"System configuration available (ConfigUtils object)")
+            print("System configuration available (ConfigUtils object)")
 
     def test_external_dependency_handling(self):
         """Test system handles missing external dependencies gracefully"""

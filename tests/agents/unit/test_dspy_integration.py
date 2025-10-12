@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, Mock, mock_open, patch
 # DSPy imports
 import dspy
 import pytest
-
 from cogniverse_agents.detailed_report_agent import DetailedReportAgent
 
 # Phase 1-3 imports for integration tests
@@ -24,13 +23,6 @@ from cogniverse_agents.dspy_integration_mixin import (
     DSPySummaryMixin,
 )
 from cogniverse_agents.query_analysis_tool_v3 import QueryAnalysisToolV3
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDecision
-
-# Agent imports
-from cogniverse_agents.summarizer_agent import SummarizerAgent
-
-# Phase 5 imports for enhanced agent testing
-from cogniverse_agents.video_search_agent import VideoSearchAgent
 from cogniverse_agents.routing.dspy_relationship_router import (
     DSPyAdvancedRoutingModule,
     DSPyRelationshipExtractorModule,
@@ -45,7 +37,16 @@ from cogniverse_agents.routing.query_enhancement_engine import (
     QueryEnhancementPipeline,
     QueryRewriter,
 )
-from cogniverse_agents.routing.relationship_extraction_tools import RelationshipExtractorTool
+from cogniverse_agents.routing.relationship_extraction_tools import (
+    RelationshipExtractorTool,
+)
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDecision
+
+# Agent imports
+from cogniverse_agents.summarizer_agent import SummarizerAgent
+
+# Phase 5 imports for enhanced agent testing
+from cogniverse_agents.video_search_agent import VideoSearchAgent
 
 
 @pytest.mark.unit
@@ -789,7 +790,9 @@ class TestDSPy30RoutingSignatures:
 
     def test_advanced_routing_signature_structure(self):
         """Test AdvancedRoutingSignature for complex routing decisions"""
-        from cogniverse_agents.routing.dspy_routing_signatures import AdvancedRoutingSignature
+        from cogniverse_agents.routing.dspy_routing_signatures import (
+            AdvancedRoutingSignature,
+        )
 
         assert issubclass(AdvancedRoutingSignature, dspy.Signature)
 
@@ -1112,7 +1115,9 @@ class TestDSPyModules:
 
     def test_dspy_entity_extractor_module_structure(self):
         """Test DSPyEntityExtractorModule structure"""
-        from cogniverse_agents.routing.dspy_relationship_router import DSPyEntityExtractorModule
+        from cogniverse_agents.routing.dspy_relationship_router import (
+            DSPyEntityExtractorModule,
+        )
 
         module = DSPyEntityExtractorModule()
         assert module is not None
@@ -1132,7 +1137,9 @@ class TestDSPyModules:
     @pytest.mark.ci_fast
     def test_dspy_basic_routing_module_structure(self):
         """Test DSPyBasicRoutingModule structure"""
-        from cogniverse_agents.routing.dspy_relationship_router import DSPyBasicRoutingModule
+        from cogniverse_agents.routing.dspy_relationship_router import (
+            DSPyBasicRoutingModule,
+        )
 
         module = DSPyBasicRoutingModule()
         assert module is not None
@@ -1152,7 +1159,9 @@ class TestDSPyModules:
 
     def test_basic_routing_query_analysis(self):
         """Test basic routing query analysis functionality"""
-        from cogniverse_agents.routing.dspy_relationship_router import DSPyBasicRoutingModule
+        from cogniverse_agents.routing.dspy_relationship_router import (
+            DSPyBasicRoutingModule,
+        )
 
         module = DSPyBasicRoutingModule()
 
@@ -1193,7 +1202,9 @@ class TestDSPyModules:
 
     def test_entity_extraction_module_functionality(self):
         """Test entity extraction module functionality"""
-        from cogniverse_agents.routing.dspy_relationship_router import DSPyEntityExtractorModule
+        from cogniverse_agents.routing.dspy_relationship_router import (
+            DSPyEntityExtractorModule,
+        )
 
         module = DSPyEntityExtractorModule()
 
@@ -1348,7 +1359,9 @@ class TestDSPyFactoryFunctions:
 
     def test_create_basic_routing_module(self):
         """Test basic routing module factory"""
-        from cogniverse_agents.routing.dspy_relationship_router import create_basic_routing_module
+        from cogniverse_agents.routing.dspy_relationship_router import (
+            create_basic_routing_module,
+        )
 
         module = create_basic_routing_module()
         assert module is not None
@@ -1380,7 +1393,9 @@ class TestDSPyIntegrationReadiness:
 
     def test_phase2_modules_ready_for_query_enhancement(self):
         """Test that Phase 2 modules produce outputs suitable for Phase 3 query enhancement"""
-        from cogniverse_agents.routing.dspy_relationship_router import DSPyEntityExtractorModule
+        from cogniverse_agents.routing.dspy_relationship_router import (
+            DSPyEntityExtractorModule,
+        )
 
         entity_module = DSPyEntityExtractorModule()
         relationship_module = DSPyRelationshipExtractorModule()
@@ -1419,7 +1434,9 @@ class TestDSPyIntegrationReadiness:
 
     def test_phase2_signature_compatibility(self):
         """Test that Phase 2 uses signatures compatible with DSPy 3.0"""
-        from cogniverse_agents.routing.dspy_routing_signatures import EntityExtractionSignature
+        from cogniverse_agents.routing.dspy_routing_signatures import (
+            EntityExtractionSignature,
+        )
 
         # Verify signatures are DSPy 3.0 compatible
         assert issubclass(EntityExtractionSignature, dspy.Signature)
@@ -1762,7 +1779,9 @@ class TestQueryEnhancementFactory:
 
     def test_create_query_rewriter(self):
         """Test query rewriter factory function"""
-        from cogniverse_agents.routing.query_enhancement_engine import create_query_rewriter
+        from cogniverse_agents.routing.query_enhancement_engine import (
+            create_query_rewriter,
+        )
 
         rewriter = create_query_rewriter()
         assert rewriter is not None
@@ -1770,7 +1789,9 @@ class TestQueryEnhancementFactory:
 
     def test_create_dspy_query_enhancer(self):
         """Test DSPy query enhancer factory function"""
-        from cogniverse_agents.routing.query_enhancement_engine import create_dspy_query_enhancer
+        from cogniverse_agents.routing.query_enhancement_engine import (
+            create_dspy_query_enhancer,
+        )
 
         enhancer = create_dspy_query_enhancer()
         assert enhancer is not None
@@ -1778,7 +1799,9 @@ class TestQueryEnhancementFactory:
 
     def test_create_enhancement_pipeline(self):
         """Test enhancement pipeline factory function"""
-        from cogniverse_agents.routing.query_enhancement_engine import create_enhancement_pipeline
+        from cogniverse_agents.routing.query_enhancement_engine import (
+            create_enhancement_pipeline,
+        )
 
         pipeline = create_enhancement_pipeline()
         assert pipeline is not None
@@ -1935,7 +1958,9 @@ class TestDSPyComponentsIntegration:
         """Test complete pipeline: A2A input → relationship extraction → query enhancement"""
 
         # Phase 1: A2A-DSPy integration
-        from cogniverse_agents.routing.dspy_routing_signatures import BasicQueryAnalysisSignature
+        from cogniverse_agents.routing.dspy_routing_signatures import (
+            BasicQueryAnalysisSignature,
+        )
 
         # Create a simple DSPy module for testing
         class TestModule(dspy.Module):
@@ -2031,7 +2056,9 @@ class TestDSPyComponentsIntegration:
         )  # Uses 'relationships' not 'extracted_relationships'
 
         # Test Phase 3 signatures
-        from cogniverse_agents.routing.dspy_routing_signatures import QueryEnhancementSignature
+        from cogniverse_agents.routing.dspy_routing_signatures import (
+            QueryEnhancementSignature,
+        )
 
         phase3_fields = QueryEnhancementSignature.model_fields
         assert "original_query" in phase3_fields
@@ -2366,7 +2393,11 @@ class TestRoutingAgent:
     def test_routing_decision_structure(self):
         """Test routing decision data structure"""
 
-        from cogniverse_agents.routing.base import GenerationType, RoutingDecision, SearchModality
+        from cogniverse_agents.routing.base import (
+            GenerationType,
+            RoutingDecision,
+            SearchModality,
+        )
 
         decision = RoutingDecision(
             search_modality=SearchModality.VIDEO,

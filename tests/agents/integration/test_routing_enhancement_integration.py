@@ -5,7 +5,6 @@ import os
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-
 from cogniverse_agents.agent_orchestrator import (
     AgentOrchestrator,
     ProcessingRequest,
@@ -27,7 +26,6 @@ from cogniverse_agents.result_enhancement_engine import (
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDecision
 
 # Phase 5 imports
-from cogniverse_agents.video_search_agent import VideoSearchAgent
 
 
 class TestRoutingToEnhancedSearchIntegration:
@@ -42,7 +40,6 @@ class TestRoutingToEnhancedSearchIntegration:
     @pytest.mark.asyncio
     async def test_routing_with_query_enhancement_integration(self, mock_dependencies):
         """Test routing with query enhancement flowing to search"""
-
         # Mock relationship extraction and query enhancement
         with patch(
             "cogniverse_agents.routing.relationship_extraction_tools.RelationshipExtractorTool"

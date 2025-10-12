@@ -7,7 +7,6 @@ from datetime import datetime
 from unittest.mock import patch
 
 import pytest
-
 from cogniverse_agents.workflow_intelligence import (
     AgentPerformance,
     OptimizationStrategy,

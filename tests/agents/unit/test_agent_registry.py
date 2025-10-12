@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-
 from cogniverse_agents.agent_registry import AgentEndpoint, AgentRegistry
 
 

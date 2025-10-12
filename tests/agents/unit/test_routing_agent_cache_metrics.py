@@ -8,7 +8,6 @@ Unit tests for cache and metrics integration in RoutingAgent:
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingConfig
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
 

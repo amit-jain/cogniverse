@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 import numpy as np
 import pytest
-
 from cogniverse_agents.document_agent import DocumentAgent, DocumentResult
 
 

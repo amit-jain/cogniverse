@@ -3,7 +3,6 @@
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-
 from cogniverse_agents.detailed_report_agent import (
     DetailedReportAgent,
     ReportRequest,

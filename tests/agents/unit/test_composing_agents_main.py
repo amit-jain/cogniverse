@@ -18,6 +18,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+# Save original sys.modules state before mocking
+_original_sys_modules = {}
+_mocked_module_names = []
+
 # Mock external modules that aren't available in test environment
 mock_modules = {
     "google": MagicMock(),
@@ -31,7 +35,13 @@ mock_modules = {
     "gliner": MagicMock(),
 }
 
+# Track module names we're about to mock
+_mocked_module_names.extend(list(mock_modules.keys()))
+
+# Save original state and apply mocks
 for module_name, mock_module in mock_modules.items():
+    if module_name in sys.modules:
+        _original_sys_modules[module_name] = sys.modules[module_name]
     sys.modules[module_name] = mock_module
 
 
@@ -48,6 +58,32 @@ sys.modules["google.adk.runners"].Runner = MagicMock
 sys.modules["google.adk.sessions"].InMemorySessionService = MagicMock
 sys.modules["gliner"].GLiNER = MagicMock
 sys.modules["google.genai.types"].Part = MagicMock
+
+# Track additional module attributes we modified
+_mocked_module_names.extend(
+    [
+        "google.adk.tools",
+        "google.adk.agents",
+        "google.adk.runners",
+        "google.adk.sessions",
+        "gliner",
+        "google.genai.types",
+    ]
+)
+
+
+# Clean up function to restore sys.modules immediately when module exits
+def _cleanup_sys_modules():
+    """Restore sys.modules to pre-mock state"""
+    for module_name in _mocked_module_names:
+        if module_name in sys.modules:
+            if isinstance(sys.modules[module_name], MagicMock):
+                if module_name in _original_sys_modules:
+                    # Restore original module
+                    sys.modules[module_name] = _original_sys_modules[module_name]
+                else:
+                    # Remove mock module that wasn't there originally
+                    del sys.modules[module_name]
 
 
 # Mock config before any imports to handle module-level initialization
@@ -734,3 +770,47 @@ class TestPerformanceAndEdgeCases:
         assert "start_date" in temporal_info
         assert "end_date" in temporal_info
         assert temporal_info["detected_pattern"] == r"this week"
+
+
+# Function-level fixture to manage mocks for each test
+# This ensures mocks are available during tests but cleaned up after
+@pytest.fixture(scope="function", autouse=True)
+def manage_test_mocks():
+    """Set up and tear down module mocks for each test to prevent isolation issues"""
+    # Before test: ensure mocks are in place
+    for module_name, mock_module in mock_modules.items():
+        if module_name not in sys.modules or not isinstance(
+            sys.modules.get(module_name), MagicMock
+        ):
+            sys.modules[module_name] = mock_module
+
+    # Re-apply base class mocks
+    sys.modules["google.adk.tools"].BaseTool = MockBaseTool
+    sys.modules["google.adk.agents"].LlmAgent = MagicMock
+    sys.modules["google.adk.runners"].Runner = MagicMock
+    sys.modules["google.adk.sessions"].InMemorySessionService = MagicMock
+    sys.modules["gliner"].GLiNER = MagicMock
+    sys.modules["google.genai.types"].Part = MagicMock
+
+    yield  # Run the test
+
+    # After test: clean up sys.modules to prevent pollution
+    _cleanup_sys_modules()
+
+
+# Module-level cleanup fixture to stop config patchers
+@pytest.fixture(scope="module", autouse=True)
+def cleanup_module_patchers():
+    """Stop config patchers after all tests in this module complete"""
+    yield  # Run all tests
+
+    # Stop config patchers
+    try:
+        config_patcher.stop()
+    except RuntimeError:
+        pass  # Already stopped
+
+    try:
+        composing_config_patcher.stop()
+    except RuntimeError:
+        pass  # Already stopped

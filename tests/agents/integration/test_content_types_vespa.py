@@ -10,7 +10,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
 
@@ -226,9 +225,8 @@ class TestContentTypeVespaSchemas:
 
         import numpy as np
         import requests
-        from PIL import Image
-
         from cogniverse_core.common.models.model_loaders import get_or_load_model
+        from PIL import Image
 
         # Create a test image (100x100 red square)
         print("\n🎨 Creating test image...")
@@ -311,11 +309,12 @@ class TestContentTypeVespaSchemas:
 
         import numpy as np
         import requests
-
         from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
             AudioEmbeddingGenerator,
         )
-        from cogniverse_runtime.ingestion.processors.audio_transcriber import AudioTranscriber
+        from cogniverse_runtime.ingestion.processors.audio_transcriber import (
+            AudioTranscriber,
+        )
 
         # Create a simple test audio file (1 second of silence)
         print("\n🎵 Creating test audio file...")
@@ -515,9 +514,8 @@ class TestContentTypeVespaSchemas:
 
         import numpy as np
         import requests
-        from PIL import Image
-
         from cogniverse_core.common.models.model_loaders import get_or_load_model
+        from PIL import Image
 
         # Create a test document page (simulating a PDF page)
         print("\n📄 Creating test document page...")
@@ -695,7 +693,6 @@ class TestContentTypeVespaSchemas:
         print("-" * 80)
 
         import requests
-
         from cogniverse_agents.query_encoders import ColPaliQueryEncoder
 
         # Wait for indexing to complete

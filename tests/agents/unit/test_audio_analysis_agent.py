@@ -7,7 +7,6 @@ Tests audio transcription with Whisper, audio search, and Vespa integration.
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
-
 from cogniverse_agents.audio_analysis_agent import (
     AudioAnalysisAgent,
     AudioResult,

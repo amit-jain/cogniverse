@@ -5,15 +5,14 @@ Unit tests for ResultAggregator with relationship context integration
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-
 from cogniverse_agents.result_aggregator import (
     AgentResult,
     AggregatedResult,
     AggregationRequest,
     ResultAggregator,
 )
-from cogniverse_agents.routing_agent import RoutingDecision
 from cogniverse_agents.result_enhancement_engine import EnhancedResult
+from cogniverse_agents.routing_agent import RoutingDecision
 
 
 @pytest.mark.unit

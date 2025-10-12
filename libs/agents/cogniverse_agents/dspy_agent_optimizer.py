@@ -647,11 +647,13 @@ class DSPyAgentOptimizerPipeline:
 
     def _extract_prompts_from_module(self, module: dspy.Module) -> Dict[str, Any]:
         """Extract optimized prompts from a DSPy module."""
+        import time
+
         prompts = {
             "module_type": type(module).__name__,
             "compiled_prompts": {},
             "metadata": {
-                "optimization_timestamp": asyncio.get_event_loop().time(),
+                "optimization_timestamp": time.time(),
                 "dspy_version": (
                     dspy.__version__ if hasattr(dspy, "__version__") else "unknown"
                 ),

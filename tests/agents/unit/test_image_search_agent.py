@@ -8,9 +8,8 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 import numpy as np
 import pytest
-from PIL import Image
-
 from cogniverse_agents.image_search_agent import ImageResult, ImageSearchAgent
+from PIL import Image
 
 
 class TestImageSearchAgent:

@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock, mock_open, patch
 
 import pytest
-
 from cogniverse_agents.detailed_report_agent import DetailedReportAgent
 from cogniverse_agents.dspy_agent_optimizer import (
     DSPyAgentOptimizerPipeline,

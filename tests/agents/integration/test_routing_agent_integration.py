@@ -8,9 +8,8 @@ import os
 import tempfile
 
 import pytest
-from fastapi.testclient import TestClient
-
 from cogniverse_agents.routing_agent import RoutingAgent
+from fastapi.testclient import TestClient
 
 
 class TestRoutingAgentIntegration:

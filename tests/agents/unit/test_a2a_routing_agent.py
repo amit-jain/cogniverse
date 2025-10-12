@@ -5,7 +5,6 @@ Unit tests for A2ARoutingAgent
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-
 from cogniverse_agents.a2a_routing_agent import (
     A2ARoutingAgent,
     AgentEndpoint,

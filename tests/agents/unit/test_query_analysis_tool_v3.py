@@ -4,7 +4,6 @@ from datetime import datetime
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-
 from cogniverse_agents.query_analysis_tool_v3 import (
     QueryAnalysisResult,
     QueryAnalysisToolV3,

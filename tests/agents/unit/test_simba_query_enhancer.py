@@ -8,7 +8,6 @@ functionality including pattern learning and query improvement.
 from unittest.mock import patch
 
 import pytest
-
 from cogniverse_agents.routing.simba_query_enhancer import (
     QueryEnhancementPattern,
     SIMBAConfig,

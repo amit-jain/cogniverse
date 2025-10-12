@@ -6,14 +6,13 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
-
+from cogniverse_agents.tools.a2a_utils import A2AMessage, DataPart, Task, TextPart
 from cogniverse_agents.video_search_agent import (
     ImagePart,
     VideoPart,
     VideoProcessor,
     VideoSearchAgent,
 )
-from cogniverse_agents.tools.a2a_utils import A2AMessage, DataPart, Task, TextPart
 
 
 @pytest.mark.unit

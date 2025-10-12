@@ -5,7 +5,6 @@ Unit tests for SummarizerAgent with proper DSPy integration
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-
 from cogniverse_agents.summarizer_agent import (
     SummarizerAgent,
     SummaryGenerationSignature,
@@ -175,30 +174,29 @@ class TestSummarizerAgent:
 
     @patch("cogniverse_agents.summarizer_agent.get_config")
     @patch("cogniverse_agents.summarizer_agent.VLMInterface")
-    @patch("dspy.ChainOfThought")
+    @patch.object(SummarizerAgent, "_initialize_vlm_client")  # Prevent DSPy LM initialization
     @pytest.mark.asyncio
     async def test_process_a2a_task_success(
-        self, mock_cot, mock_vlm_class, mock_get_config
+        self, mock_init_vlm, mock_vlm_class, mock_get_config
     ):
         """Test processing A2A task successfully"""
         mock_get_config.return_value = {
             "llm": {
-                "model_name": "ollama/llama3.2",  # Use proper provider format
+                "model_name": "ollama/smollm3:500m",
                 "base_url": "http://localhost:11434",
             }
         }
         mock_vlm_class.return_value = Mock()
 
-        # Mock DSPy ChainOfThought
+        # Mock DSPy prediction result
         mock_prediction = Mock()
         mock_prediction.summary = "Test summary of the results"
         mock_prediction.key_insights = "insight1, insight2"
 
-        mock_cot_instance = Mock()
-        mock_cot_instance.forward = Mock(return_value=mock_prediction)
-        mock_cot.return_value = mock_cot_instance
-
         agent = SummarizerAgent(tenant_id="test_tenant")
+
+        # Mock the dspy_summarizer directly to return our prediction
+        agent.dspy_summarizer = Mock(return_value=mock_prediction)
 
         # Create A2A task
         request_data = {

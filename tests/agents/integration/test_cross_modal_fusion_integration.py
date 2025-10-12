@@ -13,8 +13,6 @@ from datetime import datetime
 import numpy as np
 import pytest
 import requests
-from PIL import Image
-
 from cogniverse_agents.multi_agent_orchestrator import (
     MultiAgentOrchestrator,
 )
@@ -25,6 +23,7 @@ from cogniverse_agents.workflow_types import (
     WorkflowTask,
 )
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+from PIL import Image
 
 
 @pytest.fixture(scope="module")
@@ -189,9 +188,8 @@ class TestCrossModalFusionIntegration:
         print("-" * 80)
 
         import torch
-        from sentence_transformers import SentenceTransformer
-
         from cogniverse_core.common.models.model_loaders import get_or_load_model
+        from sentence_transformers import SentenceTransformer
 
         # Load models
         print("\n📦 Loading models...")

@@ -5,14 +5,13 @@ Unit tests for TextAnalysisAgent
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
-
 from cogniverse_agents.text_analysis_agent import (
     TextAnalysisAgent,
     _agent_instances,
     app,
     get_agent,
 )
+from fastapi.testclient import TestClient
 
 
 class TestTextAnalysisAgent:

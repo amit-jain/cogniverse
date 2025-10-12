@@ -213,7 +213,6 @@ class TestRealAgentSpecializationIntegration:
         from unittest.mock import patch
 
         import dspy
-
         from cogniverse_agents.summarizer_agent import SummaryRequest
 
         # E2E test - requires real Ollama, works in production

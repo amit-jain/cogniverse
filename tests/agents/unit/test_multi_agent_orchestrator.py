@@ -6,7 +6,6 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-
 from cogniverse_agents.multi_agent_orchestrator import (
     FusionStrategy,
     MultiAgentOrchestrator,

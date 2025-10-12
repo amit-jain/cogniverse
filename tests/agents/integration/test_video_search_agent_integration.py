@@ -4,14 +4,13 @@ import asyncio
 from unittest.mock import Mock, patch
 
 import pytest
-
-from cogniverse_agents.video_search_agent import VideoSearchAgent
 from cogniverse_agents.tools.a2a_utils import (
     A2AMessage,
     FilePart,
     Task,
     TextPart,
 )
+from cogniverse_agents.video_search_agent import VideoSearchAgent
 
 
 @pytest.fixture(scope="function")

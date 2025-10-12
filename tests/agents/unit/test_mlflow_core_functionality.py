@@ -10,8 +10,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
-from cogniverse_agents.routing.mlflow_integration import ExperimentConfig, MLflowIntegration
+from cogniverse_agents.routing.mlflow_integration import (
+    ExperimentConfig,
+    MLflowIntegration,
+)
 
 
 @pytest.mark.unit
@@ -127,7 +129,9 @@ class TestMLflowIntegrationReadiness:
 
     def test_factory_function_exists(self):
         """Test factory function for creating MLflow integration"""
-        from cogniverse_agents.routing.mlflow_integration import create_mlflow_integration
+        from cogniverse_agents.routing.mlflow_integration import (
+            create_mlflow_integration,
+        )
 
         assert callable(create_mlflow_integration)
 

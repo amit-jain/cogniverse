@@ -24,8 +24,8 @@ class TestCompleteDSPySystem:
         """Test complete query processing pipeline"""
 
         # Test that the core components can be imported and work together
-        from cogniverse_agents.routing_agent import RoutingAgent
         from cogniverse_agents.routing.base import GenerationType, SearchModality
+        from cogniverse_agents.routing_agent import RoutingAgent
 
         # Mock the dependencies for testing
         with patch(
@@ -147,14 +147,18 @@ class TestCompleteDSPySystem:
 
         # Test DSPy routing signatures
         # Test advanced optimization
-        from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
+        from cogniverse_agents.routing.advanced_optimizer import (
+            AdvancedRoutingOptimizer,
+        )
         from cogniverse_agents.routing.dspy_routing_signatures import (
             AdvancedRoutingSignature,
             BasicQueryAnalysisSignature,
         )
 
         # Test query enhancement
-        from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
+        from cogniverse_agents.routing.query_enhancement_engine import (
+            QueryEnhancementPipeline,
+        )
 
         # Test relationship extraction
         from cogniverse_agents.routing.relationship_extraction_tools import (
@@ -171,7 +175,9 @@ class TestCompleteDSPySystem:
     def test_phase_6_advanced_components_integration(self):
         """Test Phase 6 advanced optimization components integration"""
 
-        from cogniverse_agents.routing.adaptive_threshold_learner import AdaptiveThresholdLearner
+        from cogniverse_agents.routing.adaptive_threshold_learner import (
+            AdaptiveThresholdLearner,
+        )
         from cogniverse_agents.routing.mlflow_integration import (
             ExperimentConfig,
         )
