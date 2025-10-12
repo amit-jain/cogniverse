@@ -6,20 +6,20 @@ Used by integration tests to create, deploy, and manage test Vespa applications.
 """
 
 import os
-import json
-import time
-import requests
+import shutil
 import subprocess
 import tempfile
-import shutil
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Optional
+
+import requests
+from cogniverse_vespa.json_schema_parser import JsonSchemaParser
 
 # Import the REAL deployment classes
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-from cogniverse_vespa.json_schema_parser import JsonSchemaParser
 from vespa.package import ApplicationPackage, Validation
-from datetime import datetime, timedelta
 
 
 class VespaTestManager:
@@ -49,7 +49,7 @@ class VespaTestManager:
             
             # Configs and schemas are now organized in resources - no copying needed
             default_schema = os.environ.get('TEST_VIDEO_SCHEMA', 'video_colpali_smol500_mv_frame')
-            print(f"📝 Using organized test config from resources")
+            print("📝 Using organized test config from resources")
             print(f"   Default schema: {default_schema}")
             
             # Store paths for later use
@@ -136,25 +136,72 @@ class VespaTestManager:
                 print("❌ No schemas could be loaded")
                 return False
             
+            # Add metadata schemas directly to the same application package
+            print("📄 Adding metadata schemas (organization_metadata, tenant_metadata)")
+            try:
+                from vespa.package import Document, Field, Schema
+
+                # Organization metadata schema
+                organization_metadata_schema = Schema(
+                    name='organization_metadata',
+                    document=Document(
+                        fields=[
+                            Field(name='org_id', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
+                            Field(name='org_name', type='string', indexing=['summary', 'index']),
+                            Field(name='created_at', type='long', indexing=['summary', 'attribute']),
+                            Field(name='created_by', type='string', indexing=['summary', 'attribute']),
+                            Field(name='status', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
+                            Field(name='tenant_count', type='int', indexing=['summary', 'attribute']),
+                        ]
+                    )
+                )
+                app_package.add_schema(organization_metadata_schema)
+                deployed_schemas.append('organization_metadata')
+
+                # Tenant metadata schema
+                tenant_metadata_schema = Schema(
+                    name='tenant_metadata',
+                    document=Document(
+                        fields=[
+                            Field(name='tenant_full_id', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
+                            Field(name='org_id', type='string', indexing=['summary', 'index', 'attribute'], attribute=['fast-search']),
+                            Field(name='tenant_name', type='string', indexing=['summary', 'attribute']),
+                            Field(name='created_at', type='long', indexing=['summary', 'attribute']),
+                            Field(name='created_by', type='string', indexing=['summary', 'attribute']),
+                            Field(name='status', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
+                            Field(name='schemas_deployed', type='array<string>', indexing=['summary', 'attribute']),
+                        ]
+                    )
+                )
+                app_package.add_schema(tenant_metadata_schema)
+                deployed_schemas.append('tenant_metadata')
+            except Exception as e:
+                print(f"⚠️  Failed to add metadata schemas: {e}")
+
             # Add validation overrides (same as deploy_all_schemas.py)
             until_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
             validation = Validation(
                 validation_id="content-cluster-removal",
                 until=until_date
             )
+            schema_removal_validation = Validation(
+                validation_id="schema-removal",
+                until=until_date
+            )
             if app_package.validations is None:
                 app_package.validations = []
             app_package.validations.append(validation)
-            
+            app_package.validations.append(schema_removal_validation)
+
             # Deploy using corrected config server endpoint
             config_server_endpoint = "http://localhost:8080"  # Will be replaced with config_port
             isolated_vespa_port = self.config_port
-            
+
             schema_manager = VespaSchemaManager(
                 vespa_endpoint=config_server_endpoint,
                 vespa_port=isolated_vespa_port
             )
-            
+
             print(f"🚀 Deploying to config server: http://localhost:{isolated_vespa_port}")
             schema_manager._deploy_package(app_package)
             
@@ -237,13 +284,13 @@ class VespaTestManager:
                     if response.status_code == 200:
                         print(f"✅ Config server ready on port {config_port}")
                         break
-                except:
+                except Exception:
                     pass
                 time.sleep(1)
                 if i % 10 == 0:  # Progress indicator every 10 seconds
                     print(f"  Still waiting... ({i}s)")
             else:
-                print(f"❌ Config server not ready after 120 seconds")
+                print("❌ Config server not ready after 120 seconds")
                 return False
             
             # Setup complete test environment
@@ -267,11 +314,11 @@ class VespaTestManager:
                         print(f"✅ Isolated Vespa ready on port {self.http_port}")
                         self.is_deployed = True
                         return True
-                except:
+                except Exception:
                     pass
                 time.sleep(2)
             
-            print(f"❌ Isolated Vespa not ready after 120 seconds")
+            print("❌ Isolated Vespa not ready after 120 seconds")
             return False
             
         except Exception as e:
@@ -292,7 +339,6 @@ class VespaTestManager:
             print("🎬 Ingesting test videos with REAL pipeline...")
             
             # Use our actual build_test_pipeline with test configuration
-            from cogniverse_runtime.ingestion.pipeline_builder import build_test_pipeline
             
             # Set environment to point to test Vespa and use test config
             original_vespa_url = os.environ.get('VESPA_URL')
@@ -304,10 +350,10 @@ class VespaTestManager:
 
             # Store original config values for restoration
             from cogniverse_core.config.utils import get_config
-            original_config_values = get_config()
-            original_config_vespa_url = original_config_values.get('vespa_url')
-            original_config_vespa_port = original_config_values.get('vespa_port')
-            
+            _original_config_values = get_config()
+            _original_config_vespa_url = _original_config_values.get('vespa_url')
+            _original_config_vespa_port = _original_config_values.get('vespa_port')
+
             os.environ['VESPA_URL'] = "http://localhost"
             os.environ['VESPA_PORT'] = str(self.http_port)
             # Use organized test config from resources - FAIL if not found
@@ -364,7 +410,10 @@ class VespaTestManager:
                     print(f"   - {video.name} ({size_mb:.1f}MB)")
                 
                 # Build pipeline with test schema and explicit app_config
-                from cogniverse_runtime.ingestion.pipeline_builder import create_pipeline, create_config
+                from cogniverse_runtime.ingestion.pipeline_builder import (
+                    create_config,
+                    create_pipeline,
+                )
 
                 # Update test_config with correct Vespa port for this isolated instance
                 test_config['vespa_port'] = self.http_port
@@ -564,7 +613,7 @@ class VespaTestManager:
         try:
             response = requests.get(f"http://localhost:{self.http_port}/ApplicationStatus", timeout=5)
             return response.status_code == 200
-        except:
+        except Exception:
             return False
 
     def get_base_url(self) -> str:
@@ -587,7 +636,7 @@ class VespaTestManager:
             registry = get_backend_registry()
             if hasattr(registry, '_backend_instances'):
                 registry._backend_instances.clear()
-                print(f"🔧 CLEARED cached backends to restore original config")
+                print("🔧 CLEARED cached backends to restore original config")
 
         # Stop and remove Docker container
         if self.container_name:

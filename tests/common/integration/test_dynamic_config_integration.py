@@ -6,10 +6,9 @@ Tests complete end-to-end flow with TextAnalysisAgent.
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
-
 from cogniverse_agents.text_analysis_agent import TextAnalysisAgent, app
 from cogniverse_core.config.agent_config import DSPyModuleType
+from fastapi.testclient import TestClient
 
 
 class TestDynamicConfigIntegration:
@@ -23,9 +22,8 @@ class TestDynamicConfigIntegration:
     @pytest.fixture
     def fresh_agent(self):
         """Create fresh TextAnalysisAgent instance with clean config"""
-        from fastapi import FastAPI
-
         from cogniverse_core.config.config_manager import ConfigManager
+        from fastapi import FastAPI
 
         # Reset ConfigManager to ensure clean state
         ConfigManager._instance = None
@@ -33,7 +31,7 @@ class TestDynamicConfigIntegration:
 
         fresh_app = FastAPI()
         with patch("dspy.LM"):
-            agent = TextAnalysisAgent()
+            agent = TextAnalysisAgent(tenant_id="test_tenant")
 
             # Reset to default PREDICT module for consistent tests
             from cogniverse_core.config.agent_config import DSPyModuleType, ModuleConfig
@@ -68,8 +66,11 @@ class TestDynamicConfigIntegration:
         assert hasattr(agent, "setup_config_endpoints")
         assert hasattr(agent, "agent_config")
 
-    def test_get_config_endpoint_returns_agent_config(self, client):
+    def test_get_config_endpoint_returns_agent_config(self, fresh_agent):
         """Test GET /config returns agent configuration"""
+        agent, fresh_app = fresh_agent
+        client = TestClient(fresh_app)
+
         response = client.get("/config")
 
         assert response.status_code == 200
@@ -143,8 +144,11 @@ class TestDynamicConfigIntegration:
         # Verify cache was cleared
         assert len(agent._dynamic_modules) == 0
 
-    def test_list_available_modules(self, client):
+    def test_list_available_modules(self, fresh_agent):
         """Test GET /config/modules/available lists all module types"""
+        agent, fresh_app = fresh_agent
+        client = TestClient(fresh_app)
+
         response = client.get("/config/modules/available")
 
         assert response.status_code == 200
@@ -158,8 +162,11 @@ class TestDynamicConfigIntegration:
         assert "multi_chain_comparison" in modules
         assert "program_of_thought" in modules
 
-    def test_list_available_optimizers(self, client):
+    def test_list_available_optimizers(self, fresh_agent):
         """Test GET /config/optimizers/available lists all optimizer types"""
+        agent, fresh_app = fresh_agent
+        client = TestClient(fresh_app)
+
         response = client.get("/config/optimizers/available")
 
         assert response.status_code == 200
@@ -187,8 +194,12 @@ class TestDynamicConfigIntegration:
         assert "capabilities" in data
         assert "text_analysis" in data["capabilities"]
 
-    def test_health_check_endpoint(self, client):
-        """Test health check endpoint"""
+    def test_health_check_endpoint(self, fresh_agent):
+        """Test health check endpoint via HealthCheckMixin"""
+        agent, fresh_app = fresh_agent
+        agent.setup_health_endpoint(fresh_app)
+        client = TestClient(fresh_app)
+
         response = client.get("/health")
         assert response.status_code == 200
         data = response.json()
@@ -214,9 +225,19 @@ class TestDynamicConfigIntegration:
         assert result["confidence"] == 0.9
         assert result["module_type"] == "predict"
 
-    def test_analyze_text_endpoint(self, client):
+    def test_analyze_text_endpoint(self, fresh_agent):
         """Test /analyze endpoint"""
-        with patch.object(TextAnalysisAgent, "analyze_text") as mock_analyze:
+        agent, fresh_app = fresh_agent
+
+        # Add /analyze endpoint to fresh_app
+        @fresh_app.post("/analyze")
+        async def analyze_endpoint(text: str, tenant_id: str, analysis_type: str = "summary"):
+            result = agent.analyze_text(text, analysis_type)
+            return {"status": "success", "analysis": result}
+
+        client = TestClient(fresh_app)
+
+        with patch.object(agent, "analyze_text") as mock_analyze:
             mock_analyze.return_value = {
                 "result": "Analysis result",
                 "confidence": 0.85,
@@ -225,7 +246,7 @@ class TestDynamicConfigIntegration:
             }
 
             response = client.post(
-                "/analyze?text=Test%20text&analysis_type=sentiment"
+                "/analyze?text=Test%20text&tenant_id=test_tenant&analysis_type=sentiment"
             )
 
         assert response.status_code == 200

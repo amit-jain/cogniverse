@@ -35,25 +35,39 @@ class TestTenantManagerAPI:
     @pytest.fixture
     def test_client(self, vespa_backend):
         """Create test client for tenant manager API"""
-        import os
+        from unittest.mock import patch
 
-        # Set environment variables for Vespa configuration
-        os.environ["VESPA_ENDPOINT"] = f"http://localhost:{vespa_backend.http_port}"
-        os.environ["VESPA_PORT"] = str(vespa_backend.http_port)
+        # VespaTestManager already deployed metadata schemas with video schemas
+        # Just wait a moment for Vespa to be fully ready
+        time.sleep(1)
 
-        # Deploy metadata schemas
-        from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+        # Mock config to return correct Vespa URL/port
+        mock_config = {
+            "vespa_url": "http://localhost",
+            "vespa_port": vespa_backend.http_port,
+            "vespa_config_port": vespa_backend.config_port,
+        }
 
-        schema_manager = VespaSchemaManager(
-            vespa_endpoint=f"http://localhost",
-            vespa_port=vespa_backend.http_port,
-        )
-        schema_manager.upload_metadata_schemas()
+        # Import app and reset global client
+        from cogniverse_runtime.admin import tenant_manager
+        from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
 
-        # Import app after setting env vars
-        from cogniverse_runtime.admin.tenant_manager import app
+        tenant_manager.vespa_client = None  # Reset global client
+        tenant_manager.schema_manager = None  # Reset schema manager
+        # Reset tenant schema manager singleton
+        if TenantSchemaManager._instance is not None:
+            TenantSchemaManager._instance._initialized = False
+        TenantSchemaManager._instance = None
 
-        return TestClient(app)
+        # Patch get_config to return our mock config - keep active during test
+        config_patcher = patch('cogniverse_runtime.admin.tenant_manager.get_config', return_value=mock_config)
+        config_patcher.start()
+
+        try:
+            client = TestClient(tenant_manager.app)
+            yield client
+        finally:
+            config_patcher.stop()
 
     @pytest.mark.ci_fast
     def test_health_check(self):
@@ -167,7 +181,7 @@ class TestTenantManagerAPI:
         )
         assert response.status_code == 200
 
-        time.sleep(1)  # Wait for Vespa indexing
+        time.sleep(2)  # Wait for Vespa indexing (org + tenant)
 
         # Verify org was created
         org_response = test_client.get("/admin/organizations/neworg")
@@ -183,6 +197,8 @@ class TestTenantManagerAPI:
             "/admin/tenants",
             json={"tenant_id": "duptenant:prod", "created_by": "test"},
         )
+
+        time.sleep(2)  # Wait for Vespa indexing
 
         # Try to create same tenant again
         response = test_client.post(
@@ -208,7 +224,7 @@ class TestTenantManagerAPI:
             json={"tenant_id": "listorg:prod", "created_by": "test"},
         )
 
-        time.sleep(1)  # Wait for Vespa indexing
+        time.sleep(3)  # Wait for Vespa indexing (multiple docs)
 
         response = test_client.get("/admin/organizations/listorg/tenants")
         assert response.status_code == 200
@@ -228,7 +244,7 @@ class TestTenantManagerAPI:
             json={"tenant_id": "gettenant:test", "created_by": "test"},
         )
 
-        time.sleep(1)  # Wait for Vespa indexing
+        time.sleep(2)  # Wait for Vespa indexing
 
         response = test_client.get("/admin/tenants/gettenant:test")
         assert response.status_code == 200
@@ -250,7 +266,7 @@ class TestTenantManagerAPI:
             json={"tenant_id": "deltenant:test", "created_by": "test"},
         )
 
-        time.sleep(1)  # Wait for Vespa indexing
+        time.sleep(2)  # Wait for Vespa indexing
 
         # Delete tenant
         response = test_client.delete("/admin/tenants/deltenant:test")
@@ -275,7 +291,7 @@ class TestTenantManagerAPI:
             json={"tenant_id": "delorg:prod", "created_by": "test"},
         )
 
-        time.sleep(1)  # Wait for Vespa indexing
+        time.sleep(3)  # Wait for Vespa indexing (multiple docs)
 
         # Delete org
         response = test_client.delete("/admin/organizations/delorg")

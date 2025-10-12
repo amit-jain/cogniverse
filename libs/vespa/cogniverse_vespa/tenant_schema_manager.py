@@ -228,8 +228,62 @@ class TenantSchemaManager:
 
         # Deploy via VespaSchemaManager
         try:
+            from datetime import datetime, timedelta
+
+            from vespa.package import Document, Field, Validation
+
             app_package = ApplicationPackage(name="videosearch")
+
+            # Add the tenant schema
             app_package.add_schema(schema)
+
+            # Add metadata schemas to prevent them from being removed
+            organization_metadata_schema = Schema(
+                name='organization_metadata',
+                document=Document(
+                    fields=[
+                        Field(name='org_id', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
+                        Field(name='org_name', type='string', indexing=['summary', 'index']),
+                        Field(name='created_at', type='long', indexing=['summary', 'attribute']),
+                        Field(name='created_by', type='string', indexing=['summary', 'attribute']),
+                        Field(name='status', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
+                        Field(name='tenant_count', type='int', indexing=['summary', 'attribute']),
+                    ]
+                )
+            )
+            app_package.add_schema(organization_metadata_schema)
+
+            tenant_metadata_schema = Schema(
+                name='tenant_metadata',
+                document=Document(
+                    fields=[
+                        Field(name='tenant_full_id', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
+                        Field(name='org_id', type='string', indexing=['summary', 'index', 'attribute'], attribute=['fast-search']),
+                        Field(name='tenant_name', type='string', indexing=['summary', 'attribute']),
+                        Field(name='created_at', type='long', indexing=['summary', 'attribute']),
+                        Field(name='created_by', type='string', indexing=['summary', 'attribute']),
+                        Field(name='status', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
+                        Field(name='schemas_deployed', type='array<string>', indexing=['summary', 'attribute']),
+                    ]
+                )
+            )
+            app_package.add_schema(tenant_metadata_schema)
+
+            # Add validation overrides to allow schema deployments without removing existing schemas
+            until_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+            schema_removal_validation = Validation(
+                validation_id="schema-removal",
+                until=until_date
+            )
+            content_cluster_validation = Validation(
+                validation_id="content-cluster-removal",
+                until=until_date
+            )
+
+            if app_package.validations is None:
+                app_package.validations = []
+            app_package.validations.append(schema_removal_validation)
+            app_package.validations.append(content_cluster_validation)
 
             self.schema_manager._deploy_package(app_package)
 
@@ -426,6 +480,8 @@ class TenantSchemaManager:
         Supports both simple and org:tenant format:
         - Simple: "acme", "startup" (alphanumeric + underscore)
         - Org:tenant: "acme:production", "startup:dev" (alphanumeric + underscore + colon)
+
+        Note: Hyphens are NOT allowed (Vespa schema names don't support dashes)
         """
         if not tenant_id:
             raise ValueError("tenant_id cannot be empty")
@@ -433,11 +489,12 @@ class TenantSchemaManager:
         if not isinstance(tenant_id, str):
             raise ValueError(f"tenant_id must be string, got {type(tenant_id)}")
 
-        # Allow alphanumeric, underscores, hyphens, and colons (for org:tenant format)
-        allowed_chars = tenant_id.replace("_", "").replace("-", "").replace(":", "")
+        # Allow alphanumeric, underscores, and colons (for org:tenant format)
+        # NO hyphens - Vespa schema names don't support dashes
+        allowed_chars = tenant_id.replace("_", "").replace(":", "")
         if not allowed_chars.isalnum():
             raise ValueError(
-                f"Invalid tenant_id '{tenant_id}': only alphanumeric, underscore, hyphen, and colon allowed"
+                f"Invalid tenant_id '{tenant_id}': only alphanumeric, underscore, and colon allowed"
             )
 
         # If colon present, validate org:tenant format

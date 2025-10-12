@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from cogniverse_core.config.utils import get_config
 from vespa.package import (
     ApplicationPackage,
     Document,
@@ -14,8 +15,6 @@ from vespa.package import (
     Schema,
     SecondPhaseRanking,
 )
-
-from cogniverse_core.config.utils import get_config
 
 
 class VespaSchemaManager:
@@ -936,8 +935,11 @@ class VespaSchemaManager:
                 app_package.validations = []
             app_package.validations.append(validation)
         
-        # Create the deployment URL
-        deploy_url = f"{self.vespa_endpoint.replace('8080', str(self.vespa_port))}/application/v2/tenant/default/prepareandactivate"
+        # Create the deployment URL - properly construct with base URL and port
+        import re
+        # Remove any existing port from endpoint
+        base_url = re.sub(r':\d+$', '', self.vespa_endpoint)
+        deploy_url = f"{base_url}:{self.vespa_port}/application/v2/tenant/default/prepareandactivate"
         
         try:
             # Generate the ZIP package
@@ -967,14 +969,14 @@ class VespaSchemaManager:
             self._logger.error(f"Failed to deploy package: {str(e)}")
             raise
 
-    def upload_metadata_schemas(self, app_name: str = "metadata") -> None:
+    def upload_metadata_schemas(self, app_name: str = "videosearch") -> None:
         """
         Deploy organization and tenant metadata schemas for multi-tenant management.
 
         These schemas store org/tenant metadata and are used by the tenant management API.
 
         Args:
-            app_name: Name of the application
+            app_name: Name of the application (default: "videosearch" to match standard app name)
         """
         try:
             from vespa.package import (
@@ -1077,6 +1079,27 @@ class VespaSchemaManager:
                 name=app_name,
                 schema=[organization_metadata_schema, tenant_metadata_schema]
             )
+
+            # Add validation overrides to allow schema removal (when deploying metadata schemas separately)
+            from datetime import datetime, timedelta
+
+            from vespa.package import Validation
+
+            until_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+            schema_removal_validation = Validation(
+                validation_id="schema-removal",
+                until=until_date
+            )
+            content_cluster_validation = Validation(
+                validation_id="content-cluster-removal",
+                until=until_date
+            )
+
+            if app_package.validations is None:
+                app_package.validations = []
+            app_package.validations.append(schema_removal_validation)
+            app_package.validations.append(content_cluster_validation)
+
             self._deploy_package(app_package)
 
             self._logger.info("Successfully deployed organization and tenant metadata schemas")

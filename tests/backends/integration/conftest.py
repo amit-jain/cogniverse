@@ -4,11 +4,12 @@ Integration test configuration for backend tests.
 Provides Vespa Docker instance fixture for testing schema lifecycle.
 """
 
-import pytest
+import logging
 import subprocess
 import time
+
+import pytest
 import requests
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +90,7 @@ def vespa_instance():
                 if response.status_code == 200:
                     logger.info(f"✅ Config server ready on port {config_port}")
                     break
-            except:
+            except Exception:
                 pass
             time.sleep(1)
             if i % 10 == 0 and i > 0:
@@ -98,7 +99,88 @@ def vespa_instance():
             # Cleanup and skip
             subprocess.run(["docker", "stop", container_name], capture_output=True)
             subprocess.run(["docker", "rm", container_name], capture_output=True)
-            pytest.skip(f"Config server not ready after 120 seconds")
+            pytest.skip("Config server not ready after 120 seconds")
+
+        # Deploy base schemas before waiting for application endpoint
+        logger.info("Deploying base schemas...")
+        try:
+            from datetime import datetime, timedelta
+            from pathlib import Path
+
+            from cogniverse_vespa.json_schema_parser import JsonSchemaParser
+            from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+            from vespa.package import (
+                ApplicationPackage,
+                Document,
+                Field,
+                Schema,
+                Validation,
+            )
+
+            app_package = ApplicationPackage(name="videosearch")
+            parser = JsonSchemaParser()
+
+            # Load base video schemas
+            schemas_dir = Path("configs/schemas")
+            if schemas_dir.exists():
+                for schema_file in schemas_dir.glob("*_schema.json"):
+                    try:
+                        schema = parser.load_schema_from_json_file(str(schema_file))
+                        app_package.add_schema(schema)
+                        logger.info(f"  Added schema: {schema.name}")
+                    except Exception as e:
+                        logger.warning(f"  Failed to load {schema_file.name}: {e}")
+
+            # Add metadata schemas
+            organization_metadata_schema = Schema(
+                name='organization_metadata',
+                document=Document(
+                    fields=[
+                        Field(name='org_id', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
+                        Field(name='org_name', type='string', indexing=['summary', 'index']),
+                        Field(name='created_at', type='long', indexing=['summary', 'attribute']),
+                        Field(name='created_by', type='string', indexing=['summary', 'attribute']),
+                        Field(name='status', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
+                        Field(name='tenant_count', type='int', indexing=['summary', 'attribute']),
+                    ]
+                )
+            )
+            app_package.add_schema(organization_metadata_schema)
+
+            tenant_metadata_schema = Schema(
+                name='tenant_metadata',
+                document=Document(
+                    fields=[
+                        Field(name='tenant_full_id', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
+                        Field(name='org_id', type='string', indexing=['summary', 'index', 'attribute'], attribute=['fast-search']),
+                        Field(name='tenant_name', type='string', indexing=['summary', 'attribute']),
+                        Field(name='created_at', type='long', indexing=['summary', 'attribute']),
+                        Field(name='created_by', type='string', indexing=['summary', 'attribute']),
+                        Field(name='status', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
+                        Field(name='schemas_deployed', type='array<string>', indexing=['summary', 'attribute']),
+                    ]
+                )
+            )
+            app_package.add_schema(tenant_metadata_schema)
+
+            # Add validation overrides
+            until_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+            app_package.validations = [
+                Validation(validation_id="schema-removal", until=until_date),
+                Validation(validation_id="content-cluster-removal", until=until_date)
+            ]
+
+            # Deploy schemas
+            schema_manager = VespaSchemaManager(
+                vespa_endpoint="http://localhost",
+                vespa_port=config_port
+            )
+            schema_manager._deploy_package(app_package)
+            logger.info("✅ Schemas deployed")
+
+        except Exception as e:
+            logger.warning(f"Schema deployment failed: {e}")
+            # Continue anyway - some tests might not need schemas
 
         # Wait for application endpoint to be ready
         logger.info(f"Waiting for application endpoint on port {http_port}...")
@@ -108,14 +190,14 @@ def vespa_instance():
                 if response.status_code == 200:
                     logger.info(f"✅ Vespa ready on port {http_port}")
                     break
-            except:
+            except Exception:
                 pass
             time.sleep(2)
         else:
             # Cleanup and skip
             subprocess.run(["docker", "stop", container_name], capture_output=True)
             subprocess.run(["docker", "rm", container_name], capture_output=True)
-            pytest.skip(f"Application endpoint not ready after 60 seconds")
+            pytest.skip("Application endpoint not ready after 60 seconds")
 
         # Yield instance info
         yield {

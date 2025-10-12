@@ -32,7 +32,11 @@ import time
 from typing import Dict, List, Optional
 
 import uvicorn
+from cogniverse_core.common.tenant_utils import parse_tenant_id
+from cogniverse_core.config.utils import get_config
+from cogniverse_vespa.tenant_schema_manager import get_tenant_schema_manager
 from fastapi import FastAPI, HTTPException
+from vespa.application import Vespa
 
 from cogniverse_runtime.admin.models import (
     CreateOrganizationRequest,
@@ -42,10 +46,6 @@ from cogniverse_runtime.admin.models import (
     Tenant,
     TenantListResponse,
 )
-from cogniverse_vespa.tenant_schema_manager import get_tenant_schema_manager
-from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
-from cogniverse_core.config.utils import get_config
-from cogniverse_core.common.tenant_utils import parse_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -55,21 +55,20 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Vespa client for metadata storage
-vespa_client: Optional[VespaVideoSearchClient] = None
+# Vespa client for metadata storage (raw pyvespa client for document CRUD)
+vespa_client: Optional[Vespa] = None
 # Tenant schema manager for deploying tenant schemas
 schema_manager = None
 
 
-def get_vespa_client() -> VespaVideoSearchClient:
+def get_vespa_client() -> Vespa:
     """Get or create Vespa client for metadata operations"""
     global vespa_client
     if vespa_client is None:
         config = get_config()
-        vespa_client = VespaVideoSearchClient(
-            url=config.get("vespa_url", "http://localhost"),
-            port=config.get("vespa_port", 8080),
-        )
+        vespa_url = config.get("vespa_url", "http://localhost")
+        vespa_port = config.get("vespa_port", 8080)
+        vespa_client = Vespa(url=f"{vespa_url}:{vespa_port}")
     return vespa_client
 
 
@@ -80,7 +79,7 @@ def get_schema_manager():
         config = get_config()
         schema_manager = get_tenant_schema_manager(
             vespa_url=config.get("vespa_url", "http://localhost"),
-            vespa_port=config.get("vespa_port", 8080),
+            vespa_port=config.get("vespa_config_port", 19071),
         )
     return schema_manager
 
@@ -160,9 +159,9 @@ async def create_organization(request: CreateOrganizationRequest) -> Organizatio
         )
 
         # Store in Vespa
-        client.feed_document(
+        client.feed_data_point(
             schema="organization_metadata",
-            document_id=org.org_id,
+            data_id=org.org_id,
             fields={
                 "org_id": org.org_id,
                 "org_name": org.org_name,
@@ -199,19 +198,24 @@ async def list_organizations() -> OrganizationListResponse:
         # Query all organizations
         results = client.query(
             yql="select * from organization_metadata where true",
-            hits=1000,
+            hits=400,
         )
 
         organizations = []
-        for hit in results.get("root", {}).get("children", []):
+        for hit in results.json.get("root", {}).get("children", []):
             fields = hit.get("fields", {})
+            org_id = fields.get("org_id")
+
+            # Compute tenant_count dynamically
+            tenants = await list_tenants_for_org_internal(org_id)
+
             org = Organization(
-                org_id=fields.get("org_id"),
+                org_id=org_id,
                 org_name=fields.get("org_name"),
                 created_at=fields.get("created_at"),
                 created_by=fields.get("created_by"),
                 status=fields.get("status", "active"),
-                tenant_count=fields.get("tenant_count", 0),
+                tenant_count=len(tenants),
             )
             organizations.append(org)
 
@@ -249,21 +253,26 @@ async def get_organization_internal(org_id: str) -> Optional[Organization]:
     try:
         client = get_vespa_client()
 
-        result = client.get_document(
-            schema="organization_metadata", document_id=org_id
+        response = client.get_data(
+            schema="organization_metadata", data_id=org_id
         )
 
-        if not result:
+        if not response or response.status_code != 200:
             return None
 
+        result = response.json
         fields = result.get("fields", {})
+
+        # Compute tenant_count dynamically by querying tenants
+        tenants = await list_tenants_for_org_internal(org_id)
+
         return Organization(
             org_id=fields.get("org_id"),
             org_name=fields.get("org_name"),
             created_at=fields.get("created_at"),
             created_by=fields.get("created_by"),
             status=fields.get("status", "active"),
-            tenant_count=fields.get("tenant_count", 0),
+            tenant_count=len(tenants),
         )
 
     except Exception as e:
@@ -312,7 +321,7 @@ async def delete_organization(org_id: str) -> Dict:
                 logger.error(f"Failed to delete tenant {tenant.tenant_full_id}: {e}")
 
         # Delete organization
-        client.delete_document(schema="organization_metadata", document_id=org_id)
+        client.delete_data(schema="organization_metadata", data_id=org_id)
 
         logger.info(
             f"Deleted organization {org_id} with {len(deleted_tenants)} tenants"
@@ -393,12 +402,12 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
                 created_at=int(time.time() * 1000),
                 created_by=request.created_by,
                 status="active",
-                tenant_count=0,
+                tenant_count=0,  # Not used, computed dynamically
             )
 
-            client.feed_document(
+            client.feed_data_point(
                 schema="organization_metadata",
-                document_id=org.org_id,
+                data_id=org.org_id,
                 fields={
                     "org_id": org.org_id,
                     "org_name": org.org_name,
@@ -436,9 +445,9 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
         )
 
         # Store in Vespa
-        client.feed_document(
+        client.feed_data_point(
             schema="tenant_metadata",
-            document_id=tenant_full_id,
+            data_id=tenant_full_id,
             fields={
                 "tenant_full_id": tenant.tenant_full_id,
                 "org_id": tenant.org_id,
@@ -448,14 +457,6 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
                 "status": tenant.status,
                 "schemas_deployed": tenant.schemas_deployed,
             },
-        )
-
-        # Update org tenant count
-        org.tenant_count += 1
-        client.update_document(
-            schema="organization_metadata",
-            document_id=org_id,
-            fields={"tenant_count": org.tenant_count},
         )
 
         logger.info(
@@ -519,14 +520,15 @@ async def list_tenants_for_org_internal(org_id: str) -> List[Tenant]:
     try:
         client = get_vespa_client()
 
-        # Query tenants for this org
+        # Query tenants for this org using term matching in userQuery
         results = client.query(
-            yql=f"select * from tenant_metadata where org_id = '{org_id}'",
-            hits=1000,
+            yql='select * from tenant_metadata where userQuery()',
+            query=f'org_id:{org_id}',
+            hits=400,
         )
 
         tenants = []
-        for hit in results.get("root", {}).get("children", []):
+        for hit in results.json.get("root", {}).get("children", []):
             fields = hit.get("fields", {})
             tenant = Tenant(
                 tenant_full_id=fields.get("tenant_full_id"),
@@ -573,13 +575,14 @@ async def get_tenant_internal(tenant_full_id: str) -> Optional[Tenant]:
     try:
         client = get_vespa_client()
 
-        result = client.get_document(
-            schema="tenant_metadata", document_id=tenant_full_id
+        response = client.get_data(
+            schema="tenant_metadata", data_id=tenant_full_id
         )
 
-        if not result:
+        if not response or response.status_code != 200:
             return None
 
+        result = response.json
         fields = result.get("fields", {})
         return Tenant(
             tenant_full_id=fields.get("tenant_full_id"),
@@ -645,17 +648,7 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
         logger.error(f"Failed to delete schemas for {tenant_full_id}: {e}")
 
     # Delete tenant metadata
-    client.delete_document(schema="tenant_metadata", document_id=tenant_full_id)
-
-    # Update org tenant count
-    org = await get_organization_internal(tenant.org_id)
-    if org and org.tenant_count > 0:
-        org.tenant_count -= 1
-        client.update_document(
-            schema="organization_metadata",
-            document_id=tenant.org_id,
-            fields={"tenant_count": org.tenant_count},
-        )
+    client.delete_data(schema="tenant_metadata", data_id=tenant_full_id)
 
     logger.info(f"Deleted tenant {tenant_full_id} with {len(deleted_schemas)} schemas")
 
