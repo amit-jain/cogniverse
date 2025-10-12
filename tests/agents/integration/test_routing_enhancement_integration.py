@@ -41,7 +41,7 @@ class TestRoutingToEnhancedSearchIntegration:
             "cogniverse_agents.video_search_agent.get_config"
         ) as mock_search_config:
             with patch(
-                "cogniverse_vespa.vespa.vespa_search_client.VespaVideoSearchClient"
+                "cogniverse_vespa.vespa_search_client.VespaVideoSearchClient"
             ) as mock_vespa:
                 with patch(
                     "cogniverse_agents.query_encoders.QueryEncoderFactory"
@@ -541,6 +541,7 @@ class TestEnhancedAgentComponentIntegration:
             # Test complete pipeline
             processing_request = ProcessingRequest(
                 query="robots playing soccer",
+                tenant_id="test_tenant",
                 profiles=["video_colpali_smol500_mv_frame"],
                 strategies=["binary_binary"],
                 include_summaries=True,

@@ -394,7 +394,7 @@ class TestAdaptiveThresholdPerformance:
 
     def test_threshold_learning_performance(self):
         """Test performance of threshold learning under load"""
-        learner = AdaptiveThresholdLearner()
+        learner = AdaptiveThresholdLearner(tenant_id="test_tenant")
 
         # Simulate performance samples
         num_samples = 100
