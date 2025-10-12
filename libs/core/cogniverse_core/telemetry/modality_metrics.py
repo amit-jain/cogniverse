@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from cogniverse_agents.search.rerankers.multi_modal_reranker import QueryModality
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 logger = logging.getLogger(__name__)
 

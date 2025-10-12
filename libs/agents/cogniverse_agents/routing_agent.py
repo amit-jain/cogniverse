@@ -52,7 +52,7 @@ from cogniverse_agents.routing.modality_cache import ModalityCacheManager
 from cogniverse_agents.routing.parallel_executor import ParallelAgentExecutor
 from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
 from cogniverse_agents.routing.relationship_extraction_tools import RelationshipExtractorTool
-from cogniverse_agents.search.rerankers.multi_modal_reranker import MultiModalReranker
+from cogniverse_agents.search.multi_modal_reranker import MultiModalReranker
 from cogniverse_core.telemetry.modality_metrics import ModalityMetricsTracker
 
 # A2A protocol imports
@@ -559,7 +559,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin):
             try:
                 # Check cache first (if enabled)
                 if self.cache_manager:
-                    from cogniverse_agents.search.rerankers.multi_modal_reranker import QueryModality
+                    from cogniverse_agents.search.multi_modal_reranker import QueryModality
                     cached_decision = self.cache_manager.get_cached_result(
                         query=query,
                         modality=QueryModality.TEXT,  # Use TEXT as default for routing
@@ -650,7 +650,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin):
 
                 # Cache the decision (if enabled)
                 if self.cache_manager:
-                    from cogniverse_agents.search.rerankers.multi_modal_reranker import QueryModality
+                    from cogniverse_agents.search.multi_modal_reranker import QueryModality
                     self.cache_manager.cache_result(
                         query=query,
                         modality=QueryModality.TEXT,
@@ -659,7 +659,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin):
 
                 # Track metrics (if enabled)
                 if self.metrics_tracker:
-                    from cogniverse_agents.search.rerankers.multi_modal_reranker import QueryModality
+                    from cogniverse_agents.search.multi_modal_reranker import QueryModality
                     self.metrics_tracker.record_modality_execution(
                         modality=QueryModality.TEXT,
                         latency_ms=(datetime.now() - start_time).total_seconds() * 1000,

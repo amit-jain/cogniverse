@@ -22,7 +22,7 @@ from cogniverse_agents.query.encoders import QueryEncoderFactory
 from cogniverse_agents.routing_agent import RoutingDecision
 from cogniverse_vespa.tenant_aware_search_client import TenantAwareVespaSearchClient
 from cogniverse_core.config.utils import get_config
-from cogniverse_core.common.a2a_utils import DataPart, TextPart
+from cogniverse_agents.tools.a2a_utils import DataPart, TextPart
 
 logger = logging.getLogger(__name__)
 

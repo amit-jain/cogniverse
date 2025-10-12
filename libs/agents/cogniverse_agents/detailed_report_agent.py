@@ -15,7 +15,7 @@ from cogniverse_core.common.a2a_mixin import A2AEndpointsMixin
 from cogniverse_core.config.utils import get_config
 from cogniverse_core.common.health_mixin import HealthCheckMixin
 from cogniverse_core.common.vlm_interface import VLMInterface
-from cogniverse_core.common.a2a_utils import DataPart, Task
+from cogniverse_agents.tools.a2a_utils import DataPart, Task
 
 logger = logging.getLogger(__name__)
 

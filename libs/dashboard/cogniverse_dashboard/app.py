@@ -1564,7 +1564,7 @@ with main_tabs[5]:
     # Import required modules
     try:
         from cogniverse_agents.routing.modality_cache import ModalityCacheManager
-        from cogniverse_agents.search.rerankers.multi_modal_reranker import QueryModality
+        from cogniverse_agents.search.multi_modal_reranker import QueryModality
         from cogniverse_core.telemetry.modality_metrics import ModalityMetricsTracker
 
         # Initialize components

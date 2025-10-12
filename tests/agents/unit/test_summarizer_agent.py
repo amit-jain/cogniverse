@@ -14,7 +14,7 @@ from cogniverse_agents.summarizer_agent import (
     ThinkingPhase,
     VLMInterface,
 )
-from cogniverse_core.common.a2a_utils import A2AMessage, DataPart, Task
+from cogniverse_agents.tools.a2a_utils import A2AMessage, DataPart, Task
 
 
 @pytest.mark.unit

@@ -96,7 +96,7 @@ class TestDSPySystemIntegration:
     @pytest.mark.ci_fast
     def test_advanced_optimizer_initialization(self):
         """Test advanced optimizer components are properly initialized"""
-        optimizer = AdvancedRoutingOptimizer()
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant")
 
         # Should have required components
         assert hasattr(optimizer, "config")
@@ -111,7 +111,7 @@ class TestDSPySystemIntegration:
 
     def test_adaptive_threshold_learner_functionality(self):
         """Test adaptive threshold learner with real data"""
-        learner = AdaptiveThresholdLearner()
+        learner = AdaptiveThresholdLearner(tenant_id="test_tenant")
 
         # Test recording performance samples
 
@@ -182,8 +182,8 @@ class TestDSPySystemIntegration:
         try:
             components["extractor"] = RelationshipExtractorTool()
             components["pipeline"] = QueryEnhancementPipeline()
-            components["optimizer"] = AdvancedRoutingOptimizer()
-            components["learner"] = AdaptiveThresholdLearner()
+            components["optimizer"] = AdvancedRoutingOptimizer(tenant_id="test_tenant")
+            components["learner"] = AdaptiveThresholdLearner(tenant_id="test_tenant")
 
             # All components should initialize successfully
             for name, component in components.items():

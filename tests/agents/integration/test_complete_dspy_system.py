@@ -33,7 +33,7 @@ class TestCompleteDSPySystem:
         ):
             with patch("cogniverse_core.config.utils.get_config") as mock_config:
                 with patch(
-                    "cogniverse_agents.video_search_agent.VespaVideoSearchClient"
+                    "cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient"
                 ):
                     with patch(
                         "cogniverse_agents.video_search_agent.QueryEncoderFactory"
@@ -110,7 +110,7 @@ class TestCompleteDSPySystem:
 
         from cogniverse_agents.video_search_agent import VideoSearchAgent
 
-        with patch("cogniverse_agents.video_search_agent.VespaVideoSearchClient"):
+        with patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient"):
             with patch(
                 "cogniverse_agents.video_search_agent.get_config"
             ) as mock_config:
@@ -183,7 +183,7 @@ class TestCompleteDSPySystem:
 
         # Test adaptive learning (with mocked storage)
         with patch("pathlib.Path"):
-            learner = AdaptiveThresholdLearner()
+            learner = AdaptiveThresholdLearner(tenant_id="test_tenant")
             assert learner is not None
 
         # Test MLflow integration basic structure

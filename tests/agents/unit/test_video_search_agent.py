@@ -13,7 +13,7 @@ from cogniverse_agents.video_search_agent import (
     VideoProcessor,
     VideoSearchAgent,
 )
-from cogniverse_core.common.a2a_utils import A2AMessage, DataPart, Task, TextPart
+from cogniverse_agents.tools.a2a_utils import A2AMessage, DataPart, Task, TextPart
 
 
 @pytest.mark.unit

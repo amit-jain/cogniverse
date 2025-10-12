@@ -7,7 +7,7 @@ import pytest
 
 from cogniverse_agents.detailed_report_agent import DetailedReportAgent
 from cogniverse_agents.summarizer_agent import SummarizerAgent
-from cogniverse_core.common.a2a_utils import A2AMessage, DataPart, Task
+from cogniverse_agents.tools.a2a_utils import A2AMessage, DataPart, Task
 
 
 @pytest.fixture

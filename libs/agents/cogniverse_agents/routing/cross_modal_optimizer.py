@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from cogniverse_agents.routing.modality_span_collector import ModalitySpanCollector
 from cogniverse_agents.routing.xgboost_meta_models import FusionBenefitModel
-from cogniverse_agents.search.rerankers.multi_modal_reranker import QueryModality
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 logger = logging.getLogger(__name__)
 

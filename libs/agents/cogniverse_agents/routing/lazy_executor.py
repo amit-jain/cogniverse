@@ -8,7 +8,7 @@ Part of Phase 12: Production Readiness.
 import logging
 from typing import Any, Callable, Dict, List
 
-from cogniverse_agents.search.rerankers.multi_modal_reranker import QueryModality
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 logger = logging.getLogger(__name__)
 

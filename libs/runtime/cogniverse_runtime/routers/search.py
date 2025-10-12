@@ -115,19 +115,19 @@ async def rerank_results(request: Dict[str, Any]) -> Dict[str, Any]:
 
         # Import reranker based on strategy
         if strategy == "learned":
-            from cogniverse_agents.search.rerankers.learned_reranker import (
+            from cogniverse_agents.search.learned_reranker import (
                 LearnedReranker,
             )
 
             reranker = LearnedReranker()
         elif strategy == "hybrid":
-            from cogniverse_agents.search.rerankers.hybrid_reranker import (
+            from cogniverse_agents.search.hybrid_reranker import (
                 HybridReranker,
             )
 
             reranker = HybridReranker()
         elif strategy == "multi_modal":
-            from cogniverse_agents.search.rerankers.multi_modal_reranker import (
+            from cogniverse_agents.search.multi_modal_reranker import (
                 MultiModalReranker,
             )
 

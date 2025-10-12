@@ -18,7 +18,7 @@ from typing import Dict, Any, List, Optional, Tuple
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from cogniverse_core.config.utils import get_config
-from cogniverse_core.common.a2a_utils import A2AClient, discover_agents
+from cogniverse_agents.tools.a2a_utils import A2AClient, discover_agents
 
 class SystemTester:
     """Comprehensive system tester for the multi-agent RAG system."""
