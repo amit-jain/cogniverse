@@ -740,3 +740,77 @@ class TestVideoSearchAgentAdvancedFeatures:
         assert params_full.ranking_strategy == "float_binary"
         assert params_full.confidence_threshold == 0.8
         assert params_full.use_relationship_boost is False
+
+    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient")
+    @patch("cogniverse_agents.video_search_agent.get_config")
+    @pytest.mark.ci_fast
+    def test_routing_decision_compatibility(
+        self, mock_get_config, mock_vespa_class, mock_encoder_factory
+    ):
+        """Test that RoutingDecision structure is compatible with VideoSearchAgent"""
+        from cogniverse_agents.routing_agent import RoutingDecision
+
+        # Mock config and dependencies
+        mock_config = {
+            "active_video_profile": "video_colpali_smol500_mv_frame",
+            "video_processing_profiles": {
+                "video_colpali_smol500_mv_frame": {
+                    "embedding_model": "vidore/colsmol-500m",
+                    "embedding_type": "frame_based",
+                }
+            },
+        }
+        mock_get_config.return_value = mock_config
+        mock_vespa_class.return_value = Mock()
+        mock_encoder_factory.create_encoder.return_value = Mock()
+
+        # Create search agent (just testing structure compatibility)
+        search_agent = VideoSearchAgent(tenant_id="test_tenant")
+
+        # Mock routing decision with relationships
+        routing_decision = RoutingDecision(
+            query="robots playing soccer in competitions",
+            enhanced_query="autonomous robots demonstrating advanced soccer skills in competitive tournaments",
+            recommended_agent="video_search_agent",
+            confidence=0.85,
+            reasoning="Query contains technology and sports entities with competitive context, requiring enhanced video search",
+            entities=[
+                {"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9},
+                {"text": "soccer", "label": "SPORT", "confidence": 0.8},
+                {"text": "competitions", "label": "EVENT", "confidence": 0.85},
+            ],
+            relationships=[
+                {"subject": "robots", "relation": "playing", "object": "soccer"},
+                {"subject": "soccer", "relation": "in", "object": "competitions"},
+            ],
+            metadata={
+                "complexity_score": 0.7,
+                "needs_enhancement": True,
+                "relationship_extraction_applied": True,
+            },
+        )
+
+        # Test that routing decision can be used for enhanced search
+        assert routing_decision.enhanced_query != routing_decision.query
+        assert len(routing_decision.entities) == 3
+        assert len(routing_decision.relationships) == 2
+        assert routing_decision.metadata["relationship_extraction_applied"] is True
+
+        # Verify search agent can process routing decision (mock if method doesn't exist)
+        if hasattr(search_agent, "_create_search_params_from_routing_decision"):
+            search_params = search_agent._create_search_params_from_routing_decision(
+                routing_decision
+            )
+            assert search_params.query == routing_decision.enhanced_query
+            assert len(search_params.entities) == len(routing_decision.entities)
+            assert len(search_params.relationships) == len(
+                routing_decision.relationships
+            )
+            assert search_params.routing_confidence == routing_decision.confidence
+        else:
+            # Verify the search agent has the necessary attributes to handle routing decisions
+            assert hasattr(search_agent, "search_by_text")
+            assert routing_decision.enhanced_query is not None
+            assert len(routing_decision.entities) == 3
+            assert len(routing_decision.relationships) == 2

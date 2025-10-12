@@ -580,10 +580,14 @@ class TestSystemIntegrationReadiness:
 
         # Should return a configuration
         assert config is not None
-        # Config can be dict or ConfigUtils object
-        assert isinstance(config, (dict, object)) and hasattr(config, '__getitem__') or isinstance(config, dict)
+        # Config can be dict or ConfigUtils object - just verify it's a valid config
+        assert hasattr(config, 'get') or isinstance(config, dict)
 
-        print(f"System configuration available: {len(config)} keys")
+        # Print config info - handle both dict and ConfigUtils
+        if isinstance(config, dict):
+            print(f"System configuration available: {len(config)} keys")
+        else:
+            print(f"System configuration available (ConfigUtils object)")
 
     def test_external_dependency_handling(self):
         """Test system handles missing external dependencies gracefully"""

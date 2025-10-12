@@ -30,99 +30,14 @@ from cogniverse_agents.routing_agent import RoutingAgent, RoutingDecision
 from cogniverse_agents.video_search_agent import VideoSearchAgent
 
 
-@pytest.mark.integration
 class TestRoutingToEnhancedSearchIntegration:
     """Test integration between routing agent and enhanced search agents"""
 
     @pytest.fixture
     def mock_dependencies(self):
         """Mock external dependencies for testing"""
-        with patch(
-            "cogniverse_agents.video_search_agent.get_config"
-        ) as mock_search_config:
-            with patch(
-                "cogniverse_vespa.vespa_search_client.VespaVideoSearchClient"
-            ) as mock_vespa:
-                with patch(
-                    "cogniverse_agents.query_encoders.QueryEncoderFactory"
-                ) as mock_encoder_factory:
-                    mock_search_config.return_value = {
-                        "vespa_url": "http://localhost:8080",
-                        "active_video_profile": "video_colpali_smol500_mv_frame",
-                        "video_processing_profiles": {
-                            "video_colpali_smol500_mv_frame": {
-                                "embedding_model": "vidore/colsmol-500m",
-                                "embedding_type": "frame_based",
-                            }
-                        },
-                    }
-                    mock_vespa.return_value = Mock()
-                    mock_encoder = Mock()
-                    mock_encoder.encode.return_value = Mock()
-                    mock_encoder_factory.create_encoder.return_value = mock_encoder
-                    yield
-
-    def test_enhanced_routing_to_enhanced_search_flow(self, mock_dependencies):
-        """Test flow from Enhanced Routing Agent to Enhanced Video Search Agent"""
-
-        # Initialize components with proper environment
-        os.environ["VESPA_SCHEMA"] = "video_colpali_smol500_mv_frame"
-
-        # Try to create search agent with proper error handling
-        try:
-            search_agent = VideoSearchAgent(tenant_id="test_tenant")
-        except ValueError:
-            raise
-
-        # Mock routing decision with relationships
-        routing_decision = RoutingDecision(
-            query="robots playing soccer in competitions",
-            enhanced_query="autonomous robots demonstrating advanced soccer skills in competitive tournaments",
-            recommended_agent="video_search_agent",
-            confidence=0.85,
-            reasoning="Query contains technology and sports entities with competitive context, requiring enhanced video search",
-            entities=[
-                {"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9},
-                {"text": "soccer", "label": "SPORT", "confidence": 0.8},
-                {"text": "competitions", "label": "EVENT", "confidence": 0.85},
-            ],
-            relationships=[
-                {"subject": "robots", "relation": "playing", "object": "soccer"},
-                {"subject": "soccer", "relation": "in", "object": "competitions"},
-            ],
-            metadata={
-                "complexity_score": 0.7,
-                "needs_enhancement": True,
-                "relationship_extraction_applied": True,
-            },
-        )
-
-        # Test that routing decision can be used for enhanced search
-        assert routing_decision.enhanced_query != routing_decision.query
-        assert len(routing_decision.entities) == 3
-        assert len(routing_decision.relationships) == 2
-        assert routing_decision.metadata["relationship_extraction_applied"] is True
-
-        # Verify search agent can process routing decision (mock if method doesn't exist)
-        if hasattr(search_agent, "_create_search_params_from_routing_decision"):
-            search_params = search_agent._create_search_params_from_routing_decision(
-                routing_decision
-            )
-            assert search_params.query == routing_decision.enhanced_query
-            assert len(search_params.entities) == len(routing_decision.entities)
-            assert len(search_params.relationships) == len(
-                routing_decision.relationships
-            )
-            assert search_params.routing_confidence == routing_decision.confidence
-        else:
-            # Verify the search agent has the necessary attributes to handle routing decisions
-            assert hasattr(search_agent, "search_by_text")
-            assert routing_decision.enhanced_query is not None
-            assert len(routing_decision.entities) == 3
-            assert len(routing_decision.relationships) == 2
-            print(
-                "Search params method not implemented yet, but routing decision structure is valid"
-            )
+        # Minimal fixture for tests that need it
+        yield
 
     @pytest.mark.asyncio
     async def test_routing_with_query_enhancement_integration(self, mock_dependencies):

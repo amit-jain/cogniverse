@@ -383,6 +383,7 @@ class VespaTestManager:
                     .with_config(config)
                     .with_app_config(test_config)  # Pass test_config with correct port!
                     .with_schema(self.default_test_schema)
+                    .with_tenant_id("test_tenant")  # Add tenant_id for multi-tenant support
                     .with_debug(True)
                     .build()
                 )
