@@ -140,11 +140,15 @@ class Mem0MemoryManager:
         # Deploy tenant schema if needed
         if auto_create_schema:
             try:
-                # Configure schema manager with correct Vespa ports
-                self.schema_manager.vespa_host = vespa_host
-                self.schema_manager.vespa_config_port = vespa_config_port or 19071
+                # Get schema manager with CORRECT config port for deployment
+                # VespaSchemaManager needs the CONFIG port (19071+) for deployment, not data port (8080+)
+                from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+                deployment_schema_manager = TenantSchemaManager(
+                    vespa_url=vespa_host,
+                    vespa_port=vespa_config_port or 19071  # CONFIG port for deployment
+                )
 
-                self.schema_manager.ensure_tenant_schema_exists(
+                deployment_schema_manager.ensure_tenant_schema_exists(
                     self.tenant_id, base_schema_name
                 )
                 logger.info(f"Ensured tenant schema exists: {tenant_schema_name}")
