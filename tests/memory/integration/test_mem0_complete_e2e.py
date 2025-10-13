@@ -33,7 +33,7 @@ def memory_manager(vespa_container):
     manager.initialize(
         vespa_host="localhost",
         vespa_port=VESPA_DATA_PORT,
-        collection_name="agent_memories",
+        base_schema_name="agent_memories",
     )
     return manager
 

@@ -136,7 +136,7 @@ def memory_manager(test_vespa):
     manager.initialize(
         vespa_host="localhost",
         vespa_port=test_vespa["http_port"],
-        collection_name="agent_memories",
+        base_schema_name="agent_memories",
         llm_model="llama3.2",
         embedding_model="nomic-embed-text",
         ollama_base_url="http://localhost:11434/v1",
