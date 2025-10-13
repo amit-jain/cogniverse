@@ -5,7 +5,6 @@ Unit tests for Mem0MemoryManager
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
 
 
@@ -36,16 +35,30 @@ class TestMem0MemoryManager:
         assert manager.memory is None
         assert manager.config is None
 
+    @patch("cogniverse_vespa.tenant_schema_manager.TenantSchemaManager")
     @patch("cogniverse_core.common.mem0_memory_manager.get_tenant_schema_manager")
     @patch("cogniverse_core.common.mem0_memory_manager.Memory")
-    def test_initialize_success(self, mock_memory_class, mock_get_schema_manager, manager):
+    def test_initialize_success(
+        self,
+        mock_memory_class,
+        mock_get_schema_manager,
+        mock_tenant_schema_manager_class,
+        manager,
+    ):
         """Test successful initialization"""
         # Setup mocks
         mock_memory = MagicMock()
         mock_memory_class.from_config.return_value = mock_memory
 
+        # Mock the TenantSchemaManager instance that gets created during initialize()
+        mock_deployment_schema_manager = MagicMock()
+        mock_deployment_schema_manager.ensure_tenant_schema_exists.return_value = True
+        mock_tenant_schema_manager_class.return_value = mock_deployment_schema_manager
+
         mock_schema_manager = MagicMock()
-        mock_schema_manager.get_tenant_schema_name.return_value = "agent_memories_test_tenant"
+        mock_schema_manager.get_tenant_schema_name.return_value = (
+            "agent_memories_test_tenant"
+        )
         mock_schema_manager.ensure_tenant_schema_exists.return_value = True
         mock_get_schema_manager.return_value = mock_schema_manager
 
@@ -59,7 +72,10 @@ class TestMem0MemoryManager:
         assert manager.memory is not None
         assert manager.config is not None
         # Verify tenant-specific schema was used
-        assert manager.config["vector_store"]["config"]["collection_name"] == "agent_memories_test_tenant"
+        assert (
+            manager.config["vector_store"]["config"]["collection_name"]
+            == "agent_memories_test_tenant"
+        )
 
     @patch("cogniverse_core.common.mem0_memory_manager.Memory")
     def test_add_memory(self, mock_memory_class, manager):

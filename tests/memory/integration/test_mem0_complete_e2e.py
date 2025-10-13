@@ -1,147 +1,57 @@
 """
 Complete End-to-End Memory System Test
 
-This test:
-1. Starts Vespa in Docker
-2. Deploys agent_memories schema
-3. Tests full memory functionality
-4. Stops and removes Vespa container
+Uses shared session-scoped Vespa container from conftest.py.
+Tests full memory functionality with proper document cleanup.
 
 Run with: pytest tests/memory/integration/test_mem0_complete_e2e.py -v -s
 """
 
-import subprocess
 import time
-from pathlib import Path
 
 import pytest
-import requests
-from vespa.package import ApplicationPackage
-
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
-
-VESPA_CONTAINER_NAME = "vespa-memory-standalone"
-VESPA_DATA_PORT = 8084
-VESPA_CONFIG_PORT = 19075
+from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
 
 
 @pytest.fixture(scope="module")
-def memory_manager(vespa_container):
+def memory_manager(shared_memory_vespa):
     """Initialize and return memory manager for all tests"""
-    # Clear singleton to ensure fresh state
-    Mem0MemoryManager._instances.pop("test_tenant", None)
+    # Clear singletons to ensure fresh state
+    TenantSchemaManager._instance = None
+    Mem0MemoryManager._instances.clear()
+
     manager = Mem0MemoryManager(tenant_id="test_tenant")
-    # auto_create_schema=True to let Mem0MemoryManager deploy tenant-specific schema
+
+    # Initialize with shared Vespa backend
+    # auto_create_schema=False since schema was already deployed
     manager.initialize(
         vespa_host="localhost",
-        vespa_port=VESPA_DATA_PORT,
-        vespa_config_port=VESPA_CONFIG_PORT,
+        vespa_port=shared_memory_vespa["http_port"],
+        vespa_config_port=shared_memory_vespa["config_port"],
         base_schema_name="agent_memories",
-        auto_create_schema=True,
-    )
-    return manager
-
-
-@pytest.fixture(scope="module")
-def vespa_container():
-    """Start Vespa container, deploy schema, yield, then cleanup"""
-
-    print("\n" + "=" * 70)
-    print("🚀 Starting Vespa container...")
-    print("=" * 70)
-
-    # Stop and remove any existing container
-    subprocess.run(
-        ["docker", "stop", VESPA_CONTAINER_NAME],
-        capture_output=True,
-    )
-    subprocess.run(
-        ["docker", "rm", VESPA_CONTAINER_NAME],
-        capture_output=True,
+        auto_create_schema=False,  # Schema already deployed
     )
 
-    # Start fresh Vespa container
-    result = subprocess.run(
-        [
-            "docker", "run",
-            "--detach",
-            "--name", VESPA_CONTAINER_NAME,
-            "--hostname", "vespa-container",
-            "--publish", f"{VESPA_DATA_PORT}:8080",
-            "--publish", f"{VESPA_CONFIG_PORT}:19071",
-            "vespaengine/vespa:latest",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    print(f"✅ Vespa container started: {result.stdout.strip()}")
+    yield manager
 
-    # Wait for Vespa to be ready (up to 120 seconds)
-    print("\n⏳ Waiting for Vespa to be ready...")
-    max_wait = 120
-    for i in range(max_wait):
+    # Cleanup: Clear all test memories (not schemas!)
+    test_agents = [
+        ("e2e_test_tenant", "test_agent"),
+        ("e2e_test_tenant", "get_all_test"),
+        ("e2e_test_tenant", "delete_test"),
+        ("e2e_test_tenant", "stats_test"),
+        ("test_tenant", "mixin_e2e_test"),  # Mixin test uses test_tenant
+        ("tenant_a", "isolation_test"),
+        ("tenant_b", "isolation_test"),
+    ]
+
+    for tenant_id, agent_name in test_agents:
         try:
-            response = requests.get(
-                f"http://localhost:{VESPA_CONFIG_PORT}/ApplicationStatus",
-                timeout=2,
-            )
-            if response.status_code == 200:
-                print(f"✅ Vespa ready after {i+1} seconds")
-                break
+            manager.clear_agent_memory(tenant_id, agent_name)
         except Exception:
             pass
-
-        if i == max_wait - 1:
-            # Cleanup on failure
-            subprocess.run(["docker", "stop", VESPA_CONTAINER_NAME])
-            subprocess.run(["docker", "rm", VESPA_CONTAINER_NAME])
-            pytest.fail("Vespa failed to start within 120 seconds")
-
-        time.sleep(1)
-
-    # Deploy schema
-    print("\n📦 Deploying agent_memories schema...")
-    if not deploy_schema():
-        # Cleanup on failure
-        subprocess.run(["docker", "stop", VESPA_CONTAINER_NAME])
-        subprocess.run(["docker", "rm", VESPA_CONTAINER_NAME])
-        pytest.fail("Failed to deploy schema")
-
-    print("✅ Schema deployed successfully")
-
-    # Wait for schema to be active
-    print("⏳ Waiting for schema to be active...")
-    time.sleep(15)
-
-    print("\n" + "=" * 70)
-    print("✅ Vespa is ready for testing")
-    print("=" * 70 + "\n")
-
-    yield VESPA_CONTAINER_NAME
-
-    # Cleanup
-    print("\n" + "=" * 70)
-    print("🧹 Cleaning up Vespa container...")
-    print("=" * 70)
-
-    subprocess.run(
-        ["docker", "stop", VESPA_CONTAINER_NAME],
-        capture_output=True,
-    )
-    subprocess.run(
-        ["docker", "rm", VESPA_CONTAINER_NAME],
-        capture_output=True,
-    )
-
-    print("✅ Cleanup complete\n")
-
-
-def deploy_schema():
-    """Schema deployment handled by Mem0MemoryManager.initialize() with auto_create_schema=True"""
-    # No-op: Let Mem0MemoryManager handle tenant-specific schema deployment
-    print("✅ Schema deployment delegated to Mem0MemoryManager")
-    return True
 
 
 @pytest.mark.integration
@@ -149,15 +59,21 @@ def deploy_schema():
 class TestMemorySystemCompleteE2E:
     """Complete end-to-end tests for memory system"""
 
-    def test_01_vespa_health(self, memory_manager, vespa_container):
+    def test_01_vespa_health(self, memory_manager, shared_memory_vespa):
         """Test Vespa is healthy"""
-        response = requests.get(f"http://localhost:{VESPA_CONFIG_PORT}/ApplicationStatus")
+        import requests
+
+        response = requests.get(
+            f"http://localhost:{shared_memory_vespa['config_port']}/ApplicationStatus"
+        )
         assert response.status_code == 200
         print("✅ Vespa health check passed")
 
-    def test_02_schema_deployed(self, memory_manager, vespa_container):
+    def test_02_schema_deployed(self, memory_manager, shared_memory_vespa):
         """Test schema is deployed and accessible"""
-        # Test by feeding a test document
+        import requests
+
+        # Test by feeding a test document to the tenant schema
         test_doc = {
             "fields": {
                 "id": "test_schema",
@@ -166,12 +82,13 @@ class TestMemorySystemCompleteE2E:
                 "agent_id": "test",
                 "embedding": [0.0] * 768,
                 "metadata_": "{}",
-                "created_at": 1234567890
+                "created_at": 1234567890,
             }
         }
 
+        schema_name = shared_memory_vespa["tenant_schema_name"]
         response = requests.post(
-            f"http://localhost:{VESPA_DATA_PORT}/document/v1/agent_memories/agent_memories/docid/test_schema",
+            f"http://localhost:{shared_memory_vespa['http_port']}/document/v1/{schema_name}/{schema_name}/docid/test_schema",
             json=test_doc,
         )
         if response.status_code not in [200, 201]:
@@ -181,7 +98,7 @@ class TestMemorySystemCompleteE2E:
 
         # Cleanup
         requests.delete(
-            f"http://localhost:{VESPA_DATA_PORT}/document/v1/agent_memories/agent_memories/docid/test_schema"
+            f"http://localhost:{shared_memory_vespa['http_port']}/document/v1/{schema_name}/{schema_name}/docid/test_schema"
         )
 
     def test_03_memory_manager_initialization(self, memory_manager):
@@ -226,7 +143,7 @@ class TestMemorySystemCompleteE2E:
         assert "machine learning" in result_text.lower() or "AI" in result_text
         print("✅ Search results contain expected content")
 
-    def test_06_multi_tenant_isolation(self, memory_manager, vespa_container):
+    def test_06_multi_tenant_isolation(self, memory_manager, shared_memory_vespa):
         """Test tenant isolation"""
 
         # Add memory for tenant A
@@ -265,8 +182,17 @@ class TestMemorySystemCompleteE2E:
         text_a = " ".join([str(r) for r in results_a])
         text_b = " ".join([str(r) for r in results_b])
 
-        assert "cat" in text_a.lower() or "sarah" in text_a.lower() or "whiskers" in text_a.lower()
-        assert "dog" in text_b.lower() or "mike" in text_b.lower() or "buddy" in text_b.lower() or "golden" in text_b.lower()
+        assert (
+            "cat" in text_a.lower()
+            or "sarah" in text_a.lower()
+            or "whiskers" in text_a.lower()
+        )
+        assert (
+            "dog" in text_b.lower()
+            or "mike" in text_b.lower()
+            or "buddy" in text_b.lower()
+            or "golden" in text_b.lower()
+        )
 
         print("✅ Tenant isolation verified")
 
@@ -274,7 +200,7 @@ class TestMemorySystemCompleteE2E:
         memory_manager.clear_agent_memory("tenant_a", "isolation_test")
         memory_manager.clear_agent_memory("tenant_b", "isolation_test")
 
-    def test_07_get_all_memories(self, memory_manager, vespa_container):
+    def test_07_get_all_memories(self, memory_manager, shared_memory_vespa):
         """Test getting all memories"""
 
         # Clear first
@@ -311,7 +237,7 @@ class TestMemorySystemCompleteE2E:
         # Cleanup
         memory_manager.clear_agent_memory("e2e_test_tenant", "get_all_test")
 
-    def test_08_delete_memory(self, memory_manager, vespa_container):
+    def test_08_delete_memory(self, memory_manager, shared_memory_vespa):
         """Test deleting specific memory"""
 
         # Add memory with factual content
@@ -336,7 +262,7 @@ class TestMemorySystemCompleteE2E:
         # Cleanup
         memory_manager.clear_agent_memory("e2e_test_tenant", "delete_test")
 
-    def test_09_memory_stats(self, memory_manager, vespa_container):
+    def test_09_memory_stats(self, memory_manager, shared_memory_vespa):
         """Test memory statistics"""
 
         # Clear and add memories with distinct factual content
@@ -385,7 +311,7 @@ class TestMemorySystemCompleteE2E:
         # Cleanup
         memory_manager.clear_agent_memory("e2e_test_tenant", "stats_test")
 
-    def test_10_memory_aware_mixin(self, memory_manager, vespa_container):
+    def test_10_memory_aware_mixin(self, memory_manager, shared_memory_vespa):
         """Test MemoryAwareMixin with real backend"""
 
         class TestAgent(MemoryAwareMixin):
@@ -394,19 +320,23 @@ class TestMemorySystemCompleteE2E:
 
         agent = TestAgent()
 
-        # Initialize
+        # Initialize with shared Vespa ports
+        # Use same tenant as shared fixture to reuse existing schema via singleton pattern
         success = agent.initialize_memory(
             agent_name="mixin_e2e_test",
-            tenant_id="e2e_test_tenant",
-            vespa_host="localhost",
-            vespa_port=VESPA_DATA_PORT,
-            vespa_config_port=VESPA_CONFIG_PORT,
+            tenant_id="test_tenant",  # Same tenant = reuses manager singleton
+            vespa_host="http://localhost",
+            vespa_port=shared_memory_vespa["http_port"],
+            vespa_config_port=shared_memory_vespa["config_port"],
+            auto_create_schema=False,  # Explicitly don't try to create (already exists)
         )
         assert success is True
         print("✅ Mixin initialized")
 
         # Add memory with factual content
-        success = agent.update_memory("Developer prefers Python version 3.12 for all new projects")
+        success = agent.update_memory(
+            "Developer prefers Python version 3.12 for all new projects"
+        )
         assert success is True
         print("✅ Memory added via mixin")
 
@@ -452,7 +382,7 @@ class TestMemorySystemCompleteE2E:
         agent.clear_memory()
         print("✅ Mixin cleanup complete")
 
-    def test_11_cleanup_all_test_data(self, memory_manager, vespa_container):
+    def test_11_cleanup_all_test_data(self, memory_manager, shared_memory_vespa):
         """Final cleanup of all test data"""
 
         # Clear all test tenants/agents
@@ -461,7 +391,7 @@ class TestMemorySystemCompleteE2E:
             ("e2e_test_tenant", "get_all_test"),
             ("e2e_test_tenant", "delete_test"),
             ("e2e_test_tenant", "stats_test"),
-            ("e2e_test_tenant", "mixin_e2e_test"),
+            ("test_tenant", "mixin_e2e_test"),  # Mixin test uses test_tenant
             ("tenant_a", "isolation_test"),
             ("tenant_b", "isolation_test"),
         ]
@@ -474,7 +404,7 @@ class TestMemorySystemCompleteE2E:
 
         print("✅ All test data cleaned up")
 
-    def test_12_final_verification(self, memory_manager, vespa_container):
+    def test_12_final_verification(self, memory_manager, shared_memory_vespa):
         """Final verification that system is still healthy"""
 
         assert memory_manager.health_check() is True

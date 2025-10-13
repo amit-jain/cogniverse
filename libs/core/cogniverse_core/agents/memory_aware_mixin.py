@@ -50,6 +50,7 @@ class MemoryAwareMixin:
         vespa_host: str = "localhost",
         vespa_port: int = 8080,
         vespa_config_port: Optional[int] = None,
+        auto_create_schema: bool = True,
     ) -> bool:
         """
         Initialize memory for this agent
@@ -60,6 +61,7 @@ class MemoryAwareMixin:
             vespa_host: Vespa endpoint host
             vespa_port: Vespa data endpoint port
             vespa_config_port: Vespa config endpoint port (default: 19071)
+            auto_create_schema: Auto-deploy tenant schema if not exists (default: True)
 
         Returns:
             Success status
@@ -84,7 +86,7 @@ class MemoryAwareMixin:
                     vespa_port=vespa_port,
                     vespa_config_port=vespa_config_port,
                     base_schema_name="agent_memories",
-                    auto_create_schema=True,
+                    auto_create_schema=auto_create_schema,
                 )
 
             self._memory_initialized = True
@@ -288,7 +290,9 @@ class MemoryAwareMixin:
             return False
 
         # Format success memory - direct factual statement for Mem0's LLM
-        success_content = f"SUCCESS - Successfully answered: {query}. The answer was: {result}"
+        success_content = (
+            f"SUCCESS - Successfully answered: {query}. The answer was: {result}"
+        )
 
         return self.update_memory(success_content, metadata)
 
@@ -310,7 +314,9 @@ class MemoryAwareMixin:
             return False
 
         # Format failure memory - direct factual statement for Mem0's LLM
-        failure_content = f"FAILURE - Failed attempt: {query}. Error encountered: {error}"
+        failure_content = (
+            f"FAILURE - Failed attempt: {query}. Error encountered: {error}"
+        )
 
         return self.update_memory(failure_content, metadata)
 

@@ -14,10 +14,9 @@ from typing import Any, Dict, List, Optional
 # Disable Mem0's telemetry BEFORE importing mem0
 os.environ["MEM0_TELEMETRY"] = "False"
 
+from cogniverse_vespa.tenant_schema_manager import get_tenant_schema_manager
 from mem0 import Memory
 from mem0.vector_stores.configs import VectorStoreConfig
-
-from cogniverse_vespa.tenant_schema_manager import get_tenant_schema_manager
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +82,9 @@ class Mem0MemoryManager:
                 instance = super().__new__(cls)
                 instance._initialized = False
                 cls._instances[tenant_id] = instance
-                logger.info(f"Created new Mem0MemoryManager instance for tenant: {tenant_id}")
+                logger.info(
+                    f"Created new Mem0MemoryManager instance for tenant: {tenant_id}"
+                )
             return cls._instances[tenant_id]
 
     def __init__(self, tenant_id: str):
@@ -139,22 +140,19 @@ class Mem0MemoryManager:
 
         # Deploy tenant schema if needed
         if auto_create_schema:
-            try:
-                # Get schema manager with CORRECT config port for deployment
-                # VespaSchemaManager needs the CONFIG port (19071+) for deployment, not data port (8080+)
-                from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
-                deployment_schema_manager = TenantSchemaManager(
-                    vespa_url=vespa_host,
-                    vespa_port=vespa_config_port or 19071  # CONFIG port for deployment
-                )
+            # Get schema manager with CORRECT config port for deployment
+            # VespaSchemaManager needs the CONFIG port (19071+) for deployment, not data port (8080+)
+            from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
 
-                deployment_schema_manager.ensure_tenant_schema_exists(
-                    self.tenant_id, base_schema_name
-                )
-                logger.info(f"Ensured tenant schema exists: {tenant_schema_name}")
-            except Exception as e:
-                logger.warning(f"Failed to deploy tenant schema: {e}")
-                # Continue anyway - schema might already exist
+            deployment_schema_manager = TenantSchemaManager(
+                vespa_url=vespa_host,
+                vespa_port=vespa_config_port or 19071,  # CONFIG port for deployment
+            )
+
+            deployment_schema_manager.ensure_tenant_schema_exists(
+                self.tenant_id, base_schema_name
+            )
+            logger.info(f"Ensured tenant schema exists: {tenant_schema_name}")
 
         # Configure Mem0 with Ollama provider and tenant-specific schema
         self.config = {

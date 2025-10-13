@@ -5,12 +5,11 @@ Unit tests for MemoryAwareMixin
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 
 
-class TestAgent(MemoryAwareMixin):
-    """Test agent class using memory mixin"""
+class MockAgentWithMemory(MemoryAwareMixin):
+    """Mock agent class using memory mixin for testing"""
 
     def __init__(self):
         super().__init__()
@@ -22,7 +21,7 @@ class TestMemoryAwareMixin:
     @pytest.fixture
     def agent(self):
         """Create test agent"""
-        return TestAgent()
+        return MockAgentWithMemory()
 
     @pytest.fixture
     def mock_memory_manager(self):
@@ -176,7 +175,9 @@ class TestMemoryAwareMixin:
 
         # Inject context
         original_prompt = "Answer the query"
-        enhanced_prompt = agent.inject_context_into_prompt(original_prompt, "test query")
+        enhanced_prompt = agent.inject_context_into_prompt(
+            original_prompt, "test query"
+        )
 
         assert original_prompt in enhanced_prompt
         assert "Context 1" in enhanced_prompt
@@ -196,7 +197,9 @@ class TestMemoryAwareMixin:
 
         # Inject context
         original_prompt = "Answer the query"
-        enhanced_prompt = agent.inject_context_into_prompt(original_prompt, "test query")
+        enhanced_prompt = agent.inject_context_into_prompt(
+            original_prompt, "test query"
+        )
 
         # Should return original prompt unchanged
         assert enhanced_prompt == original_prompt

@@ -2,126 +2,51 @@
 Integration tests for Mem0 with Vespa backend
 
 These tests verify the complete memory system works with real Vespa instance.
+Uses shared session-scoped Vespa container from conftest.py.
 """
 
 import time
 
 import pytest
-import requests
-
 from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
+from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
 
 
 @pytest.fixture(scope="module")
-def test_vespa():
-    """
-    Setup test Vespa Docker instance on port 8081 for Mem0 tests
+def memory_manager(shared_memory_vespa):
+    """Create and initialize Mem0 memory manager with shared Vespa"""
+    # Clear singletons to ensure fresh state
+    TenantSchemaManager._instance = None
+    Mem0MemoryManager._instances.clear()
 
-    Automatically starts test Vespa before tests and cleans up after.
-    """
-    import platform
-    import subprocess
-
-    # Configuration
-    test_port = 8081
-    config_port = 19072
-    container_name = f"vespa-mem0-test-{test_port}"
-
-    # Stop and remove existing test container
-    subprocess.run(["docker", "stop", container_name], capture_output=True)
-    subprocess.run(["docker", "rm", container_name], capture_output=True)
-
-    # Start test Vespa Docker
-    machine = platform.machine().lower()
-    docker_platform = "linux/arm64" if machine in ["arm64", "aarch64"] else "linux/amd64"
-
-    docker_result = subprocess.run(
-        [
-            "docker", "run", "-d",
-            "--name", container_name,
-            "-p", f"{test_port}:8080",
-            "-p", f"{config_port}:19071",
-            "--platform", docker_platform,
-            "vespaengine/vespa",
-        ],
-        capture_output=True,
-        timeout=60,
-    )
-
-    if docker_result.returncode != 0:
-        pytest.fail(f"Failed to start Docker container: {docker_result.stderr.decode()}")
-
-    # Wait for Vespa to be ready
-    import time
-    for i in range(120):
-        try:
-            response = requests.get(f"http://localhost:{config_port}/", timeout=5)
-            if response.status_code == 200:
-                break
-        except Exception:
-            pass
-        time.sleep(1)
-    else:
-        # Cleanup on failure
-        subprocess.run(["docker", "stop", container_name], capture_output=True)
-        subprocess.run(["docker", "rm", container_name], capture_output=True)
-        pytest.fail("Vespa config server not ready after 120 seconds")
-
-    vespa_config = {
-        "http_port": test_port,
-        "config_port": config_port,
-        "container_name": container_name,
-        "base_url": f"http://localhost:{test_port}",
-    }
-
-    # Wait for application to be ready
-    # Note: Schema will be deployed by Mem0MemoryManager.initialize() with auto_create_schema=True
-    for i in range(60):
-        try:
-            response = requests.get(f"http://localhost:{test_port}/ApplicationStatus", timeout=5)
-            if response.status_code == 200:
-                break
-        except Exception:
-            pass
-        time.sleep(2)
-    else:
-        # Cleanup on failure
-        subprocess.run(["docker", "stop", container_name], capture_output=True)
-        subprocess.run(["docker", "rm", container_name], capture_output=True)
-        pytest.fail("Application not ready after 120 seconds")
-
-    yield vespa_config
-
-    # Teardown: Stop and remove test Vespa
-    subprocess.run(["docker", "stop", container_name], capture_output=True, timeout=30)
-    subprocess.run(["docker", "rm", container_name], capture_output=True, timeout=30)
-
-
-@pytest.fixture(scope="module")
-def memory_manager(test_vespa):
-    """Create and initialize Mem0 memory manager with test Vespa"""
-    # Clear singleton to ensure fresh state
-    Mem0MemoryManager._instances.pop("test_tenant", None)
     manager = Mem0MemoryManager(tenant_id="test_tenant")
 
-    # Initialize with test Vespa backend using Ollama
-    # auto_create_schema=True to let Mem0MemoryManager deploy tenant-specific schema
+    # Initialize with shared Vespa backend using Ollama
+    # auto_create_schema=False since schema was already deployed by shared_memory_vespa fixture
     manager.initialize(
         vespa_host="localhost",
-        vespa_port=test_vespa["http_port"],
-        vespa_config_port=test_vespa["config_port"],
+        vespa_port=shared_memory_vespa["http_port"],
+        vespa_config_port=shared_memory_vespa["config_port"],
         base_schema_name="agent_memories",
         llm_model="llama3.2",
         embedding_model="nomic-embed-text",
         ollama_base_url="http://localhost:11434/v1",
-        auto_create_schema=True,
+        auto_create_schema=False,  # Schema already deployed
     )
 
     yield manager
 
-    # Cleanup: Clear test memories
+    # Cleanup: Clear test memories (not schemas!)
     try:
         manager.clear_agent_memory("test_tenant", "test_agent")
+        manager.clear_agent_memory("tenant_1", "test_agent")
+        manager.clear_agent_memory("tenant_2", "test_agent")
+        manager.clear_agent_memory("test_tenant", "get_all_agent")
+        manager.clear_agent_memory("test_tenant", "delete_test_agent")
+        manager.clear_agent_memory("test_tenant", "update_test_agent")
+        manager.clear_agent_memory("test_tenant", "stats_agent")
+        manager.clear_agent_memory("test_tenant", "clear_test_agent")
+        manager.clear_agent_memory("test_tenant", "mixin_test_agent")
     except Exception:
         pass
 
@@ -219,18 +144,21 @@ class TestMem0VespaIntegration:
         has_tenant2_content = "dog" in tenant2_text or "therapy" in tenant2_text
 
         # At least one should have content (if both empty, Mem0/Ollama issue)
-        assert has_tenant1_content or has_tenant2_content, \
+        assert has_tenant1_content or has_tenant2_content, (
             f"Neither tenant has memories. T1: {tenant1_text[:100]}, T2: {tenant2_text[:100]}"
+        )
 
         # Verify isolation: tenant1 shouldn't have tenant2's content
         if has_tenant1_content:
-            assert "therapy" not in tenant1_text and "hospital" not in tenant1_text, \
+            assert "therapy" not in tenant1_text and "hospital" not in tenant1_text, (
                 "Tenant 1 has Tenant 2's content - isolation broken"
+            )
 
         # Verify isolation: tenant2 shouldn't have tenant1's content
         if has_tenant2_content:
-            assert "rescue" not in tenant2_text and "shelter" not in tenant2_text, \
+            assert "rescue" not in tenant2_text and "shelter" not in tenant2_text, (
                 "Tenant 2 has Tenant 1's content - isolation broken"
+            )
 
         # Cleanup
         memory_manager.clear_agent_memory("tenant_1", "test_agent")
@@ -390,7 +318,9 @@ class TestMem0VespaIntegration:
 
         assert stats["enabled"] is True
         # Mem0 may deduplicate, so check for at least 1
-        assert stats["total_memories"] >= 1, f"Expected at least 1 memory, got {stats['total_memories']}"
+        assert stats["total_memories"] >= 1, (
+            f"Expected at least 1 memory, got {stats['total_memories']}"
+        )
         assert stats["tenant_id"] == "test_tenant"
         assert stats["agent_name"] == "stats_agent"
 
@@ -442,16 +372,22 @@ class TestMem0VespaIntegration:
             agent_name="clear_test_agent",
         )
         # After clear, should have 0 memories
-        assert len(memories_after) == 0, f"Expected 0 memories after clear, got {len(memories_after)}"
+        assert len(memories_after) == 0, (
+            f"Expected 0 memories after clear, got {len(memories_after)}"
+        )
 
 
 @pytest.mark.integration
 class TestMem0MemoryAwareMixinIntegration:
     """Integration tests for MemoryAwareMixin with real Mem0"""
 
-    def test_mixin_with_real_memory(self, test_vespa):
+    def test_mixin_with_real_memory(self, shared_memory_vespa):
         """Test MemoryAwareMixin with real Mem0 backend"""
         from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+
+        # Clear singletons
+        TenantSchemaManager._instance = None
+        Mem0MemoryManager._instances.clear()
 
         class TestAgent(MemoryAwareMixin):
             def __init__(self):
@@ -459,12 +395,13 @@ class TestMem0MemoryAwareMixinIntegration:
 
         agent = TestAgent()
 
-        # Initialize memory with test Vespa ports
+        # Initialize memory with shared Vespa ports
         success = agent.initialize_memory(
             agent_name="mixin_test_agent",
             tenant_id="test_tenant",
-            vespa_port=test_vespa["http_port"],
-            vespa_config_port=test_vespa["config_port"],
+            vespa_host="http://localhost",
+            vespa_port=shared_memory_vespa["http_port"],
+            vespa_config_port=shared_memory_vespa["config_port"],
         )
         assert success is True
 
