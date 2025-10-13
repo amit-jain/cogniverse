@@ -15,6 +15,8 @@ class TestMem0MemoryManager:
     @pytest.fixture
     def manager(self):
         """Create manager instance"""
+        # Clear singleton instance to ensure fresh state for each test
+        Mem0MemoryManager._instances.pop("test_tenant", None)
         return Mem0MemoryManager(tenant_id="test_tenant")
 
     def test_per_tenant_singleton_pattern(self):

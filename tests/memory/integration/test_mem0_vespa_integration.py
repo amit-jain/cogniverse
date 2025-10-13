@@ -130,9 +130,12 @@ def test_vespa():
 @pytest.fixture(scope="module")
 def memory_manager(test_vespa):
     """Create and initialize Mem0 memory manager with test Vespa"""
+    # Clear singleton to ensure fresh state
+    Mem0MemoryManager._instances.pop("test_tenant", None)
     manager = Mem0MemoryManager(tenant_id="test_tenant")
 
     # Initialize with test Vespa backend using Ollama
+    # auto_create_schema=False because fixture already deployed base schema
     manager.initialize(
         vespa_host="localhost",
         vespa_port=test_vespa["http_port"],
@@ -140,6 +143,7 @@ def memory_manager(test_vespa):
         llm_model="llama3.2",
         embedding_model="nomic-embed-text",
         ollama_base_url="http://localhost:11434/v1",
+        auto_create_schema=False,
     )
 
     yield manager

@@ -29,11 +29,15 @@ VESPA_CONFIG_PORT = 19075
 @pytest.fixture(scope="module")
 def memory_manager(vespa_container):
     """Initialize and return memory manager for all tests"""
+    # Clear singleton to ensure fresh state
+    Mem0MemoryManager._instances.pop("test_tenant", None)
     manager = Mem0MemoryManager(tenant_id="test_tenant")
+    # auto_create_schema=False because fixture already deployed base schema
     manager.initialize(
         vespa_host="localhost",
         vespa_port=VESPA_DATA_PORT,
         base_schema_name="agent_memories",
+        auto_create_schema=False,
     )
     return manager
 
