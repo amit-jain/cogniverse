@@ -29,7 +29,7 @@ VESPA_CONFIG_PORT = 19075
 @pytest.fixture(scope="module")
 def memory_manager(vespa_container):
     """Initialize and return memory manager for all tests"""
-    manager = Mem0MemoryManager()
+    manager = Mem0MemoryManager(tenant_id="test_tenant")
     manager.initialize(
         vespa_host="localhost",
         vespa_port=VESPA_DATA_PORT,

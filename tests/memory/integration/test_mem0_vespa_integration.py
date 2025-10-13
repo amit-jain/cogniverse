@@ -130,7 +130,7 @@ def test_vespa():
 @pytest.fixture(scope="module")
 def memory_manager(test_vespa):
     """Create and initialize Mem0 memory manager with test Vespa"""
-    manager = Mem0MemoryManager()
+    manager = Mem0MemoryManager(tenant_id="test_tenant")
 
     # Initialize with test Vespa backend using Ollama
     manager.initialize(

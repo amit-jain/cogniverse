@@ -215,7 +215,7 @@ class TestRealVespaIntegration:
             from cogniverse_agents.video_search_agent import VideoSearchAgent
             
             print("Initializing Enhanced Video Search Agent...")
-            video_agent = VideoSearchAgent()
+            video_agent = VideoSearchAgent(tenant_id="test_tenant")
             
             # Test queries that should match our ingested test data
             test_queries = [
@@ -267,7 +267,7 @@ class TestRealVespaIntegration:
             from cogniverse_agents.video_search_agent import VideoSearchAgent
             
             print("Initializing VideoSearchAgent...")
-            video_agent = VideoSearchAgent()
+            video_agent = VideoSearchAgent(tenant_id="test_tenant")
             
             # Verify agent is properly configured
             assert video_agent is not None
@@ -504,7 +504,7 @@ class TestRealPipelineIntegration:
                 try:
                     os.environ['VESPA_SCHEMA'] = 'video_colpali_smol500_mv_frame'
                     from cogniverse_agents.video_search_agent import VideoSearchAgent
-                    video_agent = VideoSearchAgent()
+                    video_agent = VideoSearchAgent(tenant_id="test_tenant")
                     
                     assert video_agent.vespa_client is not None
                     print("✅ Enhanced video search agent connected to Vespa")
