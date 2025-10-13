@@ -16,11 +16,10 @@ import time
 
 import phoenix as px
 import pytest
-
-from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_agents.routing.lazy_executor import LazyModalityExecutor
 from cogniverse_agents.routing.modality_cache import ModalityCacheManager
 from cogniverse_agents.routing.parallel_executor import ParallelAgentExecutor
+from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
 from cogniverse_core.telemetry.modality_metrics import ModalityMetricsTracker
 
@@ -57,7 +56,7 @@ def lazy_executor():
 @pytest.fixture
 async def routing_agent():
     """Create routing agent with real telemetry"""
-    agent = RoutingAgent()
+    agent = RoutingAgent(tenant_id="test-tenant")
     yield agent
 
     # Cleanup: flush telemetry

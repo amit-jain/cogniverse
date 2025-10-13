@@ -10,7 +10,6 @@ import asyncio
 import time
 
 import pytest
-
 from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
@@ -22,7 +21,7 @@ class TestRoutingAgentCacheMetricsIntegration:
     @pytest.fixture
     async def routing_agent(self):
         """Create routing agent with real components"""
-        agent = RoutingAgent()
+        agent = RoutingAgent(tenant_id="test-tenant")
         yield agent
         # Cleanup telemetry
         agent.telemetry_manager.force_flush(timeout_millis=5000)

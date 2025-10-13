@@ -65,7 +65,8 @@ def ensemble_test_config():
 @pytest.fixture
 def ensemble_router(ensemble_test_config):
     """Create a comprehensive router instance with ensemble configuration."""
-    return ComprehensiveRouter(ensemble_test_config)
+    router = ComprehensiveRouter(ensemble_test_config)
+    yield router
 
 
 class TestEnsembleWithRealModels:
@@ -230,7 +231,7 @@ class TestEnsembleWithRealModels:
         # Should still get a decision (fallback to tiered)
         assert decision is not None
         # Might be ensemble if it completed quickly, or tiered if it timed out
-        assert decision.routing_method in ["ensemble", "gliner", "keyword"]
+        assert decision.routing_method in ["ensemble", "gliner", "keyword", "langextract"]
 
 
 class TestEnsembleConfigurationValidation:

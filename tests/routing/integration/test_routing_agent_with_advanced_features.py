@@ -13,7 +13,6 @@ Validates:
 
 
 import pytest
-
 from cogniverse_agents.routing_agent import RoutingAgent
 
 
@@ -41,7 +40,7 @@ class TestRoutingAgentWithAdvancedFeatures:
     async def routing_agent(self, mock_config):
         """Create RoutingAgent instance with mocked dependencies"""
         # Initialize without telemetry to avoid complex mocking
-        agent = RoutingAgent(config=mock_config, enable_telemetry=False)
+        agent = RoutingAgent(tenant_id="test-tenant", config=mock_config, enable_telemetry=False)
         yield agent
 
     @pytest.mark.asyncio

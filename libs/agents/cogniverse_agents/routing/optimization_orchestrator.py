@@ -71,7 +71,7 @@ class OptimizationOrchestrator:
         self.feedback_interval = feedback_interval_minutes
 
         # Initialize core components
-        self.optimizer = AdvancedRoutingOptimizer()
+        self.optimizer = AdvancedRoutingOptimizer(tenant_id=tenant_id)
 
         # Span evaluation component
         self.span_evaluator = PhoenixSpanEvaluator(

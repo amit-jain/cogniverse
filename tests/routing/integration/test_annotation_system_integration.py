@@ -20,12 +20,17 @@ from datetime import datetime, timedelta
 
 import phoenix as px
 import pytest
-
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
-from cogniverse_agents.routing.annotation_agent import AnnotationAgent, AnnotationPriority
+from cogniverse_agents.routing.annotation_agent import (
+    AnnotationAgent,
+    AnnotationPriority,
+)
 from cogniverse_agents.routing.annotation_feedback_loop import AnnotationFeedbackLoop
 from cogniverse_agents.routing.annotation_storage import AnnotationStorage
-from cogniverse_agents.routing.llm_auto_annotator import AnnotationLabel, LLMAutoAnnotator
+from cogniverse_agents.routing.llm_auto_annotator import (
+    AnnotationLabel,
+    LLMAutoAnnotator,
+)
 from cogniverse_core.telemetry.config import (
     SERVICE_NAME_ORCHESTRATION,
     SPAN_NAME_ROUTING,
@@ -279,7 +284,7 @@ class TestAnnotationSystemIntegration:
         # STEP 7: Test feedback loop with optimizer
         logger.info("\n=== STEP 7: Testing feedback loop ===")
 
-        optimizer = AdvancedRoutingOptimizer()
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant")
         feedback_loop = AnnotationFeedbackLoop(
             optimizer=optimizer, tenant_id=test_tenant_id, min_annotations_for_update=1
         )
@@ -494,7 +499,7 @@ class TestAnnotationSystemIntegration:
         time.sleep(3)  # Wait for indexing
 
         # Run feedback loop
-        optimizer = AdvancedRoutingOptimizer()
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant")
         initial_experience_count = len(optimizer.experiences)
 
         feedback_loop = AnnotationFeedbackLoop(

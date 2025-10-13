@@ -13,12 +13,17 @@ from unittest.mock import Mock, patch
 
 import pandas as pd
 import pytest
-
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
-from cogniverse_agents.routing.annotation_agent import AnnotationAgent, AnnotationPriority
+from cogniverse_agents.routing.annotation_agent import (
+    AnnotationAgent,
+    AnnotationPriority,
+)
 from cogniverse_agents.routing.annotation_feedback_loop import AnnotationFeedbackLoop
 from cogniverse_agents.routing.annotation_storage import AnnotationStorage
-from cogniverse_agents.routing.llm_auto_annotator import AnnotationLabel, LLMAutoAnnotator
+from cogniverse_agents.routing.llm_auto_annotator import (
+    AnnotationLabel,
+    LLMAutoAnnotator,
+)
 
 
 @pytest.fixture
@@ -58,7 +63,7 @@ def mock_phoenix_client():
 @pytest.fixture
 def mock_routing_evaluator():
     """Mock RoutingEvaluator for testing"""
-    from cogniverse_core.evaluation.evaluators.routing_evaluator import RoutingOutcome
+    from cogniverse_dashboard.evaluation.evaluators.routing_evaluator import RoutingOutcome
 
     evaluator = Mock()
     evaluator._classify_routing_outcome = Mock(
@@ -127,7 +132,9 @@ class TestAnnotationAgent:
         mock_routing_evaluator,
     ):
         """Test that requests are properly prioritized"""
-        from cogniverse_core.evaluation.evaluators.routing_evaluator import RoutingOutcome
+        from cogniverse_dashboard.evaluation.evaluators.routing_evaluator import (
+            RoutingOutcome,
+        )
 
         # Setup mocks with different outcomes
         mock_client_class.return_value = mock_phoenix_client
@@ -171,7 +178,9 @@ class TestLLMAutoAnnotator:
     def test_annotate(self, mock_completion, mock_litellm_response):
         """Test LLM annotation generation"""
         from cogniverse_agents.routing.annotation_agent import AnnotationRequest
-        from cogniverse_core.evaluation.evaluators.routing_evaluator import RoutingOutcome
+        from cogniverse_dashboard.evaluation.evaluators.routing_evaluator import (
+            RoutingOutcome,
+        )
 
         # Setup mock
         mock_completion.return_value = mock_litellm_response
@@ -206,7 +215,9 @@ class TestLLMAutoAnnotator:
     def test_batch_annotate(self, mock_completion, mock_litellm_response):
         """Test batch annotation"""
         from cogniverse_agents.routing.annotation_agent import AnnotationRequest
-        from cogniverse_core.evaluation.evaluators.routing_evaluator import RoutingOutcome
+        from cogniverse_dashboard.evaluation.evaluators.routing_evaluator import (
+            RoutingOutcome,
+        )
 
         # Setup mock
         mock_completion.return_value = mock_litellm_response
@@ -318,7 +329,7 @@ class TestAnnotationFeedbackLoop:
         mock_storage_class.return_value = mock_storage
 
         # Initialize optimizer
-        optimizer = AdvancedRoutingOptimizer()
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant")
 
         # Initialize feedback loop
         feedback_loop = AnnotationFeedbackLoop(
@@ -358,7 +369,7 @@ class TestAnnotationFeedbackLoop:
         mock_storage_class.return_value = mock_storage
 
         # Initialize optimizer
-        optimizer = AdvancedRoutingOptimizer()
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant")
 
         # Initialize feedback loop
         feedback_loop = AnnotationFeedbackLoop(optimizer=optimizer, tenant_id="test")
@@ -438,7 +449,7 @@ class TestEndToEndAnnotationWorkflow:
         ]
         mock_feedback_storage_class.return_value = mock_feedback_storage
 
-        optimizer = AdvancedRoutingOptimizer()
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant")
         feedback_loop = AnnotationFeedbackLoop(
             optimizer=optimizer, tenant_id="test", min_annotations_for_update=1
         )
