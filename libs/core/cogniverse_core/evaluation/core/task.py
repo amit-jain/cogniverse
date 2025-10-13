@@ -38,14 +38,14 @@ def evaluation_task(
     """
     # Auto-register plugins based on config or dataset name
     if config and "plugins" in config.get("evaluation", {}):
-        from cogniverse_dashboard.evaluation.plugins import auto_register_plugins
+        from cogniverse_core.evaluation.plugins import auto_register_plugins
 
         auto_register_plugins(config)
     elif "video" in dataset_name.lower() or any(
         p for p in (profiles or []) if "video" in p.lower() or "frame" in p.lower()
     ):
         # Auto-activate video plugin for video-related tasks
-        from cogniverse_dashboard.evaluation.plugins import register_video_plugin
+        from cogniverse_core.evaluation.plugins import register_video_plugin
 
         register_video_plugin()
 
@@ -164,7 +164,7 @@ def run_evaluation(
     """
     # If Phoenix experiment tracking requested
     if use_phoenix_experiments and mode == "experiment":
-        from cogniverse_dashboard.evaluation.plugins.phoenix_experiment import (
+        from cogniverse_core.evaluation.plugins.phoenix_experiment import (
             PhoenixExperimentPlugin,
             get_phoenix_evaluators,
         )

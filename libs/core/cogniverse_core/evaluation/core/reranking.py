@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 from collections import Counter
 from typing import Any
 
-from cogniverse_dashboard.evaluation.core.schema_analyzer import get_schema_analyzer
+from cogniverse_core.evaluation.core.schema_analyzer import get_schema_analyzer
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,9 @@ class DiversityRerankingStrategy(RerankingStrategy):
             analyzer = get_schema_analyzer(schema_name, schema_fields)
         except Exception as e:
             logger.warning(f"Using default analyzer: {e}")
-            from cogniverse_dashboard.evaluation.core.schema_analyzer import DefaultSchemaAnalyzer
+            from cogniverse_core.evaluation.core.schema_analyzer import (
+                DefaultSchemaAnalyzer,
+            )
 
             analyzer = DefaultSchemaAnalyzer()
 

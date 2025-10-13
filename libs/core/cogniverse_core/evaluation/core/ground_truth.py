@@ -10,7 +10,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
-from cogniverse_dashboard.evaluation.core.schema_analyzer import get_schema_analyzer
+from cogniverse_core.evaluation.core.schema_analyzer import get_schema_analyzer
 
 logger = logging.getLogger(__name__)
 

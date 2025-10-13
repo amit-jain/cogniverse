@@ -14,10 +14,10 @@ from pathlib import Path
 import pandas as pd
 from tabulate import tabulate
 
-from cogniverse_dashboard.evaluation.core.task import evaluation_task
-from cogniverse_dashboard.evaluation.data.datasets import DatasetManager
-from cogniverse_dashboard.evaluation.phoenix.monitoring import RetrievalMonitor
-from cogniverse_dashboard.evaluation.plugins import register_plugin
+from cogniverse_core.evaluation.core.task import evaluation_task
+from cogniverse_core.evaluation.data.datasets import DatasetManager
+from cogniverse_core.evaluation.phoenix.monitoring import RetrievalMonitor
+from cogniverse_core.evaluation.plugins import register_plugin
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,9 @@ class ExperimentTracker:
         if self.enable_quality_evaluators:
             # Register quality evaluator plugins
             try:
-                from cogniverse_dashboard.evaluation.plugins.video_analyzer import VideoAnalyzerPlugin
+                from cogniverse_core.evaluation.plugins.video_analyzer import (
+                    VideoAnalyzerPlugin,
+                )
 
                 register_plugin("video_analyzer", VideoAnalyzerPlugin())
                 logger.info("Registered video analyzer plugin for quality metrics")
@@ -92,7 +94,7 @@ class ExperimentTracker:
         if self.enable_llm_evaluators:
             # Register LLM evaluator plugins
             try:
-                from cogniverse_dashboard.evaluation.plugins.visual_evaluator import (
+                from cogniverse_core.evaluation.plugins.visual_evaluator import (
                     VisualEvaluatorPlugin,
                 )
 
@@ -281,8 +283,7 @@ class ExperimentTracker:
 
         Maintains compatibility with run_experiments_with_visualization.py
         """
-        loop = asyncio.get_event_loop()
-        return loop.run_until_complete(
+        return asyncio.run(
             self.run_experiment_async(profile, strategy, dataset_name, description)
         )
 

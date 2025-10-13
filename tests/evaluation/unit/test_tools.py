@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pandas as pd
 import pytest
-
 from cogniverse_core.evaluation.core.tools import phoenix_query_tool, video_search_tool
 
 
@@ -26,7 +25,7 @@ class TestVideoSearchTool:
     async def test_video_search_tool_execution(self):
         """Test video search tool execution."""
         with (
-            patch("cogniverse_agents.search.service.SearchService") as mock_service_cls,
+            patch("cogniverse_runtime.search.service.SearchService") as mock_service_cls,
             patch("cogniverse_core.config.utils.get_config") as mock_config,
         ):
 
@@ -76,7 +75,7 @@ class TestVideoSearchTool:
     async def test_video_search_tool_no_source_id(self):
         """Test video search tool when source_id is missing."""
         with (
-            patch("cogniverse_agents.search.service.SearchService") as mock_service_cls,
+            patch("cogniverse_runtime.search.service.SearchService") as mock_service_cls,
             patch("cogniverse_core.config.utils.get_config") as mock_config,
         ):
 
@@ -100,7 +99,7 @@ class TestVideoSearchTool:
     async def test_video_search_tool_no_score(self):
         """Test video search tool when score is missing."""
         with (
-            patch("cogniverse_agents.search.service.SearchService") as mock_service_cls,
+            patch("cogniverse_runtime.search.service.SearchService") as mock_service_cls,
             patch("cogniverse_core.config.utils.get_config") as mock_config,
         ):
 
@@ -132,7 +131,7 @@ class TestVideoSearchTool:
     async def test_video_search_tool_error_handling(self):
         """Test video search tool error handling."""
         with (
-            patch("cogniverse_agents.search.service.SearchService") as mock_service_cls,
+            patch("cogniverse_runtime.search.service.SearchService") as mock_service_cls,
             patch("cogniverse_core.config.utils.get_config") as mock_config,
         ):
 

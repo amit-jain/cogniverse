@@ -10,7 +10,7 @@ from typing import Any
 
 from inspect_ai.scorer import Score, mean, scorer
 
-from cogniverse_dashboard.evaluation.core.schema_analyzer import get_schema_analyzer
+from cogniverse_core.evaluation.core.schema_analyzer import get_schema_analyzer
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,9 @@ def get_configured_scorers(config: dict[str, Any]) -> list:
         "enable_quality_evaluators", False
     ):
         try:
-            from cogniverse_dashboard.evaluation.plugins.visual_evaluator import get_visual_scorers
+            from cogniverse_core.evaluation.plugins.visual_evaluator import (
+                get_visual_scorers,
+            )
 
             visual_scorers = get_visual_scorers(config)
             scorers.extend(visual_scorers)
@@ -342,7 +344,9 @@ def diversity_scorer():
             analyzer = get_schema_analyzer(schema_name, schema_fields)
         except Exception as e:
             logger.warning(f"Using default analyzer due to: {e}")
-            from cogniverse_dashboard.evaluation.core.schema_analyzer import DefaultSchemaAnalyzer
+            from cogniverse_core.evaluation.core.schema_analyzer import (
+                DefaultSchemaAnalyzer,
+            )
 
             analyzer = DefaultSchemaAnalyzer()
 

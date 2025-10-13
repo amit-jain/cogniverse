@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, Mock, mock_open, patch
 
 import pandas as pd
 import pytest
-
 from cogniverse_core.evaluation.core.experiment_tracker import ExperimentTracker
 
 
@@ -110,7 +109,7 @@ class TestExperimentTracker:
     @pytest.mark.unit
     def test_get_experiment_configurations_default(self, tracker):
         """Test getting experiment configurations with defaults."""
-        with patch("cogniverse_core.common.core.registry.get_registry") as mock_get_registry:
+        with patch("cogniverse_core.registries.registry.get_registry") as mock_get_registry:
             mock_registry = Mock()
             mock_registry.list_profiles.return_value = ["profile1", "profile2"]
             mock_registry.list_ranking_strategies.return_value = [
@@ -135,7 +134,7 @@ class TestExperimentTracker:
     @pytest.mark.unit
     def test_get_experiment_configurations_specific_profiles(self, tracker):
         """Test getting configurations for specific profiles."""
-        with patch("cogniverse_core.common.core.registry.get_registry") as mock_get_registry:
+        with patch("cogniverse_core.registries.registry.get_registry") as mock_get_registry:
             mock_registry = Mock()
             mock_registry.list_ranking_strategies.return_value = [
                 "binary_binary",
@@ -151,7 +150,7 @@ class TestExperimentTracker:
     @pytest.mark.unit
     def test_get_experiment_configurations_specific_strategies(self, tracker):
         """Test getting configurations for specific strategies."""
-        with patch("cogniverse_core.common.core.registry.get_registry") as mock_get_registry:
+        with patch("cogniverse_core.registries.registry.get_registry") as mock_get_registry:
             mock_registry = Mock()
             mock_registry.list_profiles.return_value = ["profile1"]
             mock_registry.list_ranking_strategies.return_value = [
@@ -172,7 +171,7 @@ class TestExperimentTracker:
     @pytest.mark.unit
     def test_get_experiment_configurations_all_strategies(self, tracker):
         """Test getting configurations with all strategies."""
-        with patch("cogniverse_core.common.core.registry.get_registry") as mock_get_registry:
+        with patch("cogniverse_core.registries.registry.get_registry") as mock_get_registry:
             mock_registry = Mock()
             mock_registry.list_profiles.return_value = ["profile1"]
             mock_registry.list_ranking_strategies.return_value = [
@@ -191,7 +190,7 @@ class TestExperimentTracker:
     @pytest.mark.unit
     def test_get_experiment_configurations_registry_error(self, tracker):
         """Test handling registry errors gracefully."""
-        with patch("cogniverse_core.common.core.registry.get_registry") as mock_get_registry:
+        with patch("cogniverse_core.registries.registry.get_registry") as mock_get_registry:
             mock_registry = Mock()
             mock_registry.list_profiles.return_value = ["profile1"]
             mock_registry.list_ranking_strategies.side_effect = Exception(
