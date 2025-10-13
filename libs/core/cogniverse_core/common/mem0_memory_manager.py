@@ -106,6 +106,7 @@ class Mem0MemoryManager:
         self,
         vespa_host: str = "localhost",
         vespa_port: int = 8080,
+        vespa_config_port: Optional[int] = None,
         base_schema_name: str = "agent_memories",
         llm_model: str = "llama3.2",
         embedding_model: str = "nomic-embed-text",
@@ -117,7 +118,8 @@ class Mem0MemoryManager:
 
         Args:
             vespa_host: Vespa endpoint host
-            vespa_port: Vespa endpoint port
+            vespa_port: Vespa data endpoint port (default: 8080)
+            vespa_config_port: Vespa config endpoint port (default: 19071)
             base_schema_name: Base schema name (default: agent_memories)
             llm_model: Ollama model name (default: llama3.2)
             embedding_model: Ollama embedding model (default: nomic-embed-text)
@@ -138,6 +140,10 @@ class Mem0MemoryManager:
         # Deploy tenant schema if needed
         if auto_create_schema:
             try:
+                # Configure schema manager with correct Vespa ports
+                self.schema_manager.vespa_host = vespa_host
+                self.schema_manager.vespa_config_port = vespa_config_port or 19071
+
                 self.schema_manager.ensure_tenant_schema_exists(
                     self.tenant_id, base_schema_name
                 )

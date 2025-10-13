@@ -32,12 +32,13 @@ def memory_manager(vespa_container):
     # Clear singleton to ensure fresh state
     Mem0MemoryManager._instances.pop("test_tenant", None)
     manager = Mem0MemoryManager(tenant_id="test_tenant")
-    # auto_create_schema=False because fixture already deployed base schema
+    # auto_create_schema=True to let Mem0MemoryManager deploy tenant-specific schema
     manager.initialize(
         vespa_host="localhost",
         vespa_port=VESPA_DATA_PORT,
+        vespa_config_port=VESPA_CONFIG_PORT,
         base_schema_name="agent_memories",
-        auto_create_schema=False,
+        auto_create_schema=True,
     )
     return manager
 
@@ -137,55 +138,10 @@ def vespa_container():
 
 
 def deploy_schema():
-    """Deploy agent_memories schema to Vespa using JSON schema"""
-
-    try:
-        # Schema path
-        schema_path = Path(__file__).parent.parent.parent.parent / "configs" / "schemas" / "agent_memories_schema.json"
-
-        if not schema_path.exists():
-            print(f"❌ Schema file not found: {schema_path}")
-            return False
-
-        # Load and parse JSON schema
-        import json
-
-        from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-
-        with open(schema_path, 'r') as f:
-            schema_config = json.load(f)
-
-        parser = JsonSchemaParser()
-        schema = parser.parse_schema(schema_config)
-
-        # Create application package
-        app_package = ApplicationPackage(name="agentmemories")
-        app_package.add_schema(schema)
-
-        # Generate the ZIP package
-        app_zip = app_package.to_zip()
-
-        # Deploy via HTTP
-        response = requests.post(
-            f"http://localhost:{VESPA_CONFIG_PORT}/application/v2/tenant/default/prepareandactivate",
-            headers={"Content-Type": "application/zip"},
-            data=app_zip,
-            timeout=60,
-            verify=False,
-        )
-
-        if response.status_code == 200:
-            return True
-        else:
-            print(f"❌ Deployment failed with status {response.status_code}")
-            print(f"Response: {response.text}")
-            return False
-
-    except Exception as e:
-        print(f"❌ Deployment error: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
+    """Schema deployment handled by Mem0MemoryManager.initialize() with auto_create_schema=True"""
+    # No-op: Let Mem0MemoryManager handle tenant-specific schema deployment
+    print("✅ Schema deployment delegated to Mem0MemoryManager")
+    return True
 
 
 @pytest.mark.integration
@@ -444,6 +400,7 @@ class TestMemorySystemCompleteE2E:
             tenant_id="e2e_test_tenant",
             vespa_host="localhost",
             vespa_port=VESPA_DATA_PORT,
+            vespa_config_port=VESPA_CONFIG_PORT,
         )
         assert success is True
         print("✅ Mixin initialized")

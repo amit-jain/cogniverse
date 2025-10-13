@@ -74,38 +74,8 @@ def test_vespa():
         "base_url": f"http://localhost:{test_port}",
     }
 
-    # Deploy agent_memories schema using JsonSchemaParser
-    import json
-    from pathlib import Path
-
-    from vespa.package import ApplicationPackage
-
-    from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-
-    schema_path = Path(__file__).parent.parent.parent.parent / "configs" / "schemas" / "agent_memories_schema.json"
-    with open(schema_path, 'r') as f:
-        schema_config = json.load(f)
-
-    parser = JsonSchemaParser()
-    schema = parser.parse_schema(schema_config)
-
-    app_package = ApplicationPackage(name="mem0test")
-    app_package.add_schema(schema)
-    app_zip = app_package.to_zip()
-
-    deploy_response = requests.post(
-        f"http://localhost:{config_port}/application/v2/tenant/default/prepareandactivate",
-        headers={"Content-Type": "application/zip"},
-        data=app_zip,
-        timeout=60,
-    )
-
-    if deploy_response.status_code not in [200, 201]:
-        subprocess.run(["docker", "stop", container_name], capture_output=True)
-        subprocess.run(["docker", "rm", container_name], capture_output=True)
-        pytest.fail(f"Schema deployment failed: {deploy_response.status_code} {deploy_response.text}")
-
     # Wait for application to be ready
+    # Note: Schema will be deployed by Mem0MemoryManager.initialize() with auto_create_schema=True
     for i in range(60):
         try:
             response = requests.get(f"http://localhost:{test_port}/ApplicationStatus", timeout=5)
@@ -135,15 +105,16 @@ def memory_manager(test_vespa):
     manager = Mem0MemoryManager(tenant_id="test_tenant")
 
     # Initialize with test Vespa backend using Ollama
-    # auto_create_schema=False because fixture already deployed base schema
+    # auto_create_schema=True to let Mem0MemoryManager deploy tenant-specific schema
     manager.initialize(
         vespa_host="localhost",
         vespa_port=test_vespa["http_port"],
+        vespa_config_port=test_vespa["config_port"],
         base_schema_name="agent_memories",
         llm_model="llama3.2",
         embedding_model="nomic-embed-text",
         ollama_base_url="http://localhost:11434/v1",
-        auto_create_schema=False,
+        auto_create_schema=True,
     )
 
     yield manager
@@ -488,11 +459,12 @@ class TestMem0MemoryAwareMixinIntegration:
 
         agent = TestAgent()
 
-        # Initialize memory with test Vespa port
+        # Initialize memory with test Vespa ports
         success = agent.initialize_memory(
             agent_name="mixin_test_agent",
             tenant_id="test_tenant",
             vespa_port=test_vespa["http_port"],
+            vespa_config_port=test_vespa["config_port"],
         )
         assert success is True
 

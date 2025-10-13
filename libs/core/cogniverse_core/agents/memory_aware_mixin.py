@@ -49,6 +49,7 @@ class MemoryAwareMixin:
         tenant_id: str,
         vespa_host: str = "localhost",
         vespa_port: int = 8080,
+        vespa_config_port: Optional[int] = None,
     ) -> bool:
         """
         Initialize memory for this agent
@@ -57,7 +58,8 @@ class MemoryAwareMixin:
             agent_name: Name of the agent
             tenant_id: Tenant identifier (REQUIRED - no default)
             vespa_host: Vespa endpoint host
-            vespa_port: Vespa endpoint port
+            vespa_port: Vespa data endpoint port
+            vespa_config_port: Vespa config endpoint port (default: 19071)
 
         Returns:
             Success status
@@ -80,6 +82,7 @@ class MemoryAwareMixin:
                 self.memory_manager.initialize(
                     vespa_host=vespa_host,
                     vespa_port=vespa_port,
+                    vespa_config_port=vespa_config_port,
                     base_schema_name="agent_memories",
                     auto_create_schema=True,
                 )

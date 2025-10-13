@@ -80,6 +80,7 @@ class TestMemoryAwareMixin:
         mock_manager.initialize.assert_called_once_with(
             vespa_host="vespa.local",
             vespa_port=9090,
+            vespa_config_port=None,
             base_schema_name="agent_memories",
             auto_create_schema=True,
         )
