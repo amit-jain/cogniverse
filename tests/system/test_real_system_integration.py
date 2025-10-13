@@ -131,8 +131,8 @@ class TestRealVespaIntegration:
         """Setup isolated Vespa test instance"""
         from .vespa_test_manager import VespaTestManager
 
-        # Create isolated test Vespa instance on port 8081
-        cls.vespa_manager = VespaTestManager(http_port=8081)
+        # Create isolated test Vespa instance on port 8082 (memory tests use 8081)
+        cls.vespa_manager = VespaTestManager(http_port=8082)
 
         print("Setting up isolated Vespa test instance...")
 
@@ -555,9 +555,9 @@ class TestRealPipelineIntegration:
 def vespa_test_manager():
     """Fixture for VespaTestManager"""
     from .vespa_test_manager import VespaTestManager
-    
+
     print("🔧 DEBUG: Creating VespaTestManager fixture...")
-    manager = VespaTestManager(http_port=8081)
+    manager = VespaTestManager(http_port=8082)
     
     try:
         print("🔧 DEBUG: Calling full_setup()...")
