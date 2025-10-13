@@ -9,8 +9,9 @@ from unittest.mock import Mock, mock_open, patch
 
 import numpy as np
 import pytest
-
-from cogniverse_runtime.ingestion.processors.video_chunk_extractor import VideoChunkExtractor
+from cogniverse_runtime.ingestion.processors.video_chunk_extractor import (
+    VideoChunkExtractor,
+)
 
 
 @pytest.mark.unit

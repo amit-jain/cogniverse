@@ -44,7 +44,7 @@ class ProcessorManager:
             self.logger.warning(f"Plugin directory not found: {plugin_dir}")
             return
 
-        package_name = "src.app.ingestion.processors"
+        package_name = "cogniverse_runtime.ingestion.processors"
 
         for _importer, modname, ispkg in pkgutil.iter_modules([str(plugin_dir)]):
             if not ispkg:  # Skip packages, only load modules

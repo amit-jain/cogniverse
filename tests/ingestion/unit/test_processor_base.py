@@ -9,7 +9,6 @@ import logging
 from typing import Any
 
 import pytest
-
 from cogniverse_runtime.ingestion.processor_base import BaseProcessor, BaseStrategy
 
 

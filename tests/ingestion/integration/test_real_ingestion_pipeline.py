@@ -53,10 +53,14 @@ class TestRealIngestionPipeline:
         """
         import logging
 
-        from cogniverse_runtime.ingestion.processors.embedding_processor import EmbeddingProcessor
+        from cogniverse_runtime.ingestion.processors.embedding_processor import (
+            EmbeddingProcessor,
+        )
 
         # First extract keyframes
-        from cogniverse_runtime.ingestion.processors.keyframe_processor import KeyframeProcessor
+        from cogniverse_runtime.ingestion.processors.keyframe_processor import (
+            KeyframeProcessor,
+        )
 
         logger = logging.getLogger("test")
 

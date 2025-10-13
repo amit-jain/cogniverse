@@ -9,7 +9,6 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
-
 from cogniverse_runtime.ingestion.processors.chunk_processor import ChunkProcessor
 
 

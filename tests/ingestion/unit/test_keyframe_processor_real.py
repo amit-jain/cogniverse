@@ -8,7 +8,6 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
-
 from cogniverse_runtime.ingestion.processors.keyframe_processor import KeyframeProcessor
 
 

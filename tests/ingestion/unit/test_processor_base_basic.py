@@ -7,7 +7,6 @@ Tests the base processor functionality and configuration system.
 from unittest.mock import Mock
 
 import pytest
-
 from cogniverse_runtime.ingestion.processor_base import BaseProcessor, BaseStrategy
 
 

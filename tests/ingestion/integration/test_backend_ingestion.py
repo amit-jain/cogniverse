@@ -21,10 +21,9 @@ from tests.utils.markers import (
 
 # Import components for integration testing
 try:
-    from cogniverse_runtime.processing.unified_video_pipeline import PipelineConfig
-
     from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
     from cogniverse_runtime.ingestion.pipeline_builder import PipelineBuilder
+    from cogniverse_runtime.processing.unified_video_pipeline import PipelineConfig
 except ImportError:
     # Handle missing imports gracefully
     VideoIngestionPipeline = None
@@ -68,7 +67,9 @@ class TestMockBackendIngestion:
         """Test keyframe extraction in isolation."""
         import logging
 
-        from cogniverse_runtime.ingestion.processors.keyframe_processor import KeyframeProcessor
+        from cogniverse_runtime.ingestion.processors.keyframe_processor import (
+            KeyframeProcessor,
+        )
 
         logger = logging.getLogger("test")
         processor = KeyframeProcessor(logger, max_frames=5)
@@ -97,7 +98,9 @@ class TestMockBackendIngestion:
         """Test chunk extraction in isolation."""
         import logging
 
-        from cogniverse_runtime.ingestion.processors.chunk_processor import ChunkProcessor
+        from cogniverse_runtime.ingestion.processors.chunk_processor import (
+            ChunkProcessor,
+        )
 
         logger = logging.getLogger("test")
         processor = ChunkProcessor(logger, chunk_duration=30.0)

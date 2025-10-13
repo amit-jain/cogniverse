@@ -11,7 +11,6 @@ from unittest.mock import Mock, patch
 import cv2
 import numpy as np
 import pytest
-
 from cogniverse_runtime.ingestion.processors.keyframe_processor import KeyframeProcessor
 
 
