@@ -14,7 +14,6 @@ from typing import Any, Dict, List, Optional
 # Disable Mem0's telemetry BEFORE importing mem0
 os.environ["MEM0_TELEMETRY"] = "False"
 
-from cogniverse_vespa.tenant_schema_manager import get_tenant_schema_manager
 from mem0 import Memory
 from mem0.vector_stores.configs import VectorStoreConfig
 
@@ -98,7 +97,6 @@ class Mem0MemoryManager:
         self.tenant_id = tenant_id
         self.memory: Optional[Memory] = None
         self.config: Optional[Dict[str, Any]] = None
-        self.schema_manager = get_tenant_schema_manager()
 
         self._initialized = True
         logger.info(f"Mem0MemoryManager initialized for tenant: {tenant_id}")
@@ -134,22 +132,19 @@ class Mem0MemoryManager:
             raise ValueError("tenant_id must be set before initialize()")
 
         # Get tenant-specific schema name
-        tenant_schema_name = self.schema_manager.get_tenant_schema_name(
+        from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+
+        schema_manager = TenantSchemaManager(
+            vespa_url=vespa_host,
+            vespa_port=vespa_config_port or 19071,
+        )
+        tenant_schema_name = schema_manager.get_tenant_schema_name(
             self.tenant_id, base_schema_name
         )
 
         # Deploy tenant schema if needed
         if auto_create_schema:
-            # Get schema manager with CORRECT config port for deployment
-            # VespaSchemaManager needs the CONFIG port (19071+) for deployment, not data port (8080+)
-            from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
-
-            deployment_schema_manager = TenantSchemaManager(
-                vespa_url=vespa_host,
-                vespa_port=vespa_config_port or 19071,  # CONFIG port for deployment
-            )
-
-            deployment_schema_manager.ensure_tenant_schema_exists(
+            schema_manager.ensure_tenant_schema_exists(
                 self.tenant_id, base_schema_name
             )
             logger.info(f"Ensured tenant schema exists: {tenant_schema_name}")

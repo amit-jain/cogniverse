@@ -16,7 +16,7 @@ from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
 def memory_manager(shared_memory_vespa):
     """Create and initialize Mem0 memory manager with shared Vespa"""
     # Clear singletons to ensure fresh state
-    TenantSchemaManager._instance = None
+    TenantSchemaManager._clear_instance()
     Mem0MemoryManager._instances.clear()
 
     manager = Mem0MemoryManager(tenant_id="test_tenant")
@@ -385,8 +385,9 @@ class TestMem0MemoryAwareMixinIntegration:
         """Test MemoryAwareMixin with real Mem0 backend"""
         from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 
-        # Clear singletons
-        TenantSchemaManager._instance = None
+        # CRITICAL: Clear singletons FIRST before any initialization
+        # Otherwise TenantSchemaManager gets created with default port 8080
+        TenantSchemaManager._clear_instance()
         Mem0MemoryManager._instances.clear()
 
         class TestAgent(MemoryAwareMixin):
