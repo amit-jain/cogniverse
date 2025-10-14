@@ -10,7 +10,6 @@ from datetime import datetime, timedelta
 import pandas as pd
 import phoenix as px
 import pytest
-
 from cogniverse_core.evaluation.data.storage import (
     ConnectionConfig,
     ConnectionState,
@@ -103,9 +102,14 @@ class TestPhoenixProductionIntegration:
         # If we have traces, verify structure
         if not df.empty:
             # Phoenix spans should have certain columns
-            expected_cols = ["trace_id", "name"]
-            for col in expected_cols:
-                assert col in df.columns or f"attributes.{col}" in df.columns
+            # Check for name (always present)
+            assert "name" in df.columns or "attributes.name" in df.columns
+            # Check for trace_id in any of its possible locations
+            assert (
+                "trace_id" in df.columns
+                or "attributes.trace_id" in df.columns
+                or "context.trace_id" in df.columns
+            )
 
     @pytest.mark.integration
     def test_concurrent_operations(self, storage):
