@@ -133,8 +133,15 @@ class BackendRegistry:
         backend_class = cls._ingestion_backends[name]
         instance = backend_class()
 
+        # Inject tenant_id into config before initialization
         if config:
-            instance.initialize(config)
+            # Make a copy to avoid modifying the original
+            backend_config = dict(config)
+            backend_config["tenant_id"] = tenant_id
+            instance.initialize(backend_config)
+        else:
+            # Create minimal config with tenant_id
+            instance.initialize({"tenant_id": tenant_id})
 
         # Cache instance with tenant_id
         cls._backend_instances[instance_key] = instance
@@ -193,8 +200,15 @@ class BackendRegistry:
         backend_class = cls._search_backends[name]
         instance = backend_class()
 
+        # Inject tenant_id into config before initialization
         if config:
-            instance.initialize(config)
+            # Make a copy to avoid modifying the original
+            backend_config = dict(config)
+            backend_config["tenant_id"] = tenant_id
+            instance.initialize(backend_config)
+        else:
+            # Create minimal config with tenant_id
+            instance.initialize({"tenant_id": tenant_id})
 
         # Cache instance with tenant_id
         cls._backend_instances[instance_key] = instance

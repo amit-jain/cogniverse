@@ -11,6 +11,8 @@ import time
 import pytest
 import requests
 
+from tests.utils.docker_utils import cleanup_vespa_container, generate_unique_ports
+
 logger = logging.getLogger(__name__)
 
 
@@ -19,14 +21,15 @@ def vespa_instance():
     """
     Start isolated Vespa Docker instance for backend integration tests.
 
-    Uses port 8082 to avoid conflicts with:
+    Uses unique ports per test module to avoid conflicts with:
     - Main Vespa (8080)
-    - System tests (8081)
+    - System tests (different module, different ports)
+    - Other test modules (deterministic hash-based port assignment)
 
     Yields:
         dict: Vespa connection info with keys:
-            - http_port: Vespa HTTP port (8082)
-            - config_port: Vespa config server port (19073)
+            - http_port: Vespa HTTP port (unique per module)
+            - config_port: Vespa config server port (unique per module)
             - base_url: Full HTTP URL
             - container_name: Docker container name
 
@@ -37,9 +40,11 @@ def vespa_instance():
                 vespa_port=vespa_instance["http_port"]
             )
     """
-    http_port = 8082
-    config_port = 19073  # Config server port (19071 + port_offset)
-    container_name = f"vespa-test-{http_port}"
+    # Generate unique ports based on test module name
+    http_port, config_port = generate_unique_ports(__name__)
+    container_name = f"vespa-backend-test-{http_port}"
+
+    logger.info(f"Backend test using unique ports: HTTP={http_port}, Config={config_port}")
 
     # Stop and remove existing container if exists
     subprocess.run(["docker", "stop", container_name], capture_output=True)
@@ -212,21 +217,31 @@ def vespa_instance():
         pytest.skip(f"Failed to start Vespa: {e}")
 
     finally:
-        # Cleanup: Stop and remove container
+        # Cleanup: Stop, remove, and wait for full resource release
         logger.info(f"Stopping Docker container '{container_name}'")
-        try:
-            stop_result = subprocess.run(
-                ["docker", "stop", container_name], capture_output=True, timeout=30
-            )
-            remove_result = subprocess.run(
-                ["docker", "rm", container_name], capture_output=True, timeout=30
-            )
+        if cleanup_vespa_container(container_name, timeout=30):
+            logger.info("✅ Container fully removed and resources released")
+        else:
+            logger.warning("⚠️  Container cleanup may not have completed fully")
 
-            if stop_result.returncode == 0 and remove_result.returncode == 0:
-                logger.info("✅ Stopped and removed Docker container")
-            else:
-                logger.warning(
-                    f"⚠️  Issues stopping container: stop={stop_result.returncode}, rm={remove_result.returncode}"
-                )
+        # Clear singleton state to avoid interference with other test modules
+        try:
+            from cogniverse_core.config.manager import ConfigManager
+            from cogniverse_core.registries.backend_registry import get_backend_registry
+            from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+
+            # Clear TenantSchemaManager singleton
+            TenantSchemaManager._clear_instance()
+
+            # Clear backend registry instances
+            registry = get_backend_registry()
+            if hasattr(registry, '_backend_instances'):
+                registry._backend_instances.clear()
+
+            # Clear ConfigManager singleton
+            if hasattr(ConfigManager, '_instance'):
+                ConfigManager._instance = None
+
+            logger.info("✅ Cleared singleton state")
         except Exception as e:
-            logger.warning(f"⚠️  Error stopping Docker container: {e}")
+            logger.warning(f"⚠️  Error clearing singleton state: {e}")

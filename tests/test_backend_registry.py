@@ -220,7 +220,8 @@ class TestBackendRegistry(unittest.TestCase):
         backend = self.registry.get_ingestion_backend("test_ingestion", "test_tenant", config)
 
         self.assertIsInstance(backend, MockIngestionBackend)
-        self.assertEqual(backend.config, config)
+        # Config should have tenant_id injected by registry
+        self.assertEqual(backend.config, {**config, "tenant_id": "test_tenant"})
         self.assertTrue(backend.initialized)
     
     def test_get_search_backend(self):
@@ -231,7 +232,8 @@ class TestBackendRegistry(unittest.TestCase):
         backend = self.registry.get_search_backend("test_search", "test_tenant", config)
 
         self.assertIsInstance(backend, MockSearchBackend)
-        self.assertEqual(backend.config, config)
+        # Config should have tenant_id injected by registry
+        self.assertEqual(backend.config, {**config, "tenant_id": "test_tenant"})
         self.assertTrue(backend.initialized)
     
     def test_backend_instance_caching(self):

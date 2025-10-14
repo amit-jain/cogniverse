@@ -62,32 +62,35 @@ class VespaPyClient:
         self.schema_name = config.get("schema_name")
         if not self.schema_name:
             raise ValueError("schema_name is required in config")
+        # For tenant-scoped schemas, use base_schema_name for loading schema file
+        self.base_schema_name = config.get("base_schema_name", self.schema_name)
         self.vespa_url = config.get("vespa_url")
         if not self.vespa_url:
             raise ValueError("vespa_url is required in config")
         self.vespa_port = config.get("vespa_port", 8080)
-        
+
         self.logger = logger or logging.getLogger(self.__class__.__name__)
-        
+
         # CRITICAL: Log backend initialization to track schema assignment
         self.logger.warning(f"🚀 VESPA CLIENT INITIALIZED:")
         self.logger.warning(f"   Schema name: {self.schema_name}")
+        self.logger.warning(f"   Base schema name: {self.base_schema_name}")
         self.logger.warning(f"   Instance ID: {id(self)}")
         self.logger.warning(f"   Vespa URL: {self.vespa_url}:{self.vespa_port}")
-        
+
         self.app = None
         self._connected = False
-        
+
         # Get model name from profile config
         profile_config = config.get("profile_config", {})
         model_name = profile_config.get("model", "")
-        
+
         # Create embedding processor with this client's schema
         self._embedding_processor = VespaEmbeddingProcessor(self.logger, model_name, self.schema_name)
-        
+
         # Initialize strategy-aware processor
         self._strategy_processor = StrategyAwareProcessor()
-        
+
         # Load schema fields for this specific schema
         self._load_schema_fields()
         
@@ -107,35 +110,36 @@ class VespaPyClient:
         self.logger.info(f"Feed configuration: {self.feed_config}")
     
     def _load_schema_fields(self):
-        """Load the fields defined in the schema"""
+        """Load the fields defined in the schema using base schema name"""
         import json
         from pathlib import Path
-        
+
         current = Path(__file__).resolve()
         while current.parent != current:
             if (current / "configs" / "schemas").exists():
-                schema_path = current / "configs" / "schemas" / f"{self.schema_name}_schema.json"
+                # Use base_schema_name for loading schema file (tenant schemas use base schema structure)
+                schema_path = current / "configs" / "schemas" / f"{self.base_schema_name}_schema.json"
                 break
             current = current.parent
         else:
             raise RuntimeError("Cannot find project root with configs/schemas directory")
-        
+
         if not schema_path.exists():
             raise ValueError(f"Schema file not found: {schema_path}")
-        
+
         try:
             with open(schema_path, 'r') as f:
                 schema_def = json.load(f)
-            
+
             # Extract field names from schema
             self.schema_fields = set()
             for field in schema_def.get("document", {}).get("fields", []):
                 self.schema_fields.add(field["name"])
-            
+
             if not self.schema_fields:
-                raise ValueError(f"No fields found in schema {self.schema_name}")
-                
-            self.logger.debug(f"Loaded {len(self.schema_fields)} fields from schema {self.schema_name}")
+                raise ValueError(f"No fields found in schema {self.base_schema_name}")
+
+            self.logger.debug(f"Loaded {len(self.schema_fields)} fields from base schema {self.base_schema_name}")
         except Exception as e:
             self.logger.error(f"Failed to load schema fields from {schema_path}: {e}")
             raise
@@ -199,8 +203,9 @@ class VespaPyClient:
         """
         # Use this client's schema (each client is dedicated to one schema)
         # Get required embeddings and field names from strategy processor
-        required_embeddings = self._strategy_processor.get_required_embeddings(self.schema_name)
-        field_names = self._strategy_processor.get_embedding_field_names(self.schema_name)
+        # Use base_schema_name for strategy lookup (tenant schemas use same strategies as base)
+        required_embeddings = self._strategy_processor.get_required_embeddings(self.base_schema_name)
+        field_names = self._strategy_processor.get_embedding_field_names(self.base_schema_name)
         
         # Process embeddings using internal processor
         # New Document class stores embeddings directly in embeddings dict

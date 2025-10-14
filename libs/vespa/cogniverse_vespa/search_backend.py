@@ -259,12 +259,12 @@ class ConnectionPool:
 
 class VespaSearchBackend(SearchBackend):
     """Production-ready Vespa search backend"""
-    
+
     def __init__(
         self,
-        vespa_url: str,
-        vespa_port: int,
-        schema_name: str,
+        vespa_url: str = None,
+        vespa_port: int = None,
+        schema_name: str = None,
         profile: str = None,  # Make profile optional
         strategy: Optional[Strategy] = None,
         query_encoder: Optional[Any] = None,
@@ -342,8 +342,132 @@ class VespaSearchBackend(SearchBackend):
                 f"with pool={enable_connection_pool}, metrics={enable_metrics}, "
                 f"strategy=None (export-only mode)"
             )
-    
-    
+
+    def initialize(self, config: Dict[str, Any]) -> None:
+        """
+        Initialize search backend (already done in __init__).
+        This method exists for SearchBackend interface compatibility.
+        """
+        # VespaSearchBackend uses __init__ for initialization
+        # This method is a no-op since init is already done
+        pass
+
+    def batch_get_documents(self, document_ids: List[str]) -> List[Optional[Document]]:
+        """
+        Retrieve multiple documents by ID using batch search query (primary batch method).
+
+        Args:
+            document_ids: List of document IDs to retrieve
+
+        Returns:
+            List of Document objects (None for not found), in the same order as document_ids
+        """
+        if not document_ids:
+            return []
+
+        # Use search query with document ID filter for efficient batch retrieval
+        # Build YQL with documentid() function for precise ID matching
+        doc_id_conditions = " OR ".join([f'documentid = "id:video:{self.schema_name}::{doc_id}"' for doc_id in document_ids])
+        yql = f"select * from {self.schema_name} where {doc_id_conditions}"
+
+        query_params = {
+            "yql": yql,
+            "hits": len(document_ids),
+            "timeout": "10s"
+        }
+
+        try:
+            # Execute batch query
+            if self.pool:
+                with self.pool.get_connection() as conn:
+                    response = conn.query(body=query_params)
+            else:
+                response = self.vespa.query(body=query_params)
+
+            # Build results dictionary for fast lookup
+            results_dict = {}
+            if response and hasattr(response, 'hits'):
+                for hit in response.hits:
+                    fields = hit.get("fields", {})
+                    # Extract document ID from Vespa document id format
+                    full_doc_id = hit.get("id", "")
+                    doc_id = full_doc_id.split("::")[-1]
+
+                    doc = Document(
+                        id=doc_id,
+                        content_type=ContentType.VIDEO,
+                        text_content=fields.get("content", ""),
+                        status=ProcessingStatus.COMPLETED
+                    )
+
+                    # Add all fields as metadata
+                    for key, value in fields.items():
+                        if value is not None:
+                            doc.add_metadata(key, value)
+
+                    results_dict[doc_id] = doc
+
+            # Return results in the same order as input document_ids
+            return [results_dict.get(doc_id) for doc_id in document_ids]
+
+        except Exception as e:
+            logger.error(f"Batch document retrieval failed: {e}")
+            # Fallback to individual retrieval if batch fails
+            return self._fallback_individual_get(document_ids)
+
+    def _fallback_individual_get(self, document_ids: List[str]) -> List[Optional[Document]]:
+        """Fallback method for individual document retrieval when batch query fails."""
+        results = []
+        for doc_id in document_ids:
+            try:
+                if self.pool:
+                    with self.pool.get_connection() as conn:
+                        response = conn.vespa.get_data(
+                            schema=self.schema_name,
+                            data_id=doc_id,
+                            namespace="video"
+                        )
+                else:
+                    response = self.vespa.get_data(
+                        schema=self.schema_name,
+                        data_id=doc_id,
+                        namespace="video"
+                    )
+
+                if response and response.status_code == 200:
+                    data = response.json()
+                    fields = data.get("fields", {})
+
+                    doc = Document(
+                        id=doc_id,
+                        content_type=ContentType.VIDEO,
+                        text_content=fields.get("content", ""),
+                        status=ProcessingStatus.COMPLETED
+                    )
+
+                    for key, value in fields.items():
+                        if value is not None:
+                            doc.add_metadata(key, value)
+
+                    results.append(doc)
+                else:
+                    results.append(None)
+
+            except Exception as e:
+                logger.error(f"Failed to retrieve document {doc_id}: {e}")
+                results.append(None)
+
+        return results
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """
+        Get search backend statistics.
+
+        Returns:
+            Statistics including document count, metrics, etc.
+        """
+        return self.get_metrics()
+
     def _embeddings_to_vespa_format(self, embeddings: np.ndarray, profile: str) -> Dict[str, Any]:
         """Convert embeddings to Vespa query format."""
         # For binary embeddings, handle differently
@@ -765,51 +889,17 @@ class VespaSearchBackend(SearchBackend):
     
     def get_document(self, document_id: str) -> Optional[Document]:
         """
-        Retrieve a specific document by ID.
-        
+        Retrieve a specific document by ID (uses batch method).
+
         Args:
             document_id: Document ID to retrieve
-            
+
         Returns:
             Document if found, None otherwise
         """
-        if self.pool:
-            with self.pool.get_connection() as conn:
-                response = conn.vespa.get_data(
-                    schema=self.schema_name,
-                    data_id=document_id,
-                    namespace="video"
-                )
-        else:
-            response = self.vespa.get_data(
-                schema=self.schema_name,
-                data_id=document_id,
-                namespace="video"
-            )
-        
-        if response and response.status_code == 200:
-            # Convert Vespa document to Document object
-            data = response.json()
-            fields = data.get("fields", {})
-            
-            # Create Document from fields
-            from cogniverse_core.common.document import Document, ContentType
-            
-            doc = Document(
-                id=document_id,
-                content_type=ContentType.VIDEO,
-                text_content=fields.get("content", ""),
-                status=ProcessingStatus.COMPLETED
-            )
-            
-            # Add all fields as metadata
-            for key, value in fields.items():
-                if value is not None:
-                    doc.add_metadata(key, value)
-            
-            return doc
-        
-        return None
+        # Use batch method for consistency and optimization
+        results = self.batch_get_documents([document_id])
+        return results[0] if results else None
     
     def export_embeddings(
         self,

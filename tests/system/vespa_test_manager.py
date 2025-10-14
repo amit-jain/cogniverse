@@ -19,22 +19,29 @@ from cogniverse_vespa.json_schema_parser import JsonSchemaParser
 
 # Import the REAL deployment classes
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+from tests.utils.docker_utils import cleanup_vespa_container
 from vespa.package import ApplicationPackage, Validation
 
 
 class VespaTestManager:
     """Manages isolated Vespa test instances for integration testing"""
     
-    def __init__(self, app_name: str = "test-video-search", http_port: int = 8081):
+    def __init__(self, app_name: str = "test-video-search", http_port: int = 8081, config_port: int = None):
         self.app_name = app_name
-        
+
         # System test resources directory (organized like Java test resources)
         self.resources_dir = Path(__file__).parent / "resources"
         self.test_videos_resource_dir = self.resources_dir / "videos"
-        self.test_configs_resource_dir = self.resources_dir / "configs" 
+        self.test_configs_resource_dir = self.resources_dir / "configs"
         self.test_schemas_resource_dir = self.resources_dir / "schemas"
         self.http_port = http_port
-        self.config_port = 19072  # For config server
+
+        # Calculate config port if not provided (standard Vespa offset)
+        if config_port is None:
+            self.config_port = http_port + 10991
+        else:
+            self.config_port = config_port
+
         self.temp_dir = None
         self.app_dir = None
         self.is_deployed = False
@@ -99,36 +106,54 @@ class VespaTestManager:
             return False
 
     def deploy_all_schemas(self) -> bool:
-        """Deploy ALL schemas from test directory to isolated Vespa"""
+        """Deploy ALL schemas from test directory to isolated Vespa (base + tenant-scoped)"""
         try:
             if not hasattr(self, 'test_videos_dir'):
                 print("❌ Test environment not set up. Call setup_test_environment() first.")
                 return False
-                
-            # Use schemas directly from resources directory  
+
+            # Use schemas directly from resources directory
             if not self.test_schemas_resource_dir.exists():
                 print("❌ No schema resources found in tests/system/resources/schemas/")
                 return False
-                
+
             schema_files = list(self.test_schemas_resource_dir.glob("*.json"))
-            
+
             if not schema_files:
                 print("❌ No schema files found in system test resources")
                 return False
-            
-            print(f"🚀 Deploying {len(schema_files)} schemas from resources to isolated Vespa...")
-            
+
+            print(f"🚀 Deploying {len(schema_files)} base schemas + tenant-scoped variants to isolated Vespa...")
+
             # Create application package with ALL schemas from resources
             app_package = ApplicationPackage(name="videosearch")
             parser = JsonSchemaParser()
-            
+
             deployed_schemas = []
+            tenant_id = "test_tenant"  # Hardcoded for system tests
+
             for schema_file in schema_files:
                 try:
-                    print(f"📄 Loading schema: {schema_file.name}")
-                    schema = parser.load_schema_from_json_file(str(schema_file))
-                    app_package.add_schema(schema)
-                    deployed_schemas.append(schema.name)
+                    print(f"📄 Loading base schema: {schema_file.name}")
+                    base_schema = parser.load_schema_from_json_file(str(schema_file))
+                    app_package.add_schema(base_schema)
+                    deployed_schemas.append(base_schema.name)
+
+                    # Create tenant-scoped version
+                    tenant_schema_name = f"{base_schema.name}_{tenant_id}"
+                    print(f"📄 Creating tenant-scoped schema: {tenant_schema_name}")
+
+                    # Clone the schema with new name for tenant
+                    tenant_schema = parser.load_schema_from_json_file(str(schema_file))
+                    tenant_schema.name = tenant_schema_name
+
+                    # Update document type name to match schema name
+                    if hasattr(tenant_schema, 'document') and tenant_schema.document:
+                        tenant_schema.document.name = tenant_schema_name
+
+                    app_package.add_schema(tenant_schema)
+                    deployed_schemas.append(tenant_schema_name)
+
                 except Exception as e:
                     print(f"⚠️  Failed to load {schema_file.name}: {e}")
             
@@ -415,8 +440,9 @@ class VespaTestManager:
                     create_pipeline,
                 )
 
-                # Update test_config with correct Vespa port for this isolated instance
+                # Update test_config with correct Vespa ports for this isolated instance
                 test_config['vespa_port'] = self.http_port
+                test_config['vespa_config_port'] = self.config_port
                 test_config['vespa_url'] = "http://localhost"
 
                 config = (
@@ -544,32 +570,63 @@ class VespaTestManager:
             return False
 
     def search_videos(self, query: str, hits: int = 10, ranking: str = "binary_binary") -> Optional[Dict]:
-        """Basic search test for verification - use raw requests for manager-level testing"""
+        """Search using backend abstraction"""
         if not self.is_deployed:
             print("❌ Cannot search - Vespa not deployed")
             return None
-            
+
         try:
-            response = requests.get(
-                f"http://localhost:{self.http_port}/search/",
-                params={
-                    "query": query,
-                    "hits": hits,
-                    "ranking": ranking,
-                    "restrict": self.default_test_schema  # Specify which schema to search
-                },
-                timeout=10
+            # Use backend abstraction instead of direct HTTP calls
+            from cogniverse_core.registries.backend_registry import get_backend_registry
+
+            registry = get_backend_registry()
+
+            # Get backend for test tenant with search configuration
+            # Profile and schema have the same name in our config
+            backend_config = {
+                "vespa_url": "http://localhost",
+                "vespa_port": self.http_port,
+                "vespa_config_port": self.config_port,
+                "schema_name": self.default_test_schema,
+                "tenant_id": "test_tenant",
+                "profile": self.default_test_schema,  # Profile name = schema name
+            }
+
+            backend = registry.get_search_backend("vespa", "test_tenant", backend_config)
+
+            # Use backend's search method
+            results = backend.search(
+                query_embeddings=None,
+                query_text=query,
+                top_k=hits,
+                filters=None,
+                ranking_strategy=ranking
             )
-            
-            if response.status_code == 200:
-                return response.json()
+
+            # Convert SearchResult objects to dict format for compatibility
+            if results:
+                return {
+                    "root": {
+                        "fields": {"totalCount": len(results)},
+                        "children": [
+                            {
+                                "fields": {
+                                    "video_id": getattr(r, "video_id", "unknown"),
+                                    "title": getattr(r, "title", "no title"),
+                                },
+                                "relevance": getattr(r, "score", 0.0)
+                            }
+                            for r in results
+                        ]
+                    }
+                }
             else:
-                print(f"❌ Search failed for '{query}': {response.status_code}")
-                print(f"Response: {response.text}")
-                return None
-                
+                return {"root": {"fields": {"totalCount": 0}, "children": []}}
+
         except Exception as e:
             print(f"❌ Search error for '{query}': {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def verify_search_functionality(self) -> bool:
@@ -638,25 +695,13 @@ class VespaTestManager:
                 registry._backend_instances.clear()
                 print("🔧 CLEARED cached backends to restore original config")
 
-        # Stop and remove Docker container
+        # Stop, remove, and wait for Docker container cleanup
         if self.container_name:
-            try:
-                print(f"Stopping Docker container '{self.container_name}'...")
-                stop_result = subprocess.run([
-                    "docker", "stop", self.container_name
-                ], capture_output=True, timeout=30)
-
-                remove_result = subprocess.run([
-                    "docker", "rm", self.container_name
-                ], capture_output=True, timeout=30)
-
-                if stop_result.returncode == 0 and remove_result.returncode == 0:
-                    print("✅ Stopped and removed Docker container")
-                else:
-                    print(f"⚠️  Issues stopping container: stop={stop_result.returncode}, rm={remove_result.returncode}")
-
-            except Exception as e:
-                print(f"⚠️  Error stopping Docker container: {e}")
+            print(f"Stopping Docker container '{self.container_name}'...")
+            if cleanup_vespa_container(self.container_name, timeout=30):
+                print("✅ Container fully removed and resources released")
+            else:
+                print("⚠️  Container cleanup may not have completed fully")
 
         # Clean up temporary files
         if self.temp_dir and Path(self.temp_dir).exists():

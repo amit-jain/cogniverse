@@ -125,9 +125,14 @@ class TestTenantAwareSearchClientSearchMethods:
         mock_vespa_client.search.assert_called_once()
         call_args = mock_vespa_client.search.call_args
 
-        assert call_args.kwargs["query_text"] == "test query"
-        assert call_args.kwargs["strategy"] == "hybrid_float_bm25"
-        assert call_args.kwargs["top_k"] == 10
+        # Check that query_params dict contains expected values
+        assert "query_params" in call_args.kwargs
+        query_params = call_args.kwargs["query_params"]
+        assert query_params["query"] == "test query"
+        assert query_params["ranking"] == "hybrid_float_bm25"
+        assert query_params["top_k"] == 10
+
+        # Check schema is passed correctly
         assert call_args.kwargs["schema"] == "video_colpali_acme"  # ✅ Tenant schema
 
     @patch("cogniverse_vespa.tenant_aware_search_client.get_tenant_schema_manager")

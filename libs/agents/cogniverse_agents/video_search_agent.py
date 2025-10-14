@@ -12,16 +12,16 @@ from typing import Any, Dict, List, Literal, Optional
 
 import numpy as np
 import uvicorn
+from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_core.config.utils import get_config
+from cogniverse_vespa.tenant_aware_search_client import TenantAwareVespaSearchClient
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_agents.query.encoders import QueryEncoderFactory
 
 # Enhanced query support from DSPy routing system
 from cogniverse_agents.routing_agent import RoutingDecision
-from cogniverse_vespa.tenant_aware_search_client import TenantAwareVespaSearchClient
-from cogniverse_core.config.utils import get_config
 from cogniverse_agents.tools.a2a_utils import DataPart, TextPart
 
 logger = logging.getLogger(__name__)
@@ -260,16 +260,6 @@ class VideoSearchAgent(MemoryAwareMixin):
         self.config = get_config()
         self.tenant_id = tenant_id
 
-        # Initialize memory for video agent
-        memory_initialized = self.initialize_memory(
-            agent_name="video_agent",
-            tenant_id=tenant_id,
-        )
-        if memory_initialized:
-            logger.info(f"✅ Memory initialized for video_agent (tenant: {tenant_id})")
-        else:
-            logger.info("ℹ️  Memory disabled or not configured for video_agent")
-
         # Check environment variables first, then kwargs, then defaults
         vespa_url = kwargs.get("vespa_url") or os.getenv(
             "VESPA_URL", "http://localhost"
@@ -294,6 +284,37 @@ class VideoSearchAgent(MemoryAwareMixin):
             vespa_url = ":".join(vespa_url.split(":")[:-1])
         else:
             vespa_port = 8080
+
+        # Extract vespa_host for memory initialization (strip protocol if present)
+        vespa_host = vespa_url.replace("http://", "").replace("https://", "")
+
+        # Get config port for schema deployment (separate from data port)
+        # System tests use config_port = data_port + 10991 (e.g., 8082 data, 19073 config)
+        # Production uses default config_port = 19071
+        vespa_config_port = kwargs.get("vespa_config_port")
+        if not vespa_config_port:
+            # Calculate config port: if data port is 8080 (default), use 19071 (default)
+            # Otherwise, assume pattern: config_port = data_port + 10991
+            if vespa_port == 8080:
+                vespa_config_port = 19071
+            else:
+                vespa_config_port = vespa_port + 10991
+
+        # Initialize memory for video agent with correct Vespa ports
+        # NOTE: Memory schema creation is controlled separately from video schema
+        # Default is True so memory always works, but tests can disable if managing schemas themselves
+        memory_initialized = self.initialize_memory(
+            agent_name="video_agent",
+            tenant_id=tenant_id,
+            vespa_host=vespa_host,
+            vespa_port=vespa_port,
+            vespa_config_port=vespa_config_port,
+            auto_create_schema=kwargs.get("auto_create_memory_schema", True),
+        )
+        if memory_initialized:
+            logger.info(f"✅ Memory initialized for video_agent (tenant: {tenant_id})")
+        else:
+            logger.info("ℹ️  Memory disabled or not configured for video_agent")
 
         # Get model from active profile - check environment variable first
         active_profile = (
@@ -328,12 +349,15 @@ class VideoSearchAgent(MemoryAwareMixin):
             logger.info(f"  - Environment VESPA_PORT: {os.getenv('VESPA_PORT')}")
             logger.info(f"  - Environment VESPA_SCHEMA: {os.getenv('VESPA_SCHEMA')}")
 
+            # Check if schema auto-creation should be disabled (useful for tests)
+            auto_create_schema = kwargs.get("auto_create_schema", True)
+
             self.vespa_client = TenantAwareVespaSearchClient(
                 tenant_id=tenant_id,
                 base_schema_name=active_profile,
                 vespa_url=vespa_url,
                 vespa_port=vespa_port,
-                auto_create_schema=True,
+                auto_create_schema=auto_create_schema,
             )
             logger.info(
                 f"Tenant-aware Vespa client initialized at {vespa_url}:{vespa_port} "

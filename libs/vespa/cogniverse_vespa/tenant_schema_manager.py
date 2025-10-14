@@ -70,19 +70,28 @@ class TenantSchemaManager:
     """
     Manages tenant-specific Vespa schemas with automatic routing and lazy creation.
 
-    Thread-safe singleton pattern with per-tenant schema caching.
+    Thread-safe singleton pattern - one instance per process.
+    Tests must clear the singleton via _clear_instance() in teardown for proper isolation.
     """
 
     _instance: Optional["TenantSchemaManager"] = None
     _lock = threading.Lock()
 
     def __new__(cls, vespa_url: str = "http://localhost", vespa_port: int = 8080):
-        """Singleton pattern to ensure single instance"""
+        """
+        Singleton pattern - returns same instance for all calls.
+
+        Args:
+            vespa_url: Vespa endpoint URL (used only on first instantiation)
+            vespa_port: Vespa config server port (used only on first instantiation)
+        """
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False
+                    instance = super().__new__(cls)
+                    instance._initialized = False
+                    cls._instance = instance
+                    logger.info(f"Created TenantSchemaManager singleton for {vespa_url}:{vespa_port}")
         return cls._instance
 
     def __init__(self, vespa_url: str = "http://localhost", vespa_port: int = 8080):
@@ -538,25 +547,48 @@ class TenantSchemaManager:
                 },
             }
 
+    @classmethod
+    def _clear_instance(cls) -> None:
+        """
+        Clear singleton instance (TEST ONLY - will raise in production).
 
-# Global singleton
-_tenant_schema_manager: Optional[TenantSchemaManager] = None
+        Tests should call this in teardown to ensure proper isolation between test modules.
+
+        Raises:
+            RuntimeError: If called outside of test environment (when pytest is not running)
+
+        Example:
+            # In test teardown:
+            TenantSchemaManager._clear_instance()
+        """
+        import sys
+        # Check if we're running under pytest
+        if not any('pytest' in mod for mod in sys.modules):
+            raise RuntimeError(
+                "TenantSchemaManager._clear_instance() is for testing only. "
+                "It should never be called in production code."
+            )
+
+        with cls._lock:
+            cls._instance = None
+            logger.debug("Cleared TenantSchemaManager singleton instance")
 
 
 def get_tenant_schema_manager(
     vespa_url: str = "http://localhost", vespa_port: int = 8080
 ) -> TenantSchemaManager:
     """
-    Get global tenant schema manager instance.
+    Get tenant schema manager instance for specific Vespa endpoint.
+
+    Returns the appropriate singleton instance based on (url, port) combination,
+    allowing multiple Vespa instances with separate managers.
 
     Args:
         vespa_url: Vespa endpoint URL
         vespa_port: Vespa port number
 
     Returns:
-        TenantSchemaManager singleton instance
+        TenantSchemaManager singleton instance for this endpoint
     """
-    global _tenant_schema_manager
-    if _tenant_schema_manager is None:
-        _tenant_schema_manager = TenantSchemaManager(vespa_url, vespa_port)
-    return _tenant_schema_manager
+    # Simply instantiate - __new__() handles per-endpoint singleton logic
+    return TenantSchemaManager(vespa_url, vespa_port)

@@ -6,19 +6,21 @@ and SearchBackend interfaces, with self-registration to the backend registry.
 """
 
 import logging
-from typing import List, Dict, Any, Optional, Iterator, Tuple
-from pathlib import Path
+from typing import Any, Dict, Iterator, List, Optional, Tuple
+
 import numpy as np
-
-from cogniverse_core.interfaces.backend import Backend
 from cogniverse_core.common.document import Document
-from .search_backend import VespaSearchBackend
-from .vespa_schema_manager import VespaSchemaManager
-from .ingestion_client import VespaPyClient
+from cogniverse_core.interfaces.backend import Backend
 
-# Try to import async client (Phase 3 optimization)
+from .config import calculate_config_port
+from .ingestion_client import VespaPyClient
+from .search_backend import VespaSearchBackend
+from .tenant_schema_manager import TenantSchemaManager
+from .vespa_schema_manager import VespaSchemaManager
+
+# Check if async ingestion client is available (optional dependency)
 try:
-    from .async_ingestion_client import AsyncVespaBackendAdapter
+    from .async_ingestion_client import AsyncVespaBackendAdapter  # noqa: F401
     ASYNC_AVAILABLE = True
 except ImportError:
     ASYNC_AVAILABLE = False
@@ -40,66 +42,97 @@ class VespaBackend(Backend):
         self._vespa_search_backend: Optional[VespaSearchBackend] = None
         # Store multiple ingestion clients, one per schema
         self._vespa_ingestion_clients: Dict[str, VespaPyClient] = {}
-        self._async_ingestion_clients: Dict[str, Any] = {}  # For Phase 3 async optimization
+        self._async_ingestion_clients: Dict[str, Any] = {}  # For async ingestion (optional)
         self.schema_manager: Optional[VespaSchemaManager] = None
+        self.tenant_schema_manager: Optional[TenantSchemaManager] = None
         self._initialized_as_search = False
         self._initialized_as_ingestion = False
         self.use_async_ingestion = False  # Flag to enable async mode
         # Store only what's needed for creating clients
         self._vespa_url: Optional[str] = None
         self._vespa_port: int = 8080
+        self._tenant_id: Optional[str] = None
     
     def _initialize_backend(self, config: Dict[str, Any]) -> None:
         """
         Initialize Vespa backend components.
-        
+
         Args:
             config: Backend configuration including:
                 - vespa_url: Vespa endpoint URL
                 - vespa_port: Vespa port
+                - tenant_id: Tenant identifier (REQUIRED for multi-tenancy)
                 - schema_name: Schema to use
                 - profile: Processing profile
                 - strategy: Strategy object (optional)
                 - query_encoder: Query encoder (optional)
         """
-        # Check if async ingestion is requested (Phase 3 optimization)
+        # Check if async ingestion is requested (optional feature)
         self.use_async_ingestion = config.get("use_async_ingestion", False) and ASYNC_AVAILABLE
-        
+
         # Store config for accessing profiles later
         self.config = config
-        
+
+        # Extract and store tenant_id (REQUIRED for tenant-aware operations)
+        self._tenant_id = config.get("tenant_id")
+        if not self._tenant_id:
+            logger.warning("No tenant_id provided in config - backend will use base schemas without tenant isolation")
+
         # Store connection details needed for creating clients
         self._vespa_url = config.get("vespa_url")
         self._vespa_port = config.get("vespa_port", 8080)
-        
-        # Initialize for ingestion if schema_name is provided without search-specific params
-        if "schema_name" in config and not ("strategy" in config or "profile" in config):
-            # This means we're initializing for ingestion operations
+
+        # Mark as ingestion backend if schema_name is provided
+        if "schema_name" in config:
             self._initialized_as_ingestion = True
             # Don't create client yet - will create per-schema on demand
-        
+
         # Initialize schema manager for schema operations
         vespa_url = config["vespa_url"]  # Required, no default
         vespa_port = config.get("vespa_port", 8080)
         deployment_port = config.get("vespa_deployment_port", 19071)
-        
+
         self.schema_manager = VespaSchemaManager(
             vespa_endpoint=f"{vespa_url}:{vespa_port}",
             vespa_port=deployment_port
+        )
+
+        # Initialize TenantSchemaManager for tenant-aware schema management
+        # Calculate config port from data port if not explicitly provided
+        vespa_config_port = config.get("vespa_config_port")
+        if not vespa_config_port:
+            vespa_config_port = calculate_config_port(vespa_port)
+            logger.debug(f"Calculated config port {vespa_config_port} from data port {vespa_port}")
+
+        self.tenant_schema_manager = TenantSchemaManager(
+            vespa_url=vespa_url,
+            vespa_port=vespa_config_port
         )
         
         # Initialize search backend if this is being used for search
         if "schema_name" in config and ("strategy" in config or "profile" in config):
             # This means we're initializing for search operations
             self._initialized_as_search = True
-            
-            # Create the actual VespaSearchBackend
+
+            # Transform schema name to tenant-scoped if tenant_id is provided
+            search_schema_name = config["schema_name"]
+            if self._tenant_id and self.tenant_schema_manager:
+                search_schema_name = self.tenant_schema_manager.get_tenant_schema_name(
+                    self._tenant_id, config["schema_name"]
+                )
+                logger.debug(
+                    f"Using tenant schema '{search_schema_name}' for tenant '{self._tenant_id}' "
+                    f"(base schema: '{config['schema_name']}')"
+                )
+
+            # Create the actual VespaSearchBackend with tenant-scoped schema
+            # Pass strategy=None to let VespaSearchBackend load it from profile
             self._vespa_search_backend = VespaSearchBackend(
                 vespa_url=config["vespa_url"],  # Required
                 vespa_port=config.get("vespa_port", 8080),
-                schema_name=config["schema_name"],
+                schema_name=search_schema_name,  # Use tenant-scoped schema
                 profile=config.get("profile"),
-                strategy=config.get("strategy"),
+                strategy=None,  # Let VespaSearchBackend load Strategy object from profile
                 query_encoder=config.get("query_encoder")
             )
         
@@ -109,41 +142,68 @@ class VespaBackend(Backend):
     
     def _get_or_create_ingestion_client(self, schema_name: str) -> VespaPyClient:
         """
-        Get or create a schema-specific ingestion client.
-        
+        Get or create a schema-specific ingestion client with tenant-aware schema naming.
+
         Args:
-            schema_name: Schema name to get client for
-            
+            schema_name: Base schema name to get client for
+
         Returns:
-            VespaPyClient configured for the specific schema
+            VespaPyClient configured for the tenant-specific schema
+
+        Note:
+            If tenant_id is set, this method will:
+            1. Transform base schema name to tenant-scoped name (e.g., video_colpali_smol500_mv_frame_test_tenant)
+            2. Ensure the tenant-scoped schema exists in Vespa (auto-deploy if needed)
+            3. Create a client that ingests to the tenant-scoped schema
         """
-        if schema_name not in self._vespa_ingestion_clients:
+        # Transform base schema name to tenant-scoped name if tenant_id is set
+        target_schema_name = schema_name
+        if self._tenant_id and self.tenant_schema_manager:
+            target_schema_name = self.tenant_schema_manager.get_tenant_schema_name(
+                self._tenant_id, schema_name
+            )
+            logger.debug(
+                f"Transformed base schema '{schema_name}' to tenant schema '{target_schema_name}' "
+                f"for tenant '{self._tenant_id}'"
+            )
+
+            # Ensure tenant schema exists (auto-deploy if needed)
+            try:
+                self.tenant_schema_manager.ensure_tenant_schema_exists(
+                    self._tenant_id, schema_name
+                )
+                logger.debug(f"Verified tenant schema '{target_schema_name}' exists in Vespa")
+            except Exception as e:
+                logger.error(f"Failed to ensure tenant schema exists: {e}")
+                raise
+        if target_schema_name not in self._vespa_ingestion_clients:
             # Create new client with config dict
-            logger.info(f"Creating new VespaPyClient for schema: {schema_name}")
-            
-            # Get the specific profile config for this schema
+            logger.info(f"Creating new VespaPyClient for schema: {target_schema_name}")
+
+            # Get the specific profile config using BASE schema name (config uses base names)
             profile_config = {}
             if self.config:
                 profiles = self.config.get("video_processing_profiles", {})
-                profile_config = profiles.get(schema_name, {})
-            
+                profile_config = profiles.get(schema_name, {})  # Use base name for config lookup
+
             # Pass connection details and profile config
             client_config = {
-                "schema_name": schema_name,
+                "schema_name": target_schema_name,  # Use tenant-scoped name for Vespa
+                "base_schema_name": schema_name,  # Base schema name for loading schema file
                 "vespa_url": self._vespa_url,
                 "vespa_port": self._vespa_port,
                 "profile_config": profile_config  # Pass only the specific profile config
             }
-            
+
             client = VespaPyClient(
                 config=client_config,
                 logger=logger
             )
             client.connect()
-            
-            self._vespa_ingestion_clients[schema_name] = client
-        
-        return self._vespa_ingestion_clients[schema_name]
+
+            self._vespa_ingestion_clients[target_schema_name] = client
+
+        return self._vespa_ingestion_clients[target_schema_name]
     
     def ingest_documents(self, documents: List[Document], schema_name: str) -> Dict[str, Any]:
         """
@@ -334,23 +394,51 @@ class VespaBackend(Backend):
     ) -> Any:
         """
         Execute a search query.
-        
+
         This method delegates to VespaSearchBackend and returns its results directly.
         The return type matches what VespaSearchBackend returns (List[SearchResult]).
-        
+
         Args:
             query_embeddings: Optional query embeddings
             query_text: Optional text query
             top_k: Number of results
             filters: Optional filters
             ranking_strategy: Optional ranking strategy
-            
+
         Returns:
             Search results (List[SearchResult] from VespaSearchBackend)
         """
+        # Lazy initialization: create search backend if not already initialized
         if not self._vespa_search_backend:
-            raise RuntimeError("Search backend not initialized. Ensure schema_name is provided in config.")
-        
+            if not self.config or "schema_name" not in self.config:
+                raise RuntimeError("Search backend not initialized. Ensure schema_name is provided in config.")
+
+            logger.debug("Creating search backend on-demand (lazy initialization)")
+
+            # Transform schema name to tenant-scoped if tenant_id is provided
+            search_schema_name = self.config["schema_name"]
+            if self._tenant_id and self.tenant_schema_manager:
+                search_schema_name = self.tenant_schema_manager.get_tenant_schema_name(
+                    self._tenant_id, self.config["schema_name"]
+                )
+                logger.debug(
+                    f"Using tenant schema '{search_schema_name}' for tenant '{self._tenant_id}' "
+                    f"(base schema: '{self.config['schema_name']}')"
+                )
+
+            # Create VespaSearchBackend with tenant-scoped schema
+            # Pass strategy=None to let VespaSearchBackend load it from profile
+            self._vespa_search_backend = VespaSearchBackend(
+                vespa_url=self.config["vespa_url"],
+                vespa_port=self.config.get("vespa_port", 8080),
+                schema_name=search_schema_name,  # Use tenant-scoped schema
+                profile=self.config.get("profile"),
+                strategy=None,  # Let VespaSearchBackend load Strategy object from profile
+                query_encoder=self.config.get("query_encoder")
+            )
+            self._initialized_as_search = True
+            logger.info(f"Search backend initialized for schema '{search_schema_name}'")
+
         # Delegate directly to VespaSearchBackend
         # It returns List[SearchResult], which is what SearchService expects
         return self._vespa_search_backend.search(
@@ -363,30 +451,32 @@ class VespaBackend(Backend):
     
     def get_document(self, document_id: str) -> Optional[Document]:
         """
-        Retrieve a document by ID.
-        
+        Retrieve a document by ID (uses batch method).
+
         Args:
             document_id: Document ID
-            
+
         Returns:
             Document or None
         """
-        if not self._vespa_search_backend:
-            raise RuntimeError("Search backend not initialized.")
-        
-        return self._vespa_search_backend.get_document(document_id)
+        # Use batch method for consistency and optimization
+        results = self.batch_get_documents([document_id])
+        return results[0] if results else None
     
     def batch_get_documents(self, document_ids: List[str]) -> List[Optional[Document]]:
         """
-        Retrieve multiple documents by ID.
-        
+        Retrieve multiple documents by ID (primary batch method).
+
         Args:
             document_ids: List of document IDs
-            
+
         Returns:
             List of Documents (None for not found)
         """
-        return [self.get_document(doc_id) for doc_id in document_ids]
+        if not self._vespa_search_backend:
+            raise RuntimeError("Search backend not initialized.")
+
+        return self._vespa_search_backend.batch_get_documents(document_ids)
     
     def get_statistics(self) -> Dict[str, Any]:
         """

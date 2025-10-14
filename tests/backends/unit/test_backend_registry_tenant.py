@@ -75,12 +75,23 @@ class TestBackendRegistryTenantIsolation:
     """Test tenant-scoped backend caching"""
 
     def setup_method(self):
-        """Clear registry before each test"""
+        """Save original backends and clear instances before each test"""
+        registry = get_backend_registry()
+        # Save original backend registrations (e.g., Vespa auto-registered on import)
+        self._saved_ingestion = registry._ingestion_backends.copy()
+        self._saved_search = registry._search_backends.copy()
+        self._saved_full = registry._full_backends.copy()
+        # Clear instances but keep backend registrations
+        registry.clear_instances()
+
+    def teardown_method(self):
+        """Restore original backends and clear instances after each test"""
         registry = get_backend_registry()
         registry.clear_instances()
-        registry._ingestion_backends.clear()
-        registry._search_backends.clear()
-        registry._full_backends.clear()
+        # Restore original backend registrations (don't delete real backends!)
+        registry._ingestion_backends = self._saved_ingestion
+        registry._search_backends = self._saved_search
+        registry._full_backends = self._saved_full
 
     def test_tenant_id_required_for_search_backend(self):
         """Test that tenant_id is required for get_search_backend"""
@@ -178,9 +189,9 @@ class TestBackendRegistryTenantIsolation:
             "mock", tenant_id="tenant_b", config=config_b
         )
 
-        # Each should have their own config
-        assert backend_a.config == config_a
-        assert backend_b.config == config_b
+        # Each should have their own config (with tenant_id injected by registry)
+        assert backend_a.config == {**config_a, "tenant_id": "tenant_a"}
+        assert backend_b.config == {**config_b, "tenant_id": "tenant_b"}
 
     def test_clear_instances_removes_all_tenants(self):
         """Test that clear_instances removes all tenant caches"""
@@ -303,9 +314,23 @@ class TestBackendRegistryEdgeCases:
     """Test edge cases and error handling"""
 
     def setup_method(self):
-        """Clear registry before each test"""
+        """Save original backends and clear instances before each test"""
+        registry = get_backend_registry()
+        # Save original backend registrations (e.g., Vespa auto-registered on import)
+        self._saved_ingestion = registry._ingestion_backends.copy()
+        self._saved_search = registry._search_backends.copy()
+        self._saved_full = registry._full_backends.copy()
+        # Clear instances but keep backend registrations
+        registry.clear_instances()
+
+    def teardown_method(self):
+        """Restore original backends and clear instances after each test"""
         registry = get_backend_registry()
         registry.clear_instances()
+        # Restore original backend registrations (don't delete real backends!)
+        registry._ingestion_backends = self._saved_ingestion
+        registry._search_backends = self._saved_search
+        registry._full_backends = self._saved_full
 
     def test_none_tenant_id_rejected(self):
         """Test that None tenant_id is rejected"""
@@ -337,9 +362,23 @@ class TestBackendRegistrySingleton:
     """Test singleton behavior with tenants"""
 
     def setup_method(self):
-        """Clear registry before each test"""
+        """Save original backends and clear instances before each test"""
+        registry = get_backend_registry()
+        # Save original backend registrations (e.g., Vespa auto-registered on import)
+        self._saved_ingestion = registry._ingestion_backends.copy()
+        self._saved_search = registry._search_backends.copy()
+        self._saved_full = registry._full_backends.copy()
+        # Clear instances but keep backend registrations
+        registry.clear_instances()
+
+    def teardown_method(self):
+        """Restore original backends and clear instances after each test"""
         registry = get_backend_registry()
         registry.clear_instances()
+        # Restore original backend registrations (don't delete real backends!)
+        registry._ingestion_backends = self._saved_ingestion
+        registry._search_backends = self._saved_search
+        registry._full_backends = self._saved_full
 
     def test_get_backend_registry_returns_singleton(self):
         """Test that get_backend_registry always returns same instance"""

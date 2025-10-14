@@ -154,15 +154,25 @@ class TenantAwareVespaSearchClient:
             f"query='{query_text[:50]}...', strategy={strategy}"
         )
 
+        # Package parameters for underlying VespaVideoSearchClient.search() method
+        query_params = {
+            "query": query_text,
+            "ranking": strategy,
+            "top_k": top_k,
+        }
+
+        # Add optional date filters if provided
+        if start_date:
+            query_params["start_date"] = start_date
+        if end_date:
+            query_params["end_date"] = end_date
+
         # Delegate to underlying client with tenant schema
+        logger.info(f"🔍 [SEARCH] Schema name for search: '{self.tenant_schema_name}'")
+        logger.info(f"🔍 [SEARCH] Query params: query='{query_text[:50]}', strategy={strategy}")
         return self.client.search(
-            query_text=query_text,
+            query_params=query_params,
             embeddings=embeddings,
-            strategy=strategy,
-            top_k=top_k,
-            start_date=start_date,
-            end_date=end_date,
-            timeout=timeout,
             schema=self.tenant_schema_name,  # ✅ Tenant schema automatically used
         )
 
