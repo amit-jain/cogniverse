@@ -1,7 +1,8 @@
 # Cache Module Study Guide
 
+**Package:** `cogniverse_core`
+**Module Location:** `libs/core/cogniverse_core/common/cache/`
 **Last Updated:** 2025-10-07
-**Module Location:** `src/common/cache/`
 **Purpose:** Multi-tiered caching system for embeddings, pipeline artifacts, and video processing outputs with pluggable backend architecture
 
 ---
@@ -64,10 +65,10 @@ The Cache Module provides a **comprehensive, multi-tiered caching infrastructure
    - Graceful degradation
    - Pattern-based invalidation
 
-### Module Structure
+## Package Structure
 
 ```
-src/common/cache/
+libs/core/cogniverse_core/common/cache/
 ├── base.py                          # Abstract base classes (CacheBackend, CacheManager)
 ├── registry.py                      # Backend plugin registry
 ├── embedding_cache.py               # Specialized embedding cache
@@ -481,7 +482,7 @@ Initialize cache manager with configuration.
 
 **Example:**
 ```python
-from src.common.cache.base import CacheConfig, BackendConfig
+from cogniverse_core.common.cache.base import CacheConfig, BackendConfig
 
 config = CacheConfig(
     backends=[
@@ -668,8 +669,8 @@ Register a new cache backend type.
 
 **Example:**
 ```python
-from src.common.cache.base import CacheBackend
-from src.common.cache.registry import CacheBackendRegistry
+from cogniverse_core.common.cache.base import CacheBackend
+from cogniverse_core.common.cache.registry import CacheBackendRegistry
 
 class MyCustomBackend(CacheBackend):
     # ... implement abstract methods ...
@@ -898,7 +899,7 @@ backend = StructuredFilesystemBackend(config)
 
 **Initialization:**
 ```python
-from src.common.cache.embedding_cache import EmbeddingCache
+from cogniverse_core.common.cache.embedding_cache import EmbeddingCache
 
 embedding_cache = EmbeddingCache(
     cache_manager=cache_manager,
@@ -1080,7 +1081,7 @@ print(f"Embedding cache hit rate: {stats['hit_rate']:.2%}")
 
 **Initialization:**
 ```python
-from src.common.cache.pipeline_cache import PipelineArtifactCache
+from cogniverse_core.common.cache.pipeline_cache import PipelineArtifactCache
 
 pipeline_cache = PipelineArtifactCache(
     cache_manager=cache_manager,
@@ -1552,7 +1553,7 @@ graph TB
 """
 Initialize multi-tiered cache with memory and filesystem backends.
 """
-from src.common.cache.base import CacheManager, CacheConfig
+from cogniverse_core.common.cache.base import CacheManager, CacheConfig
 
 # Configure backends
 config = CacheConfig(
@@ -1621,8 +1622,8 @@ print(f"Total size: {stats['manager']['size_bytes']} bytes")
 Use specialized embedding cache for efficient vector storage.
 """
 import numpy as np
-from src.common.cache.embedding_cache import EmbeddingCache
-from src.common.cache.base import CacheManager, CacheConfig
+from cogniverse_core.common.cache.embedding_cache import EmbeddingCache
+from cogniverse_core.common.cache.base import CacheManager, CacheConfig
 
 # Setup cache manager
 config = CacheConfig(
@@ -1708,8 +1709,8 @@ Cache video processing artifacts (keyframes, transcripts, descriptions).
 import cv2
 import numpy as np
 from pathlib import Path
-from src.common.cache.pipeline_cache import PipelineArtifactCache
-from src.common.cache.base import CacheManager, CacheConfig
+from cogniverse_core.common.cache.pipeline_cache import PipelineArtifactCache
+from cogniverse_core.common.cache.base import CacheManager, CacheConfig
 
 # Setup cache
 config = CacheConfig(
@@ -1877,7 +1878,7 @@ print(f"  Descriptions: {'✓' if artifacts.frame_descriptions else '✗'}")
 Cache temporal segment frames for efficient chunk-based processing.
 """
 import numpy as np
-from src.common.cache.pipeline_cache import PipelineArtifactCache
+from cogniverse_core.common.cache.pipeline_cache import PipelineArtifactCache
 
 # Initialize cache (assuming cache_manager already created)
 pipeline_cache = PipelineArtifactCache(
@@ -1970,8 +1971,8 @@ print(f"  Hit rate: {stats['overall']['manager']['hit_rate']:.2%}")
 """
 Manage cache lifecycle with invalidation and cleanup operations.
 """
-from src.common.cache.base import CacheManager, CacheConfig
-from src.common.cache.pipeline_cache import PipelineArtifactCache
+from cogniverse_core.common.cache.base import CacheManager, CacheConfig
+from cogniverse_core.common.cache.pipeline_cache import PipelineArtifactCache
 
 # Setup cache
 config = CacheConfig(
@@ -2396,7 +2397,7 @@ value = await get_with_retry(cache_manager, key)
 
 ```python
 import pytest
-from src.common.cache.base import CacheManager, CacheConfig
+from cogniverse_core.common.cache.base import CacheManager, CacheConfig
 
 @pytest.mark.asyncio
 async def test_cache_set_and_get():
@@ -2496,7 +2497,7 @@ async def test_tier_population():
 
 ```python
 import numpy as np
-from src.common.cache.embedding_cache import EmbeddingCache
+from cogniverse_core.common.cache.embedding_cache import EmbeddingCache
 
 @pytest.mark.asyncio
 async def test_embedding_binary_serialization():
@@ -2523,7 +2524,7 @@ async def test_embedding_binary_serialization():
 #### 5. Pipeline Artifact Caching
 
 ```python
-from src.common.cache.pipeline_cache import PipelineArtifactCache
+from cogniverse_core.common.cache.pipeline_cache import PipelineArtifactCache
 
 @pytest.mark.asyncio
 async def test_keyframe_caching():
@@ -2641,8 +2642,8 @@ The Cache Module provides **production-ready, multi-tiered caching** for the Cog
 - Common Module: `docs/study_guides/03_COMMON_MODULE.md` (configuration)
 
 **Source Files:**
-- Base Classes: `src/common/cache/base.py:13-251`
-- Registry: `src/common/cache/registry.py:10-45`
-- Embedding Cache: `src/common/cache/embedding_cache.py:53-201`
-- Pipeline Cache: `src/common/cache/pipeline_cache.py:47-479`
-- Filesystem Backend: `src/common/cache/backends/structured_filesystem.py:35-535`
+- Base Classes: `libs/core/cogniverse_core/common/cache/base.py:13-251`
+- Registry: `libs/core/cogniverse_core/common/cache/registry.py:10-45`
+- Embedding Cache: `libs/core/cogniverse_core/common/cache/embedding_cache.py:53-201`
+- Pipeline Cache: `libs/core/cogniverse_core/common/cache/pipeline_cache.py:47-479`
+- Filesystem Backend: `libs/core/cogniverse_core/common/cache/backends/structured_filesystem.py:35-535`

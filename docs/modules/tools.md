@@ -1,5 +1,7 @@
 # Tools Module - Comprehensive Study Guide
 
+**Package:** `cogniverse_agents`
+**Module Location:** `libs/agents/cogniverse_agents/tools/`
 **Last Updated:** 2025-10-07
 **Purpose:** Agent-to-Agent (A2A) communication, video playback, and temporal pattern extraction tools
 
@@ -36,12 +38,12 @@ from google.genai.types import Part
 from dateutil import parser as date_parser
 
 # Internal
-from src.common.config_utils import get_config
+from cogniverse_core.config.unified_config import get_config
 ```
 
-### Module Location
+## Package Structure
 ```
-src/tools/
+libs/agents/cogniverse_agents/tools/
 ├── a2a_utils.py           # A2A protocol client and utilities
 ├── video_player_tool.py   # Interactive video player tool
 └── temporal_extractor.py  # Temporal pattern recognition
@@ -155,7 +157,7 @@ class FilePart(BaseModel):
 - Support for multi-modal content (text, data, files)
 - Validation of message structure
 
-**Source:** `src/tools/a2a_utils.py:10-26`
+**Source:** `libs/agents/cogniverse_agents/tools/a2a_utils.py:10-26`
 
 ---
 
@@ -217,7 +219,7 @@ class A2AClient:
 - `httpx.RequestError`: Connection failures
 - `httpx.HTTPStatusError`: Non-200 responses
 
-**Source:** `src/tools/a2a_utils.py:43-115`
+**Source:** `libs/agents/cogniverse_agents/tools/a2a_utils.py:43-115`
 
 ---
 
@@ -249,7 +251,7 @@ def format_search_results(
     """Format search results for display (text, video, or generic)."""
 ```
 
-**Source:** `src/tools/a2a_utils.py:118-212`
+**Source:** `libs/agents/cogniverse_agents/tools/a2a_utils.py:118-212`
 
 ---
 
@@ -329,7 +331,7 @@ class VideoPlayerTool(BaseTool):
   - Left/Right arrows: Seek ±5s
   - Up/Down arrows: Volume ±10%
 
-**Source:** `src/tools/video_player_tool.py:19-563`
+**Source:** `libs/agents/cogniverse_agents/tools/video_player_tool.py:19-563`
 
 ---
 
@@ -400,7 +402,7 @@ class EnhancedTemporalExtractor:
 # "weekend" → {start_date: "2025-09-28", end_date: "2025-09-29"}
 ```
 
-**Source:** `src/tools/temporal_extractor.py:14-381`
+**Source:** `libs/agents/cogniverse_agents/tools/temporal_extractor.py:14-381`
 
 ---
 
@@ -409,7 +411,7 @@ class EnhancedTemporalExtractor:
 ### Example 1: A2A Agent Communication
 
 ```python
-from src.tools.a2a_utils import A2AClient, create_data_message
+from cogniverse_agents.tools.a2a_utils import A2AClient, create_data_message
 
 # Initialize client
 client = A2AClient(timeout=30.0)
@@ -449,7 +451,7 @@ print(f"Results: {len(response['results'])} videos found")
 ### Example 2: Agent Discovery
 
 ```python
-from src.tools.a2a_utils import discover_agents
+from cogniverse_agents.tools.a2a_utils import discover_agents
 
 # Discover capabilities of multiple agents
 agent_urls = [
@@ -490,7 +492,7 @@ SummarizerAgent:
 ### Example 3: Interactive Video Player
 
 ```python
-from src.tools.video_player_tool import VideoPlayerTool
+from cogniverse_agents.tools.video_player_tool import VideoPlayerTool
 import json
 
 # Initialize tool
@@ -547,7 +549,7 @@ if result["success"]:
 ### Example 4: Temporal Pattern Extraction
 
 ```python
-from src.tools.temporal_extractor import EnhancedTemporalExtractor
+from cogniverse_agents.tools.temporal_extractor import EnhancedTemporalExtractor
 
 # Initialize extractor
 temporal = EnhancedTemporalExtractor()
@@ -608,7 +610,7 @@ Date Range: 2024-01-10 to 2024-01-20
 ### Example 5: Multi-Agent Workflow with A2A
 
 ```python
-from src.tools.a2a_utils import A2AClient, format_search_results
+from cogniverse_agents.tools.a2a_utils import A2AClient, format_search_results
 
 client = A2AClient()
 
@@ -622,7 +624,7 @@ modality = routing_response["routing_decision"]["search_modality"]
 print(f"Routed to: {modality} search")
 
 # Step 2: Extract temporal pattern
-from src.tools.temporal_extractor import enhanced_temporal
+from cogniverse_agents.tools.temporal_extractor import enhanced_temporal
 pattern = enhanced_temporal.extract_temporal_pattern(
     "show me fire scenes from last week"
 )
@@ -680,7 +682,7 @@ if search_response["results"]:
 #### Test A2A Communication
 ```python
 import pytest
-from src.tools.a2a_utils import A2AClient, create_data_message
+from cogniverse_agents.tools.a2a_utils import A2AClient, create_data_message
 
 @pytest.mark.asyncio
 async def test_a2a_send_task():
@@ -709,7 +711,7 @@ async def test_agent_discovery():
 
 #### Test Temporal Extraction
 ```python
-from src.tools.temporal_extractor import EnhancedTemporalExtractor
+from cogniverse_agents.tools.temporal_extractor import EnhancedTemporalExtractor
 
 def test_temporal_patterns():
     extractor = EnhancedTemporalExtractor()
@@ -742,7 +744,7 @@ def test_date_resolution():
 #### Test Video Player Tool
 ```python
 import pytest
-from src.tools.video_player_tool import VideoPlayerTool
+from cogniverse_agents.tools.video_player_tool import VideoPlayerTool
 
 @pytest.mark.asyncio
 async def test_video_player_generation():
@@ -800,7 +802,7 @@ async def test_video_player_generation():
 
 **A2A Communication Errors:**
 ```python
-from src.tools.a2a_utils import A2AClient
+from cogniverse_agents.tools.a2a_utils import A2AClient
 import httpx
 
 client = A2AClient(timeout=30.0)
@@ -833,7 +835,7 @@ if not result["success"]:
 
 **Temporal Pattern Errors:**
 ```python
-from src.tools.temporal_extractor import enhanced_temporal
+from cogniverse_agents.tools.temporal_extractor import enhanced_temporal
 
 pattern = enhanced_temporal.extract_temporal_pattern("invalid query")
 
@@ -1021,6 +1023,6 @@ The Tools Module provides essential utilities for agent communication, video pla
 - `12_UTILS_MODULE.md` - Shared utilities and configuration
 
 **Key Source Files:**
-- `src/tools/a2a_utils.py` - A2A protocol implementation
-- `src/tools/video_player_tool.py` - Interactive video player
-- `src/tools/temporal_extractor.py` - Temporal pattern recognition
+- `libs/agents/cogniverse_agents/tools/a2a_utils.py` - A2A protocol implementation
+- `libs/agents/cogniverse_agents/tools/video_player_tool.py` - Interactive video player
+- `libs/agents/cogniverse_agents/tools/temporal_extractor.py` - Temporal pattern recognition

@@ -1,8 +1,9 @@
 # Cogniverse Study Guide: Scripts & Operations Module
 
-**Last Updated:** 2025-10-07
+**Last Updated:** 2025-10-15
 **Module Path:** `scripts/`
-**Purpose:** Operational scripts for system deployment, ingestion, optimization, experimentation, and management
+**SDK Packages:** Uses `cogniverse_core`, `cogniverse_agents`, `cogniverse_vespa`
+**Purpose:** Operational scripts for system deployment, ingestion, optimization, experimentation, and tenant-aware management
 
 ---
 
@@ -31,10 +32,12 @@ The Scripts & Operations module provides command-line tools for:
 ### Key Features
 - **Builder Pattern Ingestion**: Fluent API for configurable pipeline construction
 - **Multi-Profile Support**: Process videos with multiple embedding strategies simultaneously
+- **Tenant-Aware Processing**: Per-tenant schema isolation and configuration
 - **Async Processing**: Concurrent video processing with configurable limits
-- **Phoenix Integration**: Experiment tracking with visual analytics
-- **Schema Management**: JSON-based schema deployment and validation
+- **Phoenix Integration**: Per-tenant experiment tracking with visual analytics
+- **Schema Management**: JSON-based tenant-specific schema deployment
 - **Interactive Dashboards**: Streamlit tabs for analytics, configuration, and memory management
+- **UV Workspace**: All scripts use `uv run` for SDK package management
 
 ### Script Categories
 
@@ -244,6 +247,7 @@ graph TB
 --output_dir PATH        # Output directory for processed data
 --backend {byaldi,vespa} # Search backend (default: vespa)
 --profile PROFILES       # Processing profiles (space-separated)
+--tenant-id TENANT       # Tenant ID for schema isolation (default: "default")
 --max-concurrent INT     # Max concurrent videos (default: 3)
 --max-frames INT         # Maximum frames per video
 --test-mode             # Use test mode with limited frames
@@ -291,14 +295,16 @@ pipeline = (create_pipeline()
     .build())
 ```
 
-**Multi-Profile Processing:**
+**Multi-Profile Processing (Tenant-Aware):**
 ```python
-# Process with multiple profiles simultaneously
+# Process with multiple profiles simultaneously for specific tenant
+from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline
+
 for profile in ["video_colpali_smol500_mv_frame",
                 "video_videoprism_base_mv_chunk_30s"]:
-    pipeline = build_simple_pipeline(
-        video_dir=video_dir,
-        schema=profile,
+    pipeline = VideoIngestionPipeline(
+        profile=profile,
+        tenant_id="acme_corp",  # Tenant-specific processing
         backend="vespa"
     )
     results = await pipeline.process_videos_concurrent(
@@ -324,15 +330,19 @@ for profile in ["video_colpali_smol500_mv_frame",
 **Command Line Arguments:**
 ```python
 schema_file              # Path to JSON schema file (required)
+--tenant-id TENANT       # Tenant ID for schema isolation (default: "default")
 --config-host HOST       # Vespa config server host (default: localhost)
 --config-port PORT       # Config server port (default: 19071)
 --data-host HOST         # Vespa data endpoint host (default: localhost)
 --data-port PORT         # Data endpoint port (default: 8080)
 ```
 
-**Deployment Process:**
+**Deployment Process (Tenant-Aware):**
 ```python
-def deploy_json_schema(schema_file, vespa_host, config_port, data_port):
+def deploy_json_schema(schema_file, tenant_id, vespa_host, config_port, data_port):
+    from cogniverse_vespa.backends.json_schema_parser import JsonSchemaParser
+    from cogniverse_vespa.backends.vespa_schema_manager import VespaSchemaManager
+
     # 1. Load JSON schema
     with open(schema_path, 'r') as f:
         schema_config = json.load(f)
@@ -341,23 +351,22 @@ def deploy_json_schema(schema_file, vespa_host, config_port, data_port):
     parser = JsonSchemaParser()
     schema = parser.parse_schema(schema_config)
 
-    # 3. Create application package
-    app_package = ApplicationPackage(name=schema_name)
-    app_package.add_schema(schema)
+    # 3. Add tenant suffix to schema name
+    tenant_schema_name = f"{schema.name}_{tenant_id}"
 
-    # 4. Generate ZIP package
-    app_zip = app_package.to_zip()
-
-    # 5. Deploy via HTTP
-    response = requests.post(
-        f"http://{vespa_host}:{config_port}/application/v2/tenant/default/prepareandactivate",
-        headers={"Content-Type": "application/zip"},
-        data=app_zip,
-        timeout=60
+    # 4. Deploy using VespaSchemaManager
+    schema_manager = VespaSchemaManager(
+        vespa_url=f"http://{vespa_host}",
+        vespa_config_port=config_port
+    )
+    schema_manager.deploy_schema(
+        schema=schema,
+        tenant_id=tenant_id,
+        schema_suffix=f"_{tenant_id}"
     )
 
-    # 6. Verify deployment
-    verify_deployment(schema_name, vespa_host, data_port)
+    # 5. Verify deployment
+    verify_deployment(tenant_schema_name, vespa_host, data_port)
 ```
 
 **Verification:**
@@ -373,12 +382,22 @@ def verify_deployment(schema_name, vespa_host, data_port):
 
 **Example Usage:**
 ```bash
-# Deploy agent memories schema
-python scripts/deploy_json_schema.py configs/schemas/agent_memories_schema.json
+# Deploy agent memories schema for default tenant
+uv run python scripts/deploy_json_schema.py \
+  configs/schemas/agent_memories_schema.json \
+  --tenant-id default
+
+# Deploy for specific tenant
+uv run python scripts/deploy_json_schema.py \
+  configs/schemas/video_colpali_smol500_mv_frame.json \
+  --tenant-id acme_corp
 
 # Deploy to remote Vespa instance
-python scripts/deploy_json_schema.py configs/schemas/config_metadata_schema.json \
-  --config-host vespa.example.com --config-port 19071
+uv run python scripts/deploy_json_schema.py \
+  configs/schemas/config_metadata_schema.json \
+  --tenant-id acme_corp \
+  --config-host vespa.example.com \
+  --config-port 19071
 ```
 
 ---
@@ -389,36 +408,41 @@ python scripts/deploy_json_schema.py configs/schemas/config_metadata_schema.json
 
 **Location:** `scripts/deploy_all_schemas.py` (104 lines)
 
-**Deployment Workflow:**
+**Deployment Workflow (Multi-Tenant):**
 ```python
 def main():
+    from cogniverse_vespa.backends.vespa_schema_manager import VespaSchemaManager
+    from cogniverse_vespa.backends.json_schema_parser import JsonSchemaParser
+
     # 1. Get all schema files
     schemas_dir = Path("configs/schemas")
     schema_files = list(schemas_dir.glob("*.json"))
 
-    # 2. Create application package
-    app_package = ApplicationPackage(name="videosearch")
+    # 2. Define tenants
+    tenants = ["acme_corp", "globex_inc", "default"]
 
-    # 3. Parse and add each schema
-    for schema_file in schema_files:
-        parser = JsonSchemaParser()
-        schema = parser.load_schema_from_json_file(str(schema_file))
-        app_package.add_schema(schema)
+    # 3. Deploy schemas for each tenant
+    for tenant_id in tenants:
+        print(f"Deploying schemas for tenant: {tenant_id}")
 
-    # 4. Add validation overrides (allow schema removal)
-    until_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-    validation = Validation(
-        validation_id="schema-removal",
-        until=until_date
-    )
-    app_package.validations.append(validation)
+        schema_manager = VespaSchemaManager(
+            vespa_url="http://localhost:8080",
+            vespa_config_port=19071
+        )
 
-    # 5. Deploy all schemas at once
-    schema_manager._deploy_package(app_package)
+        # 4. Parse and deploy each schema with tenant suffix
+        for schema_file in schema_files:
+            parser = JsonSchemaParser()
+            schema = parser.load_schema_from_json_file(str(schema_file))
 
-    # 6. Extract ranking strategies from all schemas
-    strategies = extract_all_ranking_strategies(schemas_dir)
-    save_ranking_strategies(strategies, schemas_dir / "ranking_strategies.json")
+            # Deploy with tenant-specific name
+            schema_manager.deploy_schema(
+                schema=schema,
+                tenant_id=tenant_id,
+                schema_suffix=f"_{tenant_id}"  # e.g., video_colpali_mv_frame_acme_corp
+            )
+
+            print(f"  ✓ Deployed: {schema.name}_{tenant_id}")
 ```
 
 **Benefits:**
@@ -438,11 +462,12 @@ def main():
 **Setup Steps:**
 ```python
 def main():
+    from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline
+
     # 1. Check dependencies
     required_modules = [
         ("torch", "PyTorch"),
         ("transformers", "Transformers"),
-        ("byaldi", "Byaldi"),
         ("colpali_engine", "ColPali Engine"),
         ("faster_whisper", "Faster Whisper"),
         ("PIL", "Pillow"),
@@ -453,16 +478,20 @@ def main():
     directories = [
         "data/videos",
         "data/text",
-        "data/indexes",
-        ".byaldi"
+        "outputs/ingestion",
+        "outputs/logs"
     ]
 
     # 3. Create sample content
     create_sample_content()  # README files
     download_sample_videos()  # Test video with imageio
 
-    # 4. Setup video index
-    setup_byaldi_index()  # Run ingestion pipeline
+    # 4. Setup video ingestion (using SDK pipeline)
+    pipeline = VideoIngestionPipeline(
+        profile="video_colpali_smol500_mv_frame",
+        tenant_id="default",
+        backend="vespa"
+    )
 ```
 
 **Sample Video Creation:**
@@ -511,15 +540,12 @@ http://localhost:8000
 **Step 1: Run Orchestrator**
 ```python
 def run_orchestrator(config_path="config.json"):
-    # Run orchestrator using new structure
-    cmd = [sys.executable, "-m", "src.optimizer.orchestrator",
-           "--config", config_path]
+    from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
 
-    result = subprocess.run(
-        cmd,
-        cwd=Path(__file__).parent.parent,
-        capture_output=True,
-        text=True,
+    # Run orchestrator using SDK package
+    orchestrator = OptimizationOrchestrator(config_path=config_path)
+
+    result = orchestrator.run_optimization(
         timeout=7200  # 2 hour timeout
     )
 
@@ -556,11 +582,11 @@ def deploy_production_api():
         subprocess.run(["modal", "secret", "create",
                        "huggingface-token", f"HF_TOKEN={hf_token}"])
 
-    # Deploy to Modal
-    cmd = ["modal", "deploy", "src/inference/modal_inference_service.py"]
+    # Deploy to Modal (uses SDK packages)
+    cmd = ["modal", "deploy", "scripts/modal_vlm_service.py"]
     result = subprocess.run(cmd, timeout=600)
 
-    return "https://agentic-router-production-route.modal.run"
+    return "https://cogniverse-production.modal.run"
 ```
 
 **Step 4: Test Production API**
@@ -765,6 +791,8 @@ python scripts/manage_datasets.py --info golden_eval_v1
 **Implementation:**
 ```python
 def main():
+    from cogniverse_core.evaluation.dataset_manager import DatasetManager
+
     dm = DatasetManager()
 
     if args.list:
@@ -800,8 +828,10 @@ def main():
 
 **1. Analytics Tab** (PhoenixAnalytics):
 ```python
-# Performance metrics over time
-analytics = PhoenixAnalytics()
+from cogniverse_core.telemetry.phoenix_analytics import PhoenixAnalytics
+
+# Performance metrics over time (tenant-aware)
+analytics = PhoenixAnalytics(tenant_id="acme_corp")
 metrics = analytics.get_performance_metrics(time_range="7d")
 
 # Display charts

@@ -1,179 +1,288 @@
-# Agents Module - Deep Dive Study Guide
+# Agents Module
 
-**Module:** `src/app/agents/`
-**Purpose:** Core agent implementations for multi-agent RAG system
-**Last Updated:** 2025-10-07
+**Package:** `libs/agents/cogniverse_agents/`
+**Purpose:** Agent implementations for multi-agent RAG system with multi-tenant support
+**Last Updated:** 2025-10-15
 
 ---
 
 ## Table of Contents
+
 1. [Module Overview](#module-overview)
-2. [Architecture Diagrams](#architecture-diagrams)
-3. [Core Classes](#core-classes)
-4. [Data Flow](#data-flow)
-5. [Usage Examples](#usage-examples)
-6. [Production Considerations](#production-considerations)
+2. [Package Structure](#package-structure)
+3. [Core Agents](#core-agents)
+4. [Agent Architecture](#agent-architecture)
+5. [Multi-Tenant Integration](#multi-tenant-integration)
+6. [Usage Examples](#usage-examples)
+7. [Testing](#testing)
 
 ---
 
 ## Module Overview
 
-The Agents Module contains the intelligent components of the system. Each agent is specialized for a specific task and communicates via the A2A (Agent-to-Agent) protocol.
+The Agents package (`cogniverse-agents`) provides concrete agent implementations for the Cogniverse multi-agent RAG system. All agents are tenant-aware and integrate with the core SDK packages.
 
 ### Key Agents
-1. **MultiAgentOrchestrator** - Coordinates multi-agent workflows
-2. **RoutingAgent** - Routes queries with DSPy + relationship extraction
-3. **VideoSearchAgent** - Multi-modal video search (text/video/image)
-4. **SummarizerAgent** - Intelligent content summarization with VLM
-5. **DetailedReportAgent** - Comprehensive analysis and reporting
-6. **MemoryAwareMixin** - Mem0 conversation memory integration
+
+1. **RoutingAgent** - Query routing with DSPy optimization and relationship extraction
+2. **VideoSearchAgent** - Multi-modal video search (ColPali, VideoPrism)
+3. **ComposingAgent** - Multi-agent orchestration and workflow coordination
+4. **Optimization Agents** - Query optimization and enhancement
 
 ### Design Principles
-- **Separation of Concerns**: Each agent has a single, well-defined responsibility
-- **A2A Protocol**: Standard message format for inter-agent communication
+
+- **Tenant-Aware**: All agents require `tenant_id` parameter
+- **Memory-Enabled**: Integration with Mem0 via MemoryAwareMixin (from core)
+- **Base Class Inheritance**: Extend BaseAgent from cogniverse_core
 - **DSPy Integration**: Declarative LLM programming for optimization
-- **Memory-Aware**: All agents can leverage conversation memory
-- **Production-Ready**: Health checks, graceful degradation, comprehensive logging
+- **Production-Ready**: Health checks, graceful degradation, telemetry
 
----
+### Package Dependencies
 
-## Architecture Diagrams
-
-### Multi-Agent Workflow
-
-```mermaid
-graph TB
-    UserQuery[User Query] --> Orchestrator[MultiAgentOrchestrator]
-
-    Orchestrator --> Analysis[1. Analyze Query Complexity<br/>2. Build Dependency Graph<br/>3. Select Required Agents<br/>4. Plan Execution Order]
-
-    Analysis --> RoutingAgent[Routing Agent<br/>Port 8001]
-    Analysis --> VideoAgent[Video Search Agent<br/>Port 8002]
-    Analysis --> SummarizerAgent[Summarizer Agent<br/>Port 8004]
-
-    RoutingAgent --> A2A[A2A Task Messages<br/>JSON + Binary Data]
-    VideoAgent --> A2A
-    SummarizerAgent --> A2A
-
-    A2A --> Response[Synthesized Response]
-
-    style UserQuery fill:#e1f5ff
-    style Orchestrator fill:#fff4e1
-    style Analysis fill:#f5f5f5
-    style RoutingAgent fill:#ffe1e1
-    style VideoAgent fill:#ffe1e1
-    style SummarizerAgent fill:#ffe1e1
-    style A2A fill:#f0f0f0
-    style Response fill:#e1ffe1
-```
-
-### Routing Agent Decision Flow
-
-```mermaid
-graph TB
-    UserQuery[User Query] --> ProcessQuery[RoutingAgent.process_query]
-
-    ProcessQuery --> Phase1[Phase 1: Entity Extraction<br/>• GLiNER for named entities<br/>• Confidence scoring]
-    Phase1 --> Phase2[Phase 2: Relationship Extraction<br/>• Pattern matching<br/>• Semantic analysis]
-    Phase2 --> Phase3[Phase 3: Query Enhancement<br/>• Context enrichment<br/>• Relationship-aware expansion]
-    Phase3 --> Phase4[Phase 4: Agent Selection<br/>• Video vs Text vs Both<br/>• GRPO optimization]
-
-    Phase4 --> Decision[RoutingDecision<br/>• recommended_agent<br/>• enhanced_query<br/>• entities + relationships<br/>• confidence_score]
-
-    style UserQuery fill:#e1f5ff
-    style ProcessQuery fill:#fff4e1
-    style Phase1 fill:#f5f5f5
-    style Phase2 fill:#f5f5f5
-    style Phase3 fill:#f5f5f5
-    style Phase4 fill:#f5f5f5
-    style Decision fill:#e1ffe1
-```
-
-### Video Search Agent Flow
-
-```mermaid
-graph TB
-    Input[Input: Query<br/>text/video/image] --> Step1[1. Memory Context Retrieval<br/>if memory enabled]
-    Step1 --> Step2[2. Query Encoding<br/>• Text: ColPali/VideoPrism<br/>• Video: Frame extraction<br/>• Image: Direct encoding]
-    Step2 --> Step3[3. Vespa Vector Search<br/>• Hybrid ranking BM25 + neural<br/>• Top-K results]
-    Step3 --> Step4[4. Relationship Boost<br/>if enhanced<br/>• Entity matching<br/>• Relationship scoring<br/>• Result reranking]
-    Step4 --> Step5[5. Memory Update<br/>• Store success/failure<br/>• Learn from patterns]
-    Step5 --> Output[Return: Ranked search results]
-
-    style Input fill:#e1f5ff
-    style Step1 fill:#f5f5f5
-    style Step2 fill:#f5f5f5
-    style Step3 fill:#fff4e1
-    style Step4 fill:#f5f5f5
-    style Step5 fill:#f5f5f5
-    style Output fill:#e1ffe1
+```python
+# Agents package depends on:
+from cogniverse_core.agents.base_agent import BaseAgent
+from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_core.telemetry.manager import TelemetryManager
+from cogniverse_core.config.unified_config import SystemConfig
 ```
 
 ---
 
-## Core Classes
+## Package Structure
+
+```
+libs/agents/cogniverse_agents/
+├── __init__.py
+├── routing/                          # Routing agents
+│   ├── __init__.py
+│   ├── routing_agent.py             # Main routing agent
+│   ├── modality_cache.py            # Query modality caching
+│   ├── parallel_executor.py         # Parallel agent execution
+│   └── relationship_extractor.py    # Entity relationship extraction
+├── search/                           # Search agents
+│   ├── __init__.py
+│   ├── video_search_agent.py        # Multi-modal video search
+│   ├── multi_modal_reranker.py      # Reranking logic
+│   └── query_processor.py           # Query processing
+├── orchestration/                    # Composing agents
+│   ├── __init__.py
+│   └── composing_agent.py           # Multi-agent orchestrator
+└── optimization/                     # Optimization agents
+    ├── __init__.py
+    ├── query_optimizer.py           # Query enhancement
+    └── relationship_boost.py        # Relationship-based boosting
+```
+
+**Key Files** (82 Python files total):
+- `routing/routing_agent.py`: 347 lines
+- `search/video_search_agent.py`: 612 lines
+- `orchestration/composing_agent.py`: 289 lines
+
+---
+
+## Core Agents
 
 ### 1. RoutingAgent
 
-**File:** `src/app/agents/routing_agent.py`
-**Lines:** 50-600
-**Purpose:** Intelligent query routing with relationship extraction
+**Location**: `libs/agents/cogniverse_agents/routing/routing_agent.py`
+**Purpose**: Intelligent query routing with relationship extraction and DSPy optimization
+**Base Classes**: `BaseAgent`, `MemoryAwareMixin`, `HealthCheckMixin`
 
-#### Class Hierarchy
+#### Architecture
+
+```mermaid
+graph TB
+    Query[User Query] --> RoutingAgent[RoutingAgent<br/>tenant_id: acme]
+
+    RoutingAgent --> Memory[Get Memory Context<br/>Mem0MemoryManager]
+    Memory --> RoutingAgent
+
+    RoutingAgent --> EntityExtract[Extract Entities<br/>GLiNER / LangExtract]
+    EntityExtract --> RelExtract[Extract Relationships<br/>Pattern matching + LLM]
+    RelExtract --> QueryEnhance[Enhance Query<br/>Relationship context]
+    QueryEnhance --> DSPyOptimize[Agent Selection<br/>DSPy Module]
+    DSPyOptimize --> Decision[RoutingDecision<br/>+ selected agents<br/>+ enhanced query<br/>+ confidence]
+
+    Decision --> Telemetry[Record Span<br/>Phoenix project: acme_routing_agent]
+
+    style Query fill:#e1f5ff
+    style RoutingAgent fill:#fff4e1
+    style Decision fill:#e1ffe1
+```
+
+#### Class Definition
+
 ```python
-class RoutingAgent(DSPyRoutingMixin, A2AEndpointsMixin, HealthCheckMixin):
-    # Inherits DSPy integration, A2A protocol, and health checking
+# libs/agents/cogniverse_agents/routing/routing_agent.py
+
+from cogniverse_core.agents.base_agent import BaseAgent
+from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_core.agents.health_check_mixin import HealthCheckMixin
+from cogniverse_core.telemetry.manager import TelemetryManager
+
+class RoutingAgent(BaseAgent, MemoryAwareMixin, HealthCheckMixin):
+    """
+    Intelligent query routing with relationship extraction.
+
+    Multi-tenant aware - each tenant gets isolated routing context.
+    """
+
+    def __init__(
+        self,
+        tenant_id: str,  # REQUIRED - no default tenant
+        config: Optional[SystemConfig] = None
+    ):
+        """
+        Initialize routing agent for specific tenant.
+
+        Args:
+            tenant_id: Tenant identifier (e.g., "acme", "acme:production")
+            config: Optional system configuration
+        """
+        super().__init__(tenant_id=tenant_id, config=config)
+
+        # Initialize telemetry (tenant-scoped)
+        self.telemetry = TelemetryManager.get_instance(
+            tenant_id=tenant_id,
+            project_name="routing_agent"
+        )  # Creates project: {tenant_id}_routing_agent
+
+        # Initialize memory (tenant-scoped)
+        self.initialize_memory(
+            agent_name="routing_agent",
+            tenant_id=tenant_id
+        )
+
+        # DSPy modules (shared, but decisions per-tenant)
+        self._init_dspy_modules()
 ```
 
 #### Key Methods
 
-**`process_query(query: str, context: dict) -> RoutingDecision`**
-- **Purpose:** Main entry point for routing decisions
-- **Input:** User query string + optional context
-- **Output:** RoutingDecision with agent selection + enhanced query
-- **Process:**
-  1. Extract entities using GLiNER/LangExtract
-  2. Identify relationships between entities
-  3. Enhance query with relationship context
-  4. Select optimal agent using DSPy module
-  5. Apply GRPO optimization (if enabled)
+**`route_query(query: str, context: Optional[Dict] = None) -> RoutingDecision`**
 
-**Example:**
+Main routing entry point.
+
 ```python
-routing_agent = RoutingAgent()
-decision = await routing_agent.process_query(
-    query="Show me videos where Einstein discusses quantum physics",
-    context={"user_id": "user_123"}
-)
+async def route_query(
+    self,
+    query: str,
+    context: Optional[Dict] = None
+) -> RoutingDecision:
+    """
+    Route query with entity/relationship extraction.
 
-# RoutingDecision:
-# - recommended_agent: "video_search"
-# - enhanced_query: "Videos featuring Albert Einstein discussing quantum mechanics and wave-particle duality"
-# - entities: [{"text": "Einstein", "type": "PERSON"}, {"text": "quantum physics", "type": "TOPIC"}]
-# - relationships: [{"subject": "Einstein", "relation": "discusses", "object": "quantum physics"}]
-# - confidence: 0.89
+    Args:
+        query: User query string
+        context: Optional context (user prefs, session data)
+
+    Returns:
+        RoutingDecision with selected agents and enhanced query
+    """
+    with self.telemetry.trace("route_query") as span:
+        span.set_attribute("tenant_id", self.tenant_id)
+        span.set_attribute("query", query)
+
+        # 1. Get memory context
+        memory_context = self.get_relevant_context(query, top_k=5)
+
+        # 2. Extract entities
+        entities = self._extract_entities(query)
+
+        # 3. Extract relationships
+        relationships = self._extract_relationships(query, entities)
+
+        # 4. Enhance query
+        enhanced_query = self._enhance_query(query, entities, relationships)
+
+        # 5. Select agents (DSPy)
+        decision = self._select_agents(enhanced_query, entities, relationships)
+
+        # 6. Record decision
+        span.set_attribute("selected_agents", decision.selected_agents)
+        span.set_attribute("confidence", decision.confidence)
+
+        return decision
 ```
 
-**`extract_entities(query: str) -> List[Dict]`**
-- **Purpose:** Named entity recognition
-- **Strategy:** Tiered approach
-  - Tier 1: GLiNER (fast, entity-based)
-  - Tier 2: LLM (relationship-aware)
-  - Tier 3: LangExtract (structured output)
+**`_extract_entities(query: str) -> List[Dict]`**
 
-**`enhance_query(query: str, entities: List, relationships: List) -> str`**
-- **Purpose:** Enrich query with relationship context
-- **Technique:** Relationship-aware query expansion
+Extract named entities using GLiNER or LangExtract.
+
+```python
+def _extract_entities(self, query: str) -> List[Dict]:
+    """
+    Extract named entities from query.
+
+    Returns:
+        List of entities: [{"text": "Einstein", "type": "PERSON"}, ...]
+    """
+    # Use GLiNER for fast entity extraction
+    from gliner import GLiNER
+
+    model = GLiNER.from_pretrained("urchade/gliner_multi-v2.1")
+    entities = model.predict_entities(
+        query,
+        labels=["person", "organization", "location", "topic", "date"]
+    )
+
+    return [
+        {"text": e["text"], "type": e["label"].upper()}
+        for e in entities
+    ]
+```
+
+**`_extract_relationships(query: str, entities: List[Dict]) -> List[Dict]`**
+
+Extract relationships between entities.
+
+```python
+def _extract_relationships(
+    self,
+    query: str,
+    entities: List[Dict]
+) -> List[Dict]:
+    """
+    Extract relationships between entities.
+
+    Returns:
+        List: [{"subject": "Einstein", "relation": "discusses", "object": "physics"}, ...]
+    """
+    # Pattern-based extraction + LLM fallback
+    relationships = []
+
+    # Pattern matching for common relationships
+    patterns = {
+        "discusses": r"(\w+) discusses (\w+)",
+        "works_on": r"(\w+) works on (\w+)",
+        "related_to": r"(\w+) related to (\w+)"
+    }
+
+    for relation_type, pattern in patterns.items():
+        matches = re.finditer(pattern, query, re.IGNORECASE)
+        for match in matches:
+            relationships.append({
+                "subject": match.group(1),
+                "relation": relation_type,
+                "object": match.group(2)
+            })
+
+    return relationships
+```
 
 #### Configuration
+
 ```python
-{
-    "dspy_enabled": true,
-    "grpo_enabled": true,
+# Routing agent configuration
+routing_agent_config = {
+    "dspy_enabled": True,
+    "grpo_enabled": True,
     "confidence_threshold": 0.7,
-    "memory_enabled": true,
-    "entity_extraction": "gliner",  # or "llm", "langextract"
-    "relationship_extraction": true
+    "memory_enabled": True,
+    "entity_extraction_method": "gliner",  # or "langextract", "llm"
+    "relationship_extraction_enabled": True,
+    "cache_ttl_seconds": 300
 }
 ```
 
@@ -181,431 +290,627 @@ decision = await routing_agent.process_query(
 
 ### 2. VideoSearchAgent
 
-**File:** `src/app/agents/video_search_agent.py`
-**Lines:** 236-1273
-**Purpose:** Multi-modal video search with memory integration
+**Location**: `libs/agents/cogniverse_agents/search/video_search_agent.py`
+**Purpose**: Multi-modal video search with ColPali and VideoPrism embeddings
+**Base Classes**: `BaseAgent`, `MemoryAwareMixin`, `HealthCheckMixin`
 
-#### Key Features
-- **Multi-Modal Support**: Text, video files, image files
-- **Memory-Aware**: Learns from search patterns
-- **Relationship-Enhanced**: Boosts results based on entity/relationship matches
-- **Production-Ready**: Health checks, error handling, metrics
+#### Multi-Modal Support
 
-#### Key Methods
+```mermaid
+graph LR
+    Input[Input] --> TextQuery[Text Query]
+    Input --> VideoFile[Video File]
+    Input --> ImageFile[Image File]
 
-**`search_by_text(query: str, top_k: int) -> List[Dict]`**
-- **Purpose:** Text-to-video search
-- **Encoding:** ColPali or VideoPrism text encoder
-- **Ranking:** Hybrid (BM25 + neural embeddings)
+    TextQuery --> ColPaliEncode[ColPali Text Encoder]
+    TextQuery --> VideoPrismEncode[VideoPrism Text Encoder]
 
-**Example:**
-```python
-agent = VideoSearchAgent(
-    vespa_url="http://localhost",
-    vespa_port=8080,
-    profile="video_colpali_smol500_mv_frame"
-)
+    VideoFile --> FrameExtract[Extract Frames<br/>1 FPS]
+    FrameExtract --> VideoEncode[Encode Frames<br/>ColPali/VideoPrism]
 
-results = agent.search_by_text(
-    query="Machine learning tutorial",
-    top_k=10,
-    ranking="hybrid_binary_bm25_no_description"
-)
+    ImageFile --> ImageEncode[Encode Image<br/>ColPali/VideoPrism]
 
-# Results:
-# [
-#   {
-#     "video_id": "vid_123",
-#     "title": "ML Basics Tutorial",
-#     "score": 0.87,
-#     "keyframes": [...],
-#     "metadata": {...}
-#   },
-#   ...
-# ]
+    ColPaliEncode --> VespaSearch[Vespa Search<br/>Schema: video_frames_{tenant_id}]
+    VideoPrismEncode --> VespaSearch
+    VideoEncode --> VespaSearch
+    ImageEncode --> VespaSearch
+
+    VespaSearch --> Rerank[Rerank Results<br/>Relationship boost]
+    Rerank --> Results[Ranked Results]
 ```
 
-**`search_by_video(video_data: bytes, filename: str, top_k: int) -> List[Dict]`**
-- **Purpose:** Video-to-video similarity search
-- **Processing:**
-  1. Save video to temp file
-  2. Extract frames (1 FPS or every 30 frames)
-  3. Encode frames using query encoder
-  4. Search Vespa with frame embeddings
-  5. Clean up temp files
+#### Class Definition
 
-**`search_with_routing_decision(decision: RoutingDecision) -> Dict`**
-- **Purpose:** Enhanced search using routing context
-- **Enhancement:**
-  - Uses enhanced query from routing
-  - Applies entity matching boost
-  - Scores relationship relevance
-  - Reranks results
-
-#### Memory Integration
 ```python
-# Memory is automatically used if initialized
-agent.initialize_memory(
-    agent_name="video_agent",
-    tenant_id="tenant_123"
-)
+# libs/agents/cogniverse_agents/search/video_search_agent.py
 
-# Search automatically:
-# 1. Retrieves relevant context from past searches
-# 2. Stores successful patterns
-# 3. Learns from failures
-```
+from cogniverse_core.agents.base_agent import BaseAgent
+from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_vespa.backends.vespa_search_client import VespaSearchClient
+from cogniverse_vespa.tenant.tenant_schema_manager import TenantSchemaManager
 
----
+class VideoSearchAgent(BaseAgent, MemoryAwareMixin):
+    """
+    Multi-modal video search agent with tenant isolation.
 
-### 3. SummarizerAgent
+    Supports:
+    - Text-to-video search (ColPali, VideoPrism)
+    - Video-to-video search (similarity)
+    - Image-to-video search (visual similarity)
+    """
 
-**File:** `src/app/agents/summarizer_agent.py`
-**Lines:** 107-400
-**Purpose:** Intelligent summarization with VLM and thinking phase
+    def __init__(
+        self,
+        tenant_id: str,  # REQUIRED
+        vespa_host: str = "localhost",
+        vespa_port: int = 8080,
+        profile: str = "video_colpali_smol500_mv_frame"
+    ):
+        """
+        Initialize video search agent.
 
-#### DSPy Signature
-```python
-class SummaryGenerationSignature(dspy.Signature):
-    """Generate structured summaries with key insights."""
+        Args:
+            tenant_id: Tenant identifier
+            vespa_host: Vespa endpoint
+            vespa_port: Vespa port
+            profile: Search profile (determines schema)
+        """
+        super().__init__(tenant_id=tenant_id)
 
-    content = dspy.InputField(desc="Search results content to summarize")
-    query = dspy.InputField(desc="Original user query")
-    summary_type = dspy.InputField(desc="Type: brief, comprehensive, detailed")
+        # Ensure tenant schema exists
+        schema_manager = TenantSchemaManager(
+            vespa_url=vespa_host,
+            vespa_port=vespa_port
+        )
+        schema_manager.ensure_tenant_schema_exists(tenant_id, profile)
 
-    summary = dspy.OutputField(desc="Generated summary text")
-    key_points = dspy.OutputField(desc="List of key points (comma-separated)")
-    confidence_score = dspy.OutputField(desc="Confidence in summary (0.0-1.0)")
-```
-
-#### Key Methods
-
-**`summarize(request: SummaryRequest) -> SummaryResult`**
-- **Purpose:** Multi-phase intelligent summarization
-- **Phases:**
-  1. **Thinking Phase**: Analyze content, identify themes
-  2. **Visual Analysis**: Extract visual insights (if enabled)
-  3. **DSPy Generation**: Generate structured summary
-  4. **Confidence Assessment**: Evaluate summary quality
-
-**Example:**
-```python
-summarizer = SummarizerAgent()
-
-request = SummaryRequest(
-    query="AI developments",
-    search_results=[...],  # Search results from VideoSearchAgent
-    summary_type="comprehensive",
-    include_visual_analysis=True,
-    max_results_to_analyze=10
-)
-
-result = await summarizer.summarize(request)
-
-# SummaryResult:
-# - summary: "Comprehensive overview..."
-# - key_points: ["Point 1", "Point 2", ...]
-# - visual_insights: ["Visual element 1", ...]
-# - confidence_score: 0.92
-# - thinking_phase: ThinkingPhase(...)
-```
-
-**`summarize_with_routing_context(enhanced_request) -> SummaryResult`**
-- **Purpose:** Relationship-aware summarization
-- **Enhancement:** Includes entity/relationship analysis in summary
-
----
-
-### 4. DetailedReportAgent
-
-**File:** `src/app/agents/detailed_report_agent.py`
-**Lines:** 99-450
-**Purpose:** Comprehensive analysis and reporting
-
-#### Report Structure
-```python
-@dataclass
-class ReportResult:
-    executive_summary: str            # High-level overview
-    detailed_findings: List[Dict]     # Granular analysis
-    visual_analysis: List[Dict]       # Visual content insights
-    technical_details: List[Dict]     # Technical specifications
-    recommendations: List[str]        # Actionable recommendations
-    confidence_assessment: Dict       # Quality metrics
-    thinking_phase: ThinkingPhase     # Agent's reasoning process
-```
-
-#### Key Methods
-
-**`generate_report(request: ReportRequest) -> ReportResult`**
-- **Purpose:** Generate comprehensive detailed report
-- **Phases:**
-  1. **Thinking Phase**: Content analysis, pattern identification
-  2. **Visual Analysis**: Deep dive into visual elements
-  3. **Executive Summary**: High-level synthesis
-  4. **Detailed Findings**: Granular analysis
-  5. **Technical Details**: Specifications and metadata
-  6. **Recommendations**: Actionable next steps
-
-**Example:**
-```python
-report_agent = DetailedReportAgent()
-
-request = ReportRequest(
-    query="AI safety research trends",
-    search_results=[...],
-    report_type="comprehensive",
-    include_visual_analysis=True,
-    include_technical_details=True,
-    include_recommendations=True
-)
-
-report = await report_agent.generate_report(request)
-
-# Uses DSPy for structured report generation
-# Includes VLM analysis for visual content
-# Provides thinking phase for transparency
-```
-
----
-
-### 5. MemoryAwareMixin
-
-**File:** `src/app/agents/memory_aware_mixin.py`
-**Lines:** 16-327
-**Purpose:** Standard memory interface for all agents
-
-#### Core Concept
-All agents inherit from `MemoryAwareMixin` to access conversation memory powered by Mem0 + Vespa.
-
-#### Key Methods
-
-**`initialize_memory(agent_name, tenant_id, vespa_port) -> bool`**
-- **Purpose:** Setup memory for agent
-- **Backend:** Mem0 with Vespa vector store
-
-**`get_relevant_context(query: str, top_k: int) -> str`**
-- **Purpose:** Retrieve relevant memories for query
-- **Process:**
-  1. Embed query using Mem0
-  2. Search vector store
-  3. Return formatted context
-
-**`update_memory(content: str, metadata: dict) -> bool`**
-- **Purpose:** Store new memory
-- **LLM Processing:** Mem0 uses LLM to condense and structure memories
-
-**`remember_success(query, result, metadata) -> bool`**
-- **Purpose:** Store successful interactions for learning
-
-**`remember_failure(query, error, metadata) -> bool`**
-- **Purpose:** Store failures to avoid repeating mistakes
-
-#### Usage Pattern
-```python
-class MyAgent(MemoryAwareMixin, BaseAgent):
-    def __init__(self):
-        super().__init__()
-        # Initialize memory
-        self.initialize_memory(
-            agent_name="my_agent",
-            tenant_id="tenant_123"
+        # Initialize Vespa client with tenant schema
+        tenant_schema = schema_manager.get_tenant_schema_name(tenant_id, profile)
+        self.vespa_client = VespaSearchClient(
+            host=vespa_host,
+            port=vespa_port,
+            schema=tenant_schema  # e.g., video_colpali_smol500_mv_frame_acme
         )
 
-    async def process(self, query):
-        # Get relevant memories
-        context = self.get_relevant_context(query, top_k=5)
+        # Initialize telemetry
+        self.telemetry = TelemetryManager.get_instance(
+            tenant_id=tenant_id,
+            project_name="video_search"
+        )
 
-        # Use context in processing
-        if context:
-            enhanced_prompt = f"Context: {context}\n\nQuery: {query}"
+        # Initialize memory
+        self.initialize_memory("video_search", tenant_id)
+```
 
-        # Process...
-        result = await self._process(enhanced_prompt)
+#### Key Methods
 
-        # Store success
-        if result:
-            self.remember_success(query, result)
+**`search_by_text(query: str, top_k: int = 10) -> List[Dict]`**
+
+Text-to-video search.
+
+```python
+async def search_by_text(
+    self,
+    query: str,
+    top_k: int = 10,
+    ranking: str = "hybrid_binary_bm25_no_description"
+) -> List[Dict]:
+    """
+    Search videos by text query.
+
+    Args:
+        query: Text query string
+        top_k: Number of results
+        ranking: Ranking profile name
+
+    Returns:
+        List of video results with scores
+    """
+    with self.telemetry.trace("search_by_text") as span:
+        span.set_attribute("tenant_id", self.tenant_id)
+        span.set_attribute("query", query)
+        span.set_attribute("top_k", top_k)
+
+        # Get memory context
+        memory_context = self.get_relevant_context(query, top_k=3)
+
+        # Enhance query with context
+        if memory_context:
+            enhanced_query = f"{query} {memory_context}"
         else:
-            self.remember_failure(query, "Processing failed")
+            enhanced_query = query
 
-        return result
+        # Search Vespa (tenant schema)
+        results = self.vespa_client.search(
+            query=enhanced_query,
+            top_k=top_k,
+            ranking=ranking
+        )
+
+        # Remember successful search
+        if results:
+            self.remember_success(
+                query=query,
+                result={"count": len(results)},
+                metadata={"top_k": top_k}
+            )
+
+        span.set_attribute("result_count", len(results))
+        return results
+```
+
+**`search_by_video(video_data: bytes, filename: str, top_k: int = 10) -> List[Dict]`**
+
+Video-to-video similarity search.
+
+```python
+async def search_by_video(
+    self,
+    video_data: bytes,
+    filename: str,
+    top_k: int = 10
+) -> List[Dict]:
+    """
+    Search videos by video similarity.
+
+    Args:
+        video_data: Video file bytes
+        filename: Original filename
+        top_k: Number of results
+
+    Returns:
+        Similar videos
+    """
+    with self.telemetry.trace("search_by_video") as span:
+        span.set_attribute("tenant_id", self.tenant_id)
+        span.set_attribute("filename", filename)
+
+        # 1. Save video to temp file
+        temp_path = Path(f"/tmp/{self.tenant_id}_{filename}")
+        temp_path.write_bytes(video_data)
+
+        # 2. Extract frames
+        frames = self._extract_frames(temp_path, fps=1)
+        span.set_attribute("frame_count", len(frames))
+
+        # 3. Encode frames
+        frame_embeddings = self._encode_frames(frames)
+
+        # 4. Search with embeddings
+        results = self.vespa_client.search_by_embedding(
+            embeddings=frame_embeddings,
+            top_k=top_k
+        )
+
+        # 5. Cleanup
+        temp_path.unlink()
+
+        return results
+```
+
+#### Multi-Tenant Search Flow
+
+```python
+# Example: Two tenants searching independently
+
+# Tenant A: acme
+agent_acme = VideoSearchAgent(
+    tenant_id="acme",
+    profile="video_colpali_smol500_mv_frame"
+)
+results_acme = await agent_acme.search_by_text("cooking videos")
+# Searches schema: video_colpali_smol500_mv_frame_acme
+# Only acme's videos returned
+
+# Tenant B: startup
+agent_startup = VideoSearchAgent(
+    tenant_id="startup",
+    profile="video_colpali_smol500_mv_frame"
+)
+results_startup = await agent_startup.search_by_text("cooking videos")
+# Searches schema: video_colpali_smol500_mv_frame_startup
+# Only startup's videos returned
+
+# Physical isolation - no cross-tenant data access possible
 ```
 
 ---
 
-## Data Flow
+### 3. ComposingAgent
 
-### End-to-End Query Processing
+**Location**: `libs/agents/cogniverse_agents/orchestration/composing_agent.py`
+**Purpose**: Multi-agent workflow orchestration and coordination
+**Base Classes**: `BaseAgent`
 
+#### Architecture
+
+```mermaid
+graph TB
+    UserQuery[User Query<br/>tenant_id: acme] --> ComposingAgent[ComposingAgent]
+
+    ComposingAgent --> AnalyzeQuery[Analyze Query Complexity]
+    AnalyzeQuery --> BuildGraph[Build Dependency Graph]
+    BuildGraph --> SelectAgents[Select Required Agents]
+    SelectAgents --> PlanExecution[Plan Execution Order]
+
+    PlanExecution --> ParallelExec[ParallelAgentExecutor]
+
+    ParallelExec --> RoutingAgent[Routing Agent<br/>tenant_id: acme]
+    ParallelExec --> VideoAgent[Video Search Agent<br/>tenant_id: acme]
+    ParallelExec --> OptimAgent[Optimization Agent<br/>tenant_id: acme]
+
+    RoutingAgent --> Aggregate[Aggregate Results]
+    VideoAgent --> Aggregate
+    OptimAgent --> Aggregate
+
+    Aggregate --> Response[Synthesized Response]
+
+    style UserQuery fill:#e1f5ff
+    style ComposingAgent fill:#fff4e1
+    style Response fill:#e1ffe1
 ```
-1. USER SUBMITS QUERY
-   ↓
-2. MultiAgentOrchestrator receives query
-   ↓
-3. Orchestrator → RoutingAgent.process_query()
-   │
-   ├─→ Extract entities (GLiNER)
-   ├─→ Extract relationships
-   ├─→ Enhance query
-   └─→ Return RoutingDecision
-   ↓
-4. Based on decision:
-   │
-   ├─→ Video Search: Orchestrator → VideoSearchAgent
-   │   ├─→ Memory: Get context
-   │   ├─→ Encode query (ColPali/VideoPrism)
-   │   ├─→ Search Vespa
-   │   ├─→ Apply relationship boost
-   │   ├─→ Memory: Store pattern
-   │   └─→ Return search results
-   │
-   ├─→ Text Search: Orchestrator → TextAgent
-   │   └─→ [Similar flow]
-   │
-   └─→ Both: Execute parallel search
-       └─→ Aggregate results
-   ↓
-5. If summarization requested:
-   Orchestrator → SummarizerAgent.summarize()
-   ├─→ Thinking phase (analyze results)
-   ├─→ Visual analysis (VLM)
-   ├─→ DSPy summary generation
-   └─→ Return SummaryResult
-   ↓
-6. Orchestrator synthesizes final response
-   ↓
-7. Return to USER
+
+#### Class Definition
+
+```python
+# libs/agents/cogniverse_agents/orchestration/composing_agent.py
+
+from cogniverse_core.agents.base_agent import BaseAgent
+from cogniverse_agents.routing.routing_agent import RoutingAgent
+from cogniverse_agents.search.video_search_agent import VideoSearchAgent
+from cogniverse_agents.routing.parallel_executor import ParallelAgentExecutor
+
+class ComposingAgent(BaseAgent):
+    """
+    Orchestrates multi-agent workflows with tenant context.
+
+    Coordinates execution of routing, search, and optimization agents.
+    """
+
+    def __init__(self, tenant_id: str):
+        super().__init__(tenant_id=tenant_id)
+
+        # Initialize sub-agents (all tenant-aware)
+        self.routing_agent = RoutingAgent(tenant_id=tenant_id)
+        self.video_agent = VideoSearchAgent(tenant_id=tenant_id)
+
+        # Parallel executor
+        self.parallel_executor = ParallelAgentExecutor(
+            max_concurrent_agents=10
+        )
+
+        # Telemetry
+        self.telemetry = TelemetryManager.get_instance(
+            tenant_id=tenant_id,
+            project_name="composing_agent"
+        )
+```
+
+#### Key Methods
+
+**`process_query(query: str, options: Dict) -> Dict`**
+
+Orchestrate multi-agent query processing.
+
+```python
+async def process_query(
+    self,
+    query: str,
+    options: Optional[Dict] = None
+) -> Dict:
+    """
+    Process query through multi-agent workflow.
+
+    Args:
+        query: User query
+        options: Processing options (e.g., include_summary, max_results)
+
+    Returns:
+        Synthesized response with results from all agents
+    """
+    with self.telemetry.trace("process_query") as span:
+        span.set_attribute("tenant_id", self.tenant_id)
+        span.set_attribute("query", query)
+
+        # 1. Routing decision
+        routing_decision = await self.routing_agent.route_query(query)
+
+        # 2. Prepare agent tasks
+        agent_tasks = []
+
+        if "video_search" in routing_decision.selected_agents:
+            agent_tasks.append(
+                ("video_search", routing_decision.enhanced_query, {
+                    "top_k": options.get("max_results", 10)
+                })
+            )
+
+        # 3. Execute agents in parallel
+        results = await self.parallel_executor.execute_agents_parallel(
+            agent_tasks,
+            timeout_seconds=30.0,
+            agent_caller=self._call_agent
+        )
+
+        # 4. Synthesize response
+        response = {
+            "tenant_id": self.tenant_id,
+            "query": query,
+            "routing_decision": routing_decision,
+            "results": results,
+            "confidence": routing_decision.confidence
+        }
+
+        return response
+```
+
+---
+
+## Agent Architecture
+
+### Base Agent Inheritance
+
+All agents extend `BaseAgent` from `cogniverse_core`:
+
+```python
+# libs/core/cogniverse_core/agents/base_agent.py
+
+class BaseAgent(ABC):
+    """
+    Abstract base class for all agents.
+
+    Provides:
+    - Tenant context management
+    - Configuration access
+    - Health check interface
+    """
+
+    def __init__(
+        self,
+        tenant_id: str,  # REQUIRED
+        config: Optional[SystemConfig] = None
+    ):
+        if not tenant_id:
+            raise ValueError("tenant_id is required - no default tenant")
+
+        self.tenant_id = tenant_id
+        self.config = config or SystemConfig.load()
+
+    @abstractmethod
+    async def execute(self, *args, **kwargs):
+        """Execute agent-specific logic"""
+        pass
+
+    def health_check(self) -> Dict[str, Any]:
+        """Check agent health"""
+        return {
+            "status": "healthy",
+            "tenant_id": self.tenant_id,
+            "agent": self.__class__.__name__
+        }
+```
+
+### MemoryAwareMixin
+
+**Location**: `libs/core/cogniverse_core/agents/memory_aware_mixin.py`
+
+Provides memory integration for all agents:
+
+```python
+class MemoryAwareMixin:
+    """
+    Mixin for agent memory integration via Mem0.
+
+    Provides:
+    - Memory initialization per tenant
+    - Context retrieval
+    - Success/failure recording
+    """
+
+    def initialize_memory(
+        self,
+        agent_name: str,
+        tenant_id: str,
+        vespa_host: str = "localhost",
+        vespa_port: int = 8080
+    ) -> bool:
+        """
+        Initialize memory for agent.
+
+        Creates tenant-specific Mem0MemoryManager instance.
+        """
+        from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
+
+        self.memory_manager = Mem0MemoryManager(tenant_id=tenant_id)
+        self.memory_manager.initialize(
+            vespa_host=vespa_host,
+            vespa_port=vespa_port,
+            base_schema_name="agent_memories"  # Creates agent_memories_{tenant_id}
+        )
+
+        self.agent_name = agent_name
+        self.tenant_id = tenant_id
+        return True
+
+    def get_relevant_context(self, query: str, top_k: int = 5) -> str:
+        """Retrieve relevant memories for query"""
+        if not hasattr(self, "memory_manager"):
+            return ""
+
+        memories = self.memory_manager.search_memory(
+            query=query,
+            tenant_id=self.tenant_id,
+            agent_name=self.agent_name,
+            top_k=top_k
+        )
+
+        return "\n".join(m.get("memory", "") for m in memories)
+
+    def remember_success(self, query: str, result: Any, metadata: Dict) -> bool:
+        """Store successful interaction"""
+        if not hasattr(self, "memory_manager"):
+            return False
+
+        self.memory_manager.add_memory(
+            content=f"SUCCESS: {query} -> {result}",
+            tenant_id=self.tenant_id,
+            agent_name=self.agent_name,
+            metadata=metadata
+        )
+        return True
+```
+
+---
+
+## Multi-Tenant Integration
+
+### Tenant Context Flow
+
+```mermaid
+sequenceDiagram
+    participant API as FastAPI Server
+    participant Middleware as Tenant Middleware
+    participant Agent as RoutingAgent
+    participant SchemaManager as TenantSchemaManager
+    participant Memory as Mem0MemoryManager
+    participant Vespa as Vespa Backend
+
+    API->>Middleware: Request (X-Tenant-ID: acme)
+    Middleware->>Middleware: Extract tenant_id
+    Middleware->>SchemaManager: ensure_tenant_schema_exists("acme", "video_frames")
+    SchemaManager-->>Middleware: Schema ready
+    Middleware->>API: request.state.tenant_id = "acme"
+
+    API->>Agent: RoutingAgent(tenant_id="acme")
+    Agent->>Memory: initialize_memory("routing_agent", "acme")
+    Memory-->>Agent: Memory ready (agent_memories_acme)
+
+    API->>Agent: route_query("cooking videos")
+    Agent->>Memory: get_relevant_context("cooking videos")
+    Memory->>Vespa: search(schema="agent_memories_acme")
+    Vespa-->>Memory: Relevant memories
+    Memory-->>Agent: Context
+    Agent->>Agent: Process query
+    Agent-->>API: RoutingDecision
+```
+
+### Tenant Isolation
+
+**Key Points**:
+- Each agent instance is tenant-scoped
+- Vespa schemas are tenant-specific (`video_frames_acme`)
+- Memory managers are per-tenant singletons
+- Telemetry projects are per-tenant (`acme_routing_agent`)
+
+**Example**:
+
+```python
+# Two tenants using same agent class
+
+# Tenant A
+agent_a = RoutingAgent(tenant_id="acme")
+agent_a.initialize_memory("routing_agent", "acme")
+# Uses: agent_memories_acme schema
+
+# Tenant B
+agent_b = RoutingAgent(tenant_id="startup")
+agent_b.initialize_memory("routing_agent", "startup")
+# Uses: agent_memories_startup schema
+
+# Completely isolated - no shared memory or data
+assert agent_a.memory_manager is not agent_b.memory_manager
 ```
 
 ---
 
 ## Usage Examples
 
-### Example 1: Simple Video Search
+### Example 1: Basic Routing
 
 ```python
-from src.app.agents.video_search_agent import VideoSearchAgent
+from cogniverse_agents.routing.routing_agent import RoutingAgent
+
+# Initialize agent for tenant
+agent = RoutingAgent(tenant_id="acme")
+
+# Route query
+decision = await agent.route_query(
+    query="Show me videos about machine learning",
+    context={"user_preference": "educational"}
+)
+
+print(f"Selected agents: {decision.selected_agents}")
+print(f"Enhanced query: {decision.enhanced_query}")
+print(f"Confidence: {decision.confidence}")
+```
+
+### Example 2: Video Search
+
+```python
+from cogniverse_agents.search.video_search_agent import VideoSearchAgent
 
 # Initialize agent
 agent = VideoSearchAgent(
-    vespa_url="http://localhost",
+    tenant_id="acme",
+    vespa_host="localhost",
     vespa_port=8080,
     profile="video_colpali_smol500_mv_frame"
 )
 
-# Search
-results = agent.search_by_text(
-    query="Python tutorial for beginners",
+# Text search
+results = await agent.search_by_text(
+    query="Python programming tutorial",
     top_k=5
 )
 
-# Process results
 for result in results:
     print(f"Video: {result['title']}")
     print(f"Score: {result['score']}")
-    print(f"ID: {result['video_id']}")
 ```
 
-### Example 2: Routing with Enhancement
+### Example 3: Multi-Agent Orchestration
 
 ```python
-from src.app.agents.routing_agent import RoutingAgent
+from cogniverse_agents.orchestration.composing_agent import ComposingAgent
 
-routing_agent = RoutingAgent()
-
-# Process complex query
-decision = await routing_agent.process_query(
-    query="Show me videos where Marie Curie discusses radioactivity and its applications",
-    context={"user_preference": "educational"}
-)
-
-# Access routing details
-print(f"Agent: {decision.recommended_agent}")
-print(f"Enhanced query: {decision.enhanced_query}")
-print(f"Entities: {decision.extracted_entities}")
-print(f"Relationships: {decision.extracted_relationships}")
-print(f"Confidence: {decision.confidence}")
-```
-
-### Example 3: Multi-Agent Workflow
-
-```python
-from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
-from src.app.agents.routing_agent import RoutingAgent
-from src.app.agents.video_search_agent import VideoSearchAgent
-from src.app.agents.summarizer_agent import SummarizerAgent
-
-# Initialize orchestrator
-orchestrator = MultiAgentOrchestrator(
-    routing_agent=RoutingAgent(),
-    video_agent=VideoSearchAgent(),
-    summarizer=SummarizerAgent()
-)
+# Initialize composing agent
+orchestrator = ComposingAgent(tenant_id="acme")
 
 # Process complex query
-result = await orchestrator.process_query(
-    query="Summarize recent AI research videos",
+response = await orchestrator.process_query(
+    query="Find and summarize AI research videos from 2024",
     options={
-        "include_summary": True,
-        "max_results": 20
+        "max_results": 20,
+        "include_summary": True
     }
 )
 
-# Result includes:
-# - Routing decision
-# - Search results
-# - Summary
-# - Confidence scores
+print(f"Routing: {response['routing_decision']}")
+print(f"Results: {len(response['results'])} videos")
+print(f"Confidence: {response['confidence']}")
 ```
 
----
+### Example 4: Memory-Aware Search
 
-## Production Considerations
+```python
+from cogniverse_agents.search.video_search_agent import VideoSearchAgent
 
-### Performance
-- **Memory Initialization**: One-time setup per agent, reused across requests
-- **Query Encoding**: Cached for repeated queries
-- **Parallel Execution**: Use MultiAgentOrchestrator for concurrent agent calls
-- **Batch Processing**: VideoSearchAgent supports batch encoding
+# Initialize with memory
+agent = VideoSearchAgent(tenant_id="acme")
+agent.initialize_memory("video_search", "acme")
 
-### Scalability
-- **Stateless Agents**: Can be horizontally scaled
-- **Shared Memory**: Mem0 backend shared across instances
-- **Vector Cache**: Per-tenant caching in Vespa
+# First search
+results1 = await agent.search_by_text("cooking tutorials")
+agent.remember_success(
+    query="cooking tutorials",
+    result={"count": len(results1)},
+    metadata={"preference": "high_relevance"}
+)
 
-### Monitoring
-- **Health Checks**: All agents expose `/health` endpoint
-- **Telemetry**: Integrated with Phoenix (see Telemetry Module)
-- **Metrics**: Request count, latency, success rate
-- **Logging**: Structured logging with correlation IDs
-
-### Error Handling
-- **Graceful Degradation**: Fallback strategies at every level
-- **Circuit Breaker**: Prevents cascading failures
-- **Retry Logic**: Exponential backoff for transient failures
-- **Error Memory**: Stores failures to avoid repetition
-
-### Configuration
-```yaml
-agents:
-  routing_agent:
-    port: 8001
-    dspy_enabled: true
-    grpo_enabled: true
-    confidence_threshold: 0.7
-
-  video_agent:
-    port: 8002
-    profile: "video_colpali_smol500_mv_frame"
-    memory_enabled: true
-    cache_ttl: 300
-
-  summarizer_agent:
-    port: 8004
-    max_summary_length: 500
-    thinking_enabled: true
-    visual_analysis_enabled: true
+# Second search (uses memory context)
+results2 = await agent.search_by_text("advanced cooking techniques")
+# Memory context: "User previously searched 'cooking tutorials' with high relevance"
+# Query enhanced with context
 ```
 
 ---
@@ -613,31 +918,173 @@ agents:
 ## Testing
 
 ### Unit Tests
-- `tests/agents/unit/test_routing_agent.py`
-- `tests/agents/unit/test_video_search_agent.py`
-- `tests/agents/unit/test_summarizer_agent.py`
-- `tests/agents/unit/test_detailed_report_agent.py`
+
+**Location**: `tests/agents/unit/`
+
+```python
+# tests/agents/unit/test_routing_agent.py
+
+import pytest
+from cogniverse_agents.routing.routing_agent import RoutingAgent
+
+class TestRoutingAgent:
+    def test_initialization(self):
+        """Test agent initialization with tenant_id"""
+        agent = RoutingAgent(tenant_id="test_tenant")
+
+        assert agent.tenant_id == "test_tenant"
+        assert agent.telemetry is not None
+
+    async def test_route_query(self):
+        """Test query routing"""
+        agent = RoutingAgent(tenant_id="test_tenant")
+
+        decision = await agent.route_query(
+            query="machine learning videos"
+        )
+
+        assert decision.selected_agents
+        assert decision.enhanced_query
+        assert 0.0 <= decision.confidence <= 1.0
+
+    def test_tenant_isolation(self):
+        """Verify tenant isolation"""
+        agent_a = RoutingAgent(tenant_id="tenant_a")
+        agent_b = RoutingAgent(tenant_id="tenant_b")
+
+        assert agent_a.tenant_id != agent_b.tenant_id
+        # Memory managers should be different instances
+        agent_a.initialize_memory("routing", "tenant_a")
+        agent_b.initialize_memory("routing", "tenant_b")
+        assert agent_a.memory_manager is not agent_b.memory_manager
+```
 
 ### Integration Tests
-- `tests/agents/integration/test_routing_agent_integration.py`
-- `tests/agents/integration/test_video_search_agent_integration.py`
 
-### End-to-End Tests
-- `tests/agents/e2e/test_real_multi_agent_integration.py`
+**Location**: `tests/agents/integration/`
+
+```python
+# tests/agents/integration/test_video_search_integration.py
+
+import pytest
+from cogniverse_agents.search.video_search_agent import VideoSearchAgent
+from cogniverse_vespa.tenant.tenant_schema_manager import TenantSchemaManager
+
+@pytest.mark.integration
+class TestVideoSearchAgentIntegration:
+    @pytest.fixture
+    def tenant_id(self):
+        return "test_tenant_integration"
+
+    @pytest.fixture
+    def agent(self, tenant_id):
+        """Create agent with real Vespa connection"""
+        # Ensure schema exists
+        schema_manager = TenantSchemaManager()
+        schema_manager.ensure_tenant_schema_exists(
+            tenant_id,
+            "video_colpali_smol500_mv_frame"
+        )
+
+        # Create agent
+        agent = VideoSearchAgent(
+            tenant_id=tenant_id,
+            vespa_host="localhost",
+            vespa_port=8080
+        )
+        return agent
+
+    async def test_search_end_to_end(self, agent):
+        """Test complete search flow"""
+        results = await agent.search_by_text(
+            query="test query",
+            top_k=5
+        )
+
+        assert isinstance(results, list)
+        # Results depend on ingested data
+```
+
+### Test Utilities
+
+```python
+# tests/conftest.py
+
+import pytest
+from cogniverse_vespa.tenant.tenant_schema_manager import TenantSchemaManager
+
+@pytest.fixture
+def test_tenant_id():
+    """Unique tenant ID for tests"""
+    import uuid
+    return f"test_tenant_{uuid.uuid4().hex[:8]}"
+
+@pytest.fixture
+def cleanup_tenant_schemas(test_tenant_id):
+    """Cleanup tenant schemas after test"""
+    yield
+
+    # Cleanup
+    schema_manager = TenantSchemaManager()
+    schema_manager.delete_tenant_schemas(test_tenant_id)
+```
 
 ---
 
-## Next Steps
+## Best Practices
 
-For related modules, see:
-- **Routing Module** (`02_ROUTING_MODULE.md`) - Routing strategies and optimization
-- **Memory Module** (`07_MEMORY_MODULE.md`) - Mem0 integration details
-- **Telemetry Module** (`05_TELEMETRY_MODULE.md`) - Observability and metrics
+### 1. Always Pass Tenant ID
+
+```python
+# ✅ Good: Explicit tenant_id
+agent = RoutingAgent(tenant_id="acme")
+
+# ❌ Bad: No tenant context
+agent = RoutingAgent()  # Raises ValueError
+```
+
+### 2. Initialize Memory When Needed
+
+```python
+# If agent needs memory
+agent = VideoSearchAgent(tenant_id="acme")
+agent.initialize_memory("video_search", "acme")
+
+# Memory automatically used in searches
+results = await agent.search_by_text("query")
+```
+
+### 3. Use Telemetry for Observability
+
+```python
+# Telemetry automatically initialized
+agent = RoutingAgent(tenant_id="acme")
+
+# All operations traced to Phoenix project: acme_routing_agent
+decision = await agent.route_query("query")
+```
+
+### 4. Test Tenant Isolation
+
+```python
+# Always verify tenants are isolated
+def test_tenant_isolation():
+    agent_a = RoutingAgent(tenant_id="tenant_a")
+    agent_b = RoutingAgent(tenant_id="tenant_b")
+
+    assert agent_a.tenant_id != agent_b.tenant_id
+    assert agent_a.telemetry.project_name != agent_b.telemetry.project_name
+```
 
 ---
 
-**Study Tips:**
-1. Start with MemoryAwareMixin to understand the base pattern
-2. Explore VideoSearchAgent for the most complex multi-modal example
-3. Review RoutingAgent for DSPy integration patterns
-4. Check integration tests for real-world usage examples
+## Related Documentation
+
+- [SDK Architecture](../architecture/sdk-architecture.md) - Package structure and dependencies
+- [Multi-Tenant Architecture](../architecture/multi-tenant.md) - Tenant isolation patterns
+- [Backends Module](./backends.md) - Vespa backend integration
+- [Common Module](./common.md) - Shared utilities and base classes
+
+---
+
+**Summary**: The Agents package provides tenant-aware agent implementations that integrate with the core SDK. All agents require `tenant_id`, use tenant-specific schemas, and support memory, telemetry, and health checks.

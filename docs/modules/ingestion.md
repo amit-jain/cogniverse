@@ -1,8 +1,35 @@
 # Cogniverse Ingestion Module Study Guide
 
-**Module**: `src/app/ingestion/`
+**Package:** `cogniverse_agents`
+**Module Location:** `libs/agents/cogniverse_agents/ingestion/`
 **Purpose**: Configurable video processing pipeline for multi-modal content extraction and indexing
 **Last Updated**: 2025-10-07
+
+---
+
+## Package Structure
+
+```
+libs/agents/cogniverse_agents/ingestion/
+├── __init__.py                    # Package initialization
+├── pipeline.py                    # Main VideoIngestionPipeline orchestrator
+├── strategy_factory.py            # Creates strategy sets from config
+├── strategies.py                  # Strategy implementations (Frame, Chunk, SingleVector, etc.)
+├── processing_strategy_set.py     # Strategy container with execution flow
+├── processor_manager.py           # Manages processor instances
+├── processor_base.py              # Base classes for processors and strategies
+└── processors/
+    ├── keyframe_processor.py      # Histogram-based keyframe extraction
+    ├── chunk_processor.py         # FFmpeg-based chunk extraction
+    ├── audio_processor.py         # Whisper transcription
+    ├── vlm_processor.py           # VLM description generation
+    ├── single_vector_processor.py # Sliding window segment processing
+    └── embedding_generator/
+        ├── embedding_generator.py # Backend-agnostic embedding generation
+        ├── embedding_processors.py # Model inference (ColPali, VideoPrism, ColQwen)
+        ├── document_builders.py   # Vespa document construction
+        └── backend_factory.py     # Backend client creation
+```
 
 ---
 
@@ -39,29 +66,6 @@ The Ingestion Module transforms raw video files into searchable, multi-modal rep
 - **Caching**: Per-profile artifact caching for keyframes, transcripts, descriptions
 - **Profile-Based**: Different strategies for different embedding models
 - **Format Conversion**: Binary (int8) vs Float (bfloat16) embeddings
-
-### Module Structure
-
-```
-src/app/ingestion/
-├── pipeline.py                    # Main VideoIngestionPipeline orchestrator
-├── strategy_factory.py            # Creates strategy sets from config
-├── strategies.py                  # Strategy implementations (Frame, Chunk, SingleVector, etc.)
-├── processing_strategy_set.py     # Strategy container with execution flow
-├── processor_manager.py           # Manages processor instances
-├── processor_base.py              # Base classes for processors and strategies
-└── processors/
-    ├── keyframe_processor.py      # Histogram-based keyframe extraction
-    ├── chunk_processor.py         # FFmpeg-based chunk extraction
-    ├── audio_processor.py         # Whisper transcription
-    ├── vlm_processor.py           # VLM description generation
-    ├── single_vector_processor.py # Sliding window segment processing
-    └── embedding_generator/
-        ├── embedding_generator.py # Backend-agnostic embedding generation
-        ├── embedding_processors.py # Model inference (ColPali, VideoPrism, ColQwen)
-        ├── document_builders.py   # Vespa document construction
-        └── backend_factory.py     # Backend client creation
-```
 
 ---
 
@@ -189,7 +193,7 @@ sequenceDiagram
         Config-->>Factory: {class: "FrameSegmentationStrategy", params: {...}}
 
         Factory->>Registry: Import class dynamically
-        Note over Registry: importlib.import_module<br/>("src.app.ingestion.strategies")
+        Note over Registry: importlib.import_module<br/>("cogniverse_agents.ingestion.strategies")
 
         Registry-->>Factory: StrategyClass
 
@@ -695,7 +699,7 @@ strategy_set = StrategyFactory.create_from_profile_config(profile_config)
 **Design**:
 - Uses dynamic imports (`importlib`) to instantiate strategy classes
 - No hardcoded if/elif logic - fully config-driven
-- All strategy classes must be in `src.app.ingestion.strategies`
+- All strategy classes must be in `cogniverse_agents.ingestion.strategies`
 
 ### 3. ProcessingStrategySet (processing_strategy_set.py:16-333)
 
@@ -1227,7 +1231,7 @@ When v1 or v2 completes → v3 starts immediately
 
 ```python
 from pathlib import Path
-from src.app.ingestion.pipeline import VideoIngestionPipeline, PipelineConfig
+from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline, PipelineConfig
 
 # Create pipeline for ColPali frame-based processing
 pipeline = VideoIngestionPipeline(
@@ -1276,7 +1280,7 @@ video_processing_profiles:
 
 ```python
 from pathlib import Path
-from src.app.ingestion.pipeline import VideoIngestionPipeline
+from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline
 
 # Create pipeline
 pipeline = VideoIngestionPipeline(schema_name="video_colpali_smol500_mv_frame")
@@ -1305,7 +1309,7 @@ print(f"Throughput: {results['total_videos'] / (results['total_processing_time']
 
 ```python
 from pathlib import Path
-from src.app.ingestion.pipeline import VideoIngestionPipeline
+from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline
 
 # Create pipeline for VideoPrism single-vector embeddings
 pipeline = VideoIngestionPipeline(
@@ -1357,7 +1361,7 @@ video_videoprism_lvt_base_sv_chunk_6s:
 
 ```python
 from pathlib import Path
-from src.app.ingestion.pipeline import VideoIngestionPipeline
+from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline
 
 # Create pipeline for ColQwen chunk processing
 pipeline = VideoIngestionPipeline(
@@ -1409,8 +1413,8 @@ video_colqwen_omni_mv_chunk_30s:
 ### Example 5: Custom Strategy Configuration
 
 ```python
-from src.app.ingestion.strategy_factory import StrategyFactory
-from src.app.ingestion.pipeline import VideoIngestionPipeline
+from cogniverse_agents.ingestion.strategy_factory import StrategyFactory
+from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline
 
 # Define custom profile config
 custom_profile = {
@@ -1459,7 +1463,7 @@ Production ingestion script with monitoring and error handling.
 
 import asyncio
 from pathlib import Path
-from src.app.ingestion.pipeline import VideoIngestionPipeline
+from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline
 
 async def main():
     profiles = [
@@ -1534,7 +1538,7 @@ pipeline_cache:
 
 **Pipeline Exceptions**:
 ```python
-from src.app.ingestion.exceptions import PipelineException
+from cogniverse_agents.ingestion.exceptions import PipelineException
 
 try:
     result = await pipeline.process_video_async(video_path)
@@ -1740,10 +1744,10 @@ def test_colpali_embedding_generation():
 ---
 
 **File References**:
-- Pipeline: `src/app/ingestion/pipeline.py:135-1055`
-- StrategyFactory: `src/app/ingestion/strategy_factory.py:15-86`
-- Strategies: `src/app/ingestion/strategies.py:14-224`
-- EmbeddingGenerator: `src/app/ingestion/processors/embedding_generator/embedding_generator.py:51-649`
-- KeyframeProcessor: `src/app/ingestion/processors/keyframe_processor.py:19-256`
-- ChunkProcessor: `src/app/ingestion/processors/chunk_processor.py:17-200`
-- AudioProcessor: `src/app/ingestion/processors/audio_processor.py:17-181`
+- Pipeline: `libs/agents/cogniverse_agents/ingestion/pipeline.py`
+- StrategyFactory: `libs/agents/cogniverse_agents/ingestion/strategy_factory.py`
+- Strategies: `libs/agents/cogniverse_agents/ingestion/strategies.py`
+- EmbeddingGenerator: `libs/agents/cogniverse_agents/ingestion/processors/embedding_generator/embedding_generator.py`
+- KeyframeProcessor: `libs/agents/cogniverse_agents/ingestion/processors/keyframe_processor.py`
+- ChunkProcessor: `libs/agents/cogniverse_agents/ingestion/processors/chunk_processor.py`
+- AudioProcessor: `libs/agents/cogniverse_agents/ingestion/processors/audio_processor.py`

@@ -1,8 +1,24 @@
 # Optimization Module Study Guide
 
-**Module:** `src/app/routing/` (optimization components)
+**Package:** `cogniverse_agents`
+**Module Location:** `libs/agents/cogniverse_agents/routing/` (optimization components)
 **Purpose:** DSPy-based multi-stage optimization for routing, modality-specific, and cross-modal decision-making
 **Last Updated:** 2025-10-07
+
+---
+
+## Package Structure
+
+```
+libs/agents/cogniverse_agents/routing/
+├── optimization_orchestrator.py    # Complete optimization pipeline orchestrator
+├── advanced_optimizer.py           # GRPO routing optimizer with DSPy
+├── unified_optimizer.py            # Bidirectional routing + orchestration learning
+├── modality_optimizer.py          # Per-modality optimization with XGBoost
+├── cross_modal_optimizer.py       # Cross-modal fusion optimization
+├── optimizer_coordinator.py       # Facade for optimizer routing
+└── optimizer.py                   # Base optimizer with auto-tuning
+```
 
 ---
 
@@ -31,15 +47,13 @@ The Optimization Module provides sophisticated multi-stage optimization for rout
 
 ### Dependencies
 ```python
-from src.app.routing.advanced_optimizer import AdvancedRoutingOptimizer
-from src.app.routing.modality_optimizer import ModalityOptimizer
-from src.app.routing.cross_modal_optimizer import CrossModalOptimizer
-from src.app/routing.unified_optimizer import UnifiedOptimizer
-from src.app.routing.optimizer_coordinator import OptimizerCoordinator
-from src.app.routing.optimization_orchestrator import OptimizationOrchestrator
+from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
+from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
+from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
+from cogniverse_agents.routing.unified_optimizer import UnifiedOptimizer
+from cogniverse_agents.routing.optimizer_coordinator import OptimizerCoordinator
+from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
 ```
-
-**Module Location:** `src/app/routing/` (optimization components)
 
 ---
 
@@ -158,11 +172,11 @@ __init__(
 - `AnnotationFeedbackLoop` - Feed annotations to optimizer
 - `AdvancedRoutingOptimizer` - GRPO optimization
 
-**File:** `src/app/routing/optimization_orchestrator.py`
+**File:** `libs/agents/cogniverse_agents/routing/optimization_orchestrator.py`
 
 ---
 
-### 2. **AdvancedRoutingOptimizer** (`advanced_optimizer.py:136-1273`)
+### 2. **AdvancedRoutingOptimizer**
 
 GRPO-based routing optimizer with multi-stage DSPy optimization.
 
@@ -285,11 +299,11 @@ class AdvancedOptimizerConfig:
 - Dataset >= 200: GEPA (reflective prompt evolution)
 ```
 
-**File:** `src/app/routing/advanced_optimizer.py:136-1273`
+**File:** `libs/agents/cogniverse_agents/routing/advanced_optimizer.py`
 
 ---
 
-### 3. **UnifiedOptimizer** (`unified_optimizer.py:23-260`)
+### 3. **UnifiedOptimizer**
 
 Bidirectional learning between routing and orchestration.
 
@@ -355,11 +369,11 @@ __init__(
 - `parallel_efficiency`: From workflow metadata
 - `orchestration_pattern`: Sequential, parallel, or conditional
 
-**File:** `src/app/routing/unified_optimizer.py:23-260`
+**File:** `libs/agents/cogniverse_agents/routing/unified_optimizer.py`
 
 ---
 
-### 4. **ModalityOptimizer** (`modality_optimizer.py:71-769`)
+### 4. **ModalityOptimizer**
 
 Per-modality routing optimization with XGBoost meta-learning.
 
@@ -487,11 +501,11 @@ class ModalityRoutingModule(dspy.Module):
 - Uses **BootstrapFewShot** if <50 examples (few-shot learning)
 - Saves trained models per modality to `model_dir/{modality}_routing_module.json`
 
-**File:** `src/app/routing/modality_optimizer.py:71-769`
+**File:** `libs/agents/cogniverse_agents/routing/modality_optimizer.py`
 
 ---
 
-### 5. **OptimizerCoordinator** (`optimizer_coordinator.py:25-207`)
+### 5. **OptimizerCoordinator**
 
 Facade pattern for routing optimization requests to appropriate optimizers.
 
@@ -555,11 +569,11 @@ class OptimizationType(Enum):
     ORCHESTRATION = "orchestration"
 ```
 
-**File:** `src/app/routing/optimizer_coordinator.py:25-207`
+**File:** `libs/agents/cogniverse_agents/routing/optimizer_coordinator.py`
 
 ---
 
-### 6. **RoutingOptimizer** (`optimizer.py:87-771`)
+### 6. **RoutingOptimizer**
 
 Base optimizer for routing strategies with auto-tuning.
 
@@ -662,7 +676,7 @@ class OptimizationConfig:
     metrics_export_dir: Path = Path("outputs/routing_metrics")
 ```
 
-**File:** `src/app/routing/optimizer.py:87-771`
+**File:** `libs/agents/cogniverse_agents/routing/optimizer.py`
 
 ---
 
@@ -671,7 +685,7 @@ class OptimizationConfig:
 ### Example 1: Complete Optimization Orchestration (Production)
 
 ```python
-from src.app.routing.optimization_orchestrator import OptimizationOrchestrator
+from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
 
 # Initialize orchestrator with production config
 orchestrator = OptimizationOrchestrator(
@@ -700,7 +714,7 @@ print(f"Optimizations triggered: {metrics['optimizations_triggered']}")
 ### Example 2: Advanced Routing Optimizer with GRPO
 
 ```python
-from src.app.routing.advanced_optimizer import (
+from cogniverse_agents.routing.advanced_optimizer import (
     AdvancedRoutingOptimizer,
     AdvancedOptimizerConfig
 )
@@ -768,8 +782,8 @@ print(f"Confidence accuracy: {status['metrics']['confidence_accuracy']}")  # 0.7
 ### Example 3: Modality-Specific Optimization with XGBoost
 
 ```python
-from src.app.routing.modality_optimizer import ModalityOptimizer
-from src.app.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 # Initialize modality optimizer
 optimizer = ModalityOptimizer(
@@ -832,9 +846,9 @@ for modality, details in summary['modalities'].items():
 ### Example 4: Unified Optimizer (Bidirectional Learning)
 
 ```python
-from src.app.routing.unified_optimizer import UnifiedOptimizer
-from src.app.routing.advanced_optimizer import AdvancedRoutingOptimizer
-from src.app.agents.workflow_intelligence import WorkflowIntelligence
+from cogniverse_agents.routing.unified_optimizer import UnifiedOptimizer
+from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
+from cogniverse_agents.agents.workflow_intelligence import WorkflowIntelligence
 
 # Initialize components
 routing_optimizer = AdvancedRoutingOptimizer()
@@ -875,7 +889,7 @@ print(f"Integration: {optimization_results['integration']}")
 ### Example 5: Optimizer Coordinator (Facade Pattern)
 
 ```python
-from src.app.routing.optimizer_coordinator import (
+from cogniverse_agents.routing.optimizer_coordinator import (
     OptimizerCoordinator,
     OptimizationType
 )
@@ -933,7 +947,7 @@ print(f"Loaded optimizers: {status['loaded_optimizers']}")
 ### Example 6: Single Optimization Cycle (Testing)
 
 ```python
-from src.app.routing.optimization_orchestrator import OptimizationOrchestrator
+from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
 
 # Initialize orchestrator
 orchestrator = OptimizationOrchestrator(
@@ -1586,17 +1600,17 @@ validate_training_data(training_data, required)
 
 ### File References
 
-- `src/app/agents/dspy_agent_optimizer.py:327-385` - Training data loading
+- `libs/agents/cogniverse_agents/agents/dspy_agent_optimizer.py` - Training data loading
 - `tests/agents/integration/test_dspy_optimization_integration.py` - Example tests with proper format
 
 ---
 
 ## Related Documentation
 
-- **Routing Module Study Guide**: `02_ROUTING_MODULE.md` - Tiered routing strategies
-- **Agents Module Study Guide**: `01_AGENTS_MODULE.md` - RoutingAgent integration
-- **Telemetry Module Study Guide**: `05_TELEMETRY_MODULE.md` - Phoenix span collection
-- **Evaluation Module Study Guide**: `06_EVALUATION_MODULE.md` - RoutingEvaluator
+- **Routing Module Study Guide**: `docs/modules/routing.md` - Tiered routing strategies
+- **Agents Module Study Guide**: `docs/modules/agents.md` - RoutingAgent integration
+- **Telemetry Module Study Guide**: `docs/modules/telemetry.md` - Phoenix span collection
+- **Evaluation Module Study Guide**: `docs/modules/evaluation.md` - RoutingEvaluator
 
 ---
 
@@ -1610,9 +1624,9 @@ validate_training_data(training_data, required)
 ---
 
 **File References:**
-- `src/app/routing/optimization_orchestrator.py` - Complete optimization pipeline
-- `src/app/routing/advanced_optimizer.py:136-1273` - GRPO optimization with multi-stage DSPy
-- `src/app/routing/unified_optimizer.py:23-260` - Bidirectional routing + orchestration learning
-- `src/app/routing/modality_optimizer.py:71-769` - Per-modality optimization with XGBoost
-- `src/app/routing/optimizer_coordinator.py:25-207` - Facade for optimizer routing
-- `src/app/routing/optimizer.py:87-771` - Base optimizer with auto-tuning
+- `libs/agents/cogniverse_agents/routing/optimization_orchestrator.py` - Complete optimization pipeline
+- `libs/agents/cogniverse_agents/routing/advanced_optimizer.py` - GRPO optimization with multi-stage DSPy
+- `libs/agents/cogniverse_agents/routing/unified_optimizer.py` - Bidirectional routing + orchestration learning
+- `libs/agents/cogniverse_agents/routing/modality_optimizer.py` - Per-modality optimization with XGBoost
+- `libs/agents/cogniverse_agents/routing/optimizer_coordinator.py` - Facade for optimizer routing
+- `libs/agents/cogniverse_agents/routing/optimizer.py` - Base optimizer with auto-tuning

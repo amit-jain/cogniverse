@@ -1,6 +1,7 @@
 # Routing Module Study Guide
 
-**Last Updated:** 2025-10-07
+**Package:** `cogniverse_agents`
+**Location:** `libs/agents/cogniverse_agents/routing/`
 **Purpose:** Comprehensive guide to intelligent query routing strategies and optimization
 
 ---
@@ -31,16 +32,21 @@ The Routing Module provides intelligent query routing capabilities with multiple
 - **Cross-Modal Optimization**: Multi-modal fusion benefit prediction
 - **Production Features**: Per-modality caching (LRU), parallel execution, metrics
 
-### Module Location
-`src/app/routing/`
-
-### Key Files
-- `strategies.py` (1292 lines) - Core routing strategies
-- `advanced_optimizer.py` (1273 lines) - GRPO optimization
-- `config.py` (391 lines) - Configuration system
-- `query_enhancement_engine.py` (1037 lines) - Query enhancement with SIMBA
-- `cross_modal_optimizer.py` (630 lines) - Multi-modal fusion
-- `modality_cache.py` (255 lines) - Per-modality caching
+### Package Structure
+```
+libs/agents/cogniverse_agents/routing/
+├── router.py                           # Comprehensive router (1145 lines)
+├── strategies.py                       # Core routing strategies (1292 lines)
+├── advanced_optimizer.py               # GRPO optimization (1273 lines)
+├── config.py                           # Configuration system (391 lines)
+├── query_enhancement_engine.py         # Query enhancement with SIMBA (1037 lines)
+├── cross_modal_optimizer.py            # Multi-modal fusion (630 lines)
+├── modality_cache.py                   # Per-modality caching (255 lines)
+├── parallel_executor.py                # Parallel agent execution
+├── modality_evaluator.py               # Modality evaluation
+├── phoenix_span_evaluator.py           # Phoenix telemetry integration
+└── base.py                             # Base routing classes
+```
 
 ---
 
@@ -921,8 +927,8 @@ else:
 ### Example 1: Basic Tiered Routing
 
 ```python
-from src.app.routing.config import RoutingConfig
-from src.app.routing.strategies import GLiNERRoutingStrategy, LLMRoutingStrategy
+from cogniverse_agents.routing.config import RoutingConfig
+from cogniverse_agents.routing.strategies import GLiNERRoutingStrategy, LLMRoutingStrategy
 
 # Initialize config
 config = RoutingConfig(routing_mode="tiered")
@@ -950,7 +956,7 @@ else:
 ### Example 2: Query Enhancement with SIMBA
 
 ```python
-from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
+from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
 
 # Initialize pipeline with SIMBA enabled
 pipeline = QueryEnhancementPipeline(enable_simba=True)
@@ -994,7 +1000,7 @@ await pipeline.record_enhancement_outcome(
 ### Example 3: GRPO Optimization
 
 ```python
-from src.app.routing.advanced_optimizer import (
+from cogniverse_agents.routing.advanced_optimizer import (
     AdvancedRoutingOptimizer,
     AdvancedOptimizerConfig
 )
@@ -1048,8 +1054,8 @@ print(f"Optimization ready: {recommendations['optimization_ready']}")
 ### Example 4: Cross-Modal Fusion
 
 ```python
-from src.app.routing.cross_modal_optimizer import CrossModalOptimizer
-from src.app.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 # Initialize optimizer
 optimizer = CrossModalOptimizer()
@@ -1098,8 +1104,8 @@ optimizer.record_fusion_result(
 ### Example 5: Per-Modality Caching
 
 ```python
-from src.app.routing.modality_cache import ModalityCacheManager
-from src.app.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.routing.modality_cache import ModalityCacheManager
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 # Initialize cache manager
 cache = ModalityCacheManager(cache_size_per_modality=1000)
@@ -1237,7 +1243,7 @@ llm_config["max_tokens"] = 100  # Limit output length
 
 **Example Monitoring Setup**:
 ```python
-from src.app.telemetry.manager import TelemetryManager
+from cogniverse_core.telemetry.manager import TelemetryManager
 
 telemetry = TelemetryManager()
 
@@ -1363,7 +1369,7 @@ Located in: `tests/routing/unit/`
 # tests/routing/unit/test_tiered_routing.py
 
 import pytest
-from src.app.routing.strategies import GLiNERRoutingStrategy
+from cogniverse_agents.routing.strategies import GLiNERRoutingStrategy
 
 @pytest.mark.asyncio
 async def test_gliner_routing_high_confidence():
@@ -1458,10 +1464,10 @@ async def test_complete_routing_with_optimization():
 ## Next Steps
 
 For detailed information on related modules:
-- **Agents Module** (`01_AGENTS_MODULE.md`) - Multi-agent orchestration and specialized agents
-- **Common Module** (`03_COMMON_MODULE.md`) - Shared configuration and utilities
-- **Telemetry Module** (`05_TELEMETRY_MODULE.md`) - Multi-tenant observability
-- **Evaluation Module** (`06_EVALUATION_MODULE.md`) - Experiment tracking and metrics
+- **Agents Module** (`agents.md`) - Multi-agent orchestration and specialized agents (libs/agents/cogniverse_agents/)
+- **Common Module** (`common.md`) - Shared configuration and utilities (libs/core/cogniverse_core/common/)
+- **Telemetry Module** (`telemetry.md`) - Multi-tenant observability (libs/core/cogniverse_core/telemetry/)
+- **Evaluation Module** (`evaluation.md`) - Experiment tracking and metrics (libs/core/cogniverse_core/evaluation/)
 
 ---
 
