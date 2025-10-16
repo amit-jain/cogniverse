@@ -131,22 +131,32 @@ class Mem0MemoryManager:
         if not self.tenant_id:
             raise ValueError("tenant_id must be set before initialize()")
 
-        # Get tenant-specific schema name
-        from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+        # Get tenant-specific schema name via Backend interface
+        from cogniverse_core.config.utils import get_config
+        from cogniverse_core.registries.backend_registry import get_backend_registry
 
-        schema_manager = TenantSchemaManager(
-            vespa_url=vespa_host,
-            vespa_port=vespa_config_port or 19071,
+        config = get_config()
+        backend_type = config.get("backend_type", "vespa")
+        registry = get_backend_registry()
+
+        # Get backend instance
+        backend_config = {
+            "vespa_url": vespa_host,
+            "vespa_port": vespa_port,
+            "vespa_config_port": vespa_config_port or 19071,
+        }
+        backend = registry.get_ingestion_backend(
+            backend_type, tenant_id=self.tenant_id, config=backend_config
         )
-        tenant_schema_name = schema_manager.get_tenant_schema_name(
+
+        # Get tenant-specific schema name
+        tenant_schema_name = backend.get_tenant_schema_name(
             self.tenant_id, base_schema_name
         )
 
         # Deploy tenant schema if needed
         if auto_create_schema:
-            schema_manager.ensure_tenant_schema_exists(
-                self.tenant_id, base_schema_name
-            )
+            backend.deploy_schema(base_schema_name, tenant_id=self.tenant_id)
             logger.info(f"Ensured tenant schema exists: {tenant_schema_name}")
 
         # Configure Mem0 with Ollama provider and tenant-specific schema

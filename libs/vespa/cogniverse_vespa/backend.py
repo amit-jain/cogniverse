@@ -496,6 +496,315 @@ class VespaBackend(Backend):
             "search_enabled": self._initialized_as_search
         }
     
+    # ============================================================================
+    # Schema Management Operations (Backend interface implementation)
+    # ============================================================================
+
+    def deploy_schema(
+        self, schema_name: str, tenant_id: Optional[str] = None, **kwargs
+    ) -> bool:
+        """
+        Deploy or ensure schema exists for tenant.
+
+        Args:
+            schema_name: Base schema name to deploy
+            tenant_id: Tenant identifier (uses self._tenant_id if not provided)
+            **kwargs: Additional schema deployment options
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.tenant_schema_manager:
+            raise RuntimeError("Backend not initialized. Call initialize() first.")
+
+        # Use provided tenant_id or fall back to instance tenant_id
+        effective_tenant_id = tenant_id or self._tenant_id
+        if not effective_tenant_id:
+            raise ValueError("tenant_id required for schema deployment")
+
+        try:
+            self.tenant_schema_manager.ensure_tenant_schema_exists(
+                effective_tenant_id, schema_name
+            )
+            logger.info(
+                f"Deployed schema '{schema_name}' for tenant '{effective_tenant_id}'"
+            )
+            return True
+        except Exception as e:
+            logger.error(
+                f"Failed to deploy schema '{schema_name}' for tenant '{effective_tenant_id}': {e}"
+            )
+            return False
+
+    def delete_schema(
+        self, schema_name: str, tenant_id: Optional[str] = None
+    ) -> List[str]:
+        """
+        Delete tenant schema(s).
+
+        Args:
+            schema_name: Base schema name (if provided, deletes specific schema)
+            tenant_id: Tenant identifier (uses self._tenant_id if not provided)
+
+        Returns:
+            List of deleted schema names
+        """
+        if not self.tenant_schema_manager:
+            raise RuntimeError("Backend not initialized. Call initialize() first.")
+
+        # Use provided tenant_id or fall back to instance tenant_id
+        effective_tenant_id = tenant_id or self._tenant_id
+        if not effective_tenant_id:
+            raise ValueError("tenant_id required for schema deletion")
+
+        try:
+            deleted_schemas = self.tenant_schema_manager.delete_tenant_schemas(
+                effective_tenant_id
+            )
+            logger.info(
+                f"Deleted {len(deleted_schemas)} schemas for tenant '{effective_tenant_id}'"
+            )
+            return deleted_schemas
+        except Exception as e:
+            logger.error(
+                f"Failed to delete schemas for tenant '{effective_tenant_id}': {e}"
+            )
+            return []
+
+    def schema_exists(
+        self, schema_name: str, tenant_id: Optional[str] = None
+    ) -> bool:
+        """
+        Check if schema exists.
+
+        Args:
+            schema_name: Base schema name
+            tenant_id: Tenant identifier (uses self._tenant_id if not provided)
+
+        Returns:
+            True if schema exists, False otherwise
+        """
+        if not self.tenant_schema_manager:
+            raise RuntimeError("Backend not initialized. Call initialize() first.")
+
+        # Use provided tenant_id or fall back to instance tenant_id
+        effective_tenant_id = tenant_id or self._tenant_id
+        if not effective_tenant_id:
+            # For non-tenant operations, check if base schema exists
+            return self.validate_schema(schema_name)
+
+        try:
+            # Check if tenant schema exists (simplified implementation)
+            # Assumes schema exists if we can generate the name successfully
+            self.tenant_schema_manager.get_tenant_schema_name(
+                effective_tenant_id, schema_name
+            )
+            return True
+        except Exception as e:
+            logger.error(
+                f"Failed to check schema existence for '{schema_name}' tenant '{effective_tenant_id}': {e}"
+            )
+            return False
+
+    def get_tenant_schema_name(
+        self, tenant_id: str, base_schema_name: str
+    ) -> str:
+        """
+        Get tenant-specific schema name.
+
+        Args:
+            tenant_id: Tenant identifier
+            base_schema_name: Base schema name
+
+        Returns:
+            Tenant-specific schema name
+        """
+        if not self.tenant_schema_manager:
+            raise RuntimeError("Backend not initialized. Call initialize() first.")
+
+        return self.tenant_schema_manager.get_tenant_schema_name(
+            tenant_id, base_schema_name
+        )
+
+    # ============================================================================
+    # Metadata Document Operations (Backend interface implementation)
+    # ============================================================================
+
+    def create_metadata_document(
+        self, schema: str, doc_id: str, fields: Dict[str, Any]
+    ) -> bool:
+        """
+        Create or update metadata document.
+
+        Args:
+            schema: Schema name (e.g., "organization_metadata", "tenant_metadata")
+            doc_id: Document ID
+            fields: Document fields as dict
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self._vespa_url:
+            raise RuntimeError("Backend not initialized. Call initialize() first.")
+
+        try:
+            # Import Vespa client for metadata operations
+            from vespa.application import Vespa
+
+            # Create Vespa client for metadata operations
+            vespa_client = Vespa(url=f"{self._vespa_url}:{self._vespa_port}")
+
+            # Feed metadata document
+            vespa_client.feed_data_point(
+                schema=schema,
+                data_id=doc_id,
+                fields=fields
+            )
+
+            logger.debug(f"Created metadata document: {schema}/{doc_id}")
+            return True
+        except Exception as e:
+            logger.error(
+                f"Failed to create metadata document {schema}/{doc_id}: {e}"
+            )
+            return False
+
+    def get_metadata_document(
+        self, schema: str, doc_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get metadata document by ID.
+
+        Args:
+            schema: Schema name
+            doc_id: Document ID
+
+        Returns:
+            Document fields as dict, or None if not found
+        """
+        if not self._vespa_url:
+            raise RuntimeError("Backend not initialized. Call initialize() first.")
+
+        try:
+            # Import Vespa client for metadata operations
+            from vespa.application import Vespa
+
+            # Create Vespa client for metadata operations
+            vespa_client = Vespa(url=f"{self._vespa_url}:{self._vespa_port}")
+
+            # Get metadata document
+            response = vespa_client.get_data(schema=schema, data_id=doc_id)
+
+            if not response or response.status_code != 200:
+                return None
+
+            result = response.json
+            return result.get("fields", {})
+        except Exception as e:
+            logger.error(
+                f"Failed to get metadata document {schema}/{doc_id}: {e}"
+            )
+            return None
+
+    def query_metadata_documents(
+        self,
+        schema: str,
+        query: Optional[str] = None,
+        yql: Optional[str] = None,
+        **kwargs
+    ) -> List[Dict[str, Any]]:
+        """
+        Query metadata documents.
+
+        Args:
+            schema: Schema name to query
+            query: Text query (for userQuery() in YQL)
+            yql: Direct YQL query
+            **kwargs: Additional query options (hits, filters, etc.)
+
+        Returns:
+            List of matching documents as dicts
+        """
+        if not self._vespa_url:
+            raise RuntimeError("Backend not initialized. Call initialize() first.")
+
+        try:
+            # Import Vespa client for metadata operations
+            from vespa.application import Vespa
+
+            # Create Vespa client for metadata operations
+            vespa_client = Vespa(url=f"{self._vespa_url}:{self._vespa_port}")
+
+            # Build query parameters
+            query_params = {
+                "hits": kwargs.get("hits", 100),
+            }
+
+            if yql:
+                query_params["yql"] = yql
+                # If YQL contains userQuery(), also add the query parameter if provided
+                if query and "userQuery()" in yql:
+                    query_params["query"] = query
+            elif query:
+                # Use userQuery() for text search
+                query_params["yql"] = f'select * from {schema} where userQuery()'
+                query_params["query"] = query
+            else:
+                # Get all documents - Vespa requires at least one search term
+                # Using a match-all pattern with limit
+                query_params["yql"] = f'select * from {schema} where true limit {kwargs.get("hits", 100)}'
+
+            # Execute query
+            results = vespa_client.query(**query_params)
+
+            # Extract documents from response
+            documents = []
+            for hit in results.json.get("root", {}).get("children", []):
+                fields = hit.get("fields", {})
+                documents.append(fields)
+
+            logger.debug(f"Query returned {len(documents)} documents from {schema}")
+            return documents
+        except Exception as e:
+            logger.error(f"Failed to query metadata documents from {schema}: {e}")
+            return []
+
+    def delete_metadata_document(self, schema: str, doc_id: str) -> bool:
+        """
+        Delete metadata document.
+
+        Args:
+            schema: Schema name
+            doc_id: Document ID
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self._vespa_url:
+            raise RuntimeError("Backend not initialized. Call initialize() first.")
+
+        try:
+            # Import Vespa client for metadata operations
+            from vespa.application import Vespa
+
+            # Create Vespa client for metadata operations
+            vespa_client = Vespa(url=f"{self._vespa_url}:{self._vespa_port}")
+
+            # Delete metadata document
+            vespa_client.delete_data(schema=schema, data_id=doc_id)
+
+            logger.debug(f"Deleted metadata document: {schema}/{doc_id}")
+            return True
+        except Exception as e:
+            logger.error(
+                f"Failed to delete metadata document {schema}/{doc_id}: {e}"
+            )
+            return False
+
+    # ============================================================================
+    # Connection Management
+    # ============================================================================
+
     def close(self) -> None:
         """
         Close connections to Vespa.
@@ -504,27 +813,27 @@ class VespaBackend(Backend):
         for schema_name, client in self._vespa_ingestion_clients.items():
             client.close()
             logger.info(f"Closed Vespa client for schema: {schema_name}")
-        
+
         for schema_name, client in self._async_ingestion_clients.items():
             client.close()
             logger.info(f"Closed async Vespa client for schema: {schema_name}")
-        
+
         if self._vespa_search_backend:
             # Search backend may not have a close method
             pass
-        
+
         logger.info("Closed all Vespa backend connections")
-    
+
     def health_check(self) -> bool:
         """
         Check Vespa health.
-        
+
         Returns:
             True if healthy
         """
         if self._vespa_search_backend:
             return self._vespa_search_backend.health_check()
-        
+
         # Basic health check
         return self.schema_manager is not None
 

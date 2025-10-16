@@ -266,3 +266,161 @@ class Backend(IngestionBackend, SearchBackend):
             config: Backend configuration
         """
         pass
+
+    # ============================================================================
+    # Schema Management Operations
+    # ============================================================================
+
+    @abstractmethod
+    def deploy_schema(
+        self, schema_name: str, tenant_id: Optional[str] = None, **kwargs
+    ) -> bool:
+        """
+        Deploy or ensure schema exists for tenant.
+
+        Args:
+            schema_name: Base schema name to deploy
+            tenant_id: Tenant identifier (for multi-tenant backends)
+            **kwargs: Additional schema deployment options
+
+        Returns:
+            True if successful, False otherwise
+
+        Note:
+            For multi-tenant backends, this creates tenant-specific schema
+            (e.g., video_colpali_{tenant_id}). For single-tenant backends,
+            this ensures the base schema exists.
+        """
+        pass
+
+    @abstractmethod
+    def delete_schema(
+        self, schema_name: str, tenant_id: Optional[str] = None
+    ) -> List[str]:
+        """
+        Delete tenant schema(s).
+
+        Args:
+            schema_name: Base schema name to delete
+            tenant_id: Tenant identifier
+
+        Returns:
+            List of deleted schema names
+
+        Note:
+            For multi-tenant backends, deletes all schemas for tenant.
+            For single-tenant backends, this is typically a no-op.
+        """
+        pass
+
+    @abstractmethod
+    def schema_exists(
+        self, schema_name: str, tenant_id: Optional[str] = None
+    ) -> bool:
+        """
+        Check if schema exists.
+
+        Args:
+            schema_name: Base schema name
+            tenant_id: Tenant identifier
+
+        Returns:
+            True if schema exists, False otherwise
+        """
+        pass
+
+    @abstractmethod
+    def get_tenant_schema_name(
+        self, tenant_id: str, base_schema_name: str
+    ) -> str:
+        """
+        Get tenant-specific schema name.
+
+        Args:
+            tenant_id: Tenant identifier
+            base_schema_name: Base schema name
+
+        Returns:
+            Tenant-specific schema name (e.g., "video_colpali_acme")
+
+        Note:
+            For non-tenant-aware backends, returns base_schema_name unchanged.
+        """
+        pass
+
+    # ============================================================================
+    # Metadata Document Operations (for tenant management, etc.)
+    # ============================================================================
+
+    @abstractmethod
+    def create_metadata_document(
+        self, schema: str, doc_id: str, fields: Dict[str, Any]
+    ) -> bool:
+        """
+        Create or update metadata document.
+
+        Args:
+            schema: Schema name (e.g., "organization_metadata", "tenant_metadata")
+            doc_id: Document ID
+            fields: Document fields as dict
+
+        Returns:
+            True if successful, False otherwise
+
+        Note:
+            Used for storing organization/tenant metadata, not video content.
+            Different from ingest_documents() which handles video documents.
+        """
+        pass
+
+    @abstractmethod
+    def get_metadata_document(
+        self, schema: str, doc_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get metadata document by ID.
+
+        Args:
+            schema: Schema name
+            doc_id: Document ID
+
+        Returns:
+            Document fields as dict, or None if not found
+        """
+        pass
+
+    @abstractmethod
+    def query_metadata_documents(
+        self,
+        schema: str,
+        query: Optional[str] = None,
+        yql: Optional[str] = None,
+        **kwargs
+    ) -> List[Dict[str, Any]]:
+        """
+        Query metadata documents.
+
+        Args:
+            schema: Schema name to query
+            query: Text query (backend-specific syntax)
+            yql: Direct query language (e.g., Vespa YQL)
+            **kwargs: Additional query options (hits, filters, etc.)
+
+        Returns:
+            List of matching documents as dicts
+        """
+        pass
+
+    @abstractmethod
+    def delete_metadata_document(self, schema: str, doc_id: str) -> bool:
+        """
+        Delete metadata document.
+
+        Args:
+            schema: Schema name
+            doc_id: Document ID
+
+        Returns:
+            True if successful, False otherwise
+        """
+        pass

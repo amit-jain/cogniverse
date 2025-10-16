@@ -34,9 +34,9 @@ from typing import Dict, List, Optional
 import uvicorn
 from cogniverse_core.common.tenant_utils import parse_tenant_id
 from cogniverse_core.config.utils import get_config
-from cogniverse_vespa.tenant_schema_manager import get_tenant_schema_manager
+from cogniverse_core.interfaces.backend import Backend
+from cogniverse_core.registries.backend_registry import get_backend_registry
 from fastapi import FastAPI, HTTPException
-from vespa.application import Vespa
 
 from cogniverse_runtime.admin.models import (
     CreateOrganizationRequest,
@@ -55,33 +55,38 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Vespa client for metadata storage (raw pyvespa client for document CRUD)
-vespa_client: Optional[Vespa] = None
-# Tenant schema manager for deploying tenant schemas
-schema_manager = None
+# Backend for metadata storage and schema management
+backend: Optional[Backend] = None
 
 
-def get_vespa_client() -> Vespa:
-    """Get or create Vespa client for metadata operations"""
-    global vespa_client
-    if vespa_client is None:
+def get_backend() -> Backend:
+    """Get or create backend for metadata operations"""
+    global backend
+    if backend is None:
         config = get_config()
-        vespa_url = config.get("vespa_url", "http://localhost")
-        vespa_port = config.get("vespa_port", 8080)
-        vespa_client = Vespa(url=f"{vespa_url}:{vespa_port}")
-    return vespa_client
+        backend_type = config.get("backend_type", "vespa")
+        registry = get_backend_registry()
 
+        # Get backend instance with configuration
+        backend_config = {
+            "vespa_url": config.get("vespa_url", "http://localhost"),
+            "vespa_port": config.get("vespa_port", 8080),
+            "vespa_config_port": config.get("vespa_config_port", 19071),
+        }
 
-def get_schema_manager():
-    """Get or create tenant schema manager"""
-    global schema_manager
-    if schema_manager is None:
-        config = get_config()
-        schema_manager = get_tenant_schema_manager(
-            vespa_url=config.get("vespa_url", "http://localhost"),
-            vespa_port=config.get("vespa_config_port", 19071),
-        )
-    return schema_manager
+        # Get backend WITHOUT tenant_id (this is for metadata operations across all tenants)
+        # We'll pass tenant_id explicitly when needed for schema operations
+        try:
+            backend = registry.get_ingestion_backend(
+                backend_type, tenant_id="system", config=backend_config
+            )
+        except Exception as e:
+            logger.error(f"Failed to get backend: {e}")
+            raise
+
+        logger.info(f"Initialized {backend_type} backend for tenant management")
+
+    return backend
 
 
 def validate_org_id(org_id: str) -> None:
@@ -138,7 +143,7 @@ async def create_organization(request: CreateOrganizationRequest) -> Organizatio
     try:
         validate_org_id(request.org_id)
 
-        client = get_vespa_client()
+        backend = get_backend()
 
         # Check if org already exists
         existing = await get_organization_internal(request.org_id)
@@ -158,10 +163,10 @@ async def create_organization(request: CreateOrganizationRequest) -> Organizatio
             tenant_count=0,
         )
 
-        # Store in Vespa
-        client.feed_data_point(
+        # Store via Backend
+        backend.create_metadata_document(
             schema="organization_metadata",
-            data_id=org.org_id,
+            doc_id=org.org_id,
             fields={
                 "org_id": org.org_id,
                 "org_name": org.org_name,
@@ -193,17 +198,17 @@ async def list_organizations() -> OrganizationListResponse:
         List of all organizations with count
     """
     try:
-        client = get_vespa_client()
+        backend = get_backend()
 
         # Query all organizations
-        results = client.query(
+        documents = backend.query_metadata_documents(
+            schema="organization_metadata",
             yql="select * from organization_metadata where true",
             hits=400,
         )
 
         organizations = []
-        for hit in results.json.get("root", {}).get("children", []):
-            fields = hit.get("fields", {})
+        for fields in documents:
             org_id = fields.get("org_id")
 
             # Compute tenant_count dynamically
@@ -251,17 +256,14 @@ async def get_organization(org_id: str) -> Organization:
 async def get_organization_internal(org_id: str) -> Optional[Organization]:
     """Internal helper to get organization"""
     try:
-        client = get_vespa_client()
+        backend = get_backend()
 
-        response = client.get_data(
-            schema="organization_metadata", data_id=org_id
+        fields = backend.get_metadata_document(
+            schema="organization_metadata", doc_id=org_id
         )
 
-        if not response or response.status_code != 200:
+        if not fields:
             return None
-
-        result = response.json
-        fields = result.get("fields", {})
 
         # Compute tenant_count dynamically by querying tenants
         tenants = await list_tenants_for_org_internal(org_id)
@@ -307,7 +309,7 @@ async def delete_organization(org_id: str) -> Dict:
                 status_code=404, detail=f"Organization {org_id} not found"
             )
 
-        client = get_vespa_client()
+        backend = get_backend()
 
         # Delete all tenants for this org
         tenants = await list_tenants_for_org_internal(org_id)
@@ -321,7 +323,7 @@ async def delete_organization(org_id: str) -> Dict:
                 logger.error(f"Failed to delete tenant {tenant.tenant_full_id}: {e}")
 
         # Delete organization
-        client.delete_data(schema="organization_metadata", data_id=org_id)
+        backend.delete_metadata_document(schema="organization_metadata", doc_id=org_id)
 
         logger.info(
             f"Deleted organization {org_id} with {len(deleted_tenants)} tenants"
@@ -382,7 +384,7 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
 
         tenant_full_id = f"{org_id}:{tenant_name}"
 
-        client = get_vespa_client()
+        backend = get_backend()
 
         # Check if tenant already exists
         existing = await get_tenant_internal(tenant_full_id)
@@ -405,9 +407,9 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
                 tenant_count=0,  # Not used, computed dynamically
             )
 
-            client.feed_data_point(
+            backend.create_metadata_document(
                 schema="organization_metadata",
-                data_id=org.org_id,
+                doc_id=org.org_id,
                 fields={
                     "org_id": org.org_id,
                     "org_name": org.org_name,
@@ -419,8 +421,7 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
             )
             org_created = True
 
-        # Deploy Vespa schemas for tenant
-        manager = get_schema_manager()
+        # Deploy schemas for tenant via Backend
         base_schemas = request.base_schemas or [
             "video_colpali_smol500_mv_frame",
         ]
@@ -428,7 +429,7 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
         deployed_schemas = []
         for base_schema in base_schemas:
             try:
-                manager.ensure_tenant_schema_exists(tenant_full_id, base_schema)
+                backend.deploy_schema(base_schema, tenant_id=tenant_full_id)
                 deployed_schemas.append(base_schema)
             except Exception as e:
                 logger.error(f"Failed to deploy schema {base_schema} for {tenant_full_id}: {e}")
@@ -444,10 +445,10 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
             schemas_deployed=deployed_schemas,
         )
 
-        # Store in Vespa
-        client.feed_data_point(
+        # Store via Backend
+        backend.create_metadata_document(
             schema="tenant_metadata",
-            data_id=tenant_full_id,
+            doc_id=tenant_full_id,
             fields={
                 "tenant_full_id": tenant.tenant_full_id,
                 "org_id": tenant.org_id,
@@ -518,18 +519,18 @@ async def list_tenants_for_org(org_id: str) -> TenantListResponse:
 async def list_tenants_for_org_internal(org_id: str) -> List[Tenant]:
     """Internal helper to list tenants"""
     try:
-        client = get_vespa_client()
+        backend = get_backend()
 
         # Query tenants for this org using term matching in userQuery
-        results = client.query(
+        documents = backend.query_metadata_documents(
+            schema='tenant_metadata',
             yql='select * from tenant_metadata where userQuery()',
             query=f'org_id:{org_id}',
             hits=400,
         )
 
         tenants = []
-        for hit in results.json.get("root", {}).get("children", []):
-            fields = hit.get("fields", {})
+        for fields in documents:
             tenant = Tenant(
                 tenant_full_id=fields.get("tenant_full_id"),
                 org_id=fields.get("org_id"),
@@ -573,17 +574,14 @@ async def get_tenant(tenant_full_id: str) -> Tenant:
 async def get_tenant_internal(tenant_full_id: str) -> Optional[Tenant]:
     """Internal helper to get tenant"""
     try:
-        client = get_vespa_client()
+        backend = get_backend()
 
-        response = client.get_data(
-            schema="tenant_metadata", data_id=tenant_full_id
+        fields = backend.get_metadata_document(
+            schema="tenant_metadata", doc_id=tenant_full_id
         )
 
-        if not response or response.status_code != 200:
+        if not fields:
             return None
-
-        result = response.json
-        fields = result.get("fields", {})
         return Tenant(
             tenant_full_id=fields.get("tenant_full_id"),
             org_id=fields.get("org_id"),
@@ -636,19 +634,18 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
             status_code=404, detail=f"Tenant {tenant_full_id} not found"
         )
 
-    client = get_vespa_client()
-    manager = get_schema_manager()
+    backend = get_backend()
 
     # Delete tenant schemas
     deleted_schemas = []
     try:
-        schemas = manager.delete_tenant_schemas(tenant_full_id)
+        schemas = backend.delete_schema(schema_name=None, tenant_id=tenant_full_id)
         deleted_schemas.extend(schemas)
     except Exception as e:
         logger.error(f"Failed to delete schemas for {tenant_full_id}: {e}")
 
     # Delete tenant metadata
-    client.delete_data(schema="tenant_metadata", data_id=tenant_full_id)
+    backend.delete_metadata_document(schema="tenant_metadata", doc_id=tenant_full_id)
 
     logger.info(f"Deleted tenant {tenant_full_id} with {len(deleted_schemas)} schemas")
 

@@ -17,8 +17,6 @@ os.environ["MEM0_TELEMETRY"] = "False"
 from mem0 import Memory
 from mem0.vector_stores.configs import VectorStoreConfig
 
-from cogniverse_vespa.tenant_schema_manager import get_tenant_schema_manager
-
 logger = logging.getLogger(__name__)
 
 
@@ -97,7 +95,6 @@ class Mem0MemoryManager:
         self.tenant_id = tenant_id
         self.memory: Optional[Memory] = None
         self.config: Optional[Dict[str, Any]] = None
-        self.schema_manager = get_tenant_schema_manager()
 
         self._initialized = True
         logger.info(f"Mem0MemoryManager initialized for tenant: {tenant_id}")
@@ -130,17 +127,33 @@ class Mem0MemoryManager:
         if not self.tenant_id:
             raise ValueError("tenant_id must be set before initialize()")
 
+        # Get tenant-specific schema name via Backend interface
+        from cogniverse_core.config.utils import get_config
+        from cogniverse_core.registries.backend_registry import get_backend_registry
+
+        config = get_config()
+        backend_type = config.get("backend_type", "vespa")
+        registry = get_backend_registry()
+
+        # Get backend instance
+        backend_config = {
+            "vespa_url": vespa_host,
+            "vespa_port": vespa_port,
+            "vespa_config_port": 19071,
+        }
+        backend = registry.get_ingestion_backend(
+            backend_type, tenant_id=self.tenant_id, config=backend_config
+        )
+
         # Get tenant-specific schema name
-        tenant_schema_name = self.schema_manager.get_tenant_schema_name(
+        tenant_schema_name = backend.get_tenant_schema_name(
             self.tenant_id, base_schema_name
         )
 
         # Deploy tenant schema if needed
         if auto_create_schema:
             try:
-                self.schema_manager.ensure_tenant_schema_exists(
-                    self.tenant_id, base_schema_name
-                )
+                backend.deploy_schema(base_schema_name, tenant_id=self.tenant_id)
                 logger.info(f"Ensured tenant schema exists: {tenant_schema_name}")
             except Exception as e:
                 logger.warning(f"Failed to deploy tenant schema: {e}")
