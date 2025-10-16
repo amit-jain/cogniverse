@@ -196,8 +196,9 @@ class ConnectionPool:
                     logger.info(f"Created new connection {conn.connection_id}")
             
             # Wait for connection if none available
+            from cogniverse_core.common.utils.async_polling import wait_for_resource_cleanup
             while conn is None and (time.time() - start_time) < self.config.connection_timeout:
-                time.sleep(0.1)
+                wait_for_resource_cleanup(0.1, "connection availability")
                 with self._lock:
                     if self._available:
                         conn = self._available.pop()

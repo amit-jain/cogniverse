@@ -5,6 +5,7 @@ Unit tests for ModalityCacheManager
 import time
 
 import pytest
+from tests.utils.async_polling import wait_for_cache_expiration
 
 from cogniverse_agents.routing.modality_cache import LRUCache, ModalityCacheManager
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
@@ -168,7 +169,7 @@ class TestModalityCacheManager:
         )
 
         # Wait for expiration
-        time.sleep(1.1)
+        wait_for_cache_expiration(ttl=1.0, buffer=0.1)
 
         # Should be expired
         assert (

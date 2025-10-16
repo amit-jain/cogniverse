@@ -22,6 +22,7 @@ from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from vespa.package import ApplicationPackage, Validation
 
 from tests.utils.docker_utils import cleanup_vespa_container
+from tests.utils.async_polling import wait_for_vespa_indexing
 
 
 class VespaTestManager:
@@ -321,7 +322,7 @@ class VespaTestManager:
                         break
                 except Exception:
                     pass
-                time.sleep(1)
+                wait_for_vespa_indexing(delay=1)
                 if i % 10 == 0:  # Progress indicator every 10 seconds
                     print(f"  Still waiting... ({i}s)")
             else:
@@ -354,7 +355,7 @@ class VespaTestManager:
                         return True
                 except Exception:
                     pass
-                time.sleep(2)
+                wait_for_vespa_indexing(delay=2)
 
             print("❌ Isolated Vespa not ready after 120 seconds")
             return False

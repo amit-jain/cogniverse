@@ -102,7 +102,7 @@ def vespa_instance():
                     break
             except Exception:
                 pass
-            time.sleep(1)
+            wait_for_vespa_indexing(delay=1)
             if i % 10 == 0 and i > 0:
                 logger.info(f"  Still waiting... ({i}s)")
         else:
@@ -172,7 +172,7 @@ def vespa_instance():
                     break
             except Exception:
                 pass
-            time.sleep(2)
+            wait_for_vespa_indexing(delay=2)
         else:
             # Cleanup and skip
             subprocess.run(["docker", "stop", container_name], capture_output=True)

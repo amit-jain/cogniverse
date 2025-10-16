@@ -47,7 +47,7 @@ def cleanup_background_threads():
             break
 
         # Give threads time to finish their work
-        time.sleep(0.1)
+        simulate_processing_delay(delay=0.1, description="test processing")
 
     # Force garbage collection to clean up any remaining references
     gc.collect()

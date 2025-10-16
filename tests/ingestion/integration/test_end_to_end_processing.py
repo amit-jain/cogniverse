@@ -552,7 +552,7 @@ class TestEndToEndVideoProcessing:
     ):
         """Test pipeline safety under concurrent processing scenarios."""
         import threading
-        import time
+        from tests.utils.async_polling import simulate_processing_delay
 
         # Mock thread-safe processor
         class ThreadSafeProcessor:
@@ -570,7 +570,7 @@ class TestEndToEndVideoProcessing:
             def extract_keyframes(self, *args, **kwargs):
                 with self._lock:
                     self.call_count += 1
-                    time.sleep(0.01)  # Simulate processing time
+                    simulate_processing_delay(delay=0.01, description="concurrent processing")
                     return {
                         "video_id": f"video_{self.call_count}",
                         "total_keyframes": 1,

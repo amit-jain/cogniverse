@@ -16,6 +16,7 @@ NO MOCKS - all tests against real Phoenix server.
 """
 
 import logging
+from tests.utils.async_polling import wait_for_vespa_indexing, simulate_processing_delay
 import os
 import time
 from datetime import datetime, timedelta
@@ -131,10 +132,10 @@ class TestCompleteOptimizationIntegration:
                     "routing.context": "{}",
                 },
             ):
-                time.sleep(0.05)
+                simulate_processing_delay(delay=0.05, description="processing")
 
         telemetry_manager.force_flush(timeout_millis=5000)
-        time.sleep(2)
+        wait_for_vespa_indexing(delay=2)
 
         # STEP 2: Verify spans exist in Phoenix
         logger.info("\n=== STEP 2: Verifying spans exist in Phoenix ===")
@@ -275,10 +276,10 @@ class TestCompleteOptimizationIntegration:
                     "routing.context": "{}",
                 },
             ):
-                time.sleep(0.05)
+                simulate_processing_delay(delay=0.05, description="processing")
 
         telemetry_manager.force_flush(timeout_millis=5000)
-        time.sleep(2)
+        wait_for_vespa_indexing(delay=2)
 
         # STEP 2: Initialize orchestrator with low thresholds
         logger.info("\n=== STEP 2: Initializing orchestrator ===")
@@ -377,10 +378,10 @@ class TestCompleteOptimizationIntegration:
                     "routing.context": "{}",
                 },
             ):
-                time.sleep(0.02)
+                simulate_processing_delay(delay=0.02, description="processing")
 
         telemetry_manager.force_flush(timeout_millis=5000)
-        time.sleep(2)
+        wait_for_vespa_indexing(delay=2)
 
         # STEP 2: Initialize orchestrator with low optimization threshold
         logger.info("\n=== STEP 2: Initializing orchestrator with low thresholds ===")
@@ -398,7 +399,7 @@ class TestCompleteOptimizationIntegration:
             logger.info(f"\n--- Cycle {cycle + 1} ---")
             result = await orchestrator.run_once()
             logger.info(f"Cycle {cycle + 1} result: {result}")
-            time.sleep(1)
+            wait_for_vespa_indexing(delay=1)
 
         # STEP 4: Validate experiences accumulated
         logger.info("\n=== STEP 4: Validating experience accumulation ===")
@@ -479,10 +480,10 @@ class TestCompleteOptimizationIntegration:
                     "routing.context": "{}",
                 },
             ):
-                time.sleep(0.05)
+                simulate_processing_delay(delay=0.05, description="processing")
 
         telemetry_manager.force_flush(timeout_millis=5000)
-        time.sleep(2)
+        wait_for_vespa_indexing(delay=2)
 
         # STEP 4: Run orchestration
         await orchestrator.run_once()

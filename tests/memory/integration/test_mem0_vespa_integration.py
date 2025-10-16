@@ -8,6 +8,7 @@ Uses shared session-scoped Vespa container from conftest.py.
 import time
 
 import pytest
+from tests.utils.async_polling import wait_for_vespa_indexing
 from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
 from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
 
@@ -73,7 +74,7 @@ class TestMem0VespaIntegration:
         assert isinstance(memory_id, str)
 
         # Wait for indexing
-        time.sleep(2)
+        wait_for_vespa_indexing(delay=2)
 
         # Search for memory
         results = memory_manager.search_memory(
@@ -94,7 +95,7 @@ class TestMem0VespaIntegration:
         memory_manager.clear_agent_memory("tenant_1", "test_agent")
         memory_manager.clear_agent_memory("tenant_2", "test_agent")
 
-        time.sleep(1)
+        wait_for_vespa_indexing(delay=1)
 
         # Add memory for tenant 1 with very specific content
         mem1_id = memory_manager.add_memory(
@@ -114,7 +115,7 @@ class TestMem0VespaIntegration:
         assert mem1_id is not None or mem1_id == ""  # Mem0 might return empty string
         assert mem2_id is not None or mem2_id == ""
 
-        time.sleep(2)
+        wait_for_vespa_indexing(delay=2)
 
         # Search tenant 1 - should only find cats
         results_1 = memory_manager.search_memory(
@@ -169,7 +170,7 @@ class TestMem0VespaIntegration:
         # Clear first
         memory_manager.clear_agent_memory("test_tenant", "get_all_agent")
 
-        time.sleep(1)
+        wait_for_vespa_indexing(delay=1)
 
         # Add multiple semantically distinct memories to avoid Mem0 deduplication
         contents = [
@@ -187,7 +188,7 @@ class TestMem0VespaIntegration:
             )
             added_ids.append(mem_id)
 
-        time.sleep(3)
+        wait_for_vespa_indexing(delay=3, description="multiple documents")
 
         # Get all memories
         memories = memory_manager.get_all_memories(
@@ -206,7 +207,7 @@ class TestMem0VespaIntegration:
         # Clear first
         memory_manager.clear_agent_memory("test_tenant", "delete_test_agent")
 
-        time.sleep(1)
+        wait_for_vespa_indexing(delay=1)
 
         # Add memory with factual content that Mem0 will store
         memory_id = memory_manager.add_memory(
@@ -219,7 +220,7 @@ class TestMem0VespaIntegration:
         assert isinstance(memory_id, str)
         assert len(memory_id) > 0
 
-        time.sleep(2)
+        wait_for_vespa_indexing(delay=2)
 
         # Delete memory
         success = memory_manager.delete_memory(
@@ -230,7 +231,7 @@ class TestMem0VespaIntegration:
         assert success is True
 
         # Verify memory was deleted by checking it's not in get_all
-        time.sleep(1)
+        wait_for_vespa_indexing(delay=1)
         memories = memory_manager.get_all_memories(
             tenant_id="test_tenant",
             agent_name="delete_test_agent",
@@ -246,7 +247,7 @@ class TestMem0VespaIntegration:
         # Clear first
         memory_manager.clear_agent_memory("test_tenant", "update_test_agent")
 
-        time.sleep(1)
+        wait_for_vespa_indexing(delay=1)
 
         # Add memory with factual content
         memory_id = memory_manager.add_memory(
@@ -259,7 +260,7 @@ class TestMem0VespaIntegration:
         assert isinstance(memory_id, str)
         assert len(memory_id) > 0
 
-        time.sleep(2)
+        wait_for_vespa_indexing(delay=2)
 
         # Update memory
         success = memory_manager.update_memory(
@@ -271,7 +272,7 @@ class TestMem0VespaIntegration:
         assert success is True
 
         # Verify memory was updated by searching for the new content
-        time.sleep(2)
+        wait_for_vespa_indexing(delay=2)
         results = memory_manager.search_memory(
             query="newcompany email",
             tenant_id="test_tenant",
@@ -292,7 +293,7 @@ class TestMem0VespaIntegration:
         # Clear first
         memory_manager.clear_agent_memory("test_tenant", "stats_agent")
 
-        time.sleep(1)
+        wait_for_vespa_indexing(delay=1)
 
         # Add semantically distinct memories
         memories_to_add = [
@@ -308,7 +309,7 @@ class TestMem0VespaIntegration:
                 agent_name="stats_agent",
             )
 
-        time.sleep(3)
+        wait_for_vespa_indexing(delay=3, description="multiple documents")
 
         # Get stats
         stats = memory_manager.get_memory_stats(
@@ -332,7 +333,7 @@ class TestMem0VespaIntegration:
         # Clear first
         memory_manager.clear_agent_memory("test_tenant", "clear_test_agent")
 
-        time.sleep(1)
+        wait_for_vespa_indexing(delay=1)
 
         # Add distinct memories
         memories_to_add = [
@@ -348,7 +349,7 @@ class TestMem0VespaIntegration:
                 agent_name="clear_test_agent",
             )
 
-        time.sleep(3)
+        wait_for_vespa_indexing(delay=3, description="multiple documents")
 
         # Verify at least some memories exist
         memories_before = memory_manager.get_all_memories(
@@ -364,7 +365,7 @@ class TestMem0VespaIntegration:
         )
         assert success is True
 
-        time.sleep(1)
+        wait_for_vespa_indexing(delay=1)
 
         # Verify cleared
         memories_after = memory_manager.get_all_memories(
@@ -410,7 +411,7 @@ class TestMem0MemoryAwareMixinIntegration:
         success = agent.update_memory("Test memory content")
         assert success is True
 
-        time.sleep(2)
+        wait_for_vespa_indexing(delay=2)
 
         # Search memory
         agent.get_relevant_context("test query")

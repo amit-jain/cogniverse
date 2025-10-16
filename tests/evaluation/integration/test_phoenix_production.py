@@ -4,6 +4,7 @@ These tests verify actual Phoenix integration, not mocks.
 """
 
 import threading
+from tests.utils.async_polling import wait_for_phoenix_processing
 import time
 from datetime import datetime, timedelta
 
@@ -79,7 +80,7 @@ class TestPhoenixProductionIntegration:
         assert "integration_test" in experiment_id
 
         # Give Phoenix time to process
-        time.sleep(1)
+        wait_for_phoenix_processing(delay=1, description="Phoenix processing")
 
         # Verify metrics were updated
         metrics = storage.get_metrics()
@@ -166,13 +167,13 @@ class TestPhoenixProductionIntegration:
             storage.connection_state = ConnectionState.DISCONNECTED
 
             # Wait for health check to detect and recover
-            time.sleep(1.0)
+            wait_for_phoenix_processing(delay=1.0, description="Phoenix processing")
 
             # Restore client for health check
             storage.client = original_client
 
             # Wait for recovery
-            time.sleep(1.0)
+            wait_for_phoenix_processing(delay=1.0, description="Phoenix processing")
 
             # Should have attempted reconnection
             # Note: Actual reconnection depends on Phoenix availability
@@ -245,7 +246,7 @@ class TestPhoenixProductionIntegration:
             )
 
         # Give time for export
-        time.sleep(2)
+        wait_for_phoenix_processing(delay=2, description="Phoenix processing")
 
         # Check metrics
         metrics = storage.get_metrics()

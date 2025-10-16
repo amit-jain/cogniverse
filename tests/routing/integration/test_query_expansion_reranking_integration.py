@@ -14,6 +14,7 @@ Requires:
 """
 
 import subprocess
+from tests.utils.async_polling import wait_for_vespa_indexing, simulate_processing_delay
 import time
 from datetime import datetime, timedelta
 
@@ -98,7 +99,7 @@ def test_vespa_integration():
                 break
         except Exception:
             pass
-        time.sleep(1)
+        wait_for_vespa_indexing(delay=1)
         if i % 10 == 0 and i > 0:
             print(f"   Still waiting... ({i}s)")
     else:

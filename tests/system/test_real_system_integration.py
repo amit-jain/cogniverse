@@ -13,6 +13,7 @@ Test outputs are written to tests/system/outputs/ and excluded from git.
 """
 
 import asyncio
+from tests.utils.async_polling import wait_for_vespa_indexing, simulate_processing_delay
 import os
 import subprocess
 import time
@@ -81,7 +82,7 @@ def start_vespa() -> bool:
             if check_vespa_available():
                 print("Vespa started successfully")
                 return True
-            time.sleep(1)
+            wait_for_vespa_indexing(delay=1)
 
         return False
     except Exception as e:
@@ -150,7 +151,7 @@ class TestRealVespaIntegration:
                 break
             elif response.status_code == 503:
                 # Application still starting up, wait and retry
-                time.sleep(5)
+                wait_for_vespa_indexing(delay=5)
             else:
                 # Unexpected status code, fail immediately
                 assert False, f"Got unexpected status {response.status_code}"
@@ -178,7 +179,7 @@ class TestRealVespaIntegration:
                 break
             elif response.status_code == 503:
                 # Search API still starting up, wait and retry
-                time.sleep(5)
+                wait_for_vespa_indexing(delay=5)
             else:
                 # Unexpected status code, fail immediately
                 assert False, f"Got unexpected search status {response.status_code}"

@@ -10,6 +10,7 @@ Run with: pytest tests/memory/integration/test_mem0_complete_e2e.py -v -s
 import time
 
 import pytest
+from tests.utils.async_polling import wait_for_vespa_indexing
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
 from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
@@ -125,7 +126,7 @@ class TestMemorySystemCompleteE2E:
 
         # Wait for indexing
         print("⏳ Waiting for Vespa indexing...")
-        time.sleep(5)
+        wait_for_vespa_indexing(delay=5)
 
         # Search
         results = memory_manager.search_memory(
@@ -160,7 +161,7 @@ class TestMemorySystemCompleteE2E:
             agent_name="isolation_test",
         )
 
-        time.sleep(5)
+        wait_for_vespa_indexing(delay=5)
 
         # Search tenant A
         results_a = memory_manager.search_memory(
@@ -223,7 +224,7 @@ class TestMemorySystemCompleteE2E:
             agent_name="get_all_test",
         )
 
-        time.sleep(5)
+        wait_for_vespa_indexing(delay=5)
 
         # Get all
         memories = memory_manager.get_all_memories(
@@ -247,7 +248,7 @@ class TestMemorySystemCompleteE2E:
             agent_name="delete_test",
         )
 
-        time.sleep(5)
+        wait_for_vespa_indexing(delay=5)
 
         # Delete
         success = memory_manager.delete_memory(
@@ -294,7 +295,7 @@ class TestMemorySystemCompleteE2E:
             agent_name="stats_test",
         )
 
-        time.sleep(5)
+        wait_for_vespa_indexing(delay=5)
 
         # Get stats
         stats = memory_manager.get_memory_stats(
@@ -340,7 +341,7 @@ class TestMemorySystemCompleteE2E:
         assert success is True
         print("✅ Memory added via mixin")
 
-        time.sleep(3)
+        wait_for_vespa_indexing(delay=3)
 
         # Search
         context = agent.get_relevant_context("Python programming", top_k=5)
@@ -364,7 +365,7 @@ class TestMemorySystemCompleteE2E:
         assert success is True
         print("✅ Remember failure via mixin")
 
-        time.sleep(5)
+        wait_for_vespa_indexing(delay=5)
 
         # Get stats
         stats = agent.get_memory_stats()

@@ -6,6 +6,7 @@ Validates schema uploads, data ingestion, and search functionality.
 """
 
 import subprocess
+from tests.utils.async_polling import wait_for_vespa_indexing
 import time
 from pathlib import Path
 
@@ -82,7 +83,7 @@ def test_vespa_manager():
                 break
         except Exception:
             pass
-        time.sleep(1)
+        wait_for_vespa_indexing(delay=1)
         if i % 10 == 0 and i > 0:
             print(f"   Still waiting... ({i}s)")
     else:
@@ -126,7 +127,7 @@ def test_vespa_manager():
                 break
         except Exception:
             pass
-        time.sleep(2)
+        wait_for_vespa_indexing(delay=2)
     else:
         # Cleanup on failure
         subprocess.run(["docker", "stop", container_name], capture_output=True)
@@ -290,7 +291,7 @@ class TestContentTypeVespaSchemas:
         print("✅ Sample image document ingested successfully")
 
         # Wait for document to be indexed
-        time.sleep(2)
+        wait_for_vespa_indexing(delay=2)
 
         # Verify document can be retrieved
         print("\n🔍 Verifying document retrieval...")
@@ -403,7 +404,7 @@ class TestContentTypeVespaSchemas:
         print("✅ Sample audio document ingested successfully")
 
         # Wait for document to be indexed
-        time.sleep(2)
+        wait_for_vespa_indexing(delay=2)
 
         # Verify document can be retrieved
         print("\n🔍 Verifying document retrieval...")
@@ -428,7 +429,7 @@ class TestContentTypeVespaSchemas:
 
         # Wait a bit more for indexing to complete
         print("\n⏳ Waiting for indexing to complete...")
-        time.sleep(3)
+        wait_for_vespa_indexing(delay=3)
 
         # Search for images with YQL query
         print("\n🔍 Searching for 'car' in image descriptions...")
@@ -472,7 +473,7 @@ class TestContentTypeVespaSchemas:
 
         # Wait a bit more for indexing to complete
         print("\n⏳ Waiting for indexing to complete...")
-        time.sleep(3)
+        wait_for_vespa_indexing(delay=3)
 
         # Search for audio with YQL query
         print("\n🔍 Searching for 'podcast' in audio transcripts...")
@@ -586,7 +587,7 @@ class TestContentTypeVespaSchemas:
         print("✅ Document page ingested successfully (visual strategy)")
 
         # Wait for document to be indexed
-        time.sleep(2)
+        wait_for_vespa_indexing(delay=2)
 
         # Verify document can be retrieved
         print("\n🔍 Verifying document page retrieval...")
@@ -673,7 +674,7 @@ class TestContentTypeVespaSchemas:
         print("✅ Document ingested successfully (text strategy)")
 
         # Wait for document to be indexed
-        time.sleep(2)
+        wait_for_vespa_indexing(delay=2)
 
         # Verify document can be retrieved
         print("\n🔍 Verifying document retrieval...")
@@ -697,7 +698,7 @@ class TestContentTypeVespaSchemas:
 
         # Wait for indexing to complete
         print("\n⏳ Waiting for indexing to complete...")
-        time.sleep(3)
+        wait_for_vespa_indexing(delay=3)
 
         # Load query encoder
         print("\n📦 Loading ColPali query encoder...")
@@ -754,7 +755,7 @@ class TestContentTypeVespaSchemas:
 
         # Wait for indexing to complete
         print("\n⏳ Waiting for indexing to complete...")
-        time.sleep(3)
+        wait_for_vespa_indexing(delay=3)
 
         # Load text embedding model
         print("\n📦 Loading text embedding model...")

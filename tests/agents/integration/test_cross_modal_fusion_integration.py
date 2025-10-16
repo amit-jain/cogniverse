@@ -7,6 +7,7 @@ executes multi-agent workflows, and validates fusion quality.
 """
 
 import subprocess
+from tests.utils.async_polling import wait_for_vespa_indexing, simulate_processing_delay
 import time
 from datetime import datetime
 
@@ -94,7 +95,7 @@ def test_vespa_fusion():
                 break
         except Exception:
             pass
-        time.sleep(1)
+        wait_for_vespa_indexing(delay=1)
         if i % 10 == 0 and i > 0:
             print(f"   Still waiting... ({i}s)")
     else:
@@ -177,7 +178,7 @@ class TestCrossModalFusionIntegration:
                     break
             except Exception:
                 pass
-            time.sleep(2)
+            wait_for_vespa_indexing(delay=2)
         else:
             pytest.fail("Application not ready after 120 seconds")
 
@@ -329,7 +330,7 @@ class TestCrossModalFusionIntegration:
 
         # Wait for indexing
         print("\n⏳ Waiting for indexing to complete...")
-        time.sleep(5)
+        wait_for_vespa_indexing(delay=5)
         print("✅ Indexing complete")
 
     def test_cross_modal_fusion_workflow(self, test_vespa_fusion):

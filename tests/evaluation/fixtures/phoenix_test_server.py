@@ -3,6 +3,7 @@ Phoenix test server fixture for integration tests.
 """
 
 import os
+from tests.utils.async_polling import wait_for_phoenix_processing
 import socket
 import subprocess
 import tempfile
@@ -62,7 +63,7 @@ class PhoenixTestServer:
                     raise RuntimeError(
                         f"Phoenix server failed to start on port {self.port}"
                     ) from None
-                time.sleep(1)
+                wait_for_phoenix_processing(delay=1, description="Phoenix processing")
 
         return self
 

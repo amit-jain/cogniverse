@@ -9,6 +9,7 @@ Tests the complete end-to-end flow:
 """
 
 import logging
+from tests.utils.async_polling import wait_for_vespa_indexing, simulate_processing_delay
 import time
 from datetime import datetime, timedelta
 
@@ -122,13 +123,13 @@ class TestMultiModalRoutingIntegration:
                     "routing.context": "{}",
                 },
             ):
-                time.sleep(0.05)
+                simulate_processing_delay(delay=0.05, description="processing")
 
             logger.info(f"  Detected modalities: {decision.detected_modalities}")
             logger.info(f"  Search modality: {decision.search_modality}")
 
         telemetry_manager.force_flush(timeout_millis=5000)
-        time.sleep(2)
+        wait_for_vespa_indexing(delay=2)
 
         # Verify spans in Phoenix
         end_time = datetime.now()
@@ -188,13 +189,13 @@ class TestMultiModalRoutingIntegration:
                     "routing.context": "{}",
                 },
             ):
-                time.sleep(0.05)
+                simulate_processing_delay(delay=0.05, description="processing")
 
             logger.info(f"  Detected modalities: {decision.detected_modalities}")
             logger.info(f"  Search modality: {decision.search_modality}")
 
         telemetry_manager.force_flush(timeout_millis=5000)
-        time.sleep(2)
+        wait_for_vespa_indexing(delay=2)
 
         # Verify spans in Phoenix
         end_time = datetime.now()
@@ -252,13 +253,13 @@ class TestMultiModalRoutingIntegration:
                     "routing.context": "{}",
                 },
             ):
-                time.sleep(0.05)
+                simulate_processing_delay(delay=0.05, description="processing")
 
             logger.info(f"  Detected modalities: {decision.detected_modalities}")
             logger.info(f"  Search modality: {decision.search_modality}")
 
         telemetry_manager.force_flush(timeout_millis=5000)
-        time.sleep(2)
+        wait_for_vespa_indexing(delay=2)
 
         # Verify spans in Phoenix
         end_time = datetime.now()
@@ -316,7 +317,7 @@ class TestMultiModalRoutingIntegration:
                     "routing.context": "{}",
                 },
             ):
-                time.sleep(0.05)
+                simulate_processing_delay(delay=0.05, description="processing")
 
             # Should detect multiple modalities
             logger.info(f"  Detected modalities: {decision.detected_modalities}")
@@ -326,7 +327,7 @@ class TestMultiModalRoutingIntegration:
             ), f"Expected multiple modalities, got {decision.detected_modalities}"
 
         telemetry_manager.force_flush(timeout_millis=5000)
-        time.sleep(2)
+        wait_for_vespa_indexing(delay=2)
 
         # Verify spans in Phoenix
         end_time = datetime.now()
@@ -390,10 +391,10 @@ class TestMultiModalRoutingIntegration:
                     "routing.context": "{}",
                 },
             ):
-                time.sleep(0.05)
+                simulate_processing_delay(delay=0.05, description="processing")
 
         telemetry_manager.force_flush(timeout_millis=5000)
-        time.sleep(2)
+        wait_for_vespa_indexing(delay=2)
 
         # Verify spans in Phoenix
         end_time = datetime.now()
@@ -446,10 +447,10 @@ class TestMultiModalRoutingIntegration:
                 "routing.context": "{}",
             },
         ):
-            time.sleep(0.05)
+            simulate_processing_delay(delay=0.05, description="processing")
 
         telemetry_manager.force_flush(timeout_millis=5000)
-        time.sleep(2)
+        wait_for_vespa_indexing(delay=2)
 
         # Verify spans in Phoenix
         end_time = datetime.now()

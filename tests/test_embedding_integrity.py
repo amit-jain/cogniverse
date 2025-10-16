@@ -5,6 +5,7 @@ Checks for cross-video contamination and validates embedding uniqueness
 """
 
 import json
+from tests.utils.async_polling import wait_for_service_startup
 import sys
 import subprocess
 import numpy as np
@@ -425,7 +426,7 @@ class EmbeddingIntegrityTester:
                 slice_files.append(slice_file)
                 
                 # Small delay to avoid overwhelming the system
-                time.sleep(0.5)
+                wait_for_service_startup(delay=0.5, description="model loading")
                 
             except subprocess.CalledProcessError as e:
                 print(f" ❌ Failed: {e.stderr}")

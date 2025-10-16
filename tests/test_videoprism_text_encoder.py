@@ -10,6 +10,7 @@ Tests cover:
 """
 
 import time
+from tests.utils.async_polling import wait_for_service_startup
 import unittest
 from unittest.mock import MagicMock, Mock, patch
 
@@ -138,7 +139,7 @@ class TestCircuitBreaker(unittest.TestCase):
                 pass
         
         # Wait for recovery timeout
-        time.sleep(1.1)
+        wait_for_service_startup(delay=1.1, description="model loading")
         
         # Should be half-open now
         self.assertEqual(self.breaker.state, CircuitState.HALF_OPEN)
@@ -156,7 +157,7 @@ class TestCircuitBreaker(unittest.TestCase):
                 pass
         
         # Wait for recovery
-        time.sleep(1.1)
+        wait_for_service_startup(delay=1.1, description="model loading")
         
         # Successful call should close circuit
         result = self.breaker.call(lambda: "recovered")

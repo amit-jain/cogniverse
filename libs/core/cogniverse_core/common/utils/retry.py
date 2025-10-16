@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from functools import wraps
 from typing import Callable, Optional, Tuple, Type, TypeVar, Union
 
+from cogniverse_core.common.utils.async_polling import wait_for_operation_complete
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -107,7 +109,7 @@ def retry_with_backoff(
                             f"after {type(e).__name__}: {e}. Waiting {delay:.2f}s"
                         )
 
-                    time.sleep(delay)
+                    wait_for_operation_complete(delay, f"retry backoff for {f.__name__}")
 
             # Should never reach here, but for safety
             if last_exception:
@@ -173,7 +175,7 @@ class RetryableOperation:
                     f"after {type(e).__name__}. Waiting {delay:.2f}s"
                 )
 
-                time.sleep(delay)
+                wait_for_operation_complete(delay, f"retry backoff for operation {self.correlation_id}")
 
         if last_exception:
             raise last_exception

@@ -4,12 +4,11 @@ Integration tests for Tenant Management API.
 Tests organization and tenant CRUD operations with Vespa backend.
 """
 
-import time
-
 import pytest
 from fastapi.testclient import TestClient
 
 from tests.system.vespa_test_manager import VespaTestManager
+from tests.utils.async_polling import wait_for_vespa_indexing
 
 
 @pytest.mark.integration
@@ -39,7 +38,7 @@ class TestTenantManagerAPI:
 
         # VespaTestManager already deployed metadata schemas with video schemas
         # Just wait a moment for Vespa to be fully ready
-        time.sleep(1)
+        wait_for_vespa_indexing(delay=1, description="Vespa startup")
 
         # Mock config to return correct Vespa URL/port
         mock_config = {
@@ -130,7 +129,7 @@ class TestTenantManagerAPI:
             json={"org_id": "org2", "org_name": "Org 2", "created_by": "test"},
         )
 
-        time.sleep(1)  # Wait for Vespa indexing
+        wait_for_vespa_indexing(delay=1)
 
         response = test_client.get("/admin/organizations")
         assert response.status_code == 200
@@ -146,7 +145,7 @@ class TestTenantManagerAPI:
             json={"org_id": "getorg", "org_name": "Get Org", "created_by": "test"},
         )
 
-        time.sleep(1)  # Wait for Vespa indexing
+        wait_for_vespa_indexing(delay=1)
 
         response = test_client.get("/admin/organizations/getorg")
         assert response.status_code == 200
@@ -181,7 +180,7 @@ class TestTenantManagerAPI:
         )
         assert response.status_code == 200
 
-        time.sleep(2)  # Wait for Vespa indexing (org + tenant)
+        wait_for_vespa_indexing(delay=2, description="organization and tenant indexing")
 
         # Verify org was created
         org_response = test_client.get("/admin/organizations/neworg")
@@ -198,7 +197,7 @@ class TestTenantManagerAPI:
             json={"tenant_id": "duptenant:prod", "created_by": "test"},
         )
 
-        time.sleep(2)  # Wait for Vespa indexing
+        wait_for_vespa_indexing(delay=2, description="tenant indexing")
 
         # Try to create same tenant again
         response = test_client.post(
@@ -224,7 +223,7 @@ class TestTenantManagerAPI:
             json={"tenant_id": "listorg:prod", "created_by": "test"},
         )
 
-        time.sleep(3)  # Wait for Vespa indexing (multiple docs)
+        wait_for_vespa_indexing(delay=3, description="multiple tenant documents")
 
         response = test_client.get("/admin/organizations/listorg/tenants")
         assert response.status_code == 200
@@ -244,7 +243,7 @@ class TestTenantManagerAPI:
             json={"tenant_id": "gettenant:test", "created_by": "test"},
         )
 
-        time.sleep(2)  # Wait for Vespa indexing
+        wait_for_vespa_indexing(delay=2, description="tenant indexing")
 
         response = test_client.get("/admin/tenants/gettenant:test")
         assert response.status_code == 200
@@ -266,7 +265,7 @@ class TestTenantManagerAPI:
             json={"tenant_id": "deltenant:test", "created_by": "test"},
         )
 
-        time.sleep(2)  # Wait for Vespa indexing
+        wait_for_vespa_indexing(delay=2, description="tenant indexing")
 
         # Delete tenant
         response = test_client.delete("/admin/tenants/deltenant:test")
@@ -291,7 +290,7 @@ class TestTenantManagerAPI:
             json={"tenant_id": "delorg:prod", "created_by": "test"},
         )
 
-        time.sleep(3)  # Wait for Vespa indexing (multiple docs)
+        wait_for_vespa_indexing(delay=3, description="multiple tenant documents")
 
         # Delete org
         response = test_client.delete("/admin/organizations/delorg")

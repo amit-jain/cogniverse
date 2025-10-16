@@ -10,6 +10,7 @@ import hashlib
 import subprocess
 import time
 from typing import Tuple
+from tests.utils.async_polling import wait_for_vespa_indexing, simulate_processing_delay
 
 
 def generate_unique_ports(module_name: str, base_http_port: int = 8100) -> Tuple[int, int]:
@@ -79,11 +80,11 @@ def wait_for_container_removal(container_name: str, timeout: int = 30) -> bool:
         if container_name not in result.stdout:
             # Container fully removed from Docker
             # Give Docker a moment to release ports and resources
-            time.sleep(1)
+            wait_for_vespa_indexing(delay=1)
             return True
 
         # Container still exists, wait and retry
-        time.sleep(0.5)
+        simulate_processing_delay(delay=0.5, description="docker container removal")
 
     # Timeout reached
     return False

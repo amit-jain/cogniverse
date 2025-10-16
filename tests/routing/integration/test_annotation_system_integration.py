@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 
 import phoenix as px
 import pytest
+from tests.utils.async_polling import wait_for_phoenix_processing, simulate_processing_delay
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 from cogniverse_agents.routing.annotation_agent import (
     AnnotationAgent,
@@ -121,11 +122,11 @@ class TestAnnotationSystemIntegration:
                 if span_id and hasattr(span_id, "span_id"):
                     span_ids.append(str(span_id.span_id))
                 # Simulate processing
-                time.sleep(0.1)
+                simulate_processing_delay(delay=0.1)
 
         # Force flush to Phoenix
         telemetry_manager.force_flush(timeout_millis=5000)
-        time.sleep(2)  # Wait for Phoenix to process
+        wait_for_phoenix_processing(delay=2)
 
         logger.info(f"Created {len(span_ids)} routing spans")
 
@@ -249,7 +250,7 @@ class TestAnnotationSystemIntegration:
         assert success, "Failed to store annotation in Phoenix"
 
         # Force flush
-        time.sleep(2)  # Wait for Phoenix to process
+        wait_for_phoenix_processing(delay=2)
 
         logger.info("Annotation stored successfully")
 
@@ -265,7 +266,7 @@ class TestAnnotationSystemIntegration:
 
             # Query the project for evaluations
             # Note: Phoenix may take time to index evaluations
-            time.sleep(3)
+            wait_for_phoenix_processing(delay=3, description="Phoenix evaluation indexing")
 
             # Try to query annotated spans
             annotated_spans = annotation_storage.query_annotated_spans(
@@ -340,7 +341,7 @@ class TestAnnotationSystemIntegration:
                 test_span_id = "test_span_" + str(int(time.time()))
 
         telemetry_manager.force_flush(timeout_millis=5000)
-        time.sleep(2)
+        wait_for_phoenix_processing(delay=2)
 
         # Store annotation
         annotation_storage = AnnotationStorage(tenant_id=test_tenant_id)
@@ -362,7 +363,7 @@ class TestAnnotationSystemIntegration:
 
         assert success, "Failed to store annotation"
 
-        time.sleep(3)  # Wait for indexing
+        wait_for_phoenix_processing(delay=3, description="Phoenix annotation indexing")
 
         # Try to retrieve
         config = TelemetryConfig.from_env()
@@ -418,7 +419,7 @@ class TestAnnotationSystemIntegration:
                         span.record_exception(e)
 
         telemetry_manager.force_flush(timeout_millis=5000)
-        time.sleep(2)
+        wait_for_phoenix_processing(delay=2)
 
         # Run annotation agent
         annotation_agent = AnnotationAgent(
@@ -473,7 +474,7 @@ class TestAnnotationSystemIntegration:
             pass
 
         telemetry_manager.force_flush(timeout_millis=5000)
-        time.sleep(2)
+        wait_for_phoenix_processing(delay=2)
 
         # Identify and annotate
         annotation_agent = AnnotationAgent(
@@ -496,7 +497,7 @@ class TestAnnotationSystemIntegration:
 
         assert success, "Failed to store human annotation"
 
-        time.sleep(3)  # Wait for indexing
+        wait_for_phoenix_processing(delay=3, description="Phoenix annotation indexing")
 
         # Run feedback loop
         optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant")

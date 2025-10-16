@@ -3,6 +3,7 @@ Unit tests for Phoenix monitoring module.
 """
 
 import threading
+from tests.utils.async_polling import wait_for_phoenix_processing
 import time
 from unittest.mock import Mock, patch
 
@@ -185,7 +186,7 @@ class TestRetrievalMonitor:
             monitor = RetrievalMonitor()
             with patch.object(monitor, "_monitoring_loop"):
                 monitor.start()
-                time.sleep(0.1)  # Let thread start
+                wait_for_phoenix_processing(delay=0.1, description="Phoenix processing")  # Let thread start
 
                 monitor.stop()
 

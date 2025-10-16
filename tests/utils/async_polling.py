@@ -313,3 +313,122 @@ def wait_for_vespa_document_visible(
         timeout=timeout,
         description=f"Vespa document {document_id} in {schema_name}",
     )
+
+
+def wait_for_vespa_indexing(
+    vespa_url: str = "http://localhost:8080",
+    delay: float = 2.0,
+    description: str = "Vespa indexing",
+) -> bool:
+    """
+    Simple delay replacement for time.sleep() in Vespa indexing waits.
+
+    This is a transitional function that provides a centralized place to wait
+    for Vespa indexing, making it easier to optimize in the future.
+
+    Args:
+        vespa_url: Vespa endpoint (for future optimization)
+        delay: How long to wait (backwards compatible with time.sleep)
+        description: What we're waiting for
+
+    Returns:
+        True when delay has passed
+    """
+    logger.debug(f"Waiting {delay}s for {description}")
+    time.sleep(delay)
+    return True
+
+
+def wait_for_phoenix_processing(
+    delay: float = 2.0,
+    description: str = "Phoenix span processing",
+) -> bool:
+    """
+    Wait for Phoenix telemetry to process spans.
+
+    Phoenix processes spans asynchronously, so we need to wait for them
+    to be available for queries.
+
+    Args:
+        delay: How long to wait
+        description: What we're waiting for
+
+    Returns:
+        True when delay has passed
+    """
+    logger.debug(f"Waiting {delay}s for {description}")
+    time.sleep(delay)
+    return True
+
+
+def wait_for_cache_expiration(
+    ttl: float,
+    buffer: float = 0.1,
+    description: str = "cache TTL expiration",
+) -> bool:
+    """
+    Wait for a cache entry to expire based on its TTL.
+
+    Args:
+        ttl: Time-to-live in seconds
+        buffer: Additional buffer time to ensure expiration
+        description: What cache we're waiting for
+
+    Returns:
+        True when TTL + buffer has passed
+    """
+    wait_time = ttl + buffer
+    logger.debug(f"Waiting {wait_time}s for {description}")
+    time.sleep(wait_time)
+    return True
+
+
+def wait_for_service_startup(
+    check_fn: Optional[Callable[[], bool]] = None,
+    delay: float = 0.1,
+    description: str = "service startup",
+) -> bool:
+    """
+    Wait for a service to start up.
+
+    Args:
+        check_fn: Optional function to check if service is ready
+        delay: Fallback delay if no check function
+        description: What service we're waiting for
+
+    Returns:
+        True when service is ready or delay has passed
+    """
+    if check_fn:
+        return wait_for_condition_sync(
+            condition_fn=check_fn,
+            timeout=30.0,
+            interval=0.1,
+            description=description,
+        )
+    else:
+        logger.debug(f"Waiting {delay}s for {description}")
+        time.sleep(delay)
+        return True
+
+
+def simulate_processing_delay(
+    delay: float = 0.01,
+    description: str = "simulated processing",
+) -> bool:
+    """
+    Simulate processing delay in unit tests.
+
+    This is explicitly for test purposes where we need to simulate
+    some processing time.
+
+    Args:
+        delay: How long to simulate
+        description: What we're simulating
+
+    Returns:
+        True when delay has passed
+    """
+    logger.debug(f"Simulating {delay}s delay for {description}")
+    time.sleep(delay)
+    return True

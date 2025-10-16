@@ -11,7 +11,6 @@ Provides session-scoped Vespa container that:
 import json
 import platform
 import subprocess
-import time
 from pathlib import Path
 
 import pytest
@@ -20,6 +19,7 @@ from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
 from cogniverse_vespa.json_schema_parser import JsonSchemaParser
 from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+from tests.utils.async_polling import wait_for_service_startup, wait_for_vespa_indexing
 from vespa.package import (
     ApplicationPackage,
     Document,
@@ -48,7 +48,7 @@ def wait_for_vespa_ready(config_port: int, timeout: int = 120) -> bool:
                 return True
         except Exception:
             pass
-        time.sleep(1)
+        wait_for_service_startup(delay=1.0, description="Vespa container startup")
 
     print(f"❌ Vespa not ready after {timeout} seconds")
     return False
@@ -229,7 +229,7 @@ def wait_for_schema_ready(data_port: int, schema_name: str, timeout: int = 60) -
                 return True
         except Exception:
             pass
-        time.sleep(1)
+        wait_for_vespa_indexing(delay=1.0, description="schema readiness check")
 
     print(f"❌ Schema {schema_name} not ready after {timeout} seconds")
     return False
