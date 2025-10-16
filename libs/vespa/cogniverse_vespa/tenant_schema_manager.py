@@ -53,16 +53,19 @@ logger = logging.getLogger(__name__)
 
 class TenantSchemaManagerException(Exception):
     """Base exception for tenant schema management errors"""
+
     pass
 
 
 class SchemaNotFoundException(TenantSchemaManagerException):
     """Raised when base schema template not found"""
+
     pass
 
 
 class SchemaDeploymentException(TenantSchemaManagerException):
     """Raised when schema deployment fails"""
+
     pass
 
 
@@ -91,7 +94,9 @@ class TenantSchemaManager:
                     instance = super().__new__(cls)
                     instance._initialized = False
                     cls._instance = instance
-                    logger.info(f"Created TenantSchemaManager singleton for {vespa_url}:{vespa_port}")
+                    logger.info(
+                        f"Created TenantSchemaManager singleton for {vespa_url}:{vespa_port}"
+                    )
         return cls._instance
 
     def __init__(self, vespa_url: str = "http://localhost", vespa_port: int = 8080):
@@ -110,8 +115,7 @@ class TenantSchemaManager:
 
         # Underlying schema manager for actual deployment
         self.schema_manager = VespaSchemaManager(
-            vespa_endpoint=vespa_url,
-            vespa_port=vespa_port
+            vespa_endpoint=vespa_url, vespa_port=vespa_port
         )
 
         # JSON schema parser for loading templates
@@ -159,7 +163,9 @@ class TenantSchemaManager:
 
         return f"{base_schema_name}_{tenant_suffix}"
 
-    def ensure_tenant_schema_exists(self, tenant_id: str, base_schema_name: str) -> bool:
+    def ensure_tenant_schema_exists(
+        self, tenant_id: str, base_schema_name: str
+    ) -> bool:
         """
         Ensure tenant schema exists, deploying it lazily if needed.
 
@@ -184,11 +190,15 @@ class TenantSchemaManager:
             # Check cache first
             if tenant_id in self._deployed_schemas:
                 if base_schema_name in self._deployed_schemas[tenant_id]:
-                    logger.debug(f"Schema {base_schema_name} for tenant {tenant_id} already deployed (cached)")
+                    logger.debug(
+                        f"Schema {base_schema_name} for tenant {tenant_id} already deployed (cached)"
+                    )
                     return True
 
             # Check if schema actually exists in Vespa
-            tenant_schema_name = self.get_tenant_schema_name(tenant_id, base_schema_name)
+            tenant_schema_name = self.get_tenant_schema_name(
+                tenant_id, base_schema_name
+            )
             if self._schema_exists_in_vespa(tenant_schema_name):
                 logger.info(f"Schema {tenant_schema_name} already exists in Vespa")
                 self._cache_deployed_schema(tenant_id, base_schema_name)
@@ -239,54 +249,28 @@ class TenantSchemaManager:
         try:
             from datetime import datetime, timedelta
 
-            from vespa.package import Document, Field, Validation
+            from vespa.package import Validation
+
+            from cogniverse_vespa.metadata_schemas import (
+                add_metadata_schemas_to_package,
+            )
 
             app_package = ApplicationPackage(name="videosearch")
 
             # Add the tenant schema
             app_package.add_schema(schema)
 
-            # Add metadata schemas to prevent them from being removed
-            organization_metadata_schema = Schema(
-                name='organization_metadata',
-                document=Document(
-                    fields=[
-                        Field(name='org_id', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
-                        Field(name='org_name', type='string', indexing=['summary', 'index']),
-                        Field(name='created_at', type='long', indexing=['summary', 'attribute']),
-                        Field(name='created_by', type='string', indexing=['summary', 'attribute']),
-                        Field(name='status', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
-                        Field(name='tenant_count', type='int', indexing=['summary', 'attribute']),
-                    ]
-                )
-            )
-            app_package.add_schema(organization_metadata_schema)
-
-            tenant_metadata_schema = Schema(
-                name='tenant_metadata',
-                document=Document(
-                    fields=[
-                        Field(name='tenant_full_id', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
-                        Field(name='org_id', type='string', indexing=['summary', 'index', 'attribute'], attribute=['fast-search']),
-                        Field(name='tenant_name', type='string', indexing=['summary', 'attribute']),
-                        Field(name='created_at', type='long', indexing=['summary', 'attribute']),
-                        Field(name='created_by', type='string', indexing=['summary', 'attribute']),
-                        Field(name='status', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
-                        Field(name='schemas_deployed', type='array<string>', indexing=['summary', 'attribute']),
-                    ]
-                )
-            )
-            app_package.add_schema(tenant_metadata_schema)
+            # Add metadata schemas (organization_metadata, tenant_metadata)
+            # Using consolidated module to prevent duplication
+            add_metadata_schemas_to_package(app_package)
 
             # Add validation overrides to allow schema deployments without removing existing schemas
             until_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
             schema_removal_validation = Validation(
-                validation_id="schema-removal",
-                until=until_date
+                validation_id="schema-removal", until=until_date
             )
             content_cluster_validation = Validation(
-                validation_id="content-cluster-removal",
-                until=until_date
+                validation_id="content-cluster-removal", until=until_date
             )
 
             if app_package.validations is None:
@@ -334,7 +318,9 @@ class TenantSchemaManager:
             base_schemas = list(self._deployed_schemas[tenant_id])
 
             for base_schema_name in base_schemas:
-                tenant_schema_name = self.get_tenant_schema_name(tenant_id, base_schema_name)
+                tenant_schema_name = self.get_tenant_schema_name(
+                    tenant_id, base_schema_name
+                )
 
                 try:
                     # Note: Vespa schema deletion is not directly supported via PyVespa
@@ -562,8 +548,9 @@ class TenantSchemaManager:
             TenantSchemaManager._clear_instance()
         """
         import sys
+
         # Check if we're running under pytest
-        if not any('pytest' in mod for mod in sys.modules):
+        if not any("pytest" in mod for mod in sys.modules):
             raise RuntimeError(
                 "TenantSchemaManager._clear_instance() is for testing only. "
                 "It should never be called in production code."

@@ -44,7 +44,9 @@ def vespa_instance():
     http_port, config_port = generate_unique_ports(__name__)
     container_name = f"vespa-backend-test-{http_port}"
 
-    logger.info(f"Backend test using unique ports: HTTP={http_port}, Config={config_port}")
+    logger.info(
+        f"Backend test using unique ports: HTTP={http_port}, Config={config_port}"
+    )
 
     # Stop and remove existing container if exists
     subprocess.run(["docker", "stop", container_name], capture_output=True)
@@ -52,6 +54,7 @@ def vespa_instance():
 
     # Detect platform
     import platform
+
     machine = platform.machine().lower()
     if machine in ["arm64", "aarch64"]:
         docker_platform = "linux/arm64"
@@ -83,7 +86,9 @@ def vespa_instance():
         )
 
         if docker_result.returncode != 0:
-            pytest.skip(f"Failed to start Docker container: {docker_result.stderr.decode()}")
+            pytest.skip(
+                f"Failed to start Docker container: {docker_result.stderr.decode()}"
+            )
 
         logger.info(f"✅ Vespa Docker container '{container_name}' started")
 
@@ -114,13 +119,7 @@ def vespa_instance():
 
             from cogniverse_vespa.json_schema_parser import JsonSchemaParser
             from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-            from vespa.package import (
-                ApplicationPackage,
-                Document,
-                Field,
-                Schema,
-                Validation,
-            )
+            from vespa.package import ApplicationPackage, Validation
 
             app_package = ApplicationPackage(name="videosearch")
             parser = JsonSchemaParser()
@@ -136,49 +135,23 @@ def vespa_instance():
                     except Exception as e:
                         logger.warning(f"  Failed to load {schema_file.name}: {e}")
 
-            # Add metadata schemas
-            organization_metadata_schema = Schema(
-                name='organization_metadata',
-                document=Document(
-                    fields=[
-                        Field(name='org_id', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
-                        Field(name='org_name', type='string', indexing=['summary', 'index']),
-                        Field(name='created_at', type='long', indexing=['summary', 'attribute']),
-                        Field(name='created_by', type='string', indexing=['summary', 'attribute']),
-                        Field(name='status', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
-                        Field(name='tenant_count', type='int', indexing=['summary', 'attribute']),
-                    ]
-                )
+            # Add metadata schemas (using consolidated module)
+            from cogniverse_vespa.metadata_schemas import (
+                add_metadata_schemas_to_package,
             )
-            app_package.add_schema(organization_metadata_schema)
 
-            tenant_metadata_schema = Schema(
-                name='tenant_metadata',
-                document=Document(
-                    fields=[
-                        Field(name='tenant_full_id', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
-                        Field(name='org_id', type='string', indexing=['summary', 'index', 'attribute'], attribute=['fast-search']),
-                        Field(name='tenant_name', type='string', indexing=['summary', 'attribute']),
-                        Field(name='created_at', type='long', indexing=['summary', 'attribute']),
-                        Field(name='created_by', type='string', indexing=['summary', 'attribute']),
-                        Field(name='status', type='string', indexing=['summary', 'attribute'], attribute=['fast-search']),
-                        Field(name='schemas_deployed', type='array<string>', indexing=['summary', 'attribute']),
-                    ]
-                )
-            )
-            app_package.add_schema(tenant_metadata_schema)
+            add_metadata_schemas_to_package(app_package)
 
             # Add validation overrides
             until_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
             app_package.validations = [
                 Validation(validation_id="schema-removal", until=until_date),
-                Validation(validation_id="content-cluster-removal", until=until_date)
+                Validation(validation_id="content-cluster-removal", until=until_date),
             ]
 
             # Deploy schemas
             schema_manager = VespaSchemaManager(
-                vespa_endpoint="http://localhost",
-                vespa_port=config_port
+                vespa_endpoint="http://localhost", vespa_port=config_port
             )
             schema_manager._deploy_package(app_package)
             logger.info("✅ Schemas deployed")
@@ -191,7 +164,9 @@ def vespa_instance():
         logger.info(f"Waiting for application endpoint on port {http_port}...")
         for i in range(60):  # 1 minute timeout
             try:
-                response = requests.get(f"http://localhost:{http_port}/ApplicationStatus", timeout=5)
+                response = requests.get(
+                    f"http://localhost:{http_port}/ApplicationStatus", timeout=5
+                )
                 if response.status_code == 200:
                     logger.info(f"✅ Vespa ready on port {http_port}")
                     break
@@ -235,11 +210,11 @@ def vespa_instance():
 
             # Clear backend registry instances
             registry = get_backend_registry()
-            if hasattr(registry, '_backend_instances'):
+            if hasattr(registry, "_backend_instances"):
                 registry._backend_instances.clear()
 
             # Clear ConfigManager singleton
-            if hasattr(ConfigManager, '_instance'):
+            if hasattr(ConfigManager, "_instance"):
                 ConfigManager._instance = None
 
             logger.info("✅ Cleared singleton state")
