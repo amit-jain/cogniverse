@@ -213,11 +213,24 @@ class TestBackendRegistry(unittest.TestCase):
         """Set up test fixtures."""
         # Get fresh registry and clear any existing registrations
         self.registry = BackendRegistry()
+        # Save current registry state to restore in tearDown
+        self._saved_ingestion = BackendRegistry._ingestion_backends.copy()
+        self._saved_search = BackendRegistry._search_backends.copy()
+        self._saved_full = BackendRegistry._full_backends.copy()
+        self._saved_instances = BackendRegistry._backend_instances.copy()
         # Clear class-level registrations
         BackendRegistry._ingestion_backends.clear()
         BackendRegistry._search_backends.clear()
         BackendRegistry._full_backends.clear()
         BackendRegistry._backend_instances.clear()
+
+    def tearDown(self):
+        """Restore registry state after test."""
+        # Restore saved registry state
+        BackendRegistry._ingestion_backends = self._saved_ingestion
+        BackendRegistry._search_backends = self._saved_search
+        BackendRegistry._full_backends = self._saved_full
+        BackendRegistry._backend_instances = self._saved_instances
     
     def test_register_ingestion_backend(self):
         """Test registering an ingestion backend."""
