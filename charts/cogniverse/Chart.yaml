@@ -1,0 +1,28 @@
+apiVersion: v2
+name: cogniverse
+description: Multi-Agent RAG System for Multi-Modal Content Analysis
+type: application
+version: 2.0.0
+appVersion: "2.0.0"
+
+keywords:
+  - ai
+  - rag
+  - multi-agent
+  - vector-search
+  - multi-modal
+
+home: https://github.com/your-org/cogniverse
+sources:
+  - https://github.com/your-org/cogniverse
+
+maintainers:
+  - name: Cogniverse Team
+    email: team@cogniverse.ai
+
+dependencies: []
+
+# Minimum Kubernetes version
+kubeVersion: ">=1.24.0-0"
+
+icon: https://cogniverse.ai/icon.png

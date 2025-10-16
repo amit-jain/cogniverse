@@ -127,9 +127,57 @@ JAX_PLATFORM_NAME=cpu
 
 ---
 
-## Docker Compose Deployment (Reference)
+## Deployment Options
 
-While not required, Docker Compose provides a convenient way to orchestrate all services together.
+Cogniverse supports multiple deployment methods depending on your needs:
+
+### Quick Deployment Scripts
+
+**1. Local Development - Docker Compose** (Recommended for development)
+```bash
+# Quick start with all services
+./scripts/deploy_local_docker.sh
+
+# Production mode
+./scripts/deploy_local_docker.sh --production
+
+# With live logs
+./scripts/deploy_local_docker.sh --logs
+```
+
+**2. Local Kubernetes - K3s** (For testing K8s deployments locally)
+```bash
+# Install K3s and deploy
+./scripts/deploy_k3s.sh --install-k3s
+
+# Deploy to existing K3s
+./scripts/deploy_k3s.sh
+
+# With Argo Workflows
+./scripts/deploy_k3s.sh --install-argo
+```
+
+**3. Production Kubernetes** (For remote K8s clusters: EKS, GKE, AKS)
+```bash
+# Full production deployment with ingress and TLS
+./scripts/deploy_kubernetes.sh \
+  --cloud-provider aws \
+  --domain cogniverse.example.com \
+  --install-ingress \
+  --install-cert-manager \
+  --install-argo
+```
+
+**See detailed guides:**
+- [Docker Deployment Guide](docker-deployment.md) - Complete Docker Compose setup
+- [Kubernetes Deployment Guide](kubernetes-deployment.md) - K8s/K3s/Helm deployment
+- [Argo Workflows Guide](argo-workflows.md) - Batch processing workflows
+
+---
+
+## Docker Compose Deployment (Manual)
+
+For manual Docker Compose setup, here's the reference configuration:
 
 ### Complete Stack
 

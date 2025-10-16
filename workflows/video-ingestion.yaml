@@ -1,0 +1,263 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: video-ingestion
+  namespace: cogniverse
+spec:
+  entrypoint: video-ingestion-pipeline
+
+  arguments:
+    parameters:
+    - name: video-dir
+      value: "/data/videos"
+    - name: tenant-id
+      value: "default"
+    - name: profiles
+      value: "video_colpali_smol500_mv_frame,video_videoprism_base_mv_chunk_30s"
+    - name: batch-size
+      value: "10"
+    - name: max-workers
+      value: "4"
+
+  volumeClaimTemplates:
+  - metadata:
+      name: video-workspace
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 100Gi
+
+  templates:
+  # Main pipeline
+  - name: video-ingestion-pipeline
+    steps:
+    - - name: validate-input
+        template: validate-input
+    - - name: prepare-videos
+        template: prepare-videos
+    - - name: ingest-videos
+        template: ingest-videos
+    - - name: verify-ingestion
+        template: verify-ingestion
+    - - name: notify-completion
+        template: notify-completion
+
+  # Validate input parameters and video directory
+  - name: validate-input
+    container:
+      image: cogniverse/runtime:2.0.0
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -e
+          echo "Validating input parameters..."
+
+          # Check tenant ID
+          if [ -z "{{workflow.parameters.tenant-id}}" ]; then
+            echo "ERROR: tenant-id is required"
+            exit 1
+          fi
+
+          # Check video directory
+          if [ ! -d "{{workflow.parameters.video-dir}}" ]; then
+            echo "ERROR: video-dir does not exist: {{workflow.parameters.video-dir}}"
+            exit 1
+          fi
+
+          # Count videos
+          VIDEO_COUNT=$(find {{workflow.parameters.video-dir}} -type f \( -iname "*.mp4" -o -iname "*.avi" -o -iname "*.mov" \) | wc -l)
+          echo "Found $VIDEO_COUNT video files"
+
+          if [ $VIDEO_COUNT -eq 0 ]; then
+            echo "ERROR: No video files found in {{workflow.parameters.video-dir}}"
+            exit 1
+          fi
+
+          echo "Validation successful"
+          echo "$VIDEO_COUNT" > /tmp/video_count.txt
+      volumeMounts:
+      - name: video-workspace
+        mountPath: /data
+      resources:
+        requests:
+          memory: "512Mi"
+          cpu: "500m"
+        limits:
+          memory: "1Gi"
+          cpu: "1"
+
+  # Prepare videos for processing
+  - name: prepare-videos
+    container:
+      image: cogniverse/runtime:2.0.0
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -e
+          echo "Preparing videos for processing..."
+
+          # Create batch manifest
+          find {{workflow.parameters.video-dir}} -type f \( -iname "*.mp4" -o -iname "*.avi" -o -iname "*.mov" \) > /tmp/video_list.txt
+
+          # Split into batches
+          BATCH_SIZE={{workflow.parameters.batch-size}}
+          split -l $BATCH_SIZE /tmp/video_list.txt /tmp/batch_
+
+          # Count batches
+          BATCH_COUNT=$(ls /tmp/batch_* | wc -l)
+          echo "Created $BATCH_COUNT batches of size $BATCH_SIZE"
+          echo "$BATCH_COUNT" > /tmp/batch_count.txt
+
+          echo "Preparation complete"
+      volumeMounts:
+      - name: video-workspace
+        mountPath: /data
+      resources:
+        requests:
+          memory: "512Mi"
+          cpu: "500m"
+        limits:
+          memory: "1Gi"
+          cpu: "1"
+
+  # Ingest videos with multi-profile support
+  - name: ingest-videos
+    container:
+      image: cogniverse/runtime:2.0.0
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -e
+          echo "Starting video ingestion..."
+          echo "Tenant: {{workflow.parameters.tenant-id}}"
+          echo "Profiles: {{workflow.parameters.profiles}}"
+
+          # Run ingestion
+          cd /app
+          JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
+            --video_dir {{workflow.parameters.video-dir}} \
+            --tenant {{workflow.parameters.tenant-id}} \
+            --profiles {{workflow.parameters.profiles}} \
+            --batch_size {{workflow.parameters.batch-size}} \
+            --max_workers {{workflow.parameters.max-workers}} \
+            --backend vespa
+
+          echo "Ingestion completed successfully"
+      env:
+      - name: VESPA_URL
+        value: "http://cogniverse-vespa:8080"
+      - name: VESPA_CONFIG_PORT
+        value: "19071"
+      - name: PHOENIX_ENDPOINT
+        value: "http://cogniverse-phoenix:6006"
+      - name: TENANT_ID
+        value: "{{workflow.parameters.tenant-id}}"
+      volumeMounts:
+      - name: video-workspace
+        mountPath: /data
+      resources:
+        requests:
+          memory: "8Gi"
+          cpu: "4"
+        limits:
+          memory: "16Gi"
+          cpu: "8"
+      # Optionally add GPU support
+      # nvidia.com/gpu: "1"
+
+  # Verify ingestion results
+  - name: verify-ingestion
+    container:
+      image: cogniverse/runtime:2.0.0
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -e
+          echo "Verifying ingestion results..."
+
+          # Query Vespa to check ingested documents
+          PROFILES="{{workflow.parameters.profiles}}"
+          IFS=',' read -ra PROFILE_ARRAY <<< "$PROFILES"
+
+          TOTAL_DOCS=0
+          for profile in "${PROFILE_ARRAY[@]}"; do
+            SCHEMA_NAME="${profile}_{{workflow.parameters.tenant-id}}"
+
+            # Query document count
+            DOC_COUNT=$(curl -s "http://cogniverse-vespa:8080/search/?yql=select+*+from+${SCHEMA_NAME}+where+true+limit+0" | \
+              python3 -c "import sys, json; print(json.load(sys.stdin)['root']['fields']['totalCount'])")
+
+            echo "Schema $SCHEMA_NAME: $DOC_COUNT documents"
+            TOTAL_DOCS=$((TOTAL_DOCS + DOC_COUNT))
+          done
+
+          echo "Total documents ingested: $TOTAL_DOCS"
+
+          if [ $TOTAL_DOCS -eq 0 ]; then
+            echo "ERROR: No documents were ingested"
+            exit 1
+          fi
+
+          echo "Verification successful"
+      env:
+      - name: VESPA_URL
+        value: "http://cogniverse-vespa:8080"
+      resources:
+        requests:
+          memory: "512Mi"
+          cpu: "500m"
+        limits:
+          memory: "1Gi"
+          cpu: "1"
+
+  # Send completion notification
+  - name: notify-completion
+    container:
+      image: curlimages/curl:latest
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          echo "Video ingestion workflow completed"
+          echo "Tenant: {{workflow.parameters.tenant-id}}"
+          echo "Workflow: {{workflow.name}}"
+          echo "Status: {{workflow.status}}"
+
+          # Send notification (customize endpoint)
+          # curl -X POST https://your-webhook-url \
+          #   -H "Content-Type: application/json" \
+          #   -d '{
+          #     "workflow": "video-ingestion",
+          #     "tenant": "{{workflow.parameters.tenant-id}}",
+          #     "status": "{{workflow.status}}",
+          #     "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"
+          #   }'
+      resources:
+        requests:
+          memory: "128Mi"
+          cpu: "100m"
+        limits:
+          memory: "256Mi"
+          cpu: "200m"
+---
+# Example Workflow submission
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: video-ingestion-
+  namespace: cogniverse
+spec:
+  workflowTemplateRef:
+    name: video-ingestion
+  arguments:
+    parameters:
+    - name: video-dir
+      value: "/data/acme_corp/videos"
+    - name: tenant-id
+      value: "acme_corp"
+    - name: profiles
+      value: "video_colpali_smol500_mv_frame"
+    - name: batch-size
+      value: "20"
+    - name: max-workers
+      value: "8"

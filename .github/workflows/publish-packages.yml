@@ -1,0 +1,366 @@
+name: Publish SDK Packages
+
+on:
+  # Trigger on version tags
+  push:
+    tags:
+      - 'v*.*.*'
+      - 'v*.*.*-alpha.*'
+      - 'v*.*.*-beta.*'
+      - 'v*.*.*-rc.*'
+
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Publish target'
+        required: true
+        default: 'testpypi'
+        type: choice
+        options:
+          - testpypi
+          - pypi
+      dry_run:
+        description: 'Dry run (preview only)'
+        required: false
+        default: false
+        type: boolean
+
+# Ensure only one publish workflow runs at a time
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Build and validate packages
+  build:
+    name: Build Packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for version detection
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install uv
+        run: |
+          pip install uv
+          uv --version
+
+      - name: Sync workspace dependencies
+        run: |
+          uv sync
+
+      - name: Build packages
+        run: |
+          ./scripts/build_packages.sh --clean --verbose
+
+      - name: List built packages
+        run: |
+          echo "Built packages:"
+          ls -lh dist/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-packages
+          path: dist/
+          retention-days: 7
+
+      - name: Upload build manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-manifest
+          path: dist/BUILD_MANIFEST.txt
+          retention-days: 7
+
+  # Run tests to verify packages
+  test:
+    name: Test Packages
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    services:
+      vespa:
+        image: vespaengine/vespa:latest
+        ports:
+          - 8080:8080
+          - 19071:19071
+        options: >-
+          --health-cmd "curl -f http://localhost:19071/state/v1/health || exit 1"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 5
+          --health-start-period 60s
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install uv
+        run: |
+          pip install uv
+          uv --version
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-packages
+          path: dist/
+
+      - name: Install packages from dist
+        run: |
+          # Install built wheels in dependency order
+          uv pip install dist/cogniverse_core-*.whl
+          uv pip install dist/cogniverse_agents-*.whl
+          uv pip install dist/cogniverse_vespa-*.whl
+          uv pip install dist/cogniverse_runtime-*.whl
+          uv pip install dist/cogniverse_dashboard-*.whl
+
+      - name: Verify package imports
+        run: |
+          uv run python -c "from cogniverse_core.config import SystemConfig"
+          uv run python -c "from cogniverse_agents.agents import RoutingAgent"
+          uv run python -c "from cogniverse_vespa.backends import VespaBackend"
+          echo "All packages imported successfully"
+
+      - name: Run package tests
+        env:
+          JAX_PLATFORM_NAME: cpu
+          VESPA_URL: http://localhost:8080
+          VESPA_CONFIG_PORT: 19071
+        run: |
+          # Run critical tests
+          JAX_PLATFORM_NAME=cpu timeout 1800 uv run pytest tests/common/ tests/routing/unit/ -v --tb=short
+
+  # Publish to TestPyPI
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: [build, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/cogniverse-core/
+
+    # Only run for prerelease tags or manual workflow dispatch with testpypi target
+    if: |
+      (github.event_name == 'push' && contains(github.ref, '-alpha') || contains(github.ref, '-beta') || contains(github.ref, '-rc')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: |
+          pip install uv twine
+          uv --version
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-packages
+          path: dist/
+
+      - name: Validate distributions
+        run: |
+          twine check dist/*
+
+      - name: Publish to TestPyPI
+        if: ${{ !inputs.dry_run }}
+        env:
+          TEST_PYPI_TOKEN: ${{ secrets.TEST_PYPI_TOKEN }}
+        run: |
+          TEST_PYPI=true ./scripts/publish_packages.sh
+
+      - name: Dry run publish
+        if: ${{ inputs.dry_run }}
+        run: |
+          TEST_PYPI=true DRY_RUN=true ./scripts/publish_packages.sh
+
+      - name: Test installation from TestPyPI
+        if: ${{ !inputs.dry_run }}
+        run: |
+          sleep 60  # Wait for packages to be available
+          pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ cogniverse-core
+
+  # Publish to production PyPI
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [build, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: pypi
+      url: https://pypi.org/project/cogniverse-core/
+
+    # Only run for release tags (no prerelease suffix) or manual workflow dispatch with pypi target
+    if: |
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-alpha') && !contains(github.ref, '-beta') && !contains(github.ref, '-rc')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: |
+          pip install uv twine
+          uv --version
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-packages
+          path: dist/
+
+      - name: Validate distributions
+        run: |
+          twine check dist/*
+
+      - name: Publish to PyPI
+        if: ${{ !inputs.dry_run }}
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          ./scripts/publish_packages.sh
+
+      - name: Dry run publish
+        if: ${{ inputs.dry_run }}
+        run: |
+          DRY_RUN=true ./scripts/publish_packages.sh
+
+      - name: Test installation from PyPI
+        if: ${{ !inputs.dry_run }}
+        run: |
+          sleep 60  # Wait for packages to be available
+          pip install cogniverse-core
+          python -c "from cogniverse_core.config import SystemConfig; print('Successfully installed from PyPI')"
+
+  # Create GitHub Release
+  create-release:
+    name: Create GitHub Release
+    needs: [build, test, publish-pypi]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # Only run for release tags
+    if: |
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/tags/v') &&
+      !contains(github.ref, '-alpha') &&
+      !contains(github.ref, '-beta') &&
+      !contains(github.ref, '-rc')
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download build manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: build-manifest
+          path: .
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          cat > release_notes.md <<EOF
+          # Cogniverse SDK v${{ steps.version.outputs.version }}
+
+          ## Installation
+
+          \`\`\`bash
+          pip install cogniverse-core==${{ steps.version.outputs.version }}
+          pip install cogniverse-agents==${{ steps.version.outputs.version }}
+          pip install cogniverse-vespa==${{ steps.version.outputs.version }}
+          pip install cogniverse-runtime==${{ steps.version.outputs.version }}
+          pip install cogniverse-dashboard==${{ steps.version.outputs.version }}
+          \`\`\`
+
+          Or install all packages:
+
+          \`\`\`bash
+          pip install cogniverse-runtime==${{ steps.version.outputs.version }}
+          \`\`\`
+
+          ## Packages
+
+          - \`cogniverse-core\`: Core configuration and utilities
+          - \`cogniverse-agents\`: Multi-agent orchestration and routing
+          - \`cogniverse-vespa\`: Vespa vector database backend
+          - \`cogniverse-runtime\`: FastAPI runtime server
+          - \`cogniverse-dashboard\`: Streamlit dashboard UI
+
+          ## Links
+
+          - [Documentation](https://docs.cogniverse.ai)
+          - [PyPI](https://pypi.org/project/cogniverse-core/)
+          - [Docker Hub](https://hub.docker.com/u/cogniverse)
+
+          EOF
+          cat release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release v${{ steps.version.outputs.version }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+          files: |
+            BUILD_MANIFEST.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Notify on failure
+  notify-failure:
+    name: Notify Failure
+    needs: [build, test, publish-testpypi, publish-pypi]
+    runs-on: ubuntu-latest
+    if: failure()
+
+    steps:
+      - name: Send notification
+        run: |
+          echo "Publishing workflow failed"
+          echo "Tag: ${{ github.ref }}"
+          echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          # Add notification logic here (Slack, email, etc.)

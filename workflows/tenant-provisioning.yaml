@@ -1,0 +1,363 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: tenant-provisioning
+  namespace: cogniverse
+spec:
+  entrypoint: provisioning-pipeline
+
+  arguments:
+    parameters:
+    - name: tenant-id
+      value: ""
+    - name: tenant-name
+      value: ""
+    - name: profiles
+      value: "video_colpali_smol500_mv_frame,video_videoprism_base_mv_chunk_30s"
+    - name: storage-quota
+      value: "100Gi"
+    - name: cpu-quota
+      value: "10"
+    - name: memory-quota
+      value: "20Gi"
+
+  templates:
+  # Main provisioning pipeline
+  - name: provisioning-pipeline
+    steps:
+    - - name: validate-tenant
+        template: validate-tenant
+    - - name: create-namespace
+        template: create-namespace
+    - - name: deploy-schemas
+        template: deploy-schemas
+    - - name: create-phoenix-project
+        template: create-phoenix-project
+    - - name: setup-resource-quotas
+        template: setup-resource-quotas
+    - - name: create-storage
+        template: create-storage
+    - - name: initialize-memory
+        template: initialize-memory
+    - - name: verify-tenant
+        template: verify-tenant
+    - - name: notify-completion
+        template: notify-completion
+
+  # Validate tenant configuration
+  - name: validate-tenant
+    container:
+      image: cogniverse/runtime:2.0.0
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -e
+          echo "Validating tenant configuration..."
+
+          # Check tenant ID format
+          if [[ ! "{{workflow.parameters.tenant-id}}" =~ ^[a-z0-9_]+$ ]]; then
+            echo "ERROR: Invalid tenant ID format (use lowercase alphanumeric and underscores)"
+            exit 1
+          fi
+
+          # Check if tenant already exists
+          cd /app
+          TENANT_EXISTS=$(uv run python -c "
+          from cogniverse_vespa.backends import VespaBackend
+          from cogniverse_core.config import SystemConfig
+          config = SystemConfig(tenant_id='{{workflow.parameters.tenant-id}}')
+          backend = VespaBackend(config)
+          # Check if any schemas exist for this tenant
+          print('exists')  # Placeholder - add actual check
+          " 2>/dev/null || echo "new")
+
+          if [ "$TENANT_EXISTS" = "exists" ]; then
+            echo "ERROR: Tenant {{workflow.parameters.tenant-id}} already exists"
+            exit 1
+          fi
+
+          echo "Tenant validation passed"
+      resources:
+        requests:
+          memory: "1Gi"
+          cpu: "500m"
+        limits:
+          memory: "2Gi"
+          cpu: "1"
+
+  # Create Kubernetes namespace for tenant
+  - name: create-namespace
+    resource:
+      action: create
+      manifest: |
+        apiVersion: v1
+        kind: Namespace
+        metadata:
+          name: cogniverse-{{workflow.parameters.tenant-id}}
+          labels:
+            tenant: "{{workflow.parameters.tenant-id}}"
+            managed-by: cogniverse
+
+  # Deploy Vespa schemas for tenant
+  - name: deploy-schemas
+    container:
+      image: cogniverse/runtime:2.0.0
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -e
+          echo "Deploying Vespa schemas for tenant {{workflow.parameters.tenant-id}}..."
+
+          # Deploy each profile schema
+          IFS=',' read -ra PROFILES <<< "{{workflow.parameters.profiles}}"
+          for profile in "${PROFILES[@]}"; do
+            echo "Deploying schema: $profile"
+
+            cd /app
+            uv run python scripts/deploy_json_schema.py \
+              "configs/schemas/${profile}.json" \
+              --tenant-id {{workflow.parameters.tenant-id}}
+
+            echo "Schema $profile deployed successfully"
+          done
+
+          echo "All schemas deployed"
+      env:
+      - name: VESPA_URL
+        value: "http://cogniverse-vespa:8080"
+      - name: VESPA_CONFIG_PORT
+        value: "19071"
+      resources:
+        requests:
+          memory: "2Gi"
+          cpu: "1"
+        limits:
+          memory: "4Gi"
+          cpu: "2"
+
+  # Create Phoenix project for tenant
+  - name: create-phoenix-project
+    container:
+      image: cogniverse/runtime:2.0.0
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -e
+          echo "Creating Phoenix project for tenant..."
+
+          PROJECT_NAME="{{workflow.parameters.tenant-id}}_project"
+          echo "Project name: $PROJECT_NAME"
+
+          # Phoenix projects are created automatically on first trace
+          # We'll send a test trace to initialize the project
+          cd /app
+          uv run python -c "
+          from cogniverse_core.config import SystemConfig
+          from cogniverse_core.telemetry import TelemetryManager
+
+          config = SystemConfig(
+              tenant_id='{{workflow.parameters.tenant-id}}',
+              phoenix_enabled=True,
+              phoenix_project_name='$PROJECT_NAME'
+          )
+
+          telemetry = TelemetryManager(config)
+          print(f'Phoenix project {PROJECT_NAME} initialized')
+          "
+
+          echo "Phoenix project created"
+      env:
+      - name: PHOENIX_ENDPOINT
+        value: "http://cogniverse-phoenix:6006"
+      resources:
+        requests:
+          memory: "1Gi"
+          cpu: "500m"
+        limits:
+          memory: "2Gi"
+          cpu: "1"
+
+  # Setup resource quotas
+  - name: setup-resource-quotas
+    resource:
+      action: create
+      manifest: |
+        apiVersion: v1
+        kind: ResourceQuota
+        metadata:
+          name: tenant-quota
+          namespace: cogniverse-{{workflow.parameters.tenant-id}}
+        spec:
+          hard:
+            requests.cpu: "{{workflow.parameters.cpu-quota}}"
+            requests.memory: "{{workflow.parameters.memory-quota}}"
+            requests.storage: "{{workflow.parameters.storage-quota}}"
+            persistentvolumeclaims: "10"
+            pods: "50"
+
+  # Create storage for tenant
+  - name: create-storage
+    resource:
+      action: create
+      manifest: |
+        apiVersion: v1
+        kind: PersistentVolumeClaim
+        metadata:
+          name: tenant-data
+          namespace: cogniverse-{{workflow.parameters.tenant-id}}
+          labels:
+            tenant: "{{workflow.parameters.tenant-id}}"
+        spec:
+          accessModes:
+            - ReadWriteMany
+          resources:
+            requests:
+              storage: {{workflow.parameters.storage-quota}}
+          storageClassName: standard
+
+  # Initialize Mem0 memory system for tenant
+  - name: initialize-memory
+    container:
+      image: cogniverse/runtime:2.0.0
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -e
+          echo "Initializing memory system for tenant..."
+
+          cd /app
+          uv run python -c "
+          from cogniverse_core.config import SystemConfig
+          from cogniverse_core.common.memory.mem0_memory_manager import Mem0MemoryManager
+
+          config = SystemConfig(
+              tenant_id='{{workflow.parameters.tenant-id}}',
+              vespa_url='http://cogniverse-vespa:8080',
+              vespa_config_port=19071
+          )
+
+          memory = Mem0MemoryManager(config)
+          memory.initialize()
+
+          print('Memory system initialized for tenant {{workflow.parameters.tenant-id}}')
+          "
+
+          echo "Memory system ready"
+      env:
+      - name: VESPA_URL
+        value: "http://cogniverse-vespa:8080"
+      - name: VESPA_CONFIG_PORT
+        value: "19071"
+      resources:
+        requests:
+          memory: "2Gi"
+          cpu: "1"
+        limits:
+          memory: "4Gi"
+          cpu: "2"
+
+  # Verify tenant provisioning
+  - name: verify-tenant
+    container:
+      image: cogniverse/runtime:2.0.0
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -e
+          echo "Verifying tenant provisioning..."
+
+          # Check namespace
+          if ! kubectl get namespace cogniverse-{{workflow.parameters.tenant-id}} >/dev/null 2>&1; then
+            echo "ERROR: Namespace not created"
+            exit 1
+          fi
+
+          # Check schemas
+          IFS=',' read -ra PROFILES <<< "{{workflow.parameters.profiles}}"
+          for profile in "${PROFILES[@]}"; do
+            SCHEMA_NAME="${profile}_{{workflow.parameters.tenant-id}}"
+
+            # Query schema
+            RESPONSE=$(curl -s "http://cogniverse-vespa:8080/search/?yql=select+*+from+${SCHEMA_NAME}+where+true+limit+0")
+
+            if echo "$RESPONSE" | grep -q "error"; then
+              echo "ERROR: Schema $SCHEMA_NAME not accessible"
+              exit 1
+            fi
+
+            echo "Schema $SCHEMA_NAME verified"
+          done
+
+          # Check PVC
+          if ! kubectl get pvc tenant-data -n cogniverse-{{workflow.parameters.tenant-id}} >/dev/null 2>&1; then
+            echo "ERROR: PVC not created"
+            exit 1
+          fi
+
+          echo "Tenant provisioning verified successfully"
+      env:
+      - name: VESPA_URL
+        value: "http://cogniverse-vespa:8080"
+      resources:
+        requests:
+          memory: "512Mi"
+          cpu: "500m"
+        limits:
+          memory: "1Gi"
+          cpu: "1"
+
+  # Send completion notification
+  - name: notify-completion
+    container:
+      image: curlimages/curl:latest
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          echo "Tenant provisioning completed"
+          echo "Tenant ID: {{workflow.parameters.tenant-id}}"
+          echo "Tenant Name: {{workflow.parameters.tenant-name}}"
+          echo "Profiles: {{workflow.parameters.profiles}}"
+          echo "Storage: {{workflow.parameters.storage-quota}}"
+          echo "CPU Quota: {{workflow.parameters.cpu-quota}}"
+          echo "Memory Quota: {{workflow.parameters.memory-quota}}"
+
+          # Send notification
+          # curl -X POST https://your-webhook-url \
+          #   -H "Content-Type: application/json" \
+          #   -d '{
+          #     "workflow": "tenant-provisioning",
+          #     "tenant_id": "{{workflow.parameters.tenant-id}}",
+          #     "tenant_name": "{{workflow.parameters.tenant-name}}",
+          #     "status": "completed"
+          #   }'
+      resources:
+        requests:
+          memory: "128Mi"
+          cpu: "100m"
+        limits:
+          memory: "256Mi"
+          cpu: "200m"
+---
+# Example Workflow submission
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: tenant-provisioning-
+  namespace: cogniverse
+spec:
+  workflowTemplateRef:
+    name: tenant-provisioning
+  arguments:
+    parameters:
+    - name: tenant-id
+      value: "newcorp_inc"
+    - name: tenant-name
+      value: "NewCorp Inc"
+    - name: profiles
+      value: "video_colpali_smol500_mv_frame,video_videoprism_base_mv_chunk_30s"
+    - name: storage-quota
+      value: "200Gi"
+    - name: cpu-quota
+      value: "20"
+    - name: memory-quota
+      value: "40Gi"

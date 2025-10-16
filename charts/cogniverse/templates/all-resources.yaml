@@ -1,0 +1,532 @@
+{{- $fullName := include "cogniverse.fullname" . -}}
+{{- $labels := include "cogniverse.labels" . -}}
+{{- $selectorLabels := include "cogniverse.selectorLabels" . -}}
+---
+# ServiceAccount
+{{- if .Values.serviceAccount.create -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "cogniverse.serviceAccountName" . }}
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+  {{- with .Values.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+---
+# Vespa StatefulSet
+{{- if .Values.vespa.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullName }}-vespa
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: vespa
+spec:
+  serviceName: {{ $fullName }}-vespa
+  replicas: {{ .Values.vespa.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cogniverse.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: vespa
+  template:
+    metadata:
+      labels:
+        {{- include "cogniverse.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: vespa
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: vespa
+        image: "{{ .Values.vespa.image.repository }}:{{ .Values.vespa.image.tag }}"
+        imagePullPolicy: {{ .Values.vespa.image.pullPolicy }}
+        ports:
+        - name: query
+          containerPort: 8080
+        - name: config
+          containerPort: 19071
+        - name: metrics
+          containerPort: 19092
+        env:
+        {{- range $key, $value := .Values.vespa.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        livenessProbe:
+          {{- toYaml .Values.vespa.livenessProbe | nindent 10 }}
+        readinessProbe:
+          {{- toYaml .Values.vespa.readinessProbe | nindent 10 }}
+        resources:
+          {{- toYaml .Values.vespa.resources | nindent 10 }}
+        volumeMounts:
+        - name: data
+          mountPath: /opt/vespa/var
+      {{- with .Values.vespa.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.vespa.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.vespa.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- if .Values.vespa.persistence.enabled }}
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+      {{- with .Values.vespa.persistence.annotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      accessModes:
+        - {{ .Values.vespa.persistence.accessMode }}
+      {{- if .Values.vespa.persistence.storageClass }}
+      storageClassName: {{ .Values.vespa.persistence.storageClass }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.vespa.persistence.size }}
+  {{- end }}
+{{- end }}
+---
+# Vespa Service
+{{- if .Values.vespa.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-vespa
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: vespa
+  {{- with .Values.vespa.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.vespa.service.type }}
+  ports:
+  - port: {{ .Values.vespa.service.ports.query }}
+    targetPort: query
+    protocol: TCP
+    name: query
+  - port: {{ .Values.vespa.service.ports.config }}
+    targetPort: config
+    protocol: TCP
+    name: config
+  - port: {{ .Values.vespa.service.ports.metrics }}
+    targetPort: metrics
+    protocol: TCP
+    name: metrics
+  selector:
+    {{- include "cogniverse.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: vespa
+{{- end }}
+---
+# Runtime Deployment
+{{- if .Values.runtime.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-runtime
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: runtime
+spec:
+  replicas: {{ .Values.runtime.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cogniverse.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: runtime
+  template:
+    metadata:
+      labels:
+        {{- include "cogniverse.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: runtime
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: runtime
+        image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
+        imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: 8000
+        env:
+        - name: VESPA_URL
+          value: "http://{{ $fullName }}-vespa:{{ .Values.vespa.service.ports.query }}"
+        - name: VESPA_CONFIG_PORT
+          value: "{{ .Values.vespa.service.ports.config }}"
+        - name: PHOENIX_ENDPOINT
+          value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+        - name: OLLAMA_ENDPOINT
+          value: "http://{{ $fullName }}-ollama:{{ .Values.ollama.service.port }}"
+        {{- range $key, $value := .Values.runtime.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        livenessProbe:
+          {{- toYaml .Values.runtime.livenessProbe | nindent 10 }}
+        readinessProbe:
+          {{- toYaml .Values.runtime.readinessProbe | nindent 10 }}
+        resources:
+          {{- toYaml .Values.runtime.resources | nindent 10 }}
+      {{- with .Values.runtime.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.runtime.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.runtime.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
+---
+# Runtime Service
+{{- if .Values.runtime.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-runtime
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: runtime
+  {{- with .Values.runtime.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.runtime.service.type }}
+  ports:
+  - port: {{ .Values.runtime.service.port }}
+    targetPort: http
+    protocol: TCP
+    name: http
+  selector:
+    {{- include "cogniverse.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: runtime
+{{- end }}
+---
+# Dashboard Deployment
+{{- if .Values.dashboard.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-dashboard
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard
+spec:
+  replicas: {{ .Values.dashboard.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cogniverse.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: dashboard
+  template:
+    metadata:
+      labels:
+        {{- include "cogniverse.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: dashboard
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: dashboard
+        image: "{{ .Values.dashboard.image.repository }}:{{ .Values.dashboard.image.tag }}"
+        imagePullPolicy: {{ .Values.dashboard.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: 8501
+        env:
+        - name: RUNTIME_URL
+          value: "http://{{ $fullName }}-runtime:{{ .Values.runtime.service.port }}"
+        - name: PHOENIX_ENDPOINT
+          value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+        {{- range $key, $value := .Values.dashboard.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        livenessProbe:
+          {{- toYaml .Values.dashboard.livenessProbe | nindent 10 }}
+        readinessProbe:
+          {{- toYaml .Values.dashboard.readinessProbe | nindent 10 }}
+        resources:
+          {{- toYaml .Values.dashboard.resources | nindent 10 }}
+      {{- with .Values.dashboard.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.dashboard.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.dashboard.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
+---
+# Dashboard Service
+{{- if .Values.dashboard.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-dashboard
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard
+  {{- with .Values.dashboard.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.dashboard.service.type }}
+  ports:
+  - port: {{ .Values.dashboard.service.port }}
+    targetPort: http
+    protocol: TCP
+    name: http
+  selector:
+    {{- include "cogniverse.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard
+{{- end }}
+---
+# Phoenix StatefulSet
+{{- if .Values.phoenix.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullName }}-phoenix
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: phoenix
+spec:
+  serviceName: {{ $fullName }}-phoenix
+  replicas: {{ .Values.phoenix.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cogniverse.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: phoenix
+  template:
+    metadata:
+      labels:
+        {{- include "cogniverse.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: phoenix
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: phoenix
+        image: "{{ .Values.phoenix.image.repository }}:{{ .Values.phoenix.image.tag }}"
+        imagePullPolicy: {{ .Values.phoenix.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: 6006
+        env:
+        {{- range $key, $value := .Values.phoenix.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        livenessProbe:
+          {{- toYaml .Values.phoenix.livenessProbe | nindent 10 }}
+        readinessProbe:
+          {{- toYaml .Values.phoenix.readinessProbe | nindent 10 }}
+        resources:
+          {{- toYaml .Values.phoenix.resources | nindent 10 }}
+        volumeMounts:
+        - name: data
+          mountPath: /phoenix-data
+      {{- with .Values.phoenix.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.phoenix.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.phoenix.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- if .Values.phoenix.persistence.enabled }}
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+      {{- with .Values.phoenix.persistence.annotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      accessModes:
+        - {{ .Values.phoenix.persistence.accessMode }}
+      {{- if .Values.phoenix.persistence.storageClass }}
+      storageClassName: {{ .Values.phoenix.persistence.storageClass }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.phoenix.persistence.size }}
+  {{- end }}
+{{- end }}
+---
+# Phoenix Service
+{{- if .Values.phoenix.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-phoenix
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: phoenix
+  {{- with .Values.phoenix.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.phoenix.service.type }}
+  ports:
+  - port: {{ .Values.phoenix.service.port }}
+    targetPort: http
+    protocol: TCP
+    name: http
+  selector:
+    {{- include "cogniverse.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: phoenix
+{{- end }}
+---
+# Ollama StatefulSet
+{{- if .Values.ollama.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullName }}-ollama
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+spec:
+  serviceName: {{ $fullName }}-ollama
+  replicas: {{ .Values.ollama.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cogniverse.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ollama
+  template:
+    metadata:
+      labels:
+        {{- include "cogniverse.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ollama
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: ollama
+        image: "{{ .Values.ollama.image.repository }}:{{ .Values.ollama.image.tag }}"
+        imagePullPolicy: {{ .Values.ollama.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: 11434
+        env:
+        {{- range $key, $value := .Values.ollama.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        livenessProbe:
+          {{- toYaml .Values.ollama.livenessProbe | nindent 10 }}
+        readinessProbe:
+          {{- toYaml .Values.ollama.readinessProbe | nindent 10 }}
+        resources:
+          {{- toYaml .Values.ollama.resources | nindent 10 }}
+        volumeMounts:
+        - name: data
+          mountPath: /root/.ollama
+      {{- with .Values.ollama.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.ollama.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.ollama.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- if .Values.ollama.persistence.enabled }}
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+      {{- with .Values.ollama.persistence.annotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      accessModes:
+        - {{ .Values.ollama.persistence.accessMode }}
+      {{- if .Values.ollama.persistence.storageClass }}
+      storageClassName: {{ .Values.ollama.persistence.storageClass }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.ollama.persistence.size }}
+  {{- end }}
+{{- end }}
+---
+# Ollama Service
+{{- if .Values.ollama.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-ollama
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+  {{- with .Values.ollama.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.ollama.service.type }}
+  ports:
+  - port: {{ .Values.ollama.service.port }}
+    targetPort: http
+    protocol: TCP
+    name: http
+  selector:
+    {{- include "cogniverse.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+{{- end }}

@@ -116,6 +116,33 @@ services:
       - cogniverse
     restart: unless-stopped
 
+  # Ollama (Local LLM inference)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: cogniverse-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - cogniverse
+    restart: unless-stopped
+
 networks:
   cogniverse:
     driver: bridge
@@ -125,6 +152,8 @@ volumes:
   vespa-data:
     driver: local
   phoenix-data:
+    driver: local
+  ollama-data:
     driver: local
 
 # Usage:
@@ -141,6 +170,7 @@ volumes:
 #    - Dashboard: http://localhost:8501
 #    - Phoenix: http://localhost:6006
 #    - Vespa: http://localhost:8080
+#    - Ollama: http://localhost:11434
 #
 # 4. Health checks:
 #    docker-compose ps

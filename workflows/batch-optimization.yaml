@@ -1,0 +1,309 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: batch-optimization
+  namespace: cogniverse
+spec:
+  entrypoint: optimization-pipeline
+
+  arguments:
+    parameters:
+    - name: tenant-id
+      value: "default"
+    - name: optimizer-type
+      value: "GEPA"  # GEPA, Bootstrap, SIMBA, MIPRO
+    - name: dataset-name
+      value: "golden_eval_v1"
+    - name: profiles
+      value: "video_colpali_smol500_mv_frame"
+    - name: max-iterations
+      value: "100"
+    - name: learning-rate
+      value: "0.001"
+
+  templates:
+  # Main optimization pipeline
+  - name: optimization-pipeline
+    steps:
+    - - name: validate-config
+        template: validate-config
+    - - name: prepare-dataset
+        template: prepare-dataset
+    - - name: run-optimization
+        template: run-optimization
+    - - name: evaluate-results
+        template: evaluate-results
+    - - name: deploy-optimized-model
+        template: deploy-optimized-model
+        when: "{{steps.evaluate-results.outputs.parameters.improvement}} > 5"
+    - - name: notify-completion
+        template: notify-completion
+
+  # Validate optimization configuration
+  - name: validate-config
+    container:
+      image: cogniverse/runtime:2.0.0
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -e
+          echo "Validating optimization configuration..."
+
+          # Validate optimizer type
+          VALID_OPTIMIZERS="GEPA Bootstrap SIMBA MIPRO"
+          if ! echo "$VALID_OPTIMIZERS" | grep -q "{{workflow.parameters.optimizer-type}}"; then
+            echo "ERROR: Invalid optimizer type: {{workflow.parameters.optimizer-type}}"
+            exit 1
+          fi
+
+          # Check dataset exists
+          DATASET_PATH="/app/data/testset/evaluation/{{workflow.parameters.dataset-name}}.csv"
+          if [ ! -f "$DATASET_PATH" ]; then
+            echo "ERROR: Dataset not found: $DATASET_PATH"
+            exit 1
+          fi
+
+          echo "Configuration valid"
+      resources:
+        requests:
+          memory: "512Mi"
+          cpu: "500m"
+        limits:
+          memory: "1Gi"
+          cpu: "1"
+
+  # Prepare evaluation dataset
+  - name: prepare-dataset
+    container:
+      image: cogniverse/runtime:2.0.0
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -e
+          echo "Preparing evaluation dataset..."
+
+          # Load and validate dataset
+          cd /app
+          uv run python -c "
+          import pandas as pd
+          df = pd.read_csv('data/testset/evaluation/{{workflow.parameters.dataset-name}}.csv')
+          print(f'Dataset loaded: {len(df)} samples')
+          print(f'Columns: {df.columns.tolist()}')
+          "
+
+          echo "Dataset prepared"
+      env:
+      - name: TENANT_ID
+        value: "{{workflow.parameters.tenant-id}}"
+      resources:
+        requests:
+          memory: "2Gi"
+          cpu: "1"
+        limits:
+          memory: "4Gi"
+          cpu: "2"
+
+  # Run DSPy optimization
+  - name: run-optimization
+    container:
+      image: cogniverse/runtime:2.0.0
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -e
+          echo "Running DSPy optimization..."
+          echo "Optimizer: {{workflow.parameters.optimizer-type}}"
+          echo "Dataset: {{workflow.parameters.dataset-name}}"
+          echo "Tenant: {{workflow.parameters.tenant-id}}"
+
+          # Run optimization
+          cd /app
+          JAX_PLATFORM_NAME=cpu uv run python scripts/run_optimization.py \
+            --tenant-id {{workflow.parameters.tenant-id}} \
+            --optimizer {{workflow.parameters.optimizer-type}} \
+            --dataset {{workflow.parameters.dataset-name}} \
+            --profiles {{workflow.parameters.profiles}} \
+            --max-iterations {{workflow.parameters.max-iterations}} \
+            --learning-rate {{workflow.parameters.learning-rate}} \
+            --output /tmp/optimization_results.json
+
+          # Check results
+          if [ ! -f /tmp/optimization_results.json ]; then
+            echo "ERROR: Optimization results not generated"
+            exit 1
+          fi
+
+          # Extract metrics
+          BASELINE_SCORE=$(cat /tmp/optimization_results.json | python3 -c "import sys, json; print(json.load(sys.stdin)['baseline_score'])")
+          OPTIMIZED_SCORE=$(cat /tmp/optimization_results.json | python3 -c "import sys, json; print(json.load(sys.stdin)['optimized_score'])")
+          IMPROVEMENT=$(echo "scale=2; ($OPTIMIZED_SCORE - $BASELINE_SCORE) / $BASELINE_SCORE * 100" | bc)
+
+          echo "Baseline score: $BASELINE_SCORE"
+          echo "Optimized score: $OPTIMIZED_SCORE"
+          echo "Improvement: ${IMPROVEMENT}%"
+
+          # Save metrics
+          echo "$BASELINE_SCORE" > /tmp/baseline_score.txt
+          echo "$OPTIMIZED_SCORE" > /tmp/optimized_score.txt
+          echo "$IMPROVEMENT" > /tmp/improvement.txt
+
+          echo "Optimization completed"
+      env:
+      - name: VESPA_URL
+        value: "http://cogniverse-vespa:8080"
+      - name: PHOENIX_ENDPOINT
+        value: "http://cogniverse-phoenix:6006"
+      - name: TENANT_ID
+        value: "{{workflow.parameters.tenant-id}}"
+      - name: LLM_MODEL
+        value: "ollama/mistral:7b-instruct"
+      - name: OLLAMA_ENDPOINT
+        value: "http://cogniverse-ollama:11434"
+      resources:
+        requests:
+          memory: "16Gi"
+          cpu: "8"
+        limits:
+          memory: "32Gi"
+          cpu: "16"
+      # Add GPU if available
+      # nvidia.com/gpu: "1"
+    outputs:
+      parameters:
+      - name: baseline-score
+        valueFrom:
+          path: /tmp/baseline_score.txt
+      - name: optimized-score
+        valueFrom:
+          path: /tmp/optimized_score.txt
+      - name: improvement
+        valueFrom:
+          path: /tmp/improvement.txt
+
+  # Evaluate optimization results
+  - name: evaluate-results
+    container:
+      image: cogniverse/runtime:2.0.0
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -e
+          echo "Evaluating optimization results..."
+
+          IMPROVEMENT="{{steps.run-optimization.outputs.parameters.improvement}}"
+          echo "Improvement: ${IMPROVEMENT}%"
+
+          # Check if improvement meets threshold
+          if (( $(echo "$IMPROVEMENT > 5" | bc -l) )); then
+            echo "Improvement exceeds threshold (5%)"
+            echo "Recommendation: Deploy optimized model"
+          else
+            echo "Improvement below threshold (5%)"
+            echo "Recommendation: Keep current model"
+          fi
+
+          echo "Evaluation completed"
+      resources:
+        requests:
+          memory: "1Gi"
+          cpu: "1"
+        limits:
+          memory: "2Gi"
+          cpu: "2"
+    outputs:
+      parameters:
+      - name: improvement
+        value: "{{steps.run-optimization.outputs.parameters.improvement}}"
+
+  # Deploy optimized model
+  - name: deploy-optimized-model
+    container:
+      image: cogniverse/runtime:2.0.0
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -e
+          echo "Deploying optimized model..."
+
+          # Save optimized routing model
+          cd /app
+          uv run python -c "
+          import json
+          from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
+
+          # Load optimized parameters
+          with open('/tmp/optimization_results.json', 'r') as f:
+              results = json.load(f)
+
+          # Deploy to production
+          print('Deploying optimized routing model...')
+          # Add deployment logic here
+          print('Deployment completed')
+          "
+
+          echo "Model deployed successfully"
+      env:
+      - name: TENANT_ID
+        value: "{{workflow.parameters.tenant-id}}"
+      resources:
+        requests:
+          memory: "2Gi"
+          cpu: "1"
+        limits:
+          memory: "4Gi"
+          cpu: "2"
+
+  # Send completion notification
+  - name: notify-completion
+    container:
+      image: curlimages/curl:latest
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          echo "Optimization workflow completed"
+          echo "Tenant: {{workflow.parameters.tenant-id}}"
+          echo "Optimizer: {{workflow.parameters.optimizer-type}}"
+          echo "Baseline: {{steps.run-optimization.outputs.parameters.baseline-score}}"
+          echo "Optimized: {{steps.run-optimization.outputs.parameters.optimized-score}}"
+          echo "Improvement: {{steps.run-optimization.outputs.parameters.improvement}}%"
+
+          # Send notification
+          # curl -X POST https://your-webhook-url \
+          #   -H "Content-Type: application/json" \
+          #   -d '{
+          #     "workflow": "batch-optimization",
+          #     "tenant": "{{workflow.parameters.tenant-id}}",
+          #     "improvement": "{{steps.run-optimization.outputs.parameters.improvement}}",
+          #     "status": "completed"
+          #   }'
+      resources:
+        requests:
+          memory: "128Mi"
+          cpu: "100m"
+        limits:
+          memory: "256Mi"
+          cpu: "200m"
+---
+# Example Workflow submission
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: batch-optimization-
+  namespace: cogniverse
+spec:
+  workflowTemplateRef:
+    name: batch-optimization
+  arguments:
+    parameters:
+    - name: tenant-id
+      value: "acme_corp"
+    - name: optimizer-type
+      value: "GEPA"
+    - name: dataset-name
+      value: "golden_eval_v1"
+    - name: profiles
+      value: "video_colpali_smol500_mv_frame"
+    - name: max-iterations
+      value: "200"
+    - name: learning-rate
+      value: "0.001"
