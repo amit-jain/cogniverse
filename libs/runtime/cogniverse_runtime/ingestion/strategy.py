@@ -60,15 +60,49 @@ class StrategyConfig:
     This is THE single source of truth for how to process, store, and search videos.
     """
 
-    def __init__(self, config_dir: Path = Path("configs")):
-        self.config_dir = config_dir
+    def __init__(self, config_dir: Path = None):
+        # If config_dir not provided, try COGNIVERSE_CONFIG env var first, then default to "configs"
+        if config_dir is None:
+            import os
+            env_config = os.environ.get('COGNIVERSE_CONFIG')
+            if env_config:
+                # COGNIVERSE_CONFIG points to a specific config file
+                config_file = Path(env_config)
+                if config_file.exists():
+                    # For test configs like tests/system/resources/configs/system_test_config.json,
+                    # the schemas dir is at tests/system/resources/schemas (parent.parent/schemas)
+                    # But for production configs like configs/config.json,
+                    # the schemas dir is at configs/schemas (parent/schemas)
+                    # We need to check both locations
+                    if config_file.name != "config.json":
+                        # Test config file with different name - schemas likely in parent.parent/schemas
+                        potential_config_dir = config_file.parent.parent
+                    else:
+                        # Standard config.json - schemas in parent/schemas
+                        potential_config_dir = config_file.parent
+
+                    self.config_dir = potential_config_dir
+                    self.config_file = config_file
+                    logger.info(f"StrategyConfig using COGNIVERSE_CONFIG: {env_config}")
+                    logger.info(f"  Config dir: {self.config_dir}")
+                else:
+                    logger.warning(f"COGNIVERSE_CONFIG file not found: {env_config}, falling back to default")
+                    self.config_dir = Path("configs")
+                    self.config_file = self.config_dir / "config.json"
+            else:
+                self.config_dir = Path("configs")
+                self.config_file = self.config_dir / "config.json"
+        else:
+            self.config_dir = config_dir
+            self.config_file = self.config_dir / "config.json"
+
         self._load_all_configs()
         self._strategy_cache = {}
 
     def _load_all_configs(self):
         """Load all configuration files"""
         # Main config
-        with open(self.config_dir / "config.json") as f:
+        with open(self.config_file) as f:
             self.config = json.load(f)
 
         # Ranking strategies
@@ -104,7 +138,8 @@ class StrategyConfig:
             return self._strategy_cache[profile_name]
 
         # Get profile config
-        profiles = self.config.get("video_processing_profiles", {})
+        backend_config = self.config.get("backend", {})
+        profiles = backend_config.get("profiles", {})
         profile = profiles.get(profile_name)
 
         if not profile:

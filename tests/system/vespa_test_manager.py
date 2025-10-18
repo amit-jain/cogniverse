@@ -9,7 +9,6 @@ import os
 import shutil
 import subprocess
 import tempfile
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Optional
@@ -21,8 +20,8 @@ from cogniverse_vespa.json_schema_parser import JsonSchemaParser
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from vespa.package import ApplicationPackage, Validation
 
+from tests.utils.async_polling import wait_for_http_ready
 from tests.utils.docker_utils import cleanup_vespa_container
-from tests.utils.async_polling import wait_for_vespa_indexing
 
 
 class VespaTestManager:
@@ -133,7 +132,8 @@ class VespaTestManager:
                 print("❌ No schema resources found in tests/system/resources/schemas/")
                 return False
 
-            schema_files = list(self.test_schemas_resource_dir.glob("*.json"))
+            # Only load actual schema files, not ranking_strategies.json
+            schema_files = list(self.test_schemas_resource_dir.glob("*_schema.json"))
 
             if not schema_files:
                 print("❌ No schema files found in system test resources")
@@ -157,20 +157,35 @@ class VespaTestManager:
                     app_package.add_schema(base_schema)
                     deployed_schemas.append(base_schema.name)
 
-                    # Create tenant-scoped version
+                    # Create tenant-scoped version by modifying JSON before parsing
+                    # This ensures rank profiles are included in the schema from the start
                     tenant_schema_name = f"{base_schema.name}_{tenant_id}"
                     print(f"📄 Creating tenant-scoped schema: {tenant_schema_name}")
 
-                    # Clone the schema with new name for tenant
-                    tenant_schema = parser.load_schema_from_json_file(str(schema_file))
-                    tenant_schema.name = tenant_schema_name
+                    # Load JSON, modify name, then parse to preserve all rank profiles
+                    import json
+                    with open(schema_file) as f:
+                        schema_json = json.load(f)
 
-                    # Update document type name to match schema name
-                    if hasattr(tenant_schema, "document") and tenant_schema.document:
-                        tenant_schema.document.name = tenant_schema_name
+                    # Update schema and document names for tenant
+                    schema_json["name"] = tenant_schema_name
+                    schema_json["document"]["name"] = tenant_schema_name
 
-                    app_package.add_schema(tenant_schema)
-                    deployed_schemas.append(tenant_schema_name)
+                    # Create temp file with modified JSON
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp:
+                        json.dump(schema_json, tmp)
+                        tmp_path = tmp.name
+
+                    try:
+                        # Parse the modified JSON to get tenant schema with all rank profiles
+                        tenant_schema = parser.load_schema_from_json_file(tmp_path)
+                        app_package.add_schema(tenant_schema)
+                        deployed_schemas.append(tenant_schema_name)
+                    finally:
+                        # Clean up temp file
+                        import os
+                        os.unlink(tmp_path)
 
                 except Exception as e:
                     print(f"⚠️  Failed to load {schema_file.name}: {e}")
@@ -310,23 +325,18 @@ class VespaTestManager:
             print(f"✅ Vespa Docker container '{container_name}' started")
             self.container_name = container_name
 
-            # Wait for Vespa to be ready (Docker containers take time to start)
-            print("Waiting for Vespa to be ready...")
-            for i in range(120):  # Wait up to 2 minutes for container startup
-                try:
-                    response = requests.get(
-                        f"http://localhost:{config_port}/", timeout=5
-                    )
-                    if response.status_code == 200:
-                        print(f"✅ Config server ready on port {config_port}")
-                        break
-                except Exception:
-                    pass
-                wait_for_vespa_indexing(delay=1)
-                if i % 10 == 0:  # Progress indicator every 10 seconds
-                    print(f"  Still waiting... ({i}s)")
-            else:
-                print("❌ Config server not ready after 120 seconds")
+            # Wait for Vespa config server to be ready (Docker containers take time to start)
+            print("Waiting for Vespa config server to be ready...")
+            try:
+                wait_for_http_ready(
+                    url=f"http://localhost:{config_port}/",
+                    timeout=120.0,
+                    expected_status=200,
+                    description=f"Vespa config server on port {config_port}"
+                )
+                print(f"✅ Config server ready on port {config_port}")
+            except Exception as e:
+                print(f"❌ Config server not ready after 120 seconds: {e}")
                 return False
 
             # Setup complete test environment
@@ -343,22 +353,19 @@ class VespaTestManager:
 
             # Wait for application to be ready on the mapped port
             print(f"Waiting for application to be ready on port {self.http_port}...")
-            for i in range(60):
-                try:
-                    response = requests.get(
-                        f"http://localhost:{self.http_port}/ApplicationStatus",
-                        timeout=5,
-                    )
-                    if response.status_code == 200:
-                        print(f"✅ Isolated Vespa ready on port {self.http_port}")
-                        self.is_deployed = True
-                        return True
-                except Exception:
-                    pass
-                wait_for_vespa_indexing(delay=2)
-
-            print("❌ Isolated Vespa not ready after 120 seconds")
-            return False
+            try:
+                wait_for_http_ready(
+                    url=f"http://localhost:{self.http_port}/ApplicationStatus",
+                    timeout=120.0,
+                    expected_status=200,
+                    description=f"Vespa application on port {self.http_port}"
+                )
+                print(f"✅ Isolated Vespa ready on port {self.http_port}")
+                self.is_deployed = True
+                return True
+            except Exception as e:
+                print(f"❌ Isolated Vespa not ready after 120 seconds: {e}")
+                return False
 
         except Exception as e:
             print(f"❌ Failed to start isolated Vespa: {e}")
@@ -415,7 +422,9 @@ class VespaTestManager:
             with open(system_test_config) as f:
                 test_config = json.load(f)
 
-            profiles = test_config.get("video_processing_profiles", {})
+            # Get profiles from new backend.profiles structure
+            backend_config = test_config.get("backend", {})
+            profiles = backend_config.get("profiles", {})
             print(
                 f"🔧 Config loaded with Vespa: vespa_url=http://localhost, vespa_port={self.http_port}"
             )
@@ -425,9 +434,10 @@ class VespaTestManager:
             from cogniverse_core.config.utils import get_config
 
             current_config = get_config()
-            loaded_profiles = current_config.get("video_processing_profiles", {})
+            current_backend_config = current_config.get("backend", {})
+            loaded_profiles = current_backend_config.get("profiles", {})
             print(
-                f"🔍 Config verification: video_processing_profiles has {len(loaded_profiles)} entries"
+                f"🔍 Config verification: backend.profiles has {len(loaded_profiles)} entries"
             )
             if self.default_test_schema in loaded_profiles:
                 profile = loaded_profiles[self.default_test_schema]
@@ -473,8 +483,14 @@ class VespaTestManager:
 
                 # Update test_config with correct Vespa ports for this isolated instance
                 test_config["vespa_port"] = self.http_port
-                test_config["vespa_config_port"] = self.config_port
+                test_config["config_port"] = self.config_port
                 test_config["vespa_url"] = "http://localhost"
+
+                # CRITICAL: Also update backend section to use test port
+                # Backend section takes precedence over top-level keys
+                if "backend" in test_config:
+                    test_config["backend"]["port"] = self.http_port
+                    test_config["backend"]["url"] = "http://localhost"
 
                 config = (
                     create_config()
@@ -528,6 +544,16 @@ class VespaTestManager:
                     print(
                         f"✅ Ingested {total_docs_fed} video documents to isolated Vespa"
                     )
+
+                    # Wait for Vespa indexing to complete (eventual consistency)
+                    print("⏳ Waiting for Vespa indexing to complete...")
+                    from tests.utils.async_polling import wait_for_vespa_indexing
+                    wait_for_vespa_indexing(
+                        vespa_url=f"http://localhost:{self.http_port}",
+                        delay=5.0,
+                        description="Vespa document indexing after ingestion"
+                    )
+                    print("✅ Indexing wait complete")
 
                     # Store ingestion results
                     self.ingested_videos = len(video_files)
@@ -624,33 +650,37 @@ class VespaTestManager:
 
         try:
             # Use backend abstraction instead of direct HTTP calls
+            from cogniverse_core.config.utils import get_config
             from cogniverse_core.registries.backend_registry import get_backend_registry
 
             registry = get_backend_registry()
 
+            # Load full config with backend section
+            full_config = get_config()
+
             # Get backend for test tenant with search configuration
-            # Profile and schema have the same name in our config
+            # Explicitly pass profile to avoid relying on dynamic loading
             backend_config = {
-                "vespa_url": "http://localhost",
-                "vespa_port": self.http_port,
-                "vespa_config_port": self.config_port,
-                "schema_name": self.default_test_schema,
                 "tenant_id": "test_tenant",
-                "profile": self.default_test_schema,  # Profile name = schema name
+                "profile": self.default_test_schema,  # Explicit profile selection (best practice)
+                "backend": full_config.get("backend", {}),  # Pass entire backend section
             }
 
             backend = registry.get_search_backend(
                 "vespa", "test_tenant", backend_config
             )
 
-            # Use backend's search method
-            results = backend.search(
-                query_embeddings=None,
-                query_text=query,
-                top_k=hits,
-                filters=None,
-                ranking_strategy=ranking,
-            )
+            # Use backend's search method with query_dict format
+            query_dict = {
+                "query": query,
+                "type": "video",
+                "query_embeddings": None,
+                "top_k": hits,
+                "filters": None,
+                "strategy": ranking,
+            }
+
+            results = backend.search(query_dict)
 
             # Convert SearchResult objects to dict format for compatibility
             if results:

@@ -13,7 +13,6 @@ Test outputs are written to tests/system/outputs/ and excluded from git.
 """
 
 import asyncio
-from tests.utils.async_polling import wait_for_vespa_indexing, simulate_processing_delay
 import os
 import subprocess
 import time
@@ -28,6 +27,8 @@ from cogniverse_agents.routing.relationship_extraction_tools import (
 )
 from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_agents.summarizer_agent import SummarizerAgent
+
+from tests.utils.async_polling import wait_for_vespa_indexing
 
 
 def check_vespa_available() -> bool:
@@ -141,7 +142,6 @@ class TestRealVespaIntegration:
         base_url = shared_system_vespa["base_url"]
 
         # Test Vespa is accessible - retry for up to 5 minutes if getting 503
-        import time
 
         max_wait = 300  # 5 minutes
         start_time = time.time()
@@ -197,6 +197,7 @@ class TestRealVespaIntegration:
         vespa_url = shared_system_vespa["vespa_url"]
         vespa_port = shared_system_vespa["http_port"]
         default_schema = shared_system_vespa["default_schema"]
+        base_url = shared_system_vespa["base_url"]
 
         try:
             # Test our actual Enhanced Video Search Agent
@@ -221,11 +222,37 @@ class TestRealVespaIntegration:
                 "basketball player practicing",
             ]
 
+            # DEBUG: Query Vespa directly first to verify documents exist
+            print("\n🔍 DEBUG: Querying Vespa directly to check documents...")
+            try:
+                tenant_schema = f"{default_schema}_test_tenant"
+                direct_query_url = f"{base_url}/search/"
+                direct_query_params = {
+                    "yql": f"select * from {tenant_schema} where true limit 5",
+                    "timeout": "10s"
+                }
+                direct_response = requests.get(direct_query_url, params=direct_query_params, timeout=15)
+                print(f"   Direct Vespa query status: {direct_response.status_code}")
+                if direct_response.status_code == 200:
+                    direct_data = direct_response.json()
+                    direct_hits = direct_data.get("root", {}).get("children", [])
+                    print(f"   Direct query found {len(direct_hits)} documents in {tenant_schema}")
+                    if direct_hits:
+                        print(f"   Sample document: {direct_hits[0].get('fields', {}).get('video_id', 'N/A')}")
+                else:
+                    print(f"   Direct query failed: {direct_response.text[:200]}")
+            except Exception as e:
+                print(f"   Direct query error: {e}")
+
             for query in test_queries:
                 print(f"\n🔍 Testing agentic search for: '{query}'")
 
                 # Use the actual agent's search method
                 search_results = video_agent.search_by_text(query, top_k=10)
+
+                # DEBUG: Log what the agent is doing
+                print(f"   Agent returned {len(search_results) if search_results else 0} results")
+                print(f"   Agent schema: {video_agent.search_backend.schema_name}")
 
                 assert search_results is not None, (
                     f"Enhanced search should return results for '{query}'"
@@ -237,6 +264,12 @@ class TestRealVespaIntegration:
 
                 print(f"✅ Enhanced Video Search Agent found {total_results} results")
 
+                # STRICT ASSERTION: Must have results from ingested test data
+                assert total_results > 0, (
+                    f"Expected search results for query '{query}', got 0 results. "
+                    f"Check that test videos are properly ingested and searchable."
+                )
+
                 # Show top results
                 for i, result in enumerate(results[:3]):
                     video_id = result.get("video_id", "unknown")
@@ -246,10 +279,10 @@ class TestRealVespaIntegration:
                         f"  Result {i + 1}: {video_id} - {title} (relevance: {relevance:.3f})"
                     )
 
-                # Test that the agent can handle empty results gracefully
-                if total_results == 0:
-                    print(
-                        "  No results found - testing agent handles empty results gracefully"
+                    # Verify result structure
+                    assert "video_id" in result, f"Result {i} missing video_id"
+                    assert ("score" in result or "relevance" in result), (
+                        f"Result {i} missing score/relevance"
                     )
 
             print("\n🎉 Enhanced Video Search Agent integration test COMPLETED!")
@@ -284,7 +317,7 @@ class TestRealVespaIntegration:
 
             # Verify agent is properly configured
             assert video_agent is not None
-            assert hasattr(video_agent, "vespa_client")
+            assert hasattr(video_agent, "search_backend")
             print("✅ Enhanced video search agent initialized successfully")
 
             # Test simple search functionality
@@ -454,8 +487,8 @@ class TestRealPipelineIntegration:
     def test_real_complete_pipeline(self, shared_system_vespa):
         """Test complete pipeline with real services: routing -> extraction -> enhancement -> search"""
         # Get Vespa ports from fixture
-        vespa_url = shared_system_vespa["vespa_url"]
-        vespa_port = shared_system_vespa["http_port"]
+        _vespa_url = shared_system_vespa["vespa_url"]
+        _vespa_port = shared_system_vespa["http_port"]
         base_url = shared_system_vespa["base_url"]
         # Initialize all components
         routing_agent = RoutingAgent(tenant_id="test_tenant")

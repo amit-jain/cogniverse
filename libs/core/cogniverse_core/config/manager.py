@@ -409,6 +409,173 @@ class ConfigManager:
             config_value=config_value,
         )
 
+    # ========== Schema Registry Methods ==========
+
+    def register_deployed_schema(
+        self,
+        tenant_id: str,
+        base_schema_name: str,
+        full_schema_name: str,
+        schema_definition: str,
+        config: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        Register a deployed schema in the config store.
+
+        Stores:
+        - tenant_id: Tenant identifier
+        - base_schema_name: Original schema name (e.g., 'video_colpali_smol500_mv_frame')
+        - full_schema_name: Tenant-scoped name (e.g., 'video_colpali_smol500_mv_frame_test_tenant')
+        - schema_definition: Full .sd file content as string
+        - config: Schema configuration (profile, model, etc.)
+        - deployment_time: Timestamp of deployment
+
+        Args:
+            tenant_id: Tenant identifier
+            base_schema_name: Original schema name
+            full_schema_name: Tenant-scoped schema name
+            schema_definition: Full schema definition as string
+            config: Optional schema configuration
+        """
+        from datetime import datetime
+
+        config_key = f"schema_{base_schema_name}"
+        value = {
+            "tenant_id": tenant_id,
+            "base_schema_name": base_schema_name,
+            "full_schema_name": full_schema_name,
+            "schema_definition": schema_definition,
+            "config": config or {},
+            "deployment_time": datetime.now().isoformat(),
+        }
+
+        self.store.set_config(
+            tenant_id=tenant_id,
+            scope=ConfigScope.SCHEMA,
+            service="schema_registry",
+            config_key=config_key,
+            config_value=value,
+        )
+
+        logger.info(
+            f"Registered schema '{base_schema_name}' for tenant '{tenant_id}' "
+            f"(full name: '{full_schema_name}')"
+        )
+
+    def get_deployed_schemas(
+        self, tenant_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all deployed schemas, optionally filtered by tenant.
+
+        Args:
+            tenant_id: Optional tenant filter (None = all tenants)
+
+        Returns:
+            List of schema info dicts with:
+            - tenant_id
+            - base_schema_name
+            - full_schema_name
+            - schema_definition
+            - config
+            - deployment_time
+        """
+        if tenant_id:
+            # Get schemas for specific tenant
+            entries = self.store.list_configs(
+                tenant_id=tenant_id,
+                scope=ConfigScope.SCHEMA,
+                service="schema_registry",
+            )
+        else:
+            # This is trickier - need to get across all tenants
+            # For now, we'll require tenant_id to be specified
+            # In future, could extend store interface to support cross-tenant queries
+            raise ValueError(
+                "tenant_id must be specified. Cross-tenant queries not yet supported."
+            )
+
+        schemas = []
+        for entry in entries:
+            schema_info = entry.config_value
+            # Filter out deleted schemas
+            if not schema_info.get("deleted", False):
+                schemas.append(schema_info)
+
+        return schemas
+
+    def schema_deployed(self, tenant_id: str, base_schema_name: str) -> bool:
+        """
+        Check if schema already deployed for tenant.
+
+        Args:
+            tenant_id: Tenant identifier
+            base_schema_name: Original schema name
+
+        Returns:
+            True if schema is deployed, False otherwise
+        """
+        config_key = f"schema_{base_schema_name}"
+
+        try:
+            entry = self.store.get_config(
+                tenant_id=tenant_id,
+                scope=ConfigScope.SCHEMA,
+                service="schema_registry",
+                config_key=config_key,
+            )
+
+            if entry is None:
+                return False
+
+            # Check if schema is marked as deleted
+            schema_info = entry.config_value
+            return not schema_info.get("deleted", False)
+
+        except Exception as e:
+            logger.debug(
+                f"Error checking schema deployment for {tenant_id}:{base_schema_name}: {e}"
+            )
+            return False
+
+    def unregister_schema(self, tenant_id: str, base_schema_name: str) -> None:
+        """
+        Remove schema from registry (mark as deleted).
+
+        Args:
+            tenant_id: Tenant identifier
+            base_schema_name: Original schema name
+        """
+        from datetime import datetime
+
+        config_key = f"schema_{base_schema_name}"
+
+        # Mark schema as deleted rather than actually deleting
+        # This preserves history and allows for audit trail
+        entry = self.store.get_config(
+            tenant_id=tenant_id,
+            scope=ConfigScope.SCHEMA,
+            service="schema_registry",
+            config_key=config_key,
+        )
+
+        if entry:
+            schema_info = entry.config_value
+            schema_info["deleted"] = True
+            schema_info["deleted_at"] = datetime.now().isoformat()
+
+            self.store.set_config(
+                tenant_id=tenant_id,
+                scope=ConfigScope.SCHEMA,
+                service="schema_registry",
+                config_key=config_key,
+                config_value=schema_info,
+            )
+
+            logger.info(
+                f"Unregistered schema '{base_schema_name}' for tenant '{tenant_id}'"
+            )
+
     # ========== Bulk Operations ==========
 
     def get_all_configs(

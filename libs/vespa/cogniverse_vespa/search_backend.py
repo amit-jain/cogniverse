@@ -10,31 +10,24 @@ Features:
 - Strategy-based search with no hardcoded logic
 """
 
-import json
-import time
-import threading
-import uuid
-from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple, Union
-from dataclasses import dataclass, field
-from contextlib import contextmanager
-from collections import defaultdict
-from datetime import datetime
 import logging
+import threading
+import time
+import uuid
+from collections import defaultdict
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 import numpy as np
-from vespa.application import Vespa
-
-from cogniverse_core.interfaces.backend import SearchBackend, SearchResult
-from cogniverse_core.common.document import Document, ContentType, ProcessingStatus
-from cogniverse_core.common.models.videoprism_text_encoder import (
-    VideoPrismTextEncoder, create_text_encoder
-)
-from cogniverse_runtime.ingestion.strategy import Strategy
-from cogniverse_core.registries.registry import get_registry
-from cogniverse_core.common.utils.retry import retry_with_backoff, RetryConfig
+from cogniverse_core.common.document import ContentType, Document, ProcessingStatus
 from cogniverse_core.common.utils.output_manager import OutputManager
-from cogniverse_agents.query.encoders import QueryEncoderFactory, QueryEncoder
+from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
+from cogniverse_core.interfaces.backend import SearchBackend, SearchResult
+from cogniverse_core.registries.registry import get_registry
+from cogniverse_runtime.ingestion.strategy import Strategy
+from vespa.application import Vespa
 
 logger = logging.getLogger(__name__)
 
@@ -196,9 +189,8 @@ class ConnectionPool:
                     logger.info(f"Created new connection {conn.connection_id}")
             
             # Wait for connection if none available
-            from cogniverse_core.common.utils.async_polling import wait_for_resource_cleanup
             while conn is None and (time.time() - start_time) < self.config.connection_timeout:
-                wait_for_resource_cleanup(0.1, "connection availability")
+                time.sleep(0.1)  # Poll for connection availability
                 with self._lock:
                     if self._available:
                         conn = self._available.pop()
@@ -265,49 +257,71 @@ class VespaSearchBackend(SearchBackend):
         self,
         vespa_url: str = None,
         vespa_port: int = None,
-        schema_name: str = None,
-        profile: str = None,  # Make profile optional
+        schema_name: str = None,  # DEPRECATED - schema determined at query time
+        profile: str = None,  # DEPRECATED - profile determined at query time
         strategy: Optional[Strategy] = None,
         query_encoder: Optional[Any] = None,
         enable_metrics: bool = True,
         enable_connection_pool: bool = True,
         pool_config: Optional[ConnectionPoolConfig] = None,
-        retry_config: Optional[RetryConfig] = None
+        retry_config: Optional[RetryConfig] = None,
+        config: Optional[Dict[str, Any]] = None  # NEW: Accept config dict
     ):
         """
-        Initialize Vespa search backend
-        
+        Initialize Vespa search backend with ALL profiles.
+        Schema is determined at query time, not initialization time.
+
         Args:
-            vespa_url: Vespa URL
-            vespa_port: Vespa port
-            schema_name: Name of the Vespa schema
-            profile: Video processing profile
-            strategy: Optional Strategy object (will be loaded if not provided)
+            vespa_url: Vespa URL (or use config)
+            vespa_port: Vespa port (or use config)
+            schema_name: DEPRECATED - schema determined at query time from search() parameter
+            profile: DEPRECATED - profile determined at query time from search() parameter
+            strategy: DEPRECATED - strategies loaded dynamically per schema
             query_encoder: Optional query encoder instance
             enable_metrics: Whether to collect metrics
             enable_connection_pool: Whether to use connection pooling
             pool_config: Connection pool configuration
             retry_config: Retry configuration
+            config: Backend configuration dict (NEW - preferred way)
         """
-        self.vespa_url = vespa_url
-        self.vespa_port = vespa_port
-        self.schema_name = schema_name
-        self.profile = profile
-        self.query_encoder = query_encoder
-        
-        # Get strategy from registry if profile provided
-        if strategy is None and profile is not None:
-            registry = get_registry()
-            self.strategy = registry.get_strategy(profile)
+        # If config provided, extract from it (new approach)
+        if config is not None:
+            self.vespa_url = config.get("url") or config.get("vespa_url", "http://localhost")
+            self.vespa_port = config.get("port") or config.get("vespa_port", 8080)
+            # tenant_id is REQUIRED - no fallback allowed
+            self.tenant_id = config.get("tenant_id")
+            if not self.tenant_id:
+                logger.warning("VespaSearchBackend initialized WITHOUT tenant_id - search will fail")
+            # Store ALL profiles - schema determined at query time
+            self.profiles = config.get("profiles", {})
+            self.default_profiles = config.get("default_profiles", {})
+            # No schema-specific initialization
+            self.schema_name = None  # Will be set per-query
+            self.profile = None  # Will be set per-query
+            self.strategy = None  # Will be loaded per-query
+            self.query_encoder = query_encoder or config.get("query_encoder")
         else:
-            self.strategy = strategy  # Can be None for export-only usage
+            # Legacy initialization with individual parameters
+            self.vespa_url = vespa_url
+            self.vespa_port = vespa_port
+            self.schema_name = schema_name
+            self.profile = profile
+            self.query_encoder = query_encoder
+            self.profiles = {}
+            self.default_profiles = {}
+            # Get strategy from registry if profile provided (legacy behavior)
+            if strategy is None and profile is not None:
+                registry = get_registry()
+                self.strategy = registry.get_strategy(profile)
+            else:
+                self.strategy = strategy  # Can be None for export-only usage
         
         # Combine URL and port
-        full_url = f"{vespa_url}:{vespa_port}"
-        
+        full_url = f"{self.vespa_url}:{self.vespa_port}"
+
         # Initialize output manager
         self.output_manager = OutputManager()
-        
+
         # Setup connection pool
         if enable_connection_pool:
             self.pool = ConnectionPool(
@@ -316,7 +330,7 @@ class VespaSearchBackend(SearchBackend):
             )
         else:
             self.pool = None
-            self.vespa = Vespa(url=vespa_url, port=vespa_port)
+            self.vespa = Vespa(url=self.vespa_url, port=self.vespa_port)
         
         # Setup retry configuration
         self.retry_config = retry_config or RetryConfig(
@@ -333,25 +347,80 @@ class VespaSearchBackend(SearchBackend):
         
         if self.strategy:
             logger.info(
-                f"VespaSearchBackend initialized for schema '{schema_name}' "
-                f"with pool={enable_connection_pool}, metrics={enable_metrics}, "
+                f"VespaSearchBackend.__init__: schema_name='{schema_name}' (stored as self.schema_name), "
+                f"pool={enable_connection_pool}, metrics={enable_metrics}, "
                 f"strategy={self.strategy.processing_type}/{self.strategy.segmentation}"
             )
         else:
             logger.info(
-                f"VespaSearchBackend initialized for schema '{schema_name}' "
-                f"with pool={enable_connection_pool}, metrics={enable_metrics}, "
+                f"VespaSearchBackend.__init__: schema_name='{schema_name}' (stored as self.schema_name), "
+                f"pool={enable_connection_pool}, metrics={enable_metrics}, "
                 f"strategy=None (export-only mode)"
             )
 
     def initialize(self, config: Dict[str, Any]) -> None:
         """
-        Initialize search backend (already done in __init__).
-        This method exists for SearchBackend interface compatibility.
+        Initialize search backend from config.
+        Called by backend registry after instantiation.
+
+        Args:
+            config: Configuration with keys vespa_url, vespa_port, schema_name, profile, tenant_id
         """
-        # VespaSearchBackend uses __init__ for initialization
-        # This method is a no-op since init is already done
-        pass
+        # Extract config values
+        self.vespa_url = config.get("vespa_url", "http://localhost")
+        self.vespa_port = config.get("vespa_port", 8080)
+        base_schema_name = config.get("schema_name")
+        tenant_id = config.get("tenant_id")
+        self.profile = config.get("profile")  # Changed from "active_video_profile" to "profile"
+        self.query_encoder = None
+
+        # Transform schema name to tenant-scoped format if tenant_id provided
+        if tenant_id and base_schema_name:
+            from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+            tenant_manager = TenantSchemaManager(self.vespa_url, self.vespa_port)
+            self.schema_name = tenant_manager.get_tenant_schema_name(tenant_id, base_schema_name)
+            logger.info(f"Transformed schema name: {base_schema_name} → {self.schema_name} (tenant: {tenant_id})")
+        else:
+            self.schema_name = base_schema_name
+
+        # Get strategy from registry if profile provided
+        if self.profile is not None:
+            registry = get_registry()
+            self.strategy = registry.get_strategy(self.profile)
+        else:
+            self.strategy = None
+
+        # Combine URL and port
+        full_url = f"{self.vespa_url}:{self.vespa_port}"
+
+        # Initialize output manager
+        self.output_manager = OutputManager()
+
+        # Setup connection pool
+        self.pool = ConnectionPool(full_url, ConnectionPoolConfig())
+
+        # Setup retry config
+        self.retry_config = RetryConfig(
+            max_attempts=3,
+            initial_delay=0.5,
+            exceptions=(Exception,)
+        )
+
+        # Initialize metrics
+        self.metrics = SearchMetrics()
+
+        if self.strategy:
+            logger.info(
+                f"VespaSearchBackend initialized for schema '{self.schema_name}' "
+                f"with pool=True, metrics=True, "
+                f"strategy={self.strategy.processing_type}/{self.strategy.segmentation}"
+            )
+        else:
+            logger.info(
+                f"VespaSearchBackend initialized for schema '{self.schema_name}' "
+                f"with pool=True, metrics=True, "
+                f"strategy=None (export-only mode)"
+            )
 
     def batch_get_documents(self, document_ids: List[str]) -> List[Optional[Document]]:
         """
@@ -530,58 +599,192 @@ class VespaSearchBackend(SearchBackend):
     @retry_with_backoff
     def search(
         self,
-        query_embeddings: Optional[np.ndarray],
-        query_text: str,
-        top_k: int = 10,
-        filters: Optional[Dict[str, Any]] = None,
-        ranking_strategy: Optional[str] = None
+        query_dict: Dict[str, Any]
     ) -> List[SearchResult]:
         """
-        Search for documents. Requires strategy to be configured.
-        """
-        if self.strategy is None:
-            raise RuntimeError(
-                "Search not available: VespaSearchBackend was initialized without a strategy. "
-                "This instance is configured for export-only operations."
-            )
-        """
-        Search for documents matching the query.
-        
+        Search for documents using query dict format.
+
         Args:
-            query_embeddings: Optional query embeddings from encoder (generated on-demand if None)
-            query_text: Original query text
-            top_k: Number of results to return
-            filters: Optional filters (date range, etc.)
-            ranking_strategy: Optional ranking strategy override
-            
+            query_dict: Dictionary with keys:
+                - query: Text query string (required)
+                - type: Content type (e.g., "video") (required)
+                - profile: Profile name (optional)
+                - strategy: Strategy name (optional)
+                - top_k: Number of results (optional, defaults to 10)
+                - filters: Optional filters dict
+                - query_embeddings: Pre-computed embeddings (optional)
+
         Returns:
             List of SearchResult objects
+
+        Profile Resolution Logic:
+            1. If profile in query_dict → use it
+            2. Else if only 1 profile for type → auto-select
+            3. Else if default_profiles[type] exists → use it
+            4. Else → raise ValueError
+
+        Strategy Resolution: Same logic as profile
         """
         correlation_id = str(uuid.uuid4())
+
+        # Extract parameters from query_dict
+        query_text = query_dict.get("query")
+        if not query_text:
+            raise ValueError("query_dict must contain 'query' key with text query")
+
+        content_type = query_dict.get("type")
+        if not content_type:
+            raise ValueError("query_dict must contain 'type' key (e.g., 'video')")
+
+        top_k = query_dict.get("top_k", 10)
+        # filters = query_dict.get("filters")  # TODO: Implement filter support
+        query_embeddings = query_dict.get("query_embeddings")
+
+        # Phase 1: Profile Resolution
+        requested_profile = query_dict.get("profile")
+
+        if requested_profile:
+            # 1. Use explicitly requested profile
+            if requested_profile not in self.profiles:
+                raise ValueError(
+                    f"Requested profile '{requested_profile}' not found. "
+                    f"Available profiles: {list(self.profiles.keys())}"
+                )
+            profile_name = requested_profile
+            logger.info(f"[{correlation_id}] Using requested profile: {profile_name}")
+        else:
+            # 2. Auto-select based on type
+            # Get all profiles for this type
+            type_profiles = {
+                name: config
+                for name, config in self.profiles.items()
+                if config.get("type") == content_type
+            }
+
+            if len(type_profiles) == 1:
+                # Only one profile for this type - auto-select
+                profile_name = list(type_profiles.keys())[0]
+                logger.info(f"[{correlation_id}] Auto-selected single profile for type '{content_type}': {profile_name}")
+            elif len(type_profiles) > 1:
+                # 3. Check default_profiles
+                default_config = self.default_profiles.get(content_type, {})
+                profile_name = default_config.get("profile")
+
+                if not profile_name:
+                    raise ValueError(
+                        f"Multiple profiles available for type '{content_type}' but no default configured. "
+                        f"Available profiles: {list(type_profiles.keys())}. "
+                        f"Either specify 'profile' in query_dict or configure backend.default_profiles.{content_type}.profile"
+                    )
+
+                if profile_name not in type_profiles:
+                    raise ValueError(
+                        f"Default profile '{profile_name}' for type '{content_type}' not found in available profiles: "
+                        f"{list(type_profiles.keys())}"
+                    )
+
+                logger.info(f"[{correlation_id}] Using default profile for type '{content_type}': {profile_name}")
+            else:
+                # 4. No profiles for this type
+                raise ValueError(
+                    f"No profiles found for type '{content_type}'. "
+                    f"Available types: {set(p.get('type') for p in self.profiles.values())}"
+                )
+
+        # Get profile config
+        profile_config = self.profiles[profile_name]
+
+        # Determine schema_name from profile (base name)
+        base_schema_name = profile_config.get("schema_name", profile_name)
+
+        # Apply tenant scoping - tenant_id is REQUIRED
+        if not self.tenant_id:
+            raise ValueError(
+                f"tenant_id is required for search operations. "
+                f"Profile '{profile_name}' cannot be used without tenant isolation."
+            )
+
+        from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+        tenant_manager = TenantSchemaManager(self.vespa_url, self.vespa_port)
+        schema_name = tenant_manager.get_tenant_schema_name(self.tenant_id, base_schema_name)
+        logger.info(f"[{correlation_id}] Applied tenant scoping: {base_schema_name} → {schema_name}")
+
+        # Load Strategy object to access ranking strategies
+        registry = get_registry()
+        strategy = registry.get_strategy(profile_name)
+
+        # Phase 2: Strategy Resolution
+        requested_strategy = query_dict.get("strategy")
+
+        if requested_strategy:
+            # 1. Use explicitly requested strategy
+            available_strategies = strategy.ranking_strategies
+            if requested_strategy not in available_strategies:
+                raise ValueError(
+                    f"Requested strategy '{requested_strategy}' not found in profile '{profile_name}'. "
+                    f"Available strategies: {list(available_strategies.keys())}"
+                )
+            strategy_name = requested_strategy
+            logger.info(f"[{correlation_id}] Using requested strategy: {strategy_name}")
+        else:
+            # 2. Auto-select based on profile
+            available_strategies = strategy.ranking_strategies
+
+            if len(available_strategies) == 1:
+                # Only one strategy - auto-select
+                strategy_name = list(available_strategies.keys())[0]
+                logger.info(f"[{correlation_id}] Auto-selected single strategy: {strategy_name}")
+            elif len(available_strategies) > 1:
+                # 3. Check default_profiles for strategy
+                default_config = self.default_profiles.get(content_type, {})
+                strategy_name = default_config.get("strategy")
+
+                if not strategy_name:
+                    # Fall back to profile's default_ranking
+                    strategy_name = profile_config.get("default_ranking")
+
+                if not strategy_name or strategy_name not in available_strategies:
+                    raise ValueError(
+                        f"Multiple strategies available for profile '{profile_name}' but no default configured. "
+                        f"Available strategies: {list(available_strategies.keys())}. "
+                        f"Either specify 'strategy' in query_dict or configure backend.default_profiles.{content_type}.strategy"
+                    )
+
+                logger.info(f"[{correlation_id}] Using default strategy: {strategy_name}")
+            else:
+                raise ValueError(
+                    f"No strategies found in profile '{profile_name}'"
+                )
+
+        # Update instance state for this query
+        self.schema_name = schema_name
+        self.profile = profile_name
+        self.strategy = strategy
+
+        logger.info(
+            f"[{correlation_id}] Query resolved: type={content_type}, profile={profile_name}, "
+            f"schema={schema_name}, strategy={strategy_name}"
+        )
+
+        # Continue with search execution
         start_time = time.time()
-        
+
         try:
             # Log search request
             logger.info(
                 f"[{correlation_id}] Search request: query='{query_text}', "
-                f"limit={top_k}, profile={ranking_strategy}"
+                f"limit={top_k}, profile={profile_name}, strategy={strategy_name}"
             )
-            
-            # Determine ranking profile
-            if ranking_strategy:
-                ranking_profile = ranking_strategy
-            else:
-                ranking_profile = self.strategy.default_ranking
-            
+
             # Validate and get ranking strategy config
-            if ranking_profile not in self.strategy.ranking_strategies:
+            if strategy_name not in strategy.ranking_strategies:
                 logger.warning(
-                    f"[{correlation_id}] Unknown ranking profile '{ranking_profile}', "
-                    f"using default: {self.strategy.default_ranking}"
+                    f"[{correlation_id}] Unknown ranking strategy '{strategy_name}', "
+                    f"using default: {strategy.default_ranking}"
                 )
-                ranking_profile = self.strategy.default_ranking
-            
-            rank_config = self.strategy.ranking_strategies[ranking_profile]
+                strategy_name = strategy.default_ranking
+
+            rank_config = strategy.ranking_strategies[strategy_name]
             
             # Check if strategy requires embeddings
             requires_embeddings = (
@@ -592,7 +795,7 @@ class VespaSearchBackend(SearchBackend):
             # Generate embeddings on-demand if needed and not provided
             if requires_embeddings and query_embeddings is None:
                 if self.query_encoder:
-                    logger.info(f"[{correlation_id}] Generating embeddings on-demand for strategy '{ranking_profile}'")
+                    logger.info(f"[{correlation_id}] Generating embeddings on-demand for strategy '{strategy_name}'")
                     logger.info(f"[{correlation_id}] Query encoder type: {type(self.query_encoder).__name__}")
                     logger.info(f"[{correlation_id}] Query text: '{query_text}'")
                     query_embeddings = self.query_encoder.encode(query_text)
@@ -602,48 +805,52 @@ class VespaSearchBackend(SearchBackend):
                     logger.info(f"[{correlation_id}] First 5 values: {query_embeddings.flatten()[:5]}")
                 else:
                     logger.warning(
-                        f"[{correlation_id}] Strategy '{ranking_profile}' requires embeddings but no encoder available"
+                        f"[{correlation_id}] Strategy '{strategy_name}' requires embeddings but no encoder available"
                     )
             
             # Build query based on strategy
-            query_params = self._build_query(query_text, query_embeddings, rank_config, ranking_profile, top_k, correlation_id)
-            
+            query_params = self._build_query(
+                query_text, query_embeddings, rank_config, strategy_name,
+                schema_name, top_k, correlation_id
+            )
+
             # Execute search
             logger.info(f"[{correlation_id}] Executing query with ranking={query_params.get('ranking')}, keys={list(query_params.keys())}")
-            
-            # Debug qtb type right before sending
-            if "input.query(qtb)" in query_params:
-                qtb_val = query_params["input.query(qtb)"]
-                logger.info(f"[{correlation_id}] RIGHT BEFORE QUERY - qtb type: {type(qtb_val)}, is_list: {isinstance(qtb_val, list)}")
-                if isinstance(qtb_val, list) and len(qtb_val) > 0:
-                    logger.info(f"[{correlation_id}] qtb[0] type: {type(qtb_val[0])}, value: {qtb_val[0]}")
-            
+
+            # Log the complete query for debugging
+            logger.info(f"[{correlation_id}] Query parameters:")
+            logger.info(f"[{correlation_id}]   schema_name: '{schema_name}'")
+            logger.info(f"[{correlation_id}]   model.restrict: '{query_params.get('model.restrict')}'")
+            logger.info(f"[{correlation_id}]   ranking: '{query_params.get('ranking')}'")
+            logger.info(f"[{correlation_id}]   yql: '{query_params.get('yql')}'")
+            logger.info(f"[{correlation_id}]   hits: {query_params.get('hits')}")
+
             if self.pool:
                 with self.pool.get_connection() as conn:
                     response = conn.query(body=query_params)
             else:
                 response = self.vespa.query(body=query_params)
-            
+
             # Process results
             results = self._process_results(response, correlation_id)
-            
+
             # Record metrics
             if self.metrics:
                 latency_ms = (time.time() - start_time) * 1000
-                self.metrics.record_search(True, latency_ms, ranking_profile or "default")
-            
+                self.metrics.record_search(True, latency_ms, strategy_name)
+
             logger.info(
                 f"[{correlation_id}] Search completed: {len(results)} results "
                 f"in {(time.time() - start_time)*1000:.2f}ms"
             )
-            
+
             return results
-            
+
         except Exception as e:
             # Record failure metrics
             if self.metrics:
                 latency_ms = (time.time() - start_time) * 1000
-                self.metrics.record_search(False, latency_ms, ranking_profile or "default", e)
+                self.metrics.record_search(False, latency_ms, strategy_name or "default", e)
             
             logger.error(f"[{correlation_id}] Search failed: {e}")
             raise
@@ -654,14 +861,18 @@ class VespaSearchBackend(SearchBackend):
         query_embeddings: Optional[np.ndarray],
         rank_config: Dict[str, Any],
         ranking_profile: str,
+        schema_name: str,
         limit: int,
         correlation_id: str
     ) -> Dict[str, Any]:
         """Build Vespa query based on ranking strategy - NO HARDCODING!"""
-        
+
+        # Log schema name being used
+        logger.info(f"[{correlation_id}] Building query with schema_name='{schema_name}'")
+        logger.info(f"[{correlation_id}] Ranking profile: '{ranking_profile}'")
+
         # Initialize query params
         query_params = {
-            "ranking.profile": ranking_profile,
             "hits": limit,
             "ranking": ranking_profile,
         }
@@ -671,11 +882,11 @@ class VespaSearchBackend(SearchBackend):
             # Use nearestNeighbor for visual search
             nn_field = rank_config.get("nearestneighbor_field", "embedding")
             nn_tensor = rank_config.get("nearestneighbor_tensor", "qt")
-            
+
             if rank_config.get("needs_text_query") and query_text:
                 # Hybrid search with nearestNeighbor
                 query_params["yql"] = (
-                    f"select * from {self.schema_name} where "
+                    f"select * from {schema_name} where "
                     f"userInput(@userQuery) OR "
                     f"({{targetHits: {limit}}}nearestNeighbor({nn_field}, {nn_tensor}))"
                 )
@@ -683,32 +894,37 @@ class VespaSearchBackend(SearchBackend):
             else:
                 # Pure visual search with nearestNeighbor
                 query_params["yql"] = (
-                    f"select * from {self.schema_name} where "
+                    f"select * from {schema_name} where "
                     f"{{targetHits: {limit}}}nearestNeighbor({nn_field}, {nn_tensor})"
                 )
         elif rank_config.get("needs_text_query"):
             # Text or hybrid search without nearestNeighbor
-            query_params["yql"] = f"select * from {self.schema_name} where userInput(@userQuery)"
+            query_params["yql"] = f"select * from {schema_name} where userInput(@userQuery)"
             query_params["userQuery"] = query_text
         else:
             # Regular ranking without nearestNeighbor (patch-based models)
-            query_params["yql"] = f"select * from {self.schema_name} where true"
+            query_params["yql"] = f"select * from {schema_name} where true"
         
         # Add tensor embeddings based on what the strategy says it needs
         # NO MORE HARDCODED CHECKS!
         if query_embeddings is not None:
             # Check what tensors this ranking strategy needs from its inputs
             inputs_needed = rank_config.get("inputs", {})
-            
-            logger.info(f"[{correlation_id}] Strategy '{ranking_profile}' needs inputs: {list(inputs_needed.keys())}")
-            
+
+            logger.error(f"[{correlation_id}] Strategy '{ranking_profile}' needs inputs: {list(inputs_needed.keys())}")
+            logger.error(f"[{correlation_id}] Input query_embeddings shape: {query_embeddings.shape}, dtype: {query_embeddings.dtype}")
+            if query_embeddings.ndim == 2:
+                logger.error(f"[{correlation_id}] Input query_embeddings (2D) first vector (first 5): {query_embeddings[0][:5].tolist()}")
+            else:
+                logger.error(f"[{correlation_id}] Input query_embeddings (1D) first 5 values: {query_embeddings[:5].tolist()}")
+
             for input_name, input_type in inputs_needed.items():
                 # The input names are like 'qt', 'qtb', etc. We need to construct the full Vespa query parameter name
                 vespa_param_name = f"input.query({input_name})"
-                
+
                 if input_name == "qt" and "float" in input_type:
                     # Float embeddings needed
-                    logger.info(f"[{correlation_id}] Adding float embeddings for {vespa_param_name}")
+                    logger.error(f"[{correlation_id}] Adding float embeddings for {vespa_param_name}")
                     # For multi-vector models, convert to dict format as per Vespa docs
                     if query_embeddings.ndim == 2:
                         query_params[vespa_param_name] = {index: vector.tolist() for index, vector in enumerate(query_embeddings)}
@@ -717,17 +933,20 @@ class VespaSearchBackend(SearchBackend):
                     
                 elif input_name == "qtb" and "int8" in input_type:
                     # Binary embeddings needed
-                    logger.info(f"[{correlation_id}] Adding binary embeddings for {vespa_param_name}")
+                    logger.error(f"[{correlation_id}] Adding binary embeddings for {vespa_param_name}")
                     binary_embeddings = self._generate_binary_embeddings(query_embeddings)
+                    logger.error(f"[{correlation_id}] Binary embeddings shape: {binary_embeddings.shape}, dtype: {binary_embeddings.dtype}")
                     # For multi-vector models, convert to dict format as per Vespa docs
                     if binary_embeddings.ndim == 2:
                         query_params[vespa_param_name] = {index: vector.tolist() for index, vector in enumerate(binary_embeddings)}
+                        logger.error(f"[{correlation_id}] Binary embeddings (2D) first vector (first 5): {binary_embeddings[0][:5].tolist()}")
                     else:
                         query_params[vespa_param_name] = binary_embeddings.tolist()
+                        logger.error(f"[{correlation_id}] Binary embeddings (1D) first 5 values: {binary_embeddings[:5].tolist()}")
                     
                 elif input_name == "q":
                     # Generic query tensor (used by some schemas)
-                    logger.info(f"[{correlation_id}] Adding generic embeddings for {vespa_param_name}")
+                    logger.error(f"[{correlation_id}] Adding generic embeddings for {vespa_param_name}")
                     query_params[vespa_param_name] = query_embeddings.tolist()
                     
                 else:
@@ -737,10 +956,11 @@ class VespaSearchBackend(SearchBackend):
                         f"in ranking strategy '{ranking_profile}'. This input will be skipped. "
                         f"Known input names: 'qt' (float), 'qtb' (binary), 'q' (generic)."
                     )
-        
+
         # Add schema to query body to avoid conflicts with other schemas
-        query_params["model.restrict"] = self.schema_name  # Must be string, not list!
-        
+        query_params["model.restrict"] = schema_name  # Must be string, not list!
+        logger.info(f"[{correlation_id}] Set model.restrict='{query_params['model.restrict']}'")
+
         # Log the query parameters for debugging
         logger.info(f"[{correlation_id}] Query params keys: {list(query_params.keys())}")
         if "input.query(qt)" in query_params:

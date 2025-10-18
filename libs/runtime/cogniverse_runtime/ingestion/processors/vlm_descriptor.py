@@ -84,8 +84,7 @@ class VLMDescriptor:
                 self.logger.info("Modal VLM service started successfully")
                 print("  ✅ Modal VLM service started successfully")
                 # Wait a bit for service to be ready
-                from cogniverse_core.common.utils.async_polling import wait_for_process_startup
-                wait_for_process_startup(5, "Modal VLM service")
+                time.sleep(5)  # Wait for Modal VLM service startup
             else:
                 self.logger.error(f"Failed to start Modal service: {result.stderr}")
                 print(f"  ❌ Failed to start Modal service: {result.stderr}")

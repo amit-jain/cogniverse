@@ -8,14 +8,12 @@ Each tenant gets dedicated Vespa schema for memory isolation.
 
 import logging
 import os
-import sys
 from typing import Any, Dict, List, Optional
 
 # Disable Mem0's telemetry BEFORE importing mem0
 os.environ["MEM0_TELEMETRY"] = "False"
 
 from mem0 import Memory
-from mem0.vector_stores.configs import VectorStoreConfig
 
 logger = logging.getLogger(__name__)
 
@@ -23,27 +21,32 @@ logger = logging.getLogger(__name__)
 # Register Vespa as a supported vector store provider in Mem0
 def _register_vespa_provider():
     """Register Vespa as a supported vector store provider in Mem0"""
-    from mem0.utils.factory import VectorStoreFactory
+    # TODO: Re-enable Vespa provider registration after migrating vespa_memory_config from src/ to libs/
+    # The vespa_memory_config and mem0_vespa_store modules were in src/ which has been archived
+    logger.debug("Vespa provider registration temporarily disabled (files archived from src/)")
+    return
 
-    # Import vespa_memory_config so it's available in sys.modules
-    import src.common.vespa_memory_config  # noqa: F401
+    # from mem0.utils.factory import VectorStoreFactory
 
-    # Register Vespa config in the provider_configs default dict
-    provider_configs = VectorStoreConfig._provider_configs.default
-    if "vespa" not in provider_configs:
-        provider_configs["vespa"] = "VespaConfig"
-        # Make VespaConfig available for import
-        sys.modules["mem0.configs.vector_stores.vespa"] = sys.modules[
-            "src.common.vespa_memory_config"
-        ]
-        logger.info("Registered Vespa config in Mem0")
+    # # Import vespa_memory_config so it's available in sys.modules
+    # import src.common.vespa_memory_config  # noqa: F401
 
-    # Register Vespa vector store implementation
-    if "vespa" not in VectorStoreFactory.provider_to_class:
-        VectorStoreFactory.provider_to_class["vespa"] = (
-            "src.common.mem0_vespa_store.VespaVectorStore"
-        )
-        logger.info("Registered Vespa vector store in Mem0 factory")
+    # # Register Vespa config in the provider_configs default dict
+    # provider_configs = VectorStoreConfig._provider_configs.default
+    # if "vespa" not in provider_configs:
+    #     provider_configs["vespa"] = "VespaConfig"
+    #     # Make VespaConfig available for import
+    #     sys.modules["mem0.configs.vector_stores.vespa"] = sys.modules[
+    #         "src.common.vespa_memory_config"
+    #     ]
+    #     logger.info("Registered Vespa config in Mem0")
+
+    # # Register Vespa vector store implementation
+    # if "vespa" not in VectorStoreFactory.provider_to_class:
+    #     VectorStoreFactory.provider_to_class["vespa"] = (
+    #         "src.common.mem0_vespa_store.VespaVectorStore"
+    #     )
+    #     logger.info("Registered Vespa vector store in Mem0 factory")
 
 
 # Register on module import

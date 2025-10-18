@@ -128,6 +128,11 @@ class TenantSchemaManager:
         self._deployed_schemas: Dict[str, Set[str]] = {}
         self._cache_lock = threading.RLock()
 
+        # Schema registry for tracking deployed schemas (prevents schema wipeout)
+        from cogniverse_core.registries.schema_registry import get_schema_registry
+
+        self.schema_registry = get_schema_registry()
+
         self._initialized = True
         logger.info(f"TenantSchemaManager initialized: {vespa_url}:{vespa_port}")
 
@@ -213,11 +218,17 @@ class TenantSchemaManager:
         """
         Deploy a tenant-specific schema from base schema template.
 
+        CRITICAL: This method now uses SchemaRegistry to prevent schema wipeout.
+        It fetches ALL existing schemas for the tenant and includes them in the
+        deployment, ensuring Vespa doesn't remove schemas that aren't in the package.
+
         Steps:
-        1. Load base schema JSON from configs/schemas/
-        2. Transform schema: rename to include tenant suffix
-        3. Deploy via VespaSchemaManager
-        4. Cache deployment
+        1. Check if schema already in registry - skip if so
+        2. Load base schema JSON from configs/schemas/
+        3. Transform schema: rename to include tenant suffix
+        4. Get ALL existing schemas from registry
+        5. Deploy complete package with new schema + ALL existing schemas
+        6. Register new schema in registry
 
         Args:
             tenant_id: Tenant identifier
@@ -233,6 +244,16 @@ class TenantSchemaManager:
         self._validate_tenant_id(tenant_id)
         self._validate_schema_name(base_schema_name)
 
+        # Check if schema already deployed in registry
+        if self.schema_registry.schema_exists(tenant_id, base_schema_name):
+            logger.info(
+                f"Schema '{base_schema_name}' already deployed for tenant '{tenant_id}' "
+                f"(found in schema registry). Skipping redeployment."
+            )
+            # Still cache it locally
+            self._cache_deployed_schema(tenant_id, base_schema_name)
+            return
+
         # Load base schema template
         base_schema_json = self._load_base_schema_json(base_schema_name)
 
@@ -243,7 +264,7 @@ class TenantSchemaManager:
 
         # Parse to Vespa Schema object
         tenant_schema_name = self.get_tenant_schema_name(tenant_id, base_schema_name)
-        schema = self._parse_schema_from_json(tenant_schema_json, tenant_schema_name)
+        new_schema = self._parse_schema_from_json(tenant_schema_json, tenant_schema_name)
 
         # Deploy via VespaSchemaManager
         try:
@@ -255,16 +276,39 @@ class TenantSchemaManager:
                 add_metadata_schemas_to_package,
             )
 
+            # CRITICAL: Get ALL existing schemas from registry
+            existing_schemas = self.schema_registry.get_tenant_schemas(tenant_id)
+            logger.info(
+                f"Found {len(existing_schemas)} existing schemas in registry for tenant '{tenant_id}'"
+            )
+
             app_package = ApplicationPackage(name="videosearch")
 
-            # Add the tenant schema
-            app_package.add_schema(schema)
+            # Add the new tenant schema
+            app_package.add_schema(new_schema)
+            logger.info(f"Added new schema to package: {tenant_schema_name}")
+
+            # CRITICAL: Add ALL existing schemas from registry to prevent wipeout
+            for schema_info in existing_schemas:
+                try:
+                    # Reconstruct Schema object from stored definition
+                    existing_schema = self._reconstruct_schema_from_definition(
+                        schema_info.schema_definition, schema_info.full_schema_name
+                    )
+                    app_package.add_schema(existing_schema)
+                    logger.info(f"Added existing schema to package: {schema_info.full_schema_name}")
+                except Exception as e:
+                    logger.error(
+                        f"Failed to reconstruct schema {schema_info.full_schema_name}: {e}. "
+                        "This schema may be lost in deployment!"
+                    )
+                    # Continue with other schemas - don't fail entire deployment
 
             # Add metadata schemas (organization_metadata, tenant_metadata)
             # Using consolidated module to prevent duplication
             add_metadata_schemas_to_package(app_package)
 
-            # Add validation overrides to allow schema deployments without removing existing schemas
+            # Add validation overrides (still needed for config server)
             until_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
             schema_removal_validation = Validation(
                 validation_id="schema-removal", until=until_date
@@ -278,9 +322,24 @@ class TenantSchemaManager:
             app_package.validations.append(schema_removal_validation)
             app_package.validations.append(content_cluster_validation)
 
+            # Deploy complete package with ALL schemas
+            logger.info(
+                f"Deploying application package with {len(existing_schemas) + 1} tenant schemas "
+                f"+ metadata schemas"
+            )
             self.schema_manager._deploy_package(app_package)
 
             logger.info(f"✅ Deployed tenant schema: {tenant_schema_name}")
+
+            # Register the new schema in registry
+            self.schema_registry.register_schema(
+                tenant_id=tenant_id,
+                base_schema_name=base_schema_name,
+                full_schema_name=tenant_schema_name,
+                schema_definition=str(new_schema),  # Store full schema definition
+                config={"profile": base_schema_name},  # Store profile for reference
+            )
+            logger.info(f"Registered schema '{base_schema_name}' in schema registry")
 
             # Cache successful deployment
             self._cache_deployed_schema(tenant_id, base_schema_name)
@@ -295,6 +354,8 @@ class TenantSchemaManager:
         Delete all schemas for a tenant.
 
         WARNING: This removes all data for the tenant!
+
+        This method also unregisters schemas from the schema registry.
 
         Args:
             tenant_id: Tenant identifier
@@ -330,6 +391,11 @@ class TenantSchemaManager:
                         "Manually redeploy application without this schema or use Vespa HTTP API."
                     )
                     deleted_schemas.append(tenant_schema_name)
+
+                    # Unregister from schema registry
+                    self.schema_registry.unregister_schema(tenant_id, base_schema_name)
+                    logger.info(f"Unregistered schema '{base_schema_name}' from registry")
+
                 except Exception as e:
                     logger.error(f"Failed to delete schema {tenant_schema_name}: {e}")
 
@@ -449,16 +515,101 @@ class TenantSchemaManager:
                 f"Failed to parse schema {schema_name}: {e}"
             ) from e
 
+    def _reconstruct_schema_from_definition(
+        self, schema_definition: str, schema_name: str
+    ) -> Schema:
+        """
+        Reconstruct Schema object from stored definition string.
+
+        This is needed for schema registry - we store schema definitions as strings
+        in the registry, but Vespa ApplicationPackage needs Schema objects.
+
+        Args:
+            schema_definition: Schema definition as string (from registry)
+            schema_name: Schema name
+
+        Returns:
+            Reconstructed Schema object
+
+        Raises:
+            SchemaDeploymentException: If reconstruction fails
+        """
+        try:
+            # The schema definition is stored as the string representation of a Schema object
+            # We need to reconstruct it by parsing the string back to JSON, then to Schema
+
+            # For now, we'll use a simple approach: parse the string as JSON if possible,
+            # otherwise try to reconstruct from the schema structure
+            # This may need refinement based on how pyvespa serializes schemas
+
+
+            # Try to extract JSON-like structure from schema definition
+            # Schema definitions typically start with "schema <name> {"
+            # We'll attempt to reconstruct by re-parsing from template
+
+            # Extract the base schema name (without tenant suffix)
+            # E.g., "video_colpali_smol500_mv_frame_test_tenant" → "video_colpali_smol500_mv_frame"
+            parts = schema_name.rsplit("_", 2)  # Split off last 2 parts (tenant_id parts)
+            if len(parts) >= 2:
+                base_schema_candidate = "_".join(parts[:-2]) if len(parts) > 2 else parts[0]
+            else:
+                base_schema_candidate = schema_name
+
+            # Try to load from template and re-transform
+            try:
+                # Note: This is fragile - ideally we'd store tenant_id in registry
+                # For now, we'll just use the schema name as-is since it's unique
+
+                # Load base schema and re-transform
+                base_schema_json = self._load_base_schema_json(base_schema_candidate)
+                tenant_schema_json = base_schema_json.copy()
+                tenant_schema_json["name"] = schema_name
+                if "document" in tenant_schema_json:
+                    tenant_schema_json["document"]["name"] = schema_name
+
+                return self._parse_schema_from_json(tenant_schema_json, schema_name)
+
+            except Exception:
+                # Fallback: Try to parse the definition string directly
+                # This is a last resort and may not work depending on format
+                logger.warning(
+                    f"Could not reconstruct schema {schema_name} from template. "
+                    "Attempting direct reconstruction from definition."
+                )
+
+                # If the definition is JSON-like, try parsing it
+                if schema_definition.strip().startswith("{"):
+                    schema_json = json.loads(schema_definition)
+                    return self._parse_schema_from_json(schema_json, schema_name)
+                else:
+                    # Cannot reconstruct - this is a critical error
+                    raise ValueError(
+                        f"Schema definition for {schema_name} is not in a parseable format"
+                    )
+
+        except Exception as e:
+            raise SchemaDeploymentException(
+                f"Failed to reconstruct schema {schema_name} from definition: {e}. "
+                "This schema will be missing from deployment!"
+            ) from e
+
     def _schema_exists_in_vespa(self, schema_name: str) -> bool:
         """
-        Check if schema exists in Vespa.
-
-        Note: This is a simplified check. In production, you would query Vespa's
-        config API to verify schema existence.
+        Check if schema exists in Vespa by querying the schema API.
         """
-        # For now, we rely on cache and deployment tracking
-        # In production, implement actual Vespa HTTP API check
-        return False
+        try:
+            import requests
+            # Try to query the schema - if it exists, Vespa will return it
+            response = requests.get(
+                f"{self.vespa_url}:{self.vespa_port}/document/v1/{schema_name}/{schema_name}/docid/",
+                timeout=5
+            )
+            # If schema exists, we'll get either 200 (docs exist) or 404 (schema exists but no docs)
+            # If schema doesn't exist, we'll get 400 or other error
+            return response.status_code in [200, 404]
+        except Exception as e:
+            logger.debug(f"Schema existence check failed for {schema_name}: {e}")
+            return False
 
     def _cache_deployed_schema(self, tenant_id: str, base_schema_name: str) -> None:
         """Cache deployed schema"""

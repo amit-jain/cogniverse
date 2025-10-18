@@ -133,15 +133,20 @@ class BackendRegistry:
         backend_class = cls._ingestion_backends[name]
         instance = backend_class()
 
-        # Inject tenant_id into config before initialization
+        # Build backend config - merge top-level keys with backend section
+        # Start with tenant_id, then add all top-level config keys
+        backend_config = {"tenant_id": tenant_id}
+
         if config:
-            # Make a copy to avoid modifying the original
-            backend_config = dict(config)
-            backend_config["tenant_id"] = tenant_id
-            instance.initialize(backend_config)
-        else:
-            # Create minimal config with tenant_id
-            instance.initialize({"tenant_id": tenant_id})
+            # Add all top-level keys from config (for backward compatibility)
+            backend_config.update(config)
+
+            # If there's a nested backend section, overlay it
+            # This allows backend-specific config to override top-level
+            if "backend" in config:
+                backend_config["backend"] = config["backend"]
+
+        instance.initialize(backend_config)
 
         # Cache instance with tenant_id
         cls._backend_instances[instance_key] = instance
@@ -175,6 +180,7 @@ class BackendRegistry:
             raise ValueError("tenant_id is required - no default tenant")
 
         # Cache key includes tenant_id for isolation
+        # For full backends, use same key as ingestion to share instance
         if name in cls._full_backends:
             instance_key = f"backend_{name}_{tenant_id}"
         else:
@@ -200,15 +206,20 @@ class BackendRegistry:
         backend_class = cls._search_backends[name]
         instance = backend_class()
 
-        # Inject tenant_id into config before initialization
+        # Build backend config - merge top-level keys with backend section
+        # Start with tenant_id, then add all top-level config keys
+        backend_config = {"tenant_id": tenant_id}
+
         if config:
-            # Make a copy to avoid modifying the original
-            backend_config = dict(config)
-            backend_config["tenant_id"] = tenant_id
-            instance.initialize(backend_config)
-        else:
-            # Create minimal config with tenant_id
-            instance.initialize({"tenant_id": tenant_id})
+            # Add all top-level keys from config (for backward compatibility)
+            backend_config.update(config)
+
+            # If there's a nested backend section, overlay it
+            # This allows backend-specific config to override top-level
+            if "backend" in config:
+                backend_config["backend"] = config["backend"]
+
+        instance.initialize(backend_config)
 
         # Cache instance with tenant_id
         cls._backend_instances[instance_key] = instance

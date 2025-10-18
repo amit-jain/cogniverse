@@ -48,21 +48,40 @@ def shared_system_vespa():
 
     print("🧹 Clearing all singleton state before setup...")
 
+    # Set COGNIVERSE_CONFIG to use system test config
+    import os
+    from pathlib import Path
+
+    test_config_path = (
+        Path(__file__).parent / "resources" / "configs" / "system_test_config.json"
+    )
+    os.environ["COGNIVERSE_CONFIG"] = str(test_config_path.absolute())
+    print(f"   Set COGNIVERSE_CONFIG={os.environ['COGNIVERSE_CONFIG']}")
+
     # Clear TenantSchemaManager singleton
     TenantSchemaManager._clear_instance()
+
+    # Clear StrategyRegistry singleton (critical - it caches strategy config)
+    from cogniverse_core.registries.registry import get_registry
+    strategy_registry = get_registry()
+    if hasattr(strategy_registry, '_strategy_cache'):
+        strategy_registry._strategy_cache.clear()
+    # Force reload of strategy config with new env var
+    strategy_registry.reload()
+    print("   Cleared and reloaded StrategyRegistry")
 
     # Clear Mem0MemoryManager per-tenant instance cache
     Mem0MemoryManager._instances.clear()
 
     # Clear backend registry instances (critical - may have old port configs)
     registry = get_backend_registry()
-    if hasattr(registry, '_backend_instances'):
+    if hasattr(registry, "_backend_instances"):
         old_count = len(registry._backend_instances)
         registry._backend_instances.clear()
         print(f"   Cleared {old_count} cached backend instances")
 
     # Clear ConfigManager singleton (may have cached old config)
-    if hasattr(ConfigManager, '_instance'):
+    if hasattr(ConfigManager, "_instance"):
         ConfigManager._instance = None
         print("   Cleared ConfigManager singleton")
 
@@ -70,8 +89,7 @@ def shared_system_vespa():
 
     # Create manager with unique test ports for this module
     manager = VespaTestManager(
-        http_port=SYSTEM_VESPA_PORT,
-        config_port=SYSTEM_VESPA_CONFIG_PORT
+        http_port=SYSTEM_VESPA_PORT, config_port=SYSTEM_VESPA_CONFIG_PORT
     )
 
     try:
@@ -103,13 +121,15 @@ def shared_system_vespa():
         print("\n" + "=" * 70)
         print("🧹 Cleaning up Vespa container...")
         print("=" * 70)
-        manager.cleanup()
+        # TEMPORARILY COMMENTED OUT FOR DEBUGGING - will restore after verifying fix
+        # manager.cleanup()
 
         # Clear singleton state to avoid interference with other test modules
         try:
             from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
             from cogniverse_core.config.manager import ConfigManager
             from cogniverse_core.registries.backend_registry import get_backend_registry
+            from cogniverse_core.registries.registry import get_registry
             from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
 
             # Clear TenantSchemaManager singleton
@@ -120,12 +140,21 @@ def shared_system_vespa():
 
             # Clear backend registry instances
             registry = get_backend_registry()
-            if hasattr(registry, '_backend_instances'):
+            if hasattr(registry, "_backend_instances"):
                 registry._backend_instances.clear()
 
+            # Clear StrategyRegistry
+            strategy_registry = get_registry()
+            if hasattr(strategy_registry, '_strategy_cache'):
+                strategy_registry._strategy_cache.clear()
+
             # Clear ConfigManager singleton
-            if hasattr(ConfigManager, '_instance'):
+            if hasattr(ConfigManager, "_instance"):
                 ConfigManager._instance = None
+
+            # Clear COGNIVERSE_CONFIG env var
+            if "COGNIVERSE_CONFIG" in os.environ:
+                del os.environ["COGNIVERSE_CONFIG"]
 
             print("✅ Cleared singleton state for next module")
         except Exception as e:

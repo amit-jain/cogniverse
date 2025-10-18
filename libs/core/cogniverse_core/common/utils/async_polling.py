@@ -6,7 +6,7 @@ generic time.sleep() calls with meaningful, purpose-specific waits.
 """
 
 import time
-from typing import Callable, Optional, Any
+from typing import Callable, Optional
 
 
 def wait_for_service_ready(
@@ -41,34 +41,6 @@ def wait_for_service_ready(
     return False
 
 
-def wait_for_operation_complete(
-    delay: float = 1.0,
-    description: str = "operation completion"
-) -> None:
-    """
-    Wait for an operation to complete.
-
-    Args:
-        delay: Time to wait in seconds
-        description: Description of the operation
-    """
-    time.sleep(delay)
-
-
-def wait_for_eventual_consistency(
-    delay: float = 2.0,
-    description: str = "eventual consistency"
-) -> None:
-    """
-    Wait for eventual consistency in distributed systems.
-
-    Args:
-        delay: Time to wait in seconds
-        description: Description of what needs to be consistent
-    """
-    time.sleep(delay)
-
-
 def wait_for_retry_backoff(
     attempt: int,
     base_delay: float = 1.0,
@@ -78,6 +50,9 @@ def wait_for_retry_backoff(
 ) -> None:
     """
     Wait with exponential or linear backoff for retries.
+
+    This is the ONLY time.sleep wrapper we keep - it actually calculates
+    exponential backoff delays for retry logic.
 
     Args:
         attempt: Current attempt number (0-based)
@@ -91,48 +66,4 @@ def wait_for_retry_backoff(
     else:
         delay = min(base_delay * (attempt + 1), max_delay)
 
-    time.sleep(delay)
-
-
-def wait_for_cache_refresh(
-    ttl: float,
-    buffer: float = 0.1,
-    description: str = "cache refresh"
-) -> None:
-    """
-    Wait for cache TTL to expire plus a small buffer.
-
-    Args:
-        ttl: Cache TTL in seconds
-        buffer: Additional buffer time in seconds
-        description: Description of what cache is expiring
-    """
-    time.sleep(ttl + buffer)
-
-
-def wait_for_process_startup(
-    delay: float = 2.0,
-    description: str = "process startup"
-) -> None:
-    """
-    Wait for a process to start up.
-
-    Args:
-        delay: Time to wait in seconds
-        description: Description of the process
-    """
-    time.sleep(delay)
-
-
-def wait_for_resource_cleanup(
-    delay: float = 0.5,
-    description: str = "resource cleanup"
-) -> None:
-    """
-    Wait for resources to be cleaned up.
-
-    Args:
-        delay: Time to wait in seconds
-        description: Description of resources being cleaned
-    """
     time.sleep(delay)

@@ -29,6 +29,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+# Removed wait_for_operation_complete import - function deleted in nuclear cleanup
 # Import config and memory management tabs
 from config_management_tab import render_config_management_tab
 from memory_management_tab import render_memory_management_tab
@@ -1720,7 +1721,7 @@ with main_tabs[5]:
                 with col1:
                     st.markdown(f"{status_emoji} **{modality.value.upper()}**: {status_text}")
                 with col2:
-                    if not has_model and st.button(f"Train", key=f"train_{modality.value}"):
+                    if not has_model and st.button("Train", key=f"train_{modality.value}"):
                         st.info(f"Training for {modality.value} modality would be triggered here.")
 
             st.markdown("---")
@@ -2356,7 +2357,7 @@ with main_tabs[10]:
 
 # Auto-refresh logic
 if st.session_state.auto_refresh:
-    time.sleep(refresh_interval)
+    time.sleep(refresh_interval)  # Fixed polling interval for dashboard auto-refresh
     st.rerun()
 
 # Footer

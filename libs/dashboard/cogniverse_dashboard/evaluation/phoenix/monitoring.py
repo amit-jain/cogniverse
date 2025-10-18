@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any
 
 import phoenix as px
+from cogniverse_core.common.utils.async_polling import wait_for_retry_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,9 @@ class RetrievalMonitor:
 
     def _monitoring_loop(self):
         """Main monitoring loop"""
+        consecutive_errors = 0
+        max_errors_before_backoff = 3
+
         while not self.stop_monitoring.is_set():
             try:
                 # Process buffered metrics
@@ -115,11 +119,25 @@ class RetrievalMonitor:
                 # Check for alerts
                 self._check_alerts()
 
-                # Sleep for monitoring interval
-                time.sleep(5)  # Check every 5 seconds
+                # Success - reset error count and use normal interval
+                consecutive_errors = 0
+                time.sleep(5)
 
             except Exception as e:
                 logger.error(f"Error in monitoring loop: {e}")
+                consecutive_errors += 1
+
+                # Use exponential backoff for persistent errors
+                if consecutive_errors >= max_errors_before_backoff:
+                    wait_for_retry_backoff(
+                        consecutive_errors - max_errors_before_backoff,
+                        base_delay=5.0,
+                        max_delay=60.0,
+                        description=f"monitoring error recovery (attempt {consecutive_errors})",
+                    )
+                else:
+                    # Initial errors - use normal interval
+                    time.sleep(5)
 
     def log_retrieval_event(self, event: dict[str, Any]):
         """Log individual retrieval event"""

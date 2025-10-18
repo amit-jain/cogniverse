@@ -14,7 +14,7 @@ import numpy as np
 import uvicorn
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.config.utils import get_config
-from cogniverse_vespa.tenant_aware_search_client import TenantAwareVespaSearchClient
+from cogniverse_core.registries.backend_registry import get_backend_registry
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
@@ -324,7 +324,8 @@ class VideoSearchAgent(MemoryAwareMixin):
             or "video_colpali_smol500_mv_frame"
         )
 
-        profiles = self.config.get("video_processing_profiles", {})
+        backend_config_data = self.config.get("backend", {})
+        profiles = backend_config_data.get("profiles", {})
 
         if active_profile and active_profile in profiles:
             model_name = profiles[active_profile].get(
@@ -337,7 +338,7 @@ class VideoSearchAgent(MemoryAwareMixin):
             model_name = kwargs.get("model_name", "vidore/colsmol-500m")
             self.embedding_type = "frame_based"
 
-        # Initialize Tenant-Aware Vespa search client
+        # Initialize search backend via backend registry
         try:
             logger.info("Enhanced Video Search Agent configuration:")
             logger.info(f"  - Tenant ID: {tenant_id}")
@@ -349,22 +350,28 @@ class VideoSearchAgent(MemoryAwareMixin):
             logger.info(f"  - Environment VESPA_PORT: {os.getenv('VESPA_PORT')}")
             logger.info(f"  - Environment VESPA_SCHEMA: {os.getenv('VESPA_SCHEMA')}")
 
-            # Check if schema auto-creation should be disabled (useful for tests)
-            auto_create_schema = kwargs.get("auto_create_schema", True)
+            # Build backend config
+            # Pass base schema name - backend will add tenant suffix
+            backend_config = {
+                "vespa_url": vespa_url,
+                "vespa_port": vespa_port,
+                "vespa_config_port": vespa_config_port,
+                "schema_name": active_profile,  # Base schema name, backend adds tenant suffix
+                "tenant_id": tenant_id,
+                "profile": active_profile,  # VespaBackend checks for "profile", not "active_video_profile"
+                "backend": backend_config_data,  # Pass entire backend section with profiles, default_profiles, etc.
+            }
 
-            self.vespa_client = TenantAwareVespaSearchClient(
-                tenant_id=tenant_id,
-                base_schema_name=active_profile,
-                vespa_url=vespa_url,
-                vespa_port=vespa_port,
-                auto_create_schema=auto_create_schema,
-            )
+            # Get search backend from registry
+            registry = get_backend_registry()
+            self.search_backend = registry.get_search_backend("vespa", tenant_id, backend_config)
+
             logger.info(
-                f"Tenant-aware Vespa client initialized at {vespa_url}:{vespa_port} "
-                f"for tenant {tenant_id} with schema {active_profile}"
+                f"Search backend initialized at {vespa_url}:{vespa_port} "
+                f"for tenant {tenant_id} with profile {active_profile}"
             )
         except Exception as e:
-            logger.error(f"Failed to initialize tenant-aware Vespa client: {e}")
+            logger.error(f"Failed to initialize search backend: {e}")
             raise
 
         # Initialize query encoder
@@ -408,16 +415,31 @@ class VideoSearchAgent(MemoryAwareMixin):
             # Encode text query
             query_embeddings = self.query_encoder.encode(query)
 
-            # Execute search with tenant-aware client
-            results = self.vespa_client.search(
-                query_text=query,
-                embeddings=query_embeddings,
-                strategy=kwargs.get("ranking", "hybrid_float_bm25"),
-                top_k=top_k,
-                start_date=kwargs.get("start_date"),
-                end_date=kwargs.get("end_date"),
-                timeout=kwargs.get("timeout", 10),
-            )
+            # Execute search with backend using query_dict format
+            # Note: Date filters not yet supported in new backend
+            if kwargs.get("start_date") or kwargs.get("end_date"):
+                logger.warning("Date filters (start_date/end_date) not yet supported by VespaSearchBackend")
+
+            query_dict = {
+                "query": query,
+                "type": "video",
+                "query_embeddings": query_embeddings,
+                "top_k": top_k,
+                "filters": None,  # TODO: Add date filter support
+                "strategy": kwargs.get("ranking", "binary_binary"),
+            }
+
+            search_results = self.search_backend.search(query_dict)
+
+            # Convert SearchResult objects to dict format for compatibility
+            results = []
+            for sr in search_results:
+                result_dict = {
+                    "id": sr.document.id,
+                    "score": sr.score,
+                    **sr.document.metadata
+                }
+                results.append(result_dict)
 
             logger.info(f"Text search completed: {len(results)} results")
 
@@ -476,16 +498,30 @@ class VideoSearchAgent(MemoryAwareMixin):
                 video_data, filename
             )
 
-            # Execute search with tenant-aware client
-            results = self.vespa_client.search(
-                query_text=f"Video similarity search for {filename}",
-                embeddings=query_embeddings,
-                strategy=kwargs.get("ranking", "hybrid_float_bm25"),
-                top_k=top_k,
-                start_date=kwargs.get("start_date"),
-                end_date=kwargs.get("end_date"),
-                timeout=kwargs.get("timeout", 10),
-            )
+            # Execute search with backend using query_dict format
+            if kwargs.get("start_date") or kwargs.get("end_date"):
+                logger.warning("Date filters (start_date/end_date) not yet supported by VespaSearchBackend")
+
+            query_dict = {
+                "query": f"Video similarity search for {filename}",
+                "type": "video",
+                "query_embeddings": query_embeddings,
+                "top_k": top_k,
+                "filters": None,
+                "strategy": kwargs.get("ranking", "binary_binary"),
+            }
+
+            search_results = self.search_backend.search(query_dict)
+
+            # Convert SearchResult objects to dict format for compatibility
+            results = []
+            for sr in search_results:
+                result_dict = {
+                    "id": sr.document.id,
+                    "score": sr.score,
+                    **sr.document.metadata
+                }
+                results.append(result_dict)
 
             logger.info(f"Video search completed: {len(results)} results")
 
@@ -549,16 +585,30 @@ class VideoSearchAgent(MemoryAwareMixin):
                 image_data, filename
             )
 
-            # Execute search with tenant-aware client
-            results = self.vespa_client.search(
-                query_text=f"Image similarity search for {filename}",
-                embeddings=query_embeddings,
-                strategy=kwargs.get("ranking", "hybrid_float_bm25"),
-                top_k=top_k,
-                start_date=kwargs.get("start_date"),
-                end_date=kwargs.get("end_date"),
-                timeout=kwargs.get("timeout", 10),
-            )
+            # Execute search with backend using query_dict format
+            if kwargs.get("start_date") or kwargs.get("end_date"):
+                logger.warning("Date filters (start_date/end_date) not yet supported by VespaSearchBackend")
+
+            query_dict = {
+                "query": f"Image similarity search for {filename}",
+                "type": "video",
+                "query_embeddings": query_embeddings,
+                "top_k": top_k,
+                "filters": None,
+                "strategy": kwargs.get("ranking", "binary_binary"),
+            }
+
+            search_results = self.search_backend.search(query_dict)
+
+            # Convert SearchResult objects to dict format for compatibility
+            results = []
+            for sr in search_results:
+                result_dict = {
+                    "id": sr.document.id,
+                    "score": sr.score,
+                    **sr.document.metadata
+                }
+                results.append(result_dict)
 
             logger.info(f"Image search completed: {len(results)} results")
 
@@ -732,19 +782,33 @@ class VideoSearchAgent(MemoryAwareMixin):
             # Build relationship-aware search parameters
             search_params = self._build_enhanced_search_params(context, top_k, **kwargs)
 
-            # Execute search using enhanced query with tenant-aware client
+            # Execute search using enhanced query with backend
             query_embeddings = self.query_encoder.encode(search_query)
 
-            raw_results = self.vespa_client.search(
-                query_text=search_query,
-                embeddings=query_embeddings,
-                strategy=search_params.ranking_strategy
-                or kwargs.get("ranking", "hybrid_float_bm25"),
-                top_k=top_k,
-                start_date=search_params.start_date,
-                end_date=search_params.end_date,
-                timeout=kwargs.get("timeout", 10),
-            )
+            if search_params.start_date or search_params.end_date:
+                logger.warning("Date filters (start_date/end_date) not yet supported by VespaSearchBackend")
+
+            query_dict = {
+                "query": search_query,
+                "type": "video",
+                "query_embeddings": query_embeddings,
+                "top_k": top_k,
+                "filters": None,
+                "strategy": search_params.ranking_strategy
+                or kwargs.get("ranking", "binary_binary"),
+            }
+
+            search_results = self.search_backend.search(query_dict)
+
+            # Convert SearchResult objects to dict format for compatibility
+            raw_results = []
+            for sr in search_results:
+                result_dict = {
+                    "id": sr.document.id,
+                    "score": sr.score,
+                    **sr.document.metadata
+                }
+                raw_results.append(result_dict)
 
             # Enhance results with relationship context
             enhanced_results = self._enhance_results_with_relationships(
