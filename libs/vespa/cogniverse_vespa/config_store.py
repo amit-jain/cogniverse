@@ -8,9 +8,12 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from cogniverse_core.common.config_store_interface import (
+    ConfigEntry,
+    ConfigScope,
+    ConfigStore,
+)
 from vespa.application import Vespa
-
-from cogniverse_core.common.config_store_interface import ConfigEntry, ConfigScope, ConfigStore
 
 logger = logging.getLogger(__name__)
 

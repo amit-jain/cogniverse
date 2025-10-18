@@ -10,12 +10,12 @@ import logging
 from datetime import datetime
 from typing import Dict, Optional
 
+from cogniverse_agents.routing.orchestration_annotation_storage import (
+    OrchestrationAnnotationStorage,
+)
 from cogniverse_agents.workflow_intelligence import (
     WorkflowExecution,
     WorkflowIntelligence,
-)
-from cogniverse_agents.routing.orchestration_annotation_storage import (
-    OrchestrationAnnotationStorage,
 )
 
 logger = logging.getLogger(__name__)

@@ -10,7 +10,8 @@ import hashlib
 import subprocess
 import time
 from typing import Tuple
-from tests.utils.async_polling import wait_for_vespa_indexing, simulate_processing_delay
+
+from tests.utils.async_polling import simulate_processing_delay, wait_for_vespa_indexing
 
 
 def generate_unique_ports(module_name: str, base_http_port: int = 8100) -> Tuple[int, int]:

@@ -6,12 +6,13 @@ A simple, general-purpose inference service that can be deployed on Modal.
 This service loads models dynamically and provides a clean API for text generation.
 """
 
-import modal
 import json
-import time
 import os
-from typing import Dict, Any, Optional, List
+import time
 from datetime import datetime
+from typing import Any, Dict, List
+
+import modal
 
 # Define the Modal app
 app = modal.App("general-inference-service")
@@ -21,8 +22,9 @@ volume = modal.Volume.from_name("model-cache", create_if_missing=True)
 
 def download_model():
     """Download the model during image build for faster startup."""
-    from huggingface_hub import snapshot_download
     import os
+
+    from huggingface_hub import snapshot_download
     
     model_id = os.getenv("DEFAULT_MODEL", "google/gemma-3-1b-it")
     hf_token = os.getenv("HF_TOKEN", os.getenv("HUGGING_FACE_HUB_TOKEN", ""))

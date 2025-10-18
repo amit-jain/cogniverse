@@ -9,13 +9,10 @@ Tests cover:
 - Performance metrics
 """
 
-import time
-from tests.utils.async_polling import wait_for_service_startup
 import unittest
 from unittest.mock import MagicMock, Mock, patch
 
 import numpy as np
-
 from cogniverse_core.common.models.videoprism_text_encoder import (
     CircuitBreaker,
     CircuitState,
@@ -24,6 +21,8 @@ from cogniverse_core.common.models.videoprism_text_encoder import (
     VideoPrismTextEncoder,
     create_text_encoder,
 )
+
+from tests.utils.async_polling import wait_for_service_startup
 
 
 class TestPerformanceMetrics(unittest.TestCase):
@@ -216,7 +215,9 @@ class TestVideoPrismTextEncoder(unittest.TestCase):
     
     def setUp(self):
         # Clear class-level cache before each test
-        from cogniverse_core.common.models.videoprism_text_encoder import VideoPrismTextEncoder
+        from cogniverse_core.common.models.videoprism_text_encoder import (
+            VideoPrismTextEncoder,
+        )
         VideoPrismTextEncoder._model_cache.clear()
 
         # Mock VideoPrism module

@@ -6,11 +6,11 @@ enabling third-party extensions and clean separation of concerns.
 
 import importlib
 import logging
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 from cogniverse_core.config.utils import get_config
-from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_core.registries.backend_registry import BackendRegistry
 
 logger = logging.getLogger(__name__)
 

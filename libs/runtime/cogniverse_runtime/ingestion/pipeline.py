@@ -33,18 +33,23 @@ from typing import Any
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from cogniverse_runtime.ingestion.exceptions import PipelineException, wrap_content_error
-from cogniverse_runtime.ingestion.processor_manager import ProcessorManager
-
-# Processors are imported dynamically by processor_manager
-from cogniverse_runtime.ingestion.processors.embedding_generator import create_embedding_generator
-
-# StrategyConfig imported locally where needed
-from cogniverse_runtime.ingestion.strategy_factory import StrategyFactory
-
 # Cache imports removed - using pipeline_cache directly
 from cogniverse_core.common.cache.pipeline_cache import PipelineArtifactCache
 from cogniverse_core.config.utils import get_config
+
+from cogniverse_runtime.ingestion.exceptions import (
+    PipelineException,
+    wrap_content_error,
+)
+from cogniverse_runtime.ingestion.processor_manager import ProcessorManager
+
+# Processors are imported dynamically by processor_manager
+from cogniverse_runtime.ingestion.processors.embedding_generator import (
+    create_embedding_generator,
+)
+
+# StrategyConfig imported locally where needed
+from cogniverse_runtime.ingestion.strategy_factory import StrategyFactory
 
 
 class PipelineStep(Enum):
@@ -106,8 +111,9 @@ class PipelineConfig:
         """Load pipeline config for a specific profile"""
         config = get_config()
 
-        # Get profile-specific config
-        profiles = config.get("video_processing_profiles", {})
+        # Get profile-specific config from backend section
+        backend_config = config.get("backend", {})
+        profiles = backend_config.get("profiles", {})
         if profile_name not in profiles:
             raise ValueError(f"Profile '{profile_name}' not found in config")
 
@@ -361,7 +367,8 @@ class VideoIngestionPipeline:
             return StrategyFactory.create_from_profile_config(profile_config)
 
         # Get profile config from app config
-        profiles = self.app_config.get("video_processing_profiles", {})
+        backend_config = self.app_config.get("backend", {})
+        profiles = backend_config.get("profiles", {})
         profile_config = profiles.get(self.schema_name, {})
 
         if "strategies" not in profile_config:
@@ -378,7 +385,8 @@ class VideoIngestionPipeline:
         if not self.schema_name:
             return 30.0  # Default
 
-        profiles = self.app_config.get("video_processing_profiles", {})
+        backend_config = self.app_config.get("backend", {})
+        profiles = backend_config.get("profiles", {})
         profile_config = profiles.get(self.schema_name, {})
 
         # Extract from processing type (e.g., "direct_video/chunks:30s")
@@ -400,6 +408,7 @@ class VideoIngestionPipeline:
 
         # Initialize embedding generator v2 directly
         try:
+            self.logger.info(f"Initializing embedding generator with schema_name={self.schema_name}, tenant_id={self.tenant_id}")
             self.embedding_generator = create_embedding_generator(
                 config=self.app_config,
                 schema_name=self.schema_name,
@@ -411,7 +420,13 @@ class VideoIngestionPipeline:
                 f"with backend: {self.config.search_backend}"
             )
         except Exception as e:
-            self.logger.error(f"Failed to initialize embedding generator: {e}")
+            self.logger.error(f"Failed to initialize embedding generator: {e}", exc_info=True)
+            self.logger.error(f"  schema_name={self.schema_name}, tenant_id={self.tenant_id}")
+            self.logger.error(f"  app_config keys: {list(self.app_config.keys()) if self.app_config else 'None'}")
+            if self.app_config and "backend" in self.app_config:
+                backend_config = self.app_config.get("backend", {})
+                profiles = backend_config.get("profiles", {})
+                self.logger.error(f"  backend.profiles keys: {list(profiles.keys())}")
             self.embedding_generator = None
 
         # Set embedding generator for single vector processor if needed
@@ -446,7 +461,8 @@ class VideoIngestionPipeline:
         cache_keys = []
 
         # Get profile configuration for cache parameters
-        profiles = self.app_config.get("video_processing_profiles", {})
+        backend_config = self.app_config.get("backend", {})
+        profiles = backend_config.get("profiles", {})
         profile_config = profiles.get(self.schema_name, {})
         pipeline_config = profile_config.get("pipeline_config", {})
 

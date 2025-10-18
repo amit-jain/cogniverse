@@ -12,10 +12,10 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 import phoenix as px
+from cogniverse_core.telemetry.config import SERVICE_NAME_ORCHESTRATION, TelemetryConfig
 from phoenix.trace import SpanEvaluations
 
 from cogniverse_agents.routing.llm_auto_annotator import AnnotationLabel, AutoAnnotation
-from cogniverse_core.telemetry.config import SERVICE_NAME_ORCHESTRATION, TelemetryConfig
 
 logger = logging.getLogger(__name__)
 

@@ -11,8 +11,8 @@ import torch
 
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent.parent))
-from cogniverse_core.config.utils import get_config
 from cogniverse_core.common.models import get_or_load_model
+from cogniverse_core.config.utils import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -164,10 +164,11 @@ class QueryEncoderFactory:
     def create_encoder(profile: str, model_name: Optional[str] = None) -> QueryEncoder:
         """Create query encoder for the given profile
 
-        Dynamically determines the encoder based on config.json video_processing_profiles
+        Dynamically determines the encoder based on config.json backend.profiles
         """
         config = get_config()
-        video_profiles = config.get("video_processing_profiles", {})
+        backend_config = config.get("backend", {})
+        video_profiles = backend_config.get("profiles", {})
 
         # Check if profile exists in config
         if profile not in video_profiles:
@@ -207,5 +208,6 @@ class QueryEncoderFactory:
     def get_supported_profiles() -> list:
         """Return list of supported profiles from config.json"""
         config = get_config()
-        video_profiles = config.get("video_processing_profiles", {})
+        backend_config = config.get("backend", {})
+        video_profiles = backend_config.get("profiles", {})
         return list(video_profiles.keys())

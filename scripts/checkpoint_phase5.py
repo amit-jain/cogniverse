@@ -19,7 +19,7 @@ import ast
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import List
 
 
 class Phase5CheckpointValidator:

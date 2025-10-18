@@ -26,15 +26,12 @@ from typing import Any, Dict, List, Optional
 # DSPy 3.0 imports
 import dspy
 
+# A2A protocol imports
+from cogniverse_core.common.a2a_utils import A2AClient
+
 # Enhanced routing imports
 from cogniverse_agents.routing_agent import (
     RoutingAgent,
-)
-
-# Workflow intelligence (import after types to avoid circular dependency)
-from cogniverse_agents.workflow_intelligence import (
-    OptimizationStrategy,
-    create_workflow_intelligence,
 )
 
 # Shared workflow types
@@ -45,8 +42,11 @@ from cogniverse_agents.workflow.types import (
     WorkflowTask,
 )
 
-# A2A protocol imports
-from cogniverse_core.common.a2a_utils import A2AClient
+# Workflow intelligence (import after types to avoid circular dependency)
+from cogniverse_agents.workflow_intelligence import (
+    OptimizationStrategy,
+    create_workflow_intelligence,
+)
 
 
 class FusionStrategy(Enum):

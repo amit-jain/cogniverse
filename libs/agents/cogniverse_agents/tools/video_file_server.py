@@ -7,18 +7,15 @@ This server allows the video player to reference videos via HTTP URLs
 instead of embedding large video data directly in HTML artifacts.
 """
 
-import os
 import asyncio
 import logging
 from pathlib import Path
-from typing import Optional
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
 
+import uvicorn
 from cogniverse_core.config.utils import get_config
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 # Configure logging
 logging.basicConfig(

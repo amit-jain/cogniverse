@@ -5,13 +5,13 @@ Setup script for Ollama and Llama 3.1 model.
 This script installs and configures Ollama for the Multi-Agent RAG System.
 """
 
-import os
-import sys
-import subprocess
-import requests
-import time
 import platform
-from pathlib import Path
+import subprocess
+import sys
+import time
+
+import requests
+
 
 def check_ollama_installed():
     """Check if Ollama is installed."""

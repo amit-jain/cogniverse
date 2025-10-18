@@ -4,9 +4,8 @@ Batch span exporter with queue management and drop policies.
 
 import logging
 import time
-from typing import Sequence, Optional
-from queue import Queue, Full
 from threading import Lock
+from typing import Sequence
 
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 from opentelemetry.trace import Span

@@ -6,7 +6,6 @@ Provides Vespa Docker instance fixture for testing schema lifecycle.
 
 import logging
 import subprocess
-import time
 
 import pytest
 import requests

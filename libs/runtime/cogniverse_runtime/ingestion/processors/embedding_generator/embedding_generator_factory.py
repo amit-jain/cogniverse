@@ -77,10 +77,11 @@ def create_embedding_generator(
     backend = config.get("embedding_backend", config.get("search_backend", "vespa"))
 
     # Get profile configuration using schema_name as key
-    profiles = config.get("video_processing_profiles", {})
+    backend_config = config.get("backend", {})
+    profiles = backend_config.get("profiles", {})
     if schema_name not in profiles:
         raise ValueError(
-            f"Profile '{schema_name}' not found in video_processing_profiles"
+            f"Profile '{schema_name}' not found in backend.profiles"
         )
 
     profile_config = profiles[schema_name]

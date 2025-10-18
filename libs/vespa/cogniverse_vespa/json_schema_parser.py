@@ -4,9 +4,20 @@ Converts JSON schema definitions to PyVespa objects
 """
 
 import json
-from typing import Dict, List, Any, Optional
-from vespa.package import Schema, Document, Field, RankProfile, Function, FirstPhaseRanking, SecondPhaseRanking, FieldSet
 import logging
+from typing import Any, Dict, List
+
+from vespa.package import (
+    Document,
+    Field,
+    FieldSet,
+    FirstPhaseRanking,
+    Function,
+    RankProfile,
+    Schema,
+    SecondPhaseRanking,
+)
+
 
 class JsonSchemaParser:
     """Parser to convert JSON schema definitions to PyVespa objects"""

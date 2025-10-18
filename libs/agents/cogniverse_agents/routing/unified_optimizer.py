@@ -8,13 +8,13 @@ creating a bidirectional learning loop.
 import logging
 from typing import Any, Dict, List
 
-from cogniverse_agents.workflow_intelligence import (
-    WorkflowExecution,
-    WorkflowIntelligence,
-)
 from cogniverse_agents.routing.advanced_optimizer import (
     AdvancedRoutingOptimizer,
     RoutingExperience,
+)
+from cogniverse_agents.workflow_intelligence import (
+    WorkflowExecution,
+    WorkflowIntelligence,
 )
 
 logger = logging.getLogger(__name__)

@@ -4,7 +4,6 @@ These tests verify actual Phoenix integration, not mocks.
 """
 
 import threading
-from tests.utils.async_polling import wait_for_phoenix_processing
 import time
 from datetime import datetime, timedelta
 
@@ -16,6 +15,8 @@ from cogniverse_core.evaluation.data.storage import (
     ConnectionState,
     PhoenixStorage,
 )
+
+from tests.utils.async_polling import wait_for_phoenix_processing
 
 
 @pytest.mark.integration

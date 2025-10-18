@@ -3,12 +3,13 @@
 Vespa Embedding Processor - Handles Vespa-specific format conversion
 """
 
-import torch
-import numpy as np
+import logging
 import struct
 from binascii import hexlify
-from typing import Dict, Any, List, Optional
-import logging
+from typing import Any, Dict, Optional
+
+import numpy as np
+import torch
 
 
 class VespaEmbeddingProcessor:

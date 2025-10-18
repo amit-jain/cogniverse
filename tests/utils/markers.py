@@ -4,13 +4,15 @@ Test markers and utilities for conditional test execution.
 Provides functions to check availability of backends, models, and dependencies.
 """
 
+import importlib
 import os
 import subprocess
-import importlib
-import requests
-from typing import Dict, Any
 from pathlib import Path
+from typing import Any, Dict
+
 import pytest
+import requests
+
 
 def is_ci_environment() -> bool:
     """Check if running in CI environment."""

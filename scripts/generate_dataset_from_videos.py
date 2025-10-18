@@ -9,12 +9,13 @@ This script generates queries based on:
 4. LLM-generated queries
 """
 
-import click
 import json
-from pathlib import Path
 import random
-from typing import List, Dict, Any
 import sys
+from pathlib import Path
+from typing import Dict, List
+
+import click
 
 sys.path.append(str(Path(__file__).parent.parent))
 

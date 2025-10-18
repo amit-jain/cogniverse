@@ -3,14 +3,12 @@
 Phoenix evaluation tab with EXACT tabbed format like generate_tabbed_html_report.py
 """
 
-import streamlit as st
-import pandas as pd
-import requests
-from typing import Dict, List, Any, Optional
+from typing import Any, Dict, List
+
 import plotly.graph_objects as go
-from datetime import datetime
-import json
-from pathlib import Path
+import requests
+import streamlit as st
+
 
 def query_phoenix_graphql(query: str) -> Dict[str, Any]:
     """Execute a GraphQL query against Phoenix"""
@@ -26,7 +24,7 @@ def query_phoenix_graphql(query: str) -> Dict[str, Any]:
         else:
             return {}
             
-    except Exception as e:
+    except Exception:
         return {}
 
 def get_phoenix_datasets() -> List[Dict[str, Any]]:
@@ -74,7 +72,7 @@ def get_experiment_runs(experiment_id: str) -> Dict[str, Any]:
             return response.json()
         else:
             return {}
-    except Exception as e:
+    except Exception:
         return {}
 
 def calculate_metrics(results: List[str], expected: List[str]) -> Dict[str, float]:
@@ -221,7 +219,7 @@ def get_all_experiment_data_for_dataset(dataset_id: str) -> Dict[str, Any]:
                                 'recall@1': {'mean': sum(recall1_values) / len(recall1_values)},
                                 'recall@5': {'mean': sum(recall5_values) / len(recall5_values)}
                             }
-        except Exception as e:
+        except Exception:
             continue
     
     # If still no data, use mock data to show the UI structure

@@ -8,7 +8,6 @@ different schema types without hardcoded assumptions.
 from unittest.mock import Mock
 
 import pytest
-
 from cogniverse_core.evaluation.core.ground_truth import SchemaAwareGroundTruthStrategy
 from cogniverse_core.evaluation.core.schema_analyzer import (
     DefaultSchemaAnalyzer,

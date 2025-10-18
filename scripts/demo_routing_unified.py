@@ -5,12 +5,12 @@ Combines features from both demo_routing_tiers.py and demo_routing_escalation.py
 Supports both concise and verbose output modes.
 """
 
+import argparse
 import asyncio
 import json
-from pathlib import Path
-from typing import List, Dict, Any
 import sys
-import argparse
+from pathlib import Path
+from typing import Any, Dict
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -148,7 +148,7 @@ class RouterWithTracking(TieredRouter):
         # Tier 4: Fallback
         if RoutingTier.FALLBACK in self.strategies:
             if self.verbose:
-                print(f"🔍 Tier 4 (Keyword Fallback) - Always passes")
+                print("🔍 Tier 4 (Keyword Fallback) - Always passes")
             
             fallback_decision = await self._try_fallback(query, context)
             if fallback_decision:
@@ -242,7 +242,7 @@ async def run_demonstration(verbose=False, category=None):
         
         for query in queries:
             if not query:
-                print(f"\n[Empty Query]")
+                print("\n[Empty Query]")
             else:
                 print(f"\nQuery: \"{query[:60]}{'...' if len(query) > 60 else ''}\"")
             print("-" * 40)

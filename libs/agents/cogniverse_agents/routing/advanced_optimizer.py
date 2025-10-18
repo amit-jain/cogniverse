@@ -25,9 +25,8 @@ from typing import Any, Dict, List, Optional
 # DSPy 3.0 imports
 import dspy
 import numpy as np
-from dspy.teleprompt import GEPA, SIMBA, BootstrapFewShot, MIPROv2
-
 from cogniverse_core.common.tenant_utils import get_tenant_storage_path
+from dspy.teleprompt import GEPA, SIMBA, BootstrapFewShot, MIPROv2
 
 logger = logging.getLogger(__name__)
 

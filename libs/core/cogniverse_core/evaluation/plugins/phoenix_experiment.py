@@ -49,6 +49,7 @@ class PhoenixExperimentPlugin:
 
             # Import search service
             from cogniverse_agents.search.service import SearchService
+
             from cogniverse_core.config.utils import get_config
 
             main_config = get_config()
@@ -227,7 +228,9 @@ def get_phoenix_evaluators(config: dict[str, Any]) -> list[Any]:
 
     # Add quality evaluators if configured
     if config.get("enable_quality_evaluators", False):
-        from cogniverse_core.evaluation.evaluators.sync_reference_free import create_sync_evaluators
+        from cogniverse_core.evaluation.evaluators.sync_reference_free import (
+            create_sync_evaluators,
+        )
 
         quality_evaluators = create_sync_evaluators()
         evaluators.extend(quality_evaluators)

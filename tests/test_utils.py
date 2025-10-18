@@ -6,7 +6,8 @@ import csv
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+
 from tabulate import tabulate
 
 
@@ -185,7 +186,7 @@ class TestResultsFormatter:
         print(f"Total Results: {len(results)}")
         
         if summary_stats:
-            print(f"\nSummary Statistics:")
+            print("\nSummary Statistics:")
             for key, value in summary_stats.items():
                 print(f"  {key}: {value}")
                 

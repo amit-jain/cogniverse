@@ -5,17 +5,18 @@ Deploy All Vespa Schemas for Video Search
 This script deploys all schemas from the configs/schemas directory to Vespa.
 """
 
-import sys
 import logging
+import sys
 from pathlib import Path
 
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.backends.vespa.vespa_schema_manager import VespaSchemaManager
 from src.backends.vespa.json_schema_parser import JsonSchemaParser
+from src.backends.vespa.vespa_schema_manager import VespaSchemaManager
 from src.common.config_utils import get_config
 from vespa.package import ApplicationPackage
+
 
 def main():
     # Setup logging
@@ -59,6 +60,7 @@ def main():
         
         # Add validation overrides to allow schema changes
         from datetime import datetime, timedelta
+
         from vespa.package import Validation
         
         # Allow schema removal for deployment
@@ -78,7 +80,10 @@ def main():
             
             # Extract and save ranking strategies after schema deployment
             logger.info("📊 Extracting ranking strategies from all schemas...")
-            from src.backends.vespa.ranking_strategy_extractor import extract_all_ranking_strategies, save_ranking_strategies
+            from src.backends.vespa.ranking_strategy_extractor import (
+                extract_all_ranking_strategies,
+                save_ranking_strategies,
+            )
             
             strategies = extract_all_ranking_strategies(schemas_dir)
             save_ranking_strategies(strategies, schemas_dir / "ranking_strategies.json")

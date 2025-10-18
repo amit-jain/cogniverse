@@ -7,7 +7,6 @@ from unittest.mock import Mock, mock_open, patch
 
 import pandas as pd
 import pytest
-
 from cogniverse_core.evaluation.data.datasets import DatasetManager
 from cogniverse_core.evaluation.data.traces import TraceManager
 

@@ -4,9 +4,11 @@ Unit tests for DSPy Module and Optimizer Registries.
 
 import dspy
 import pytest
-
+from cogniverse_core.common.dspy_module_registry import (
+    DSPyModuleRegistry,
+    DSPyOptimizerRegistry,
+)
 from cogniverse_core.config.agent_config import DSPyModuleType, OptimizerType
-from cogniverse_core.common.dspy_module_registry import DSPyModuleRegistry, DSPyOptimizerRegistry
 
 
 class TestSignature(dspy.Signature):

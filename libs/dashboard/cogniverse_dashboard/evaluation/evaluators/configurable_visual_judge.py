@@ -7,10 +7,9 @@ import logging
 from pathlib import Path
 
 import requests
+from cogniverse_core.config.utils import get_config
 from phoenix.experiments.evaluators.base import Evaluator
 from phoenix.experiments.types import EvaluationResult
-
-from cogniverse_core.config.utils import get_config
 
 logger = logging.getLogger(__name__)
 

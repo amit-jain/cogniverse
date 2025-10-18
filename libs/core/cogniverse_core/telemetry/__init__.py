@@ -9,8 +9,8 @@ This module provides:
 - Graceful degradation when telemetry unavailable
 """
 
-from .manager import TelemetryManager
 from .config import TelemetryConfig
+from .manager import TelemetryManager
 
 __all__ = [
     "TelemetryManager", 

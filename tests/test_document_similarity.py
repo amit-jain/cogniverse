@@ -4,9 +4,10 @@ Test document similarity search (find similar frames to a given frame)
 This is useful for UI features like "find more frames like this one"
 """
 
-import requests
-import json
+
 import numpy as np
+import requests
+
 
 def test_document_similarity():
     """Test finding similar frames to a given document (reverse image search)"""

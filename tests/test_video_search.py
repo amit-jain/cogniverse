@@ -3,22 +3,21 @@
 Test script for comparing different video embedding approaches
 """
 
-import json
-import time
 import argparse
-import numpy as np
-from pathlib import Path
-from typing import Dict, List, Any
-import requests
-from datetime import datetime
+import json
 
 # Add project root to path
 import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List
+
+import numpy as np
+
 sys.path.append(str(Path(__file__).parent.parent))
 
 from cogniverse_agents.search.service import SearchService
 from cogniverse_core.config.utils import get_config
-import torch
 
 
 class VideoSearchComparison:

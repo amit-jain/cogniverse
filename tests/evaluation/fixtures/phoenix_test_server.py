@@ -3,14 +3,14 @@ Phoenix test server fixture for integration tests.
 """
 
 import os
-from tests.utils.async_polling import wait_for_phoenix_processing
 import socket
 import subprocess
 import tempfile
-import time
 
 import phoenix as px
 import pytest
+
+from tests.utils.async_polling import wait_for_phoenix_processing
 
 
 def find_free_port():

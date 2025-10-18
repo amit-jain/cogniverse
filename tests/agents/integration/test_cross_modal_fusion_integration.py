@@ -7,7 +7,6 @@ executes multi-agent workflows, and validates fusion quality.
 """
 
 import subprocess
-from tests.utils.async_polling import wait_for_vespa_indexing, simulate_processing_delay
 import time
 from datetime import datetime
 
@@ -25,6 +24,8 @@ from cogniverse_agents.workflow_types import (
 )
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from PIL import Image
+
+from tests.utils.async_polling import wait_for_vespa_indexing
 
 
 @pytest.fixture(scope="module")

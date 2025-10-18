@@ -16,14 +16,12 @@ NO MOCKS - all tests against real Phoenix server.
 """
 
 import logging
-from tests.utils.async_polling import wait_for_vespa_indexing, simulate_processing_delay
 import os
 import time
 from datetime import datetime, timedelta
 
 import phoenix as px
 import pytest
-
 from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
 from cogniverse_core.telemetry.config import (
     SERVICE_NAME_ORCHESTRATION,
@@ -31,6 +29,8 @@ from cogniverse_core.telemetry.config import (
     TelemetryConfig,
 )
 from cogniverse_core.telemetry.manager import TelemetryManager
+
+from tests.utils.async_polling import simulate_processing_delay, wait_for_vespa_indexing
 
 logger = logging.getLogger(__name__)
 

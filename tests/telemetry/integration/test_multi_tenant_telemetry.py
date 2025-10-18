@@ -10,12 +10,16 @@ These tests validate:
 """
 
 import time
-from tests.utils.async_polling import wait_for_phoenix_processing
 
 import pytest
-
-from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig, TelemetryLevel
+from cogniverse_core.telemetry.config import (
+    BatchExportConfig,
+    TelemetryConfig,
+    TelemetryLevel,
+)
 from cogniverse_core.telemetry.manager import NoOpSpan, TelemetryManager
+
+from tests.utils.async_polling import wait_for_phoenix_processing
 
 
 @pytest.mark.integration

@@ -6,13 +6,14 @@ Download and test GLiNER models for the routing system
 import os
 import sys
 from pathlib import Path
+
 sys.path.append(str(Path(__file__).parent.parent))
 
 def download_gliner_models():
     """Download all GLiNER models used in the routing system"""
     try:
-        from gliner import GLiNER
         import torch
+        from gliner import GLiNER
         
         models = [
             "urchade/gliner_multi-v2.1",

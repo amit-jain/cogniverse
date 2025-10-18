@@ -103,7 +103,9 @@ class MockDocumentBackend:
 
 async def run_document_search_evaluation():
     """Run evaluation on document search system."""
-    from cogniverse_dashboard.evaluation.core.ground_truth import SchemaAwareGroundTruthStrategy
+    from cogniverse_dashboard.evaluation.core.ground_truth import (
+        SchemaAwareGroundTruthStrategy,
+    )
     from cogniverse_dashboard.evaluation.core.schema_analyzer import get_schema_analyzer
 
     # Document analyzer will be automatically selected based on schema
@@ -186,7 +188,9 @@ async def run_document_search_evaluation():
 
 async def run_image_search_evaluation():
     """Run evaluation on image search system."""
-    from cogniverse_dashboard.evaluation.core.schema_analyzer import DefaultSchemaAnalyzer
+    from cogniverse_dashboard.evaluation.core.schema_analyzer import (
+        DefaultSchemaAnalyzer,
+    )
 
     logger.info("\n" + "=" * 60)
     logger.info("IMAGE SEARCH EXAMPLE")

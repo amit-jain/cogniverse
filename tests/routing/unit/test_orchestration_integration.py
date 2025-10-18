@@ -9,7 +9,6 @@ Tests the integration between routing system and multi-agent orchestration:
 """
 
 import pytest
-
 from cogniverse_agents.routing.base import (
     GenerationType,
     RoutingDecision,

@@ -37,7 +37,9 @@ def register_video_plugin():
             VideoSchemaAnalyzer,
             VideoTemporalAnalyzer,
         )
-        from cogniverse_core.evaluation.plugins.visual_evaluator import register as register_visual
+        from cogniverse_core.evaluation.plugins.visual_evaluator import (
+            register as register_visual,
+        )
 
         # Register video analyzers
         register_analyzer(VideoSchemaAnalyzer())

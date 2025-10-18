@@ -12,11 +12,11 @@ from typing import Any, Dict, List, Optional
 import dspy
 import numpy as np
 import torch
+from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
+from cogniverse_core.common.models.model_loaders import get_or_load_model
 from PIL import Image
 
-from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
 from cogniverse_agents.query.encoders import ColPaliQueryEncoder
-from cogniverse_core.common.models.model_loaders import get_or_load_model
 
 logger = logging.getLogger(__name__)
 

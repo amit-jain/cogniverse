@@ -6,10 +6,9 @@ import logging
 import time
 from typing import Any
 
-from inspect_ai.solver import Solver, solver
-
 from cogniverse_agents.search.service import SearchService
 from cogniverse_core.config.utils import get_config
+from inspect_ai.solver import Solver, solver
 
 logger = logging.getLogger(__name__)
 

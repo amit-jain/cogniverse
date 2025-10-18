@@ -6,12 +6,13 @@ Validates schema uploads, data ingestion, and search functionality.
 """
 
 import subprocess
-from tests.utils.async_polling import wait_for_vespa_indexing
 import time
 from pathlib import Path
 
 import pytest
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
+from tests.utils.async_polling import wait_for_vespa_indexing
 
 
 @pytest.fixture(scope="module")

@@ -4,22 +4,21 @@ Create a cache of training examples from COMPREHENSIVE_ROUTING.md
 and implement LangExtract-style data generation using the existing cache system
 """
 
-import json
-import sys
 import asyncio
+import sys
+from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any
-from datetime import datetime, timedelta
-import logging
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import the base module first
-from src.common.cache.base import CacheBackend
 
 # Now import the backend
-from src.common.cache.backends.structured_filesystem import StructuredFilesystemBackend, StructuredFilesystemConfig
+from src.common.cache.backends.structured_filesystem import (
+    StructuredFilesystemBackend,
+    StructuredFilesystemConfig,
+)
 
 # Training examples from COMPREHENSIVE_ROUTING.md
 TRAINING_EXAMPLES = [
@@ -259,14 +258,14 @@ async def create_training_cache():
     }
     await cache.set("training_manifest", manifest)
     
-    print(f"📊 Training data distribution:")
+    print("📊 Training data distribution:")
     print(f"   Modalities: {metadata['modality_distribution']}")
     print(f"   Generation: {metadata['generation_distribution']}")
     print(f"   Intents: {metadata['intent_distribution']}")
     
     # Get cache stats
     stats = await cache.get_stats()
-    print(f"\n📈 Cache statistics:")
+    print("\n📈 Cache statistics:")
     print(f"   Total entries: {stats.get('total_entries', 0)}")
     print(f"   Cache size: {stats.get('total_size_bytes', 0) / 1024:.2f} KB")
     

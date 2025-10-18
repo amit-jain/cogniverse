@@ -11,9 +11,9 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from cogniverse_core.common.a2a_utils import A2AClient
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.config.utils import get_config
-from cogniverse_core.common.a2a_utils import A2AClient
 
 logger = logging.getLogger(__name__)
 

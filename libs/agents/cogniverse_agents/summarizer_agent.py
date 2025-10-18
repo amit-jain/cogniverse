@@ -11,16 +11,15 @@ from typing import Any, Dict, List, Optional
 
 import dspy
 import uvicorn
-from fastapi import FastAPI, HTTPException
-
 from cogniverse_core.agents.dspy_integration_mixin import DSPySummaryMixin
+from cogniverse_core.common.a2a_mixin import A2AEndpointsMixin
+from cogniverse_core.common.health_mixin import HealthCheckMixin
+from cogniverse_core.common.vlm_interface import VLMInterface
+from cogniverse_core.config.utils import get_config
+from fastapi import FastAPI, HTTPException
 
 # Enhanced routing support
 from cogniverse_agents.routing_agent import RoutingDecision
-from cogniverse_core.common.a2a_mixin import A2AEndpointsMixin
-from cogniverse_core.config.utils import get_config
-from cogniverse_core.common.health_mixin import HealthCheckMixin
-from cogniverse_core.common.vlm_interface import VLMInterface
 from cogniverse_agents.tools.a2a_utils import (
     DataPart,
     Task,

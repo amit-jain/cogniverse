@@ -16,13 +16,15 @@ from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import phoenix as px
-
 from cogniverse_core.telemetry.config import (
     SERVICE_NAME_ORCHESTRATION,
     SPAN_NAME_ROUTING,
     TelemetryConfig,
 )
-from cogniverse_dashboard.evaluation.evaluators.routing_evaluator import RoutingEvaluator, RoutingOutcome
+from cogniverse_dashboard.evaluation.evaluators.routing_evaluator import (
+    RoutingEvaluator,
+    RoutingOutcome,
+)
 
 logger = logging.getLogger(__name__)
 

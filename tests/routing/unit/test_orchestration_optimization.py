@@ -12,13 +12,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pandas as pd
 import pytest
-
-from cogniverse_agents.workflow_intelligence import WorkflowExecution
-from cogniverse_agents.routing.orchestration_feedback_loop import OrchestrationFeedbackLoop
+from cogniverse_agents.routing.orchestration_feedback_loop import (
+    OrchestrationFeedbackLoop,
+)
 from cogniverse_agents.routing.phoenix_orchestration_evaluator import (
     PhoenixOrchestrationEvaluator,
 )
 from cogniverse_agents.routing.unified_optimizer import UnifiedOptimizer
+from cogniverse_agents.workflow_intelligence import WorkflowExecution
 
 
 class TestPhoenixOrchestrationEvaluator:

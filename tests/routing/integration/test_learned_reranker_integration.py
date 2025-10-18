@@ -8,7 +8,6 @@ Integration tests for learned reranking with LiteLLM:
 
 
 import pytest
-
 from cogniverse_agents.search.hybrid_reranker import HybridReranker
 from cogniverse_agents.search.learned_reranker import LearnedReranker
 from cogniverse_agents.search.multi_modal_reranker import (

@@ -5,11 +5,12 @@ This script uses LangExtract to analyze queries and generate high-quality labele
 for training routing models.
 """
 
+import asyncio
 import json
 import os
-import asyncio
-from typing import List, Dict, Any
 from datetime import datetime
+from typing import Any, Dict, List
+
 from langextract import LangExtract
 
 # Sample queries from different categories

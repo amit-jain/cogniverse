@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 import httpx
-
-from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.config.utils import get_config
+
+from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_agents.tools.a2a_utils import (
     DataPart,
     Task,

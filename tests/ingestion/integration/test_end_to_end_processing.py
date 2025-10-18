@@ -552,6 +552,7 @@ class TestEndToEndVideoProcessing:
     ):
         """Test pipeline safety under concurrent processing scenarios."""
         import threading
+
         from tests.utils.async_polling import simulate_processing_delay
 
         # Mock thread-safe processor

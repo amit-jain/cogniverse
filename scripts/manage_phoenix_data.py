@@ -5,15 +5,14 @@ Manage Phoenix data - backup, restore, clean, and analyze
 This script provides utilities for managing Phoenix persistent data.
 """
 
-import os
-import sys
-import json
-import shutil
-import tarfile
 import argparse
+import json
 import logging
-from pathlib import Path
+import shutil
+import sys
+import tarfile
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Dict, List, Optional
 
 # Configure logging
@@ -319,7 +318,7 @@ def main():
         
         elif args.command == "restore":
             manager.restore(args.name, args.force)
-            print(f"Backup restored successfully")
+            print("Backup restored successfully")
         
         elif args.command == "list":
             backups = manager.list_backups()

@@ -7,8 +7,11 @@ import tempfile
 from pathlib import Path
 
 import pytest
-
-from cogniverse_core.config.agent_config import AgentConfig, DSPyModuleType, ModuleConfig
+from cogniverse_core.config.agent_config import (
+    AgentConfig,
+    DSPyModuleType,
+    ModuleConfig,
+)
 from cogniverse_core.config.config_manager import ConfigManager
 from cogniverse_core.config.unified_config import (
     RoutingConfigUnified,

@@ -6,14 +6,13 @@ Implements the provider interfaces for local infrastructure:
 - Local filesystem for artifact storage
 """
 
-import os
 import shutil
-import json
-import requests
-from typing import Dict, Any, List, Optional
 from pathlib import Path
+from typing import Any, Dict, List
 
-from .base_provider import ModelProvider, ArtifactProvider, ProviderFactory
+import requests
+
+from .base_provider import ArtifactProvider, ModelProvider, ProviderFactory
 
 
 class LocalModelProvider(ModelProvider):

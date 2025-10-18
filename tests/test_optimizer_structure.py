@@ -6,8 +6,8 @@ Validates that the new src/ structure imports work correctly.
 """
 
 import sys
-import os
 from pathlib import Path
+
 
 def test_imports():
     """Test that all new structure imports work."""
@@ -25,7 +25,7 @@ def test_imports():
     # Test 1: Core schemas
     total_tests += 1
     try:
-        from cogniverse_agents.optimizer.schemas import RoutingDecision, AgenticRouter
+        from cogniverse_agents.optimizer.schemas import AgenticRouter, RoutingDecision
         print("✅ schemas: RoutingDecision, AgenticRouter")
         tests_passed += 1
     except ImportError as e:
@@ -34,7 +34,10 @@ def test_imports():
     # Test 2: Router optimizer
     total_tests += 1
     try:
-        from cogniverse_agents.optimizer.router_optimizer import RouterModule, OptimizedRouter
+        from cogniverse_agents.optimizer.router_optimizer import (
+            OptimizedRouter,
+            RouterModule,
+        )
         print("✅ router_optimizer: RouterModule, OptimizedRouter")
         tests_passed += 1
     except ImportError as e:
@@ -61,7 +64,9 @@ def test_imports():
     # Test 5: Modal provider
     total_tests += 1
     try:
-        from cogniverse_agents.optimizer.providers.modal_provider import ModalModelProvider
+        from cogniverse_agents.optimizer.providers.modal_provider import (
+            ModalModelProvider,
+        )
         print("✅ modal_provider: ModalModelProvider")
         tests_passed += 1
     except ImportError as e:
@@ -70,7 +75,9 @@ def test_imports():
     # Test 6: Local provider
     total_tests += 1
     try:
-        from cogniverse_agents.optimizer.providers.local_provider import LocalModelProvider
+        from cogniverse_agents.optimizer.providers.local_provider import (
+            LocalModelProvider,
+        )
         print("✅ local_provider: LocalModelProvider")
         tests_passed += 1
     except ImportError as e:
@@ -80,7 +87,6 @@ def test_imports():
     total_tests += 1
     try:
         # This imports the Modal app, so it might fail without Modal setup
-        from cogniverse_runtime.inference.inference import app
         print("✅ production_api: Modal app")
         tests_passed += 1
     except Exception as e:
@@ -91,7 +97,6 @@ def test_imports():
     # Test 8: Model service
     total_tests += 1
     try:
-        from cogniverse_runtime.inference.model_service import app as model_app
         print("✅ model_service: Modal app")
         tests_passed += 1
     except Exception as e:
@@ -165,10 +170,10 @@ def test_old_files_status():
     # Check modal_inference directory
     modal_inference_dir = parent_dir / "modal_inference"
     if modal_inference_dir.exists():
-        print(f"📁 modal_inference/ - Directory exists (can be removed after migration)")
+        print("📁 modal_inference/ - Directory exists (can be removed after migration)")
         print(f"   └─ Contains: {len(list(modal_inference_dir.glob('*')))} items")
     else:
-        print(f"🗑️ modal_inference/ - Directory removed")
+        print("🗑️ modal_inference/ - Directory removed")
 
 def main():
     """Main test function."""

@@ -5,10 +5,10 @@ import os
 from typing import Any, Dict, List, Optional
 
 from a2a import DataPart
+from cogniverse_core.config.utils import get_config
 from fastapi import FastAPI, HTTPException
 
 from cogniverse_agents.search.service import SearchService
-from cogniverse_core.config.utils import get_config
 from cogniverse_agents.tools.a2a_utils import Task
 
 logger = logging.getLogger(__name__)

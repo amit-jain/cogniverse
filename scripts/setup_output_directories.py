@@ -3,8 +3,9 @@
 Setup and display output directory structure
 """
 
-from src.common.utils.output_manager import get_output_manager
 import json
+
+from src.common.utils.output_manager import get_output_manager
 
 
 def main():

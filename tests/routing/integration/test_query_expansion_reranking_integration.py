@@ -14,12 +14,9 @@ Requires:
 """
 
 import subprocess
-from tests.utils.async_polling import wait_for_vespa_indexing, simulate_processing_delay
-import time
 from datetime import datetime, timedelta
 
 import pytest
-
 from cogniverse_agents.routing.contextual_analyzer import ContextualAnalyzer
 from cogniverse_agents.routing.query_expansion import QueryExpander
 from cogniverse_agents.search.multi_modal_reranker import (
@@ -28,6 +25,8 @@ from cogniverse_agents.search.multi_modal_reranker import (
     SearchResult,
 )
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
+from tests.utils.async_polling import wait_for_vespa_indexing
 
 
 @pytest.fixture(scope="module")

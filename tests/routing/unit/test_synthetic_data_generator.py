@@ -6,7 +6,6 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from cogniverse_agents.routing.synthetic_data_generator import (
     ModalityExample,
     SyntheticDataGenerator,

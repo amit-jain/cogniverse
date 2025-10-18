@@ -1,12 +1,11 @@
 """Agent endpoints - unified interface for all agent operations."""
 
 import logging
-from typing import Dict, Any, List
-
-from fastapi import APIRouter, HTTPException, UploadFile, File
-from pydantic import BaseModel
+from typing import Any, Dict
 
 from cogniverse_core.registries.agent_registry import AgentRegistry
+from fastapi import APIRouter, File, HTTPException, UploadFile
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 

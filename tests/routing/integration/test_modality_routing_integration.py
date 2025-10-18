@@ -9,13 +9,11 @@ Tests the complete end-to-end flow:
 """
 
 import logging
-from tests.utils.async_polling import wait_for_vespa_indexing, simulate_processing_delay
 import time
 from datetime import datetime, timedelta
 
 import phoenix as px
 import pytest
-
 from cogniverse_agents.routing.base import SearchModality
 from cogniverse_agents.routing.router import ComprehensiveRouter
 from cogniverse_core.telemetry.config import (
@@ -24,6 +22,8 @@ from cogniverse_core.telemetry.config import (
     TelemetryConfig,
 )
 from cogniverse_core.telemetry.manager import TelemetryManager
+
+from tests.utils.async_polling import simulate_processing_delay, wait_for_vespa_indexing
 
 logger = logging.getLogger(__name__)
 

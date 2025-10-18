@@ -19,7 +19,6 @@ from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
 from cogniverse_vespa.json_schema_parser import JsonSchemaParser
 from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-from tests.utils.async_polling import wait_for_service_startup, wait_for_vespa_indexing
 from vespa.package import (
     ApplicationPackage,
     Document,
@@ -27,6 +26,8 @@ from vespa.package import (
     Schema,
     Validation,
 )
+
+from tests.utils.async_polling import wait_for_service_startup, wait_for_vespa_indexing
 
 # Shared Vespa configuration for all memory tests
 MEMORY_VESPA_PORT = 8081

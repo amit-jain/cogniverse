@@ -5,7 +5,6 @@ Unit tests for Phoenix experiment plugin.
 from unittest.mock import Mock, patch
 
 import pytest
-
 from cogniverse_core.evaluation.plugins.phoenix_experiment import (
     PhoenixExperimentPlugin,
     get_phoenix_evaluators,

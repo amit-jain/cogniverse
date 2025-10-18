@@ -6,7 +6,8 @@ This shows how processing should use the extracted ranking strategies.
 import json
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional, Set
+from typing import Any, Dict, Optional
+
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,10 @@ class StrategyAwareProcessor:
         
         if not strategies_file.exists():
             # Auto-generate if missing
-            from .ranking_strategy_extractor import extract_all_ranking_strategies, save_ranking_strategies
+            from .ranking_strategy_extractor import (
+                extract_all_ranking_strategies,
+                save_ranking_strategies,
+            )
             
             schemas_dir = Path("configs/schemas")
             strategies = extract_all_ranking_strategies(schemas_dir)

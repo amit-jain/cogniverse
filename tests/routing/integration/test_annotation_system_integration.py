@@ -20,7 +20,6 @@ from datetime import datetime, timedelta
 
 import phoenix as px
 import pytest
-from tests.utils.async_polling import wait_for_phoenix_processing, simulate_processing_delay
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 from cogniverse_agents.routing.annotation_agent import (
     AnnotationAgent,
@@ -38,6 +37,11 @@ from cogniverse_core.telemetry.config import (
     TelemetryConfig,
 )
 from cogniverse_core.telemetry.manager import TelemetryManager
+
+from tests.utils.async_polling import (
+    simulate_processing_delay,
+    wait_for_phoenix_processing,
+)
 
 logger = logging.getLogger(__name__)
 

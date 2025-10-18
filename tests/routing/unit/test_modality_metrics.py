@@ -2,13 +2,11 @@
 Unit tests for ModalityMetricsTracker
 """
 
-import time
-from tests.utils.async_polling import wait_for_vespa_indexing, simulate_processing_delay
-
 import pytest
-
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
 from cogniverse_core.telemetry.modality_metrics import ModalityMetricsTracker
+
+from tests.utils.async_polling import simulate_processing_delay
 
 
 class TestModalityMetricsTracker:

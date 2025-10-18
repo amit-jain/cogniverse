@@ -31,6 +31,9 @@ from cogniverse_agents.routing_agent import (
     RoutingAgent,
 )
 
+# A2A protocol imports
+from cogniverse_agents.tools.a2a_utils import A2AClient
+
 # Workflow intelligence (import after types to avoid circular dependency)
 from cogniverse_agents.workflow_intelligence import (
     OptimizationStrategy,
@@ -44,9 +47,6 @@ from cogniverse_agents.workflow_types import (
     WorkflowStatus,
     WorkflowTask,
 )
-
-# A2A protocol imports
-from cogniverse_agents.tools.a2a_utils import A2AClient
 
 
 class FusionStrategy(Enum):

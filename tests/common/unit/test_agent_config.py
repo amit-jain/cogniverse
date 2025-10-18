@@ -3,7 +3,6 @@ Unit tests for AgentConfig and related schemas.
 """
 
 import pytest
-
 from cogniverse_core.config.agent_config import (
     AgentConfig,
     DSPyModuleType,

@@ -3,16 +3,16 @@
 Simple SmolLM3-3B server using transformers with OpenAI-compatible API.
 """
 
-import json
 import time
-from typing import List, Dict, Any
+from typing import Dict, List
 
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
+import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import uvicorn
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
 
 # Request/Response models
 class ChatMessage(BaseModel):

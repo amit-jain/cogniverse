@@ -5,12 +5,12 @@ These tests verify the complete memory system works with real Vespa instance.
 Uses shared session-scoped Vespa container from conftest.py.
 """
 
-import time
 
 import pytest
-from tests.utils.async_polling import wait_for_vespa_indexing
 from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
 from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+
+from tests.utils.async_polling import wait_for_vespa_indexing
 
 
 @pytest.fixture(scope="module")

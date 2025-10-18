@@ -3,11 +3,12 @@
 Proper embedding atlas visualization using Apple's embedding-atlas library
 """
 
-import streamlit as st
-import pandas as pd
-import numpy as np
-from pathlib import Path
 import os
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import streamlit as st
 from embedding_atlas.streamlit import embedding_atlas
 from umap import UMAP
 

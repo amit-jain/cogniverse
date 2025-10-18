@@ -9,9 +9,15 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-from cogniverse_agents.routing.base import GenerationType, RoutingDecision, SearchModality
-from cogniverse_agents.routing.modality_optimizer import ModalityExample, ModalityOptimizer
+from cogniverse_agents.routing.base import (
+    GenerationType,
+    RoutingDecision,
+    SearchModality,
+)
+from cogniverse_agents.routing.modality_optimizer import (
+    ModalityExample,
+    ModalityOptimizer,
+)
 from cogniverse_agents.routing.router import ComprehensiveRouter
 from cogniverse_agents.routing.xgboost_meta_models import TrainingStrategy
 from cogniverse_agents.search.multi_modal_reranker import QueryModality

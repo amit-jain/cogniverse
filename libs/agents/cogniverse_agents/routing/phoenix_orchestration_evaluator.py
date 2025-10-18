@@ -10,12 +10,12 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 import phoenix as px
+from cogniverse_core.telemetry.config import SPAN_NAME_ORCHESTRATION, TelemetryConfig
 
 from cogniverse_agents.workflow_intelligence import (
     WorkflowExecution,
     WorkflowIntelligence,
 )
-from cogniverse_core.telemetry.config import SPAN_NAME_ORCHESTRATION, TelemetryConfig
 
 logger = logging.getLogger(__name__)
 

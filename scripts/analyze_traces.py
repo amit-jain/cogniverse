@@ -11,10 +11,10 @@ import argparse
 import json
 import logging
 import sys
-from pathlib import Path
-from datetime import datetime, timedelta
-from typing import Optional, List
 import time
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Optional
 
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -166,7 +166,7 @@ class TraceAnalyzer:
         
         if "response_time" in stats:
             rt = stats["response_time"]
-            print(f"\nResponse Time Statistics (ms):")
+            print("\nResponse Time Statistics (ms):")
             print(f"  Mean: {rt.get('mean', 0):.2f}")
             print(f"  Median: {rt.get('median', 0):.2f}")
             print(f"  Min: {rt.get('min', 0):.2f}")
@@ -180,7 +180,7 @@ class TraceAnalyzer:
         
         if "status" in stats:
             status = stats["status"]
-            print(f"\nStatus Distribution:")
+            print("\nStatus Distribution:")
             for status_type, count in status.get("counts", {}).items():
                 print(f"  {status_type}: {count}")
             print(f"  Success Rate: {status.get('success_rate', 0):.2%}")
@@ -188,7 +188,7 @@ class TraceAnalyzer:
         
         if "outliers" in stats:
             outliers = stats["outliers"]
-            print(f"\nOutliers:")
+            print("\nOutliers:")
             print(f"  Count: {outliers.get('count', 0)}")
             print(f"  Percentage: {outliers.get('percentage', 0):.2f}%")
             if outliers.get('values'):
@@ -198,7 +198,7 @@ class TraceAnalyzer:
         if "temporal" in stats:
             temporal = stats["temporal"]
             if "requests_by_hour" in temporal:
-                print(f"\nRequests by Hour:")
+                print("\nRequests by Hour:")
                 for hour, count in sorted(temporal["requests_by_hour"].items()):
                     print(f"  Hour {hour}: {count} requests")
     
@@ -245,7 +245,7 @@ class TraceAnalyzer:
                     self._print_summary(stats)
                     
                     # Show recent traces
-                    print(f"\nRecent Traces (last 5):")
+                    print("\nRecent Traces (last 5):")
                     for trace in traces[-5:]:
                         print(f"  {trace.timestamp.strftime('%H:%M:%S')} - "
                               f"{trace.operation} - "

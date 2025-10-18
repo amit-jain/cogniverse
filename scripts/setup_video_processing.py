@@ -6,12 +6,12 @@ Setup script for video processing pipeline:
 3. Process test videos
 """
 
-import os
 import json
+import re
 import subprocess
 import sys
-import re
 from pathlib import Path
+
 
 def check_modal_setup():
     """Check if Modal is installed and working."""
@@ -73,7 +73,7 @@ def deploy_modal_vlm():
                 print("💡 Check Modal dashboard at https://modal.com")
                 return None
         else:
-            print(f"❌ Deployment failed:")
+            print("❌ Deployment failed:")
             print(result.stderr)
             return None
             
@@ -114,10 +114,11 @@ def test_vlm_endpoint(endpoint_url):
     """Test the VLM endpoint with a simple request."""
     print("🧪 Testing VLM endpoint...")
     try:
-        import requests
         import base64
-        from PIL import Image
         import io
+
+        import requests
+        from PIL import Image
         
         # Create a simple test image
         test_img = Image.new('RGB', (100, 100), color='red')

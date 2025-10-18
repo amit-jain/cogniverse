@@ -6,7 +6,6 @@ modality preferences, topic tracking, and transition pattern analysis.
 """
 
 import pytest
-
 from cogniverse_agents.routing.contextual_analyzer import ContextualAnalyzer
 
 

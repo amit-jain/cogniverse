@@ -4,18 +4,18 @@ Test script to verify embedding integrity in Vespa
 Checks for cross-video contamination and validates embedding uniqueness
 """
 
+import argparse
 import json
-from tests.utils.async_polling import wait_for_service_startup
-import sys
 import subprocess
-import numpy as np
-from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+import sys
 from collections import defaultdict
 from datetime import datetime
-import random
-import argparse
-import time
+from pathlib import Path
+from typing import Dict, List, Optional
+
+import numpy as np
+
+from tests.utils.async_polling import wait_for_service_startup
 
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))

@@ -10,7 +10,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from cogniverse_core.common.config_store_interface import ConfigEntry, ConfigScope, ConfigStore
+from cogniverse_core.common.config_store_interface import (
+    ConfigEntry,
+    ConfigScope,
+    ConfigStore,
+)
 
 logger = logging.getLogger(__name__)
 

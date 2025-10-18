@@ -5,12 +5,12 @@ Provides exact-format spans matching the old instrumentation system
 with multi-tenant capability.
 """
 
-import logging
 import json
+import logging
 import time
 from contextlib import contextmanager
-from typing import Optional, Dict, Any
 from functools import wraps
+from typing import Dict, Optional
 
 from opentelemetry.trace import Status, StatusCode
 

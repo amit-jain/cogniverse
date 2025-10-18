@@ -14,10 +14,10 @@ For Ollama models, use "openai/<model_name>" with api_base set to Ollama endpoin
 import logging
 from typing import Any, Dict, List, Optional
 
+from cogniverse_core.config.utils import get_config_value
 from litellm import arerank, rerank
 
 from cogniverse_agents.search.multi_modal_reranker import SearchResult
-from cogniverse_core.config.utils import get_config_value
 
 logger = logging.getLogger(__name__)
 

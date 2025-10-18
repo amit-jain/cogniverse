@@ -12,14 +12,15 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
-from datetime import datetime, timedelta
+
 import pandas as pd
 
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.evaluation.span_evaluator import SpanEvaluator
 from src.evaluation.evaluators.golden_dataset import create_low_scoring_golden_dataset
+from src.evaluation.span_evaluator import SpanEvaluator
+
 from tests.comprehensive_video_query_test_v2 import VISUAL_TEST_QUERIES
 
 # Configure logging

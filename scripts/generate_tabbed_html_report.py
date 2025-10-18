@@ -3,11 +3,12 @@
 Generate HTML report with the EXACT original tabbed format
 """
 
-import json
-from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Any
 import argparse
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import List
+
 
 def format_video_tag(video_id: str, expected_videos: List[str], position: int = 0) -> str:
     """Format a video tag with appropriate styling"""

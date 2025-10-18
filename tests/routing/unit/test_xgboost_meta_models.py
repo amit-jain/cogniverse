@@ -7,7 +7,6 @@ import tempfile
 from pathlib import Path
 
 import pytest
-
 from cogniverse_agents.routing.xgboost_meta_models import (
     FusionBenefitModel,
     ModelingContext,

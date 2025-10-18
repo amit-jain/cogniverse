@@ -72,7 +72,9 @@ class DiversityRerankingStrategy(RerankingStrategy):
             analyzer = get_schema_analyzer(schema_name, schema_fields)
         except Exception as e:
             logger.warning(f"Using default analyzer: {e}")
-            from cogniverse_dashboard.evaluation.core.schema_analyzer import DefaultSchemaAnalyzer
+            from cogniverse_dashboard.evaluation.core.schema_analyzer import (
+                DefaultSchemaAnalyzer,
+            )
 
             analyzer = DefaultSchemaAnalyzer()
 

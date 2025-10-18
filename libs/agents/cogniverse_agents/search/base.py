@@ -1,7 +1,8 @@
 """Base search interface for different backends."""
 
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+
 import numpy as np
 from cogniverse_core.common.document import Document
 

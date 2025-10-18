@@ -1,12 +1,12 @@
 """Search endpoints - unified interface for search operations."""
 
 import logging
-from typing import Dict, Any, List, Optional
-
-from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from typing import Any, Dict, Optional
 
 from cogniverse_core.config.manager import ConfigManager
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
 from cogniverse_runtime.search.service import SearchService
 
 logger = logging.getLogger(__name__)
@@ -85,7 +85,8 @@ async def list_profiles() -> Dict[str, Any]:
     config_manager = ConfigManager.get_instance()
     config = config_manager.get_config()
 
-    profiles = config.get("video_processing_profiles", {})
+    backend_config = config.get("backend", {})
+    profiles = backend_config.get("profiles", {})
 
     return {
         "count": len(profiles),

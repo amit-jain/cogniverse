@@ -10,16 +10,16 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
+from cogniverse_core.config.utils import get_config
+from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_core.registries.backend_registry import BackendRegistry
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from cogniverse_core.config.utils import get_config
-from cogniverse_core.registries.backend_registry import BackendRegistry
-from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_runtime.config_loader import get_config_loader
 
 # Import routers
-from cogniverse_runtime.routers import health, agents, search, ingestion, admin
-from cogniverse_runtime.config_loader import get_config_loader
+from cogniverse_runtime.routers import admin, agents, health, ingestion, search
 
 logger = logging.getLogger(__name__)
 

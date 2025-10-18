@@ -9,10 +9,6 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 import httpx
-
-from cogniverse_agents.routing_agent import RoutingAgent
-from cogniverse_core.common.agent_models import AgentEndpoint
-from cogniverse_core.config.utils import get_config
 from cogniverse_core.common.a2a_utils import (
     DataPart,
     Task,
@@ -20,6 +16,10 @@ from cogniverse_core.common.a2a_utils import (
     create_data_message,
     create_task,
 )
+from cogniverse_core.common.agent_models import AgentEndpoint
+from cogniverse_core.config.utils import get_config
+
+from cogniverse_agents.routing_agent import RoutingAgent
 
 logger = logging.getLogger(__name__)
 

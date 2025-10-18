@@ -6,10 +6,9 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from cogniverse_core.config.utils import get_config
 from inspect_ai import Task, task
 from inspect_ai.dataset import Dataset, Sample
-
-from cogniverse_core.config.utils import get_config
 
 from .scorers import VideoRetrievalScorer
 from .solvers import (

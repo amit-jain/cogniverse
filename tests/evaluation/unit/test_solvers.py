@@ -5,7 +5,6 @@ Unit tests for evaluation solvers.
 from unittest.mock import Mock, patch
 
 import pytest
-
 from cogniverse_core.evaluation.core.solvers import (
     create_batch_solver,
     create_live_solver,

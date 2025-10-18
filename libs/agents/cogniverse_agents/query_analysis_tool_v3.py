@@ -10,9 +10,10 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
+from cogniverse_core.config.utils import get_config
+
 from cogniverse_agents.dspy_integration_mixin import DSPyQueryAnalysisMixin
 from cogniverse_agents.routing_agent import RoutingAgent
-from cogniverse_core.config.utils import get_config
 
 logger = logging.getLogger(__name__)
 

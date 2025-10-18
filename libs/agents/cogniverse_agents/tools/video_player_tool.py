@@ -10,10 +10,9 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from cogniverse_core.config.utils import get_config
 from google.adk.tools import BaseTool
 from google.genai.types import Part
-
-from cogniverse_core.config.utils import get_config
 
 
 class VideoPlayerTool(BaseTool):

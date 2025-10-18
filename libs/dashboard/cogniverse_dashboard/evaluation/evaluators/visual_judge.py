@@ -11,14 +11,13 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from phoenix.experiments.evaluators.base import Evaluator
-from phoenix.experiments.types import EvaluationResult
-from PIL import Image
-
 from cogniverse_agents.query_encoders import ColPaliQueryEncoder
 
 # Use existing model infrastructure
 from cogniverse_core.common.models import get_or_load_model
+from phoenix.experiments.evaluators.base import Evaluator
+from phoenix.experiments.types import EvaluationResult
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 

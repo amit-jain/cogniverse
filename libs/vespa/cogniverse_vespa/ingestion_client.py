@@ -14,15 +14,15 @@ The client uses VespaEmbeddingProcessor internally to handle format
 conversions, keeping the backend-specific logic encapsulated.
 """
 
-import torch
-import numpy as np
-import time
-from typing import Dict, List, Any, Optional, Tuple
 import logging
-from .embedding_processor import VespaEmbeddingProcessor
+import time
+from typing import Any, Dict, List, Optional, Tuple
+
 from cogniverse_core.common.document import Document
+from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
+
+from .embedding_processor import VespaEmbeddingProcessor
 from .strategy_aware_processor import StrategyAwareProcessor
-from cogniverse_core.common.utils.retry import retry_with_backoff, RetryConfig
 
 
 class VespaPyClient:
@@ -72,7 +72,7 @@ class VespaPyClient:
         self.logger = logger or logging.getLogger(self.__class__.__name__)
 
         # CRITICAL: Log backend initialization to track schema assignment
-        self.logger.warning(f"🚀 VESPA CLIENT INITIALIZED:")
+        self.logger.warning("🚀 VESPA CLIENT INITIALIZED:")
         self.logger.warning(f"   Schema name: {self.schema_name}")
         self.logger.warning(f"   Base schema name: {self.base_schema_name}")
         self.logger.warning(f"   Instance ID: {id(self)}")
@@ -269,7 +269,7 @@ class VespaPyClient:
         
         # CRITICAL: Log schema being used for each document (first doc only to avoid spam)
         if doc.id.endswith("_0_0") or doc.id.endswith("_0"):  # Log first doc of each video
-            self.logger.info(f"📝 FEEDING DOCUMENT TO SCHEMA:")
+            self.logger.info("📝 FEEDING DOCUMENT TO SCHEMA:")
             self.logger.info(f"   Doc ID: {doc_id_string}")
             self.logger.info(f"   Schema: {self.schema_name}")
             # Log embedding field type to verify dimensions

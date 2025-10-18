@@ -16,14 +16,21 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from cogniverse_agents.routing.base import GenerationType, RoutingDecision, SearchModality
+from cogniverse_agents.routing.base import (
+    GenerationType,
+    RoutingDecision,
+    SearchModality,
+)
 from cogniverse_agents.routing.optimizer import (
     AutoTuningOptimizer,
     OptimizationConfig,
     OptimizationMetrics,
     RoutingOptimizer,
 )
-from cogniverse_agents.routing.strategies import GLiNERRoutingStrategy, LLMRoutingStrategy
+from cogniverse_agents.routing.strategies import (
+    GLiNERRoutingStrategy,
+    LLMRoutingStrategy,
+)
 
 
 class TestOptimizationMetrics:

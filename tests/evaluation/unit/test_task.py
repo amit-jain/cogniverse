@@ -5,7 +5,6 @@ Unit tests for evaluation task orchestrator.
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
-
 from cogniverse_core.evaluation.core.task import evaluation_task
 
 

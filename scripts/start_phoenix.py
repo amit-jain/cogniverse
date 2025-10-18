@@ -7,17 +7,16 @@ for the Cogniverse evaluation framework. Uses Docker as the primary method for
 running Phoenix as a standalone service.
 """
 
-import os
-import sys
-import time
 import argparse
-import subprocess
-import logging
-from pathlib import Path
-import signal
 import atexit
 import json
-import platform
+import logging
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
 
 # Configure logging
 logging.basicConfig(
@@ -96,7 +95,7 @@ class PhoenixServer:
             "--name", self.container_name,
             "-p", f"{self.port}:6006",
             "-v", f"{self.data_dir}:/data",
-            "-e", f"PHOENIX_WORKING_DIR=/data",
+            "-e", "PHOENIX_WORKING_DIR=/data",
             "-e", "PHOENIX_ENABLE_PROMETHEUS=true",
             "-e", "PHOENIX_ENABLE_CORS=true",
             "-e", "PHOENIX_MAX_TRACES=100000",

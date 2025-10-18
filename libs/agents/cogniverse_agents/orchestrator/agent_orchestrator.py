@@ -5,6 +5,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from cogniverse_core.config.utils import get_config
+from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
 from fastapi import FastAPI, HTTPException
 
 from cogniverse_agents.result_aggregator import (
@@ -13,8 +15,6 @@ from cogniverse_agents.result_aggregator import (
     ResultAggregator,
 )
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDecision
-from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
-from cogniverse_core.config.utils import get_config
 
 logger = logging.getLogger(__name__)
 

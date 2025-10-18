@@ -6,9 +6,8 @@ from unittest.mock import patch
 
 import dspy
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-
+from cogniverse_core.common.config_api_mixin import ConfigAPIMixin
+from cogniverse_core.common.dynamic_dspy_mixin import DynamicDSPyMixin
 from cogniverse_core.config.agent_config import (
     AgentConfig,
     DSPyModuleType,
@@ -16,8 +15,8 @@ from cogniverse_core.config.agent_config import (
     OptimizerConfig,
     OptimizerType,
 )
-from cogniverse_core.common.config_api_mixin import ConfigAPIMixin
-from cogniverse_core.common.dynamic_dspy_mixin import DynamicDSPyMixin
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 
 class TestSignature(dspy.Signature):

@@ -9,7 +9,6 @@ Unit tests for LiteLLM-based learned reranker:
 from unittest.mock import Mock, patch
 
 import pytest
-
 from cogniverse_agents.search.learned_reranker import LearnedReranker
 from cogniverse_agents.search.multi_modal_reranker import SearchResult
 

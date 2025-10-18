@@ -293,7 +293,9 @@ class ConfigAPIMixin:
         @app.get("/config/optimizers/available")
         async def list_available_optimizers():
             """List all available DSPy optimizer types"""
-            from cogniverse_core.common.dspy_module_registry import DSPyOptimizerRegistry
+            from cogniverse_core.common.dspy_module_registry import (
+                DSPyOptimizerRegistry,
+            )
 
             return {
                 "status": "success",

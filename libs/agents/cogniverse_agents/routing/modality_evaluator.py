@@ -364,7 +364,9 @@ class ModalityEvaluator:
         Returns:
             Augmented training examples
         """
-        from cogniverse_agents.routing.synthetic_data_generator import SyntheticDataGenerator
+        from cogniverse_agents.routing.synthetic_data_generator import (
+            SyntheticDataGenerator,
+        )
 
         generator = SyntheticDataGenerator(vespa_client=None)
 

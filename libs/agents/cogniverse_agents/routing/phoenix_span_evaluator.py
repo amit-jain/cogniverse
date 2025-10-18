@@ -11,14 +11,13 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import phoenix as px
-from opentelemetry.trace import Span as ReadableSpan
-
 from cogniverse_core.telemetry.config import (
     SERVICE_NAME_ORCHESTRATION,
     SPAN_NAME_ROUTING,
     TelemetryConfig,
 )
 from cogniverse_dashboard.evaluation.span_evaluator import SpanEvaluator
+from opentelemetry.trace import Span as ReadableSpan
 
 from .advanced_optimizer import AdvancedRoutingOptimizer, RoutingExperience
 

@@ -63,7 +63,9 @@ def mock_phoenix_client():
 @pytest.fixture
 def mock_routing_evaluator():
     """Mock RoutingEvaluator for testing"""
-    from cogniverse_dashboard.evaluation.evaluators.routing_evaluator import RoutingOutcome
+    from cogniverse_dashboard.evaluation.evaluators.routing_evaluator import (
+        RoutingOutcome,
+    )
 
     evaluator = Mock()
     evaluator._classify_routing_outcome = Mock(

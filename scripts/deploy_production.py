@@ -6,12 +6,13 @@ Deploys just the production API to Modal.
 Use this after optimization is complete.
 """
 
-import os
-import sys
 import subprocess
-import requests
+import sys
 import time
 from pathlib import Path
+
+import requests
+
 
 def deploy_production_api() -> str:
     """
@@ -40,11 +41,11 @@ def deploy_production_api() -> str:
             timeout=600  # 10 minute timeout
         )
         
-        print(f"📤 Deployment output:")
+        print("📤 Deployment output:")
         print(result.stdout)
         
         if result.returncode != 0:
-            print(f"❌ Deployment failed:")
+            print("❌ Deployment failed:")
             print(f"STDERR: {result.stderr}")
             raise Exception("Production API deployment failed")
         
@@ -128,7 +129,7 @@ def test_api(api_url: str):
             
             # Check response format
             if "search_modality" not in result or "generation_type" not in result:
-                print(f"    ❌ Invalid response format")
+                print("    ❌ Invalid response format")
                 continue
                 
             modality = result["search_modality"]
@@ -149,7 +150,7 @@ def test_api(api_url: str):
         except Exception as e:
             print(f"    ❌ Test failed: {e}")
     
-    print(f"\n✅ API testing complete")
+    print("\n✅ API testing complete")
 
 def main():
     """Main deployment function."""

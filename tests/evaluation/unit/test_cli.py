@@ -11,7 +11,13 @@ from click.testing import CliRunner
 
 # Import CLI functions directly to avoid import issues
 try:
-    from cogniverse_core.evaluation.cli import cli, create_dataset, evaluate, list_traces, test
+    from cogniverse_core.evaluation.cli import (
+        cli,
+        create_dataset,
+        evaluate,
+        list_traces,
+        test,
+    )
 except ImportError:
     # Mock imports if they fail
     cli = None

@@ -3,17 +3,18 @@
 Simple working embedding atlas visualization
 """
 
-import streamlit as st
-import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
-from pathlib import Path
 import os
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
 
 # Import dimension reduction tools if available
 try:
-    from umap import UMAP
     from sklearn.cluster import KMeans
+    from umap import UMAP
     UMAP_AVAILABLE = True
 except ImportError:
     UMAP_AVAILABLE = False
@@ -78,8 +79,8 @@ def load_data(path):
             
             try:
                 import numpy as np
-                from umap import UMAP
                 from sklearn.cluster import KMeans
+                from umap import UMAP
                 
                 # Extract embeddings
                 embeddings = np.vstack(df['embedding'].values)

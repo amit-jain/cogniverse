@@ -1,12 +1,11 @@
 """Health check endpoints for runtime monitoring."""
 
 import logging
-from typing import Dict, Any
+from typing import Any, Dict
 
-from fastapi import APIRouter
-
-from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_core.registries.backend_registry import BackendRegistry
+from fastapi import APIRouter
 
 logger = logging.getLogger(__name__)
 

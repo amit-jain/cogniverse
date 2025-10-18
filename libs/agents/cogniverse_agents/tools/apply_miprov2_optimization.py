@@ -8,7 +8,8 @@ in the actual query analyzer.
 
 import json
 import os
-from typing import Dict, Any
+from typing import Any, Dict
+
 
 def load_miprov2_results(results_file: str = "dspy_miprov2_optimization_results.json") -> Dict[str, Any]:
     """Load MIPROv2 optimization results."""

@@ -8,27 +8,22 @@ This script reads the configuration and:
 3. Handles all model providers (modal, local, anthropic, openai) through abstractions
 """
 
+import json
 import os
 import sys
-import json
 import time
-from typing import Dict, Any, Optional, List
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List
 
 from dotenv import load_dotenv
 
-# Import from the new structure
-from .schemas import RoutingDecision, AgenticRouter
-from .router_optimizer import (
-    RouterModule, 
-    OptimizedRouter,
-    evaluate_routing_accuracy
-)
-from .providers.base_provider import ProviderFactory, DSPyLMProvider
-
 # Import all providers to register them
-from .providers import modal_provider, local_provider
+from .providers.base_provider import DSPyLMProvider, ProviderFactory
+from .router_optimizer import RouterModule, evaluate_routing_accuracy
+
+# Import from the new structure
+from .schemas import RoutingDecision
 
 # Load environment variables
 load_dotenv()
@@ -239,7 +234,6 @@ class OptimizationOrchestrator:
     """Main orchestrator for the optimization process."""
     
     def __init__(self, config_path: str = "config.json"):
-        from cogniverse_core.config.manager import ConfigManager
         
         self.config_instance = get_config()
         self.config = self._load_config()
@@ -347,7 +341,7 @@ class OptimizationOrchestrator:
             api_key = os.getenv(self.client.config["providers"]["anthropic"]["api_key_env"])
             # Use LiteLLM format for Anthropic
             teacher_lm = dspy.LM(
-                model=f"claude-3-5-sonnet-20241022",  # LiteLLM handles this
+                model="claude-3-5-sonnet-20241022",  # LiteLLM handles this
                 api_key=api_key,
                 temperature=0.7
             )
@@ -525,7 +519,6 @@ class OptimizationOrchestrator:
         if student_provider == "modal":
             # For Modal, we need to use the deployed endpoint
             # Use Config class to get configuration
-            from cogniverse_core.config.manager import ConfigManager
             config = get_config()
             modal_endpoint = config.get("inference.modal_endpoint")
             
@@ -682,7 +675,7 @@ class OptimizationOrchestrator:
         
         print(f"💾 Results saved to: {output_file}")
         print(f"💾 Integration artifact: {integration_file}")
-        print(f"☁️ Artifacts uploaded via provider")
+        print("☁️ Artifacts uploaded via provider")
         
         return artifacts
 

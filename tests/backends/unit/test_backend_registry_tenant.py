@@ -4,14 +4,12 @@ Unit tests for tenant-aware BackendRegistry.
 Tests that backend instances are properly isolated per tenant.
 """
 
-import pytest
-from unittest.mock import Mock, MagicMock, patch
 
+import pytest
+from cogniverse_core.interfaces.backend import IngestionBackend, SearchBackend
 from cogniverse_core.registries.backend_registry import (
-    BackendRegistry,
     get_backend_registry,
 )
-from cogniverse_core.interfaces.backend import SearchBackend, IngestionBackend
 
 
 class MockSearchBackend(SearchBackend):

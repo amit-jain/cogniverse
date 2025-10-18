@@ -1,15 +1,14 @@
 """Unified search service that coordinates query encoding and backend search."""
 
 import logging
-from typing import List, Dict, Any, Optional, Tuple
-import numpy as np
-import os
+from typing import Any, Dict, List, Optional
 
-from cogniverse_core.common.models import get_or_load_model
-from cogniverse_agents.query_encoders import QueryEncoderFactory
-from cogniverse_core.registries.registry import get_registry
 from cogniverse_core.registries.backend_registry import get_backend_registry
-from .base import SearchBackend, SearchResult
+from cogniverse_core.registries.registry import get_registry
+
+from cogniverse_agents.query_encoders import QueryEncoderFactory
+
+from .base import SearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -100,8 +99,11 @@ class SearchService:
         """
         # Use new multi-tenant telemetry system
         from cogniverse_core.telemetry.context import (
-            search_span, encode_span, backend_search_span, 
-            add_search_results_to_span, add_embedding_details_to_span
+            add_embedding_details_to_span,
+            add_search_results_to_span,
+            backend_search_span,
+            encode_span,
+            search_span,
         )
         
         # Default tenant if not provided (for backwards compatibility)

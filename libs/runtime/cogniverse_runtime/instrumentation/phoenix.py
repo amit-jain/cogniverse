@@ -2,16 +2,15 @@
 OpenTelemetry instrumentation for Cogniverse components
 """
 
+import json
 import logging
 import time
-import json
-from typing import Optional, Dict, Any, Callable
 from functools import wraps
 
-from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode, SpanKind
-from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
 import phoenix as px
+from opentelemetry import trace
+from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
+from opentelemetry.trace import SpanKind, Status, StatusCode
 
 logger = logging.getLogger(__name__)
 
@@ -195,9 +194,9 @@ class CogniverseInstrumentor(BaseInstrumentor):
         """Add tracing to query encoding operations"""
         try:
             from cogniverse_agents.query.encoders import (
-                ColPaliQueryEncoder, 
+                ColPaliQueryEncoder,
                 ColQwenQueryEncoder,
-                VideoPrismQueryEncoder
+                VideoPrismQueryEncoder,
             )
             
             encoder_classes = [

@@ -49,6 +49,7 @@ def create_retrieval_solver(
 
         # Import here to avoid circular dependencies
         from cogniverse_runtime.search.service import SearchService
+
         from cogniverse_core.config.utils import get_config
 
         main_config = get_config()
@@ -196,6 +197,7 @@ def create_batch_solver(
         if config.get("use_backend_for_ground_truth", False):
             try:
                 from cogniverse_runtime.search.service import SearchService
+
                 from cogniverse_core.config.utils import get_config
 
                 main_config = get_config()

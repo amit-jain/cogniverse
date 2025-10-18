@@ -5,7 +5,6 @@ Unit tests for ModalityEvaluator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from cogniverse_agents.routing.modality_evaluator import ModalityEvaluator
 from cogniverse_agents.routing.synthetic_data_generator import ModalityExample
 from cogniverse_agents.search.multi_modal_reranker import QueryModality

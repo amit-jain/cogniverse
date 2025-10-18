@@ -5,15 +5,13 @@ Implements the provider interfaces for Modal infrastructure.
 This contains all the existing Modal-specific logic.
 """
 
-import os
 import subprocess
-import requests
-import json
-from typing import Dict, Any, List, Optional
 from pathlib import Path
+from typing import Any, Dict, List
 
-from .base_provider import ModelProvider, ArtifactProvider, ProviderFactory
-from cogniverse_core.config.manager import ConfigManager
+import requests
+
+from .base_provider import ArtifactProvider, ModelProvider, ProviderFactory
 
 
 class ModalModelProvider(ModelProvider):
@@ -145,7 +143,7 @@ class ModalModelProvider(ModelProvider):
                 print(result.stdout)
                 raise Exception("Failed to extract Modal inference endpoint")
             
-            print(f"📍 Deployed endpoints:")
+            print("📍 Deployed endpoints:")
             for name, url in service_urls.items():
                 print(f"   {name}: {url}")
             

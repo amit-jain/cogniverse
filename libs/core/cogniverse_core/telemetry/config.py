@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Optional
 
-
 # Span name constants
 SPAN_NAME_REQUEST = "cogniverse.request"
 SPAN_NAME_ROUTING = "cogniverse.routing"

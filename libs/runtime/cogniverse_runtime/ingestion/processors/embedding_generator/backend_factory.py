@@ -6,8 +6,8 @@ Backend Factory - Creates backend clients
 import logging
 from typing import Any
 
-from cogniverse_core.registries.backend_registry import get_backend_registry
 from cogniverse_core.interfaces.backend import IngestionBackend
+from cogniverse_core.registries.backend_registry import get_backend_registry
 
 
 class BackendFactory:

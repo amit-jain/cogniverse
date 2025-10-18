@@ -4,11 +4,10 @@ Note: Tenant management is available through the standalone tenant_manager app.
 """
 
 import logging
-from typing import Dict, Any
-
-from fastapi import APIRouter, HTTPException
+from typing import Any, Dict
 
 from cogniverse_core.registries.backend_registry import BackendRegistry
+from fastapi import APIRouter, HTTPException
 
 logger = logging.getLogger(__name__)
 

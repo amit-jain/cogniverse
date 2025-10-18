@@ -3,8 +3,10 @@ Test that evaluation works with any schema type.
 """
 
 import pytest
-
-from cogniverse_core.evaluation.core.schema_analyzer import get_schema_analyzer, register_analyzer
+from cogniverse_core.evaluation.core.schema_analyzer import (
+    get_schema_analyzer,
+    register_analyzer,
+)
 from cogniverse_core.evaluation.plugins.document_analyzer import (
     DocumentSchemaAnalyzer,
     ImageSchemaAnalyzer,
@@ -99,7 +101,9 @@ class TestSchemaAgnosticEvaluation:
         }
 
         # Get analyzer - should be DefaultSchemaAnalyzer
-        from cogniverse_core.evaluation.core.schema_analyzer import DefaultSchemaAnalyzer
+        from cogniverse_core.evaluation.core.schema_analyzer import (
+            DefaultSchemaAnalyzer,
+        )
 
         analyzer = get_schema_analyzer(schema_name, schema_fields)
         assert isinstance(analyzer, DefaultSchemaAnalyzer)
@@ -117,7 +121,9 @@ class TestSchemaAgnosticEvaluation:
 
     def test_id_extraction_flexibility(self):
         """Test ID extraction works across different document types."""
-        from cogniverse_core.evaluation.core.schema_analyzer import DefaultSchemaAnalyzer
+        from cogniverse_core.evaluation.core.schema_analyzer import (
+            DefaultSchemaAnalyzer,
+        )
 
         # Create mock documents
         class MockDocument:
@@ -143,7 +149,9 @@ class TestSchemaAgnosticEvaluation:
     @pytest.mark.asyncio
     async def test_ground_truth_with_different_schemas(self):
         """Test ground truth extraction works with any schema."""
-        from cogniverse_core.evaluation.core.ground_truth import SchemaAwareGroundTruthStrategy
+        from cogniverse_core.evaluation.core.ground_truth import (
+            SchemaAwareGroundTruthStrategy,
+        )
 
         strategy = SchemaAwareGroundTruthStrategy()
 

@@ -74,7 +74,9 @@ class OptimizerCoordinator:
     def _get_routing_optimizer(self):
         """Lazy-load AdvancedRoutingOptimizer"""
         if self._routing_optimizer is None:
-            from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
+            from cogniverse_agents.routing.advanced_optimizer import (
+                AdvancedRoutingOptimizer,
+            )
 
             self._routing_optimizer = AdvancedRoutingOptimizer(
                 optimization_dir=self.optimization_dir, tenant_id=self.tenant_id
@@ -95,7 +97,9 @@ class OptimizerCoordinator:
     def _get_cross_modal_optimizer(self):
         """Lazy-load CrossModalOptimizer"""
         if self._cross_modal_optimizer is None:
-            from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
+            from cogniverse_agents.routing.cross_modal_optimizer import (
+                CrossModalOptimizer,
+            )
 
             self._cross_modal_optimizer = CrossModalOptimizer(
                 optimization_dir=self.optimization_dir

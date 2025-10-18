@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pandas as pd
 import pytest
-
 from cogniverse_agents.routing.phoenix_span_evaluator import PhoenixSpanEvaluator
 
 

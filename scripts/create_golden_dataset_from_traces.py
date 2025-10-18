@@ -7,15 +7,16 @@ receive low evaluation scores, making them good candidates for a challenging
 golden dataset.
 """
 
-import sys
-from pathlib import Path
-import logging
-from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional, Tuple
-import json
-import pandas as pd
-from collections import defaultdict
 import argparse
+import json
+import logging
+import sys
+from collections import defaultdict
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+import pandas as pd
 
 sys.path.append(str(Path(__file__).parent.parent))
 
@@ -350,7 +351,7 @@ class GoldenDatasetGenerator:
         report.append(f"Analysis Period: Last {self.hours_back} hours")
         report.append(f"Score Threshold: ≤ {self.score_threshold}")
         report.append(f"Min Occurrences: {self.min_occurrences}")
-        report.append(f"\nDataset Statistics:")
+        report.append("\nDataset Statistics:")
         report.append(f"  Total Queries: {len(dataset)}")
         
         if dataset:
@@ -361,7 +362,7 @@ class GoldenDatasetGenerator:
             total_videos = sum(len(d["expected_videos"]) for d in dataset.values())
             report.append(f"  Total Expected Videos: {total_videos}")
             
-            report.append(f"\nTop 5 Most Challenging Queries:")
+            report.append("\nTop 5 Most Challenging Queries:")
             sorted_queries = sorted(dataset.items(), key=lambda x: x[1]["avg_score"])
             for i, (query, data) in enumerate(sorted_queries[:5], 1):
                 report.append(f"  {i}. \"{query}\" (score: {data['avg_score']:.3f}, seen: {data['occurrences']}x)")
@@ -482,7 +483,7 @@ def main():
         
         # Update golden dataset in code if desired
         print("\n📝 To use this dataset in experiments:")
-        print(f"  1. Copy the dataset to src/evaluation/evaluators/golden_dataset.py")
+        print("  1. Copy the dataset to src/evaluation/evaluators/golden_dataset.py")
         print(f"  2. Or load from file: pd.read_json('{json_path}')")
     elif not dataset:
         print("\n⚠️  No challenging queries found. Try:")

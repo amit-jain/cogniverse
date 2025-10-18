@@ -13,8 +13,16 @@ import pytest
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from cogniverse_agents.routing.base import GenerationType, RoutingDecision, SearchModality
-from cogniverse_agents.routing.router import ComprehensiveRouter, RoutingTier, TieredRouter
+from cogniverse_agents.routing.base import (
+    GenerationType,
+    RoutingDecision,
+    SearchModality,
+)
+from cogniverse_agents.routing.router import (
+    ComprehensiveRouter,
+    RoutingTier,
+    TieredRouter,
+)
 
 
 class TestTieredRouterInitialization:

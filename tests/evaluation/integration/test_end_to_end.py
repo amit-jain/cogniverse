@@ -8,10 +8,9 @@ import tempfile
 from unittest.mock import patch
 
 import pytest
-from inspect_ai import eval as inspect_eval
-
 from cogniverse_core.evaluation.cli import cli
 from cogniverse_core.evaluation.core.task import evaluation_task
+from inspect_ai import eval as inspect_eval
 
 
 @pytest.mark.integration

@@ -3,11 +3,12 @@
 Run Phoenix experiments with visualization similar to comprehensive tests
 """
 
-import sys
-from pathlib import Path
 import logging
+import sys
 from datetime import datetime
-from typing import List, Dict
+from pathlib import Path
+from typing import Dict, List
+
 import pandas as pd
 from tabulate import tabulate
 
@@ -194,25 +195,25 @@ def main(args=None):
     print("PHOENIX EXPERIMENTS WITH VISUALIZATION")
     print("=" * 80)
     print(f"\nTimestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Experiment Project: experiments (separate from default traces)")
+    print("Experiment Project: experiments (separate from default traces)")
     
     # Show evaluator status
     quality_enabled = args.quality_evaluators if args else True
     llm_enabled = args.llm_evaluators if args else False
     
     if quality_enabled:
-        print(f"Quality Evaluators: ✅ ENABLED (relevance, diversity, distribution, temporal coverage)")
+        print("Quality Evaluators: ✅ ENABLED (relevance, diversity, distribution, temporal coverage)")
     else:
-        print(f"Quality Evaluators: ❌ DISABLED (using basic evaluators only)")
+        print("Quality Evaluators: ❌ DISABLED (using basic evaluators only)")
     
     if llm_enabled:
         llm_model = args.llm_model if args else "deepseek-r1:7b"
         print(f"LLM Evaluators: ✅ ENABLED (model: {llm_model})")
-        print(f"  - Reference-free: Query-result relevance judged by LLM")
-        print(f"  - Reference-based: Comparison with ground truth")
-        print(f"  - Hybrid: Combined evaluation approach")
+        print("  - Reference-free: Query-result relevance judged by LLM")
+        print("  - Reference-based: Comparison with ground truth")
+        print("  - Hybrid: Combined evaluation approach")
     else:
-        print(f"LLM Evaluators: ❌ DISABLED")
+        print("LLM Evaluators: ❌ DISABLED")
     print()
     
     # Use context manager to ensure project is restored after experiments
@@ -281,11 +282,11 @@ def main(args=None):
                 all_experiments.append(result)
                 
                 if result["status"] == "success":
-                    print(f"  ✅ Success")
+                    print("  ✅ Success")
                 else:
                     error = result.get("error", "Unknown error")
                     if "Text encoder not available" in error:
-                        print(f"  ⚠️  Skipped: Encoder not available")
+                        print("  ⚠️  Skipped: Encoder not available")
                     else:
                         print(f"  ❌ Failed: {error[:50]}...")
     
@@ -338,8 +339,8 @@ def main(args=None):
     print("VIEW IN PHOENIX UI")
     print("="*80)
     print(f"\n🔗 Dataset: {dataset_url}")
-    print(f"🔗 Experiments Project: http://localhost:6006/projects/experiments")
-    print(f"🔗 Default Project (spans): http://localhost:6006/projects/default")
+    print("🔗 Experiments Project: http://localhost:6006/projects/experiments")
+    print("🔗 Default Project (spans): http://localhost:6006/projects/default")
     
     print("\nℹ️  Notes:")
     print("  - Experiments are in separate 'experiments' project")
@@ -376,7 +377,9 @@ def main(args=None):
     
     # Generate integrated HTML report if quantitative results exist
     try:
-        from scripts.generate_integrated_evaluation_report import generate_integrated_report
+        from scripts.generate_integrated_evaluation_report import (
+            generate_integrated_report,
+        )
         
         print("\n📊 Generating integrated HTML report...")
         html_report = generate_integrated_report(

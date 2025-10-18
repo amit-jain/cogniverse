@@ -5,10 +5,10 @@ Run Orchestrator Script
 Simple script to run the optimization orchestrator with the new src/ structure.
 """
 
-import os
-import sys
 import subprocess
+import sys
 from pathlib import Path
+
 
 def run_orchestrator(config_path: str = "config.json", **kwargs) -> bool:
     """

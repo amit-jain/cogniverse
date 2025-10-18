@@ -11,7 +11,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
+from cogniverse_core.common.config_store import SQLiteConfigStore
+from cogniverse_core.common.config_store_interface import ConfigScope
 from cogniverse_core.config.agent_config import (
     AgentConfig,
     DSPyModuleType,
@@ -20,8 +21,6 @@ from cogniverse_core.config.agent_config import (
     OptimizerType,
 )
 from cogniverse_core.config.config_manager import ConfigManager
-from cogniverse_core.common.config_store import SQLiteConfigStore
-from cogniverse_core.common.config_store_interface import ConfigScope
 from cogniverse_core.config.unified_config import (
     RoutingConfigUnified,
     SystemConfig,

@@ -32,12 +32,16 @@ def list_plugins():
 def register_video_plugin():
     """Register video-specific evaluation components."""
     try:
-        from cogniverse_dashboard.evaluation.core.schema_analyzer import register_analyzer
+        from cogniverse_dashboard.evaluation.core.schema_analyzer import (
+            register_analyzer,
+        )
         from cogniverse_dashboard.evaluation.plugins.video_analyzer import (
             VideoSchemaAnalyzer,
             VideoTemporalAnalyzer,
         )
-        from cogniverse_dashboard.evaluation.plugins.visual_evaluator import register as register_visual
+        from cogniverse_dashboard.evaluation.plugins.visual_evaluator import (
+            register as register_visual,
+        )
 
         # Register video analyzers
         register_analyzer(VideoSchemaAnalyzer())

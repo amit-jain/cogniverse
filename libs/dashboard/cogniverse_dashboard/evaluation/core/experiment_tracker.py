@@ -82,7 +82,9 @@ class ExperimentTracker:
         if self.enable_quality_evaluators:
             # Register quality evaluator plugins
             try:
-                from cogniverse_dashboard.evaluation.plugins.video_analyzer import VideoAnalyzerPlugin
+                from cogniverse_dashboard.evaluation.plugins.video_analyzer import (
+                    VideoAnalyzerPlugin,
+                )
 
                 register_plugin("video_analyzer", VideoAnalyzerPlugin())
                 logger.info("Registered video analyzer plugin for quality metrics")

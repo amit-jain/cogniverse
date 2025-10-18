@@ -2,13 +2,12 @@
 Unit tests for ModalityCacheManager
 """
 
-import time
 
 import pytest
-from tests.utils.async_polling import wait_for_cache_expiration
-
 from cogniverse_agents.routing.modality_cache import LRUCache, ModalityCacheManager
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
+
+from tests.utils.async_polling import wait_for_cache_expiration
 
 
 class TestLRUCache:

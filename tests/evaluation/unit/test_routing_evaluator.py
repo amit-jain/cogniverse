@@ -9,7 +9,6 @@ from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from cogniverse_core.evaluation.evaluators.routing_evaluator import (
     RoutingEvaluator,
     RoutingMetrics,
