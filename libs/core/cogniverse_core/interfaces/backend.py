@@ -230,6 +230,31 @@ class SearchBackend(ABC):
         """
         pass
 
+    @abstractmethod
+    def get_embedding_requirements(self, schema_name: str) -> Dict[str, Any]:
+        """
+        Get embedding requirements for a specific schema.
+
+        This method allows the backend to specify what types of embeddings
+        it needs for ingestion, based on its internal schema configuration
+        (e.g., rank-profiles in Vespa, index config in other backends).
+
+        Args:
+            schema_name: Name of schema to get requirements for
+
+        Returns:
+            Dict containing:
+                - needs_float: bool - whether float embeddings are needed
+                - needs_binary: bool - whether binary embeddings are needed
+                - float_field: str - name of float embedding field
+                - binary_field: str - name of binary embedding field
+
+        Note:
+            This is backend-specific metadata that should NOT be exposed
+            to application code. Only used internally by ingestion pipeline.
+        """
+        pass
+
 
 class Backend(IngestionBackend, SearchBackend):
     """

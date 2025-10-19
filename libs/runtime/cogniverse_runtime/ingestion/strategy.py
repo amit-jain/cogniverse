@@ -113,20 +113,13 @@ class StrategyConfig:
             with open(ranking_strategies_path) as f:
                 self.ranking_strategies = json.load(f)
         else:
-            # Generate if missing
-            from cogniverse_vespa.ranking_strategy_extractor import (
-                extract_all_ranking_strategies,
-                save_ranking_strategies,
+            # ranking_strategies.json is required for now
+            # TODO: Eliminate this dependency - backends should provide via get_embedding_requirements()
+            raise FileNotFoundError(
+                f"ranking_strategies.json not found at {ranking_strategies_path}. "
+                f"This file is currently required. To generate it, run: "
+                f"uv run python -m cogniverse_vespa.ranking_strategy_extractor {self.config_dir / 'schemas'}"
             )
-
-            schemas_dir = self.config_dir / "schemas"
-            strategies = extract_all_ranking_strategies(schemas_dir)
-            save_ranking_strategies(strategies, ranking_strategies_path)
-            logger.info("Generated ranking strategies file")
-
-            # Now load from the saved JSON file
-            with open(ranking_strategies_path) as f:
-                self.ranking_strategies = json.load(f)
 
     def get_strategy(self, profile_name: str) -> Strategy:
         """

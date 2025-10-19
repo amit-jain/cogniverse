@@ -5,7 +5,6 @@ from typing import Any, Dict, List, Optional
 
 from cogniverse_agents.query.encoders import QueryEncoderFactory
 from cogniverse_core.registries.backend_registry import get_backend_registry
-from cogniverse_core.registries.registry import get_registry
 
 from .base import SearchResult
 
@@ -15,65 +14,84 @@ logger = logging.getLogger(__name__)
 
 class SearchService:
     """Unified search service for video retrieval."""
-    
+
     def __init__(self, config: Dict[str, Any], profile: str):
         """
         Initialize search service.
-        
+
         Args:
             config: Configuration dictionary
             profile: Video processing profile to use
         """
         self.config = config
         self.profile = profile
-        
+
         # Initialize new telemetry system
         from cogniverse_core.telemetry.manager import get_telemetry_manager
         get_telemetry_manager()  # Initialize singleton
-        
-        # Get strategy from registry
-        self.registry = get_registry()
-        self.strategy = self.registry.get_strategy(profile)
-        
+
+        # Get profile configuration from backend config
+        self.profile_config = self._get_profile_config(profile)
+
         # Initialize query encoder first
         self._init_query_encoder()
-        
-        # Initialize search backend with strategy and query encoder
+
+        # Initialize search backend with profile and query encoder
         self._init_search_backend()
-    
+
+    def _get_profile_config(self, profile: str) -> Dict[str, Any]:
+        """Get profile configuration from backend config."""
+        backend_config = self.config.get("backend", {})
+        profiles = backend_config.get("profiles", {})
+        profile_config = profiles.get(profile)
+
+        if not profile_config:
+            raise ValueError(
+                f"Profile '{profile}' not found in backend.profiles. "
+                f"Available profiles: {list(profiles.keys())}"
+            )
+
+        return profile_config
+
     def _init_query_encoder(self):
-        """Initialize query encoder based on strategy."""
-        model_name = self.strategy.model_name
+        """Initialize query encoder based on profile config."""
+        model_name = self.profile_config.get("embedding_model")
+        if not model_name:
+            raise ValueError(f"Profile '{self.profile}' missing 'embedding_model' configuration")
+
         logger.info(f"Profile {self.profile} has embedding_model: {model_name}")
-        
-        # Create query encoder using strategy information
+
+        # Create query encoder using profile information
         logger.info(f"Creating query encoder for profile: {self.profile} with model: {model_name}")
         self.query_encoder = QueryEncoderFactory.create_encoder(self.profile, model_name)
         logger.info(f"Initialized query encoder type: {type(self.query_encoder).__name__} for profile: {self.profile}")
-    
+
     def _init_search_backend(self):
-        """Initialize search backend with strategy using backend registry."""
+        """Initialize search backend using backend registry."""
         backend_type = self.config.get("search_backend", "vespa")
-        
+        schema_name = self.profile_config.get("schema_name")
+
+        if not schema_name:
+            raise ValueError(f"Profile '{self.profile}' missing 'schema_name' configuration")
+
         # Get backend from registry
         backend_registry = get_backend_registry()
-        
-        # Prepare backend configuration
+
+        # Prepare backend configuration (no strategy parameter)
         backend_config = {
-            "vespa_url": self.config["vespa_url"],  # Required
-            "vespa_port": self.config.get("vespa_port", 8080),
-            "schema_name": self.strategy.schema_name,
+            "vespa_url": self.config.get("vespa_url") or self.config.get("backend", {}).get("url", "http://localhost"),
+            "vespa_port": self.config.get("vespa_port") or self.config.get("backend", {}).get("port", 8080),
+            "schema_name": schema_name,
             "profile": self.profile,
-            "strategy": self.strategy,
             "query_encoder": self.query_encoder
         }
-        
+
         # Get backend instance from registry
         self.search_backend = backend_registry.get_search_backend(
-            backend_type, 
+            backend_type,
             backend_config
         )
-        logger.info(f"Initialized {backend_type} search backend with schema: {self.strategy.schema_name}")
+        logger.info(f"Initialized {backend_type} search backend with schema: {schema_name}")
     
     def search(
         self,
@@ -146,10 +164,11 @@ class SearchService:
                 search_span_ctx.set_attribute("has_embeddings", False)
             
             # Call backend with embeddings and telemetry
+            schema_name = self.profile_config.get("schema_name")
             with backend_search_span(
                 tenant_id=effective_tenant_id,
                 backend_type="vespa",
-                schema_name=self.strategy.schema_name,
+                schema_name=schema_name,
                 ranking_strategy=ranking_strategy or "default",
                 top_k=top_k,
                 has_embeddings=query_embeddings is not None,

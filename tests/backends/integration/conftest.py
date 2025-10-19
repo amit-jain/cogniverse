@@ -10,6 +10,7 @@ import subprocess
 import pytest
 import requests
 
+from tests.utils.async_polling import wait_for_vespa_indexing
 from tests.utils.docker_utils import cleanup_vespa_container, generate_unique_ports
 
 logger = logging.getLogger(__name__)

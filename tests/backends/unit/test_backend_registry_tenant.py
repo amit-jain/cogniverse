@@ -38,6 +38,15 @@ class MockSearchBackend(SearchBackend):
     def get_statistics(self) -> dict:
         return {}
 
+    def get_embedding_requirements(self, schema_name: str) -> dict:
+        """Mock implementation of get_embedding_requirements"""
+        return {
+            "needs_float": True,
+            "needs_binary": False,
+            "float_field": "embedding",
+            "binary_field": "embedding_binary"
+        }
+
 
 class MockIngestionBackend(IngestionBackend):
     """Mock ingestion backend for testing"""
@@ -244,6 +253,15 @@ class TestBackendRegistryTenantIsolation:
 
             def get_statistics(self) -> dict:
                 return {}
+
+            def get_embedding_requirements(self, schema_name: str) -> dict:
+                """Mock implementation of get_embedding_requirements"""
+                return {
+                    "needs_float": True,
+                    "needs_binary": False,
+                    "float_field": "embedding",
+                    "binary_field": "embedding_binary"
+                }
 
             def ingest_documents(self, documents: list):
                 pass

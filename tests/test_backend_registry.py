@@ -66,11 +66,11 @@ class MockIngestionBackend(IngestionBackend):
 
 class MockSearchBackend(SearchBackend):
     """Mock search backend for testing."""
-    
+
     def initialize(self, config: Dict[str, Any]) -> None:
         self.config = config
         self.initialized = True
-    
+
     def search(
         self,
         query_embeddings: Optional[np.ndarray],
@@ -80,7 +80,7 @@ class MockSearchBackend(SearchBackend):
         ranking_strategy: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         return [{"document_id": f"doc_{i}", "score": 1.0 - i*0.1} for i in range(min(3, top_k))]
-    
+
     def get_document(self, document_id: str) -> Optional[Document]:
         if document_id.startswith("doc_"):
             return Document(
@@ -89,15 +89,24 @@ class MockSearchBackend(SearchBackend):
                 metadata={"test": True}
             )
         return None
-    
+
     def batch_get_documents(self, document_ids: List[str]) -> List[Optional[Document]]:
         return [self.get_document(doc_id) for doc_id in document_ids]
-    
+
     def get_statistics(self) -> Dict[str, Any]:
         return {"document_count": 100, "backend": "mock_search"}
-    
+
     def health_check(self) -> bool:
         return True
+
+    def get_embedding_requirements(self, schema_name: str) -> Dict[str, Any]:
+        """Mock implementation of get_embedding_requirements"""
+        return {
+            "needs_float": True,
+            "needs_binary": False,
+            "float_field": "embedding",
+            "binary_field": "embedding_binary"
+        }
 
 
 class MockFullBackend(Backend):
@@ -169,6 +178,15 @@ class MockFullBackend(Backend):
 
     def health_check(self) -> bool:
         return True
+
+    def get_embedding_requirements(self, schema_name: str) -> Dict[str, Any]:
+        """Mock implementation of get_embedding_requirements"""
+        return {
+            "needs_float": True,
+            "needs_binary": False,
+            "float_field": "embedding",
+            "binary_field": "embedding_binary"
+        }
 
     # Phase 2 Backend interface methods
     def deploy_schema(self, schema_name: str, tenant_id: Optional[str] = None, **kwargs) -> bool:

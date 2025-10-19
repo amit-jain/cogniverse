@@ -3,15 +3,9 @@
 Document Builders - Handles creation of documents for different backends and schemas
 """
 
-import sys
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
-
-# Add project root to path
-sys.path.append(str(Path(__file__).parent.parent.parent.parent))
-from cogniverse_runtime.ingestion.strategy import StrategyConfig
 
 
 @dataclass
@@ -39,7 +33,6 @@ class DocumentBuilder:
 
     def __init__(self, schema_name: str):
         self.schema_name = schema_name
-        self.strategy_config = StrategyConfig()
         self.field_names = self._get_field_names()
 
     def build_document(

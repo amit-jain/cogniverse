@@ -318,30 +318,11 @@ class VideoIngestionPipeline:
             self.cache = None
 
     def _resolve_strategy(self):
-        """Resolve processing strategy from profile configuration"""
+        """Legacy method - strategy resolution no longer needed."""
+        # Strategy is no longer used - processing strategies come from config-based strategy set
+        # This method kept for backward compatibility but does nothing
         self.strategy = None
         self.single_vector_processor = None
-
-        if not self.schema_name:
-            self.logger.info(
-                "No schema_name provided, using default frame-based processing"
-            )
-            return
-
-        # Get strategy from profile config
-        from cogniverse_runtime.ingestion.strategy import StrategyConfig
-
-        # Use StrategyConfig to properly resolve strategy (as in old implementation)
-        if self.schema_name:
-            try:
-                strategy_config = StrategyConfig()
-                self.strategy = strategy_config.get_strategy(self.schema_name)
-                self.logger.info(f"Resolved strategy: {self.strategy}")
-            except Exception as e:
-                self.logger.error(f"Failed to resolve strategy: {e}")
-                self.strategy = None
-        else:
-            self.strategy = None
 
     def _create_strategy_set_from_config(self):
         """Create strategy set from profile configuration - CLEAN CONFIG-DRIVEN APPROACH."""

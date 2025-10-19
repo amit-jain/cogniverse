@@ -191,14 +191,11 @@ class TestSchemaValidation:
         # Deploy schema
         manager.deploy_tenant_schema("acme", "video_colpali_smol500_mv_frame")
 
-        # Validate - note: validation currently returns False since _schema_exists_in_vespa
-        # is not fully implemented. This test documents expected behavior.
-        # In production, implement actual Vespa HTTP API check.
+        # Validate - schema should exist after deployment
         result = manager.validate_tenant_schema("acme", "video_colpali_smol500_mv_frame")
 
-        # Currently returns False, but in production with proper Vespa API check, should return True
-        # TODO: Implement actual Vespa schema existence check
-        assert result is False  # Expected with current implementation
+        # Schema validation now properly checks Vespa
+        assert result is True  # Schema exists after deployment
 
 
 @pytest.mark.integration

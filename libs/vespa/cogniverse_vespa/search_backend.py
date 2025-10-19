@@ -11,6 +11,7 @@ Features:
 """
 
 import logging
+import os
 import threading
 import time
 import uuid
@@ -18,6 +19,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -25,11 +27,14 @@ from cogniverse_core.common.document import ContentType, Document, ProcessingSta
 from cogniverse_core.common.utils.output_manager import OutputManager
 from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
 from cogniverse_core.interfaces.backend import SearchBackend, SearchResult
-from cogniverse_core.registries.registry import get_registry
-from cogniverse_runtime.ingestion.strategy import Strategy
 from vespa.application import Vespa
 
 logger = logging.getLogger(__name__)
+
+# Module-level cache for ranking strategies extracted from schemas
+# This is populated once and shared across all VespaSearchBackend instances
+_RANKING_STRATEGIES_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+_CACHE_LOCK = threading.Lock()
 
 
 @dataclass
@@ -259,7 +264,6 @@ class VespaSearchBackend(SearchBackend):
         vespa_port: int = None,
         schema_name: str = None,  # DEPRECATED - schema determined at query time
         profile: str = None,  # DEPRECATED - profile determined at query time
-        strategy: Optional[Strategy] = None,
         query_encoder: Optional[Any] = None,
         enable_metrics: bool = True,
         enable_connection_pool: bool = True,
@@ -276,7 +280,6 @@ class VespaSearchBackend(SearchBackend):
             vespa_port: Vespa port (or use config)
             schema_name: DEPRECATED - schema determined at query time from search() parameter
             profile: DEPRECATED - profile determined at query time from search() parameter
-            strategy: DEPRECATED - strategies loaded dynamically per schema
             query_encoder: Optional query encoder instance
             enable_metrics: Whether to collect metrics
             enable_connection_pool: Whether to use connection pooling
@@ -298,7 +301,6 @@ class VespaSearchBackend(SearchBackend):
             # No schema-specific initialization
             self.schema_name = None  # Will be set per-query
             self.profile = None  # Will be set per-query
-            self.strategy = None  # Will be loaded per-query
             self.query_encoder = query_encoder or config.get("query_encoder")
         else:
             # Legacy initialization with individual parameters
@@ -309,12 +311,6 @@ class VespaSearchBackend(SearchBackend):
             self.query_encoder = query_encoder
             self.profiles = {}
             self.default_profiles = {}
-            # Get strategy from registry if profile provided (legacy behavior)
-            if strategy is None and profile is not None:
-                registry = get_registry()
-                self.strategy = registry.get_strategy(profile)
-            else:
-                self.strategy = strategy  # Can be None for export-only usage
         
         # Combine URL and port
         full_url = f"{self.vespa_url}:{self.vespa_port}"
@@ -344,19 +340,11 @@ class VespaSearchBackend(SearchBackend):
             self.metrics = SearchMetrics()
         else:
             self.metrics = None
-        
-        if self.strategy:
-            logger.info(
-                f"VespaSearchBackend.__init__: schema_name='{schema_name}' (stored as self.schema_name), "
-                f"pool={enable_connection_pool}, metrics={enable_metrics}, "
-                f"strategy={self.strategy.processing_type}/{self.strategy.segmentation}"
-            )
-        else:
-            logger.info(
-                f"VespaSearchBackend.__init__: schema_name='{schema_name}' (stored as self.schema_name), "
-                f"pool={enable_connection_pool}, metrics={enable_metrics}, "
-                f"strategy=None (export-only mode)"
-            )
+
+        logger.info(
+            f"VespaSearchBackend.__init__: schema_name='{schema_name}' (query-time mode), "
+            f"pool={enable_connection_pool}, metrics={enable_metrics}"
+        )
 
     def initialize(self, config: Dict[str, Any]) -> None:
         """
@@ -383,13 +371,6 @@ class VespaSearchBackend(SearchBackend):
         else:
             self.schema_name = base_schema_name
 
-        # Get strategy from registry if profile provided
-        if self.profile is not None:
-            registry = get_registry()
-            self.strategy = registry.get_strategy(self.profile)
-        else:
-            self.strategy = None
-
         # Combine URL and port
         full_url = f"{self.vespa_url}:{self.vespa_port}"
 
@@ -409,18 +390,10 @@ class VespaSearchBackend(SearchBackend):
         # Initialize metrics
         self.metrics = SearchMetrics()
 
-        if self.strategy:
-            logger.info(
-                f"VespaSearchBackend initialized for schema '{self.schema_name}' "
-                f"with pool=True, metrics=True, "
-                f"strategy={self.strategy.processing_type}/{self.strategy.segmentation}"
-            )
-        else:
-            logger.info(
-                f"VespaSearchBackend initialized for schema '{self.schema_name}' "
-                f"with pool=True, metrics=True, "
-                f"strategy=None (export-only mode)"
-            )
+        logger.info(
+            f"VespaSearchBackend initialized for schema '{self.schema_name}' "
+            f"with pool=True, metrics=True (query-time mode)"
+        )
 
     def batch_get_documents(self, document_ids: List[str]) -> List[Optional[Document]]:
         """
@@ -709,16 +682,24 @@ class VespaSearchBackend(SearchBackend):
         schema_name = tenant_manager.get_tenant_schema_name(self.tenant_id, base_schema_name)
         logger.info(f"[{correlation_id}] Applied tenant scoping: {base_schema_name} → {schema_name}")
 
-        # Load Strategy object to access ranking strategies
-        registry = get_registry()
-        strategy = registry.get_strategy(profile_name)
+        # Load ranking strategies from internal cache (not from Strategy object)
+        global _RANKING_STRATEGIES_CACHE
+        with _CACHE_LOCK:
+            if _RANKING_STRATEGIES_CACHE is None:
+                _RANKING_STRATEGIES_CACHE = self._load_ranking_strategies()
+
+        available_strategies = _RANKING_STRATEGIES_CACHE.get(base_schema_name, {})
+        if not available_strategies:
+            raise ValueError(
+                f"No ranking strategies found for schema '{base_schema_name}'. "
+                f"Available schemas: {list(_RANKING_STRATEGIES_CACHE.keys())}"
+            )
 
         # Phase 2: Strategy Resolution
         requested_strategy = query_dict.get("strategy")
 
         if requested_strategy:
             # 1. Use explicitly requested strategy
-            available_strategies = strategy.ranking_strategies
             if requested_strategy not in available_strategies:
                 raise ValueError(
                     f"Requested strategy '{requested_strategy}' not found in profile '{profile_name}'. "
@@ -728,8 +709,6 @@ class VespaSearchBackend(SearchBackend):
             logger.info(f"[{correlation_id}] Using requested strategy: {strategy_name}")
         else:
             # 2. Auto-select based on profile
-            available_strategies = strategy.ranking_strategies
-
             if len(available_strategies) == 1:
                 # Only one strategy - auto-select
                 strategy_name = list(available_strategies.keys())[0]
@@ -759,7 +738,7 @@ class VespaSearchBackend(SearchBackend):
         # Update instance state for this query
         self.schema_name = schema_name
         self.profile = profile_name
-        self.strategy = strategy
+        # No longer need strategy object - we use internal ranking strategies
 
         logger.info(
             f"[{correlation_id}] Query resolved: type={content_type}, profile={profile_name}, "
@@ -776,15 +755,8 @@ class VespaSearchBackend(SearchBackend):
                 f"limit={top_k}, profile={profile_name}, strategy={strategy_name}"
             )
 
-            # Validate and get ranking strategy config
-            if strategy_name not in strategy.ranking_strategies:
-                logger.warning(
-                    f"[{correlation_id}] Unknown ranking strategy '{strategy_name}', "
-                    f"using default: {strategy.default_ranking}"
-                )
-                strategy_name = strategy.default_ranking
-
-            rank_config = strategy.ranking_strategies[strategy_name]
+            # Get ranking strategy config from available_strategies
+            rank_config = available_strategies[strategy_name]
             
             # Check if strategy requires embeddings
             requires_embeddings = (
@@ -1241,9 +1213,156 @@ class VespaSearchBackend(SearchBackend):
         """Clean up resources"""
         if self.pool:
             self.pool.close()
-        
-        
+
+
         logger.info("VespaSearchBackend closed")
+
+    def get_embedding_requirements(self, schema_name: str) -> Dict[str, Any]:
+        """
+        Get embedding requirements for a specific schema.
+
+        This method allows the backend to specify what types of embeddings
+        it needs for ingestion, based on its internal schema configuration
+        (e.g., rank-profiles in Vespa).
+
+        Args:
+            schema_name: Name of schema to get requirements for (base name, not tenant-scoped)
+
+        Returns:
+            Dict containing:
+                - needs_float: bool - whether float embeddings are needed
+                - needs_binary: bool - whether binary embeddings are needed
+                - float_field: str - name of float embedding field
+                - binary_field: str - name of binary embedding field
+
+        Note:
+            This is backend-specific metadata that should NOT be exposed
+            to application code. Only used internally by ingestion pipeline.
+        """
+        global _RANKING_STRATEGIES_CACHE
+
+        # Load ranking strategies from schemas if not cached
+        with _CACHE_LOCK:
+            if _RANKING_STRATEGIES_CACHE is None:
+                _RANKING_STRATEGIES_CACHE = self._load_ranking_strategies()
+
+        # Get strategies for this schema
+        schema_strategies = _RANKING_STRATEGIES_CACHE.get(schema_name, {})
+
+        if not schema_strategies:
+            logger.warning(
+                f"No ranking strategies found for schema '{schema_name}'. "
+                f"Available schemas: {list(_RANKING_STRATEGIES_CACHE.keys())}"
+            )
+            # Return defaults - assume float embeddings needed
+            return {
+                "needs_float": True,
+                "needs_binary": False,
+                "float_field": "embedding",
+                "binary_field": "embedding_binary"
+            }
+
+        # Analyze what embeddings are needed across all strategies
+        needs_float = False
+        needs_binary = False
+        float_fields = set()
+        binary_fields = set()
+
+        for strategy_name, strategy_info in schema_strategies.items():
+            if strategy_info.get("needs_float_embeddings", False):
+                needs_float = True
+                field = strategy_info.get("embedding_field", "")
+                if field and "binary" not in field:
+                    float_fields.add(field)
+
+            if strategy_info.get("needs_binary_embeddings", False):
+                needs_binary = True
+                field = strategy_info.get("embedding_field", "")
+                if field and "binary" in field:
+                    binary_fields.add(field)
+
+        return {
+            "needs_float": needs_float,
+            "needs_binary": needs_binary,
+            "float_field": next(iter(float_fields), "embedding"),
+            "binary_field": next(iter(binary_fields), "embedding_binary")
+        }
+
+    def _load_ranking_strategies(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Load ranking strategies from Vespa schema files.
+
+        This is an internal method that extracts ranking profile configurations
+        from schema JSON files in the schemas directory.
+
+        Returns:
+            Dict mapping schema names to their ranking strategies (serialized to dicts)
+        """
+        from cogniverse_vespa.ranking_strategy_extractor import (
+            extract_all_ranking_strategies,
+        )
+
+        # Determine schemas directory
+        # Try COGNIVERSE_CONFIG env var first
+        config_env = os.environ.get('COGNIVERSE_CONFIG')
+        if config_env:
+            config_file = Path(config_env)
+            if config_file.exists():
+                # For test configs like tests/system/resources/configs/system_test_config.json,
+                # schemas dir is at tests/system/resources/schemas
+                # For production configs like configs/config.json,
+                # schemas dir is at configs/schemas
+                if config_file.name != "config.json":
+                    # Test config - schemas in parent.parent/schemas
+                    schemas_dir = config_file.parent.parent / "schemas"
+                else:
+                    # Production config - schemas in parent/schemas
+                    schemas_dir = config_file.parent / "schemas"
+            else:
+                logger.warning(f"COGNIVERSE_CONFIG file not found: {config_env}, using default")
+                schemas_dir = Path("configs/schemas")
+        else:
+            schemas_dir = Path("configs/schemas")
+
+        if not schemas_dir.exists():
+            logger.error(f"Schemas directory not found: {schemas_dir}")
+            return {}
+
+        logger.info(f"Loading ranking strategies from schemas directory: {schemas_dir}")
+
+        try:
+            # Extract strategies (returns Dict[str, Dict[str, RankingStrategyInfo]])
+            strategies_raw = extract_all_ranking_strategies(schemas_dir)
+
+            # Convert RankingStrategyInfo dataclasses to dicts for easier access
+            strategies = {}
+            for schema_name, schema_strategies in strategies_raw.items():
+                strategies[schema_name] = {}
+                for strategy_name, strategy_info in schema_strategies.items():
+                    # Convert dataclass to dict
+                    strategies[schema_name][strategy_name] = {
+                        "name": strategy_info.name,
+                        "strategy_type": strategy_info.strategy_type.value,
+                        "needs_float_embeddings": strategy_info.needs_float_embeddings,
+                        "needs_binary_embeddings": strategy_info.needs_binary_embeddings,
+                        "needs_text_query": strategy_info.needs_text_query,
+                        "use_nearestneighbor": strategy_info.use_nearestneighbor,
+                        "nearestneighbor_field": strategy_info.nearestneighbor_field,
+                        "nearestneighbor_tensor": strategy_info.nearestneighbor_tensor,
+                        "embedding_field": strategy_info.embedding_field,
+                        "query_tensor_name": strategy_info.query_tensor_name,
+                        "timeout": strategy_info.timeout,
+                        "description": strategy_info.description,
+                        "inputs": strategy_info.inputs,
+                        "query_tensors_needed": strategy_info.query_tensors_needed,
+                        "schema_name": strategy_info.schema_name
+                    }
+
+            logger.info(f"Loaded ranking strategies for {len(strategies)} schemas")
+            return strategies
+        except Exception as e:
+            logger.error(f"Failed to load ranking strategies: {e}")
+            return {}
 
 
 # Factory function for creating search backend
