@@ -266,6 +266,9 @@ class TenantSchemaManager:
         tenant_schema_name = self.get_tenant_schema_name(tenant_id, base_schema_name)
         new_schema = self._parse_schema_from_json(tenant_schema_json, tenant_schema_name)
 
+        # Store the JSON schema for later reconstruction (not the Schema object string representation)
+        tenant_schema_json_str = json.dumps(tenant_schema_json)
+
         # Deploy via VespaSchemaManager
         try:
             from datetime import datetime, timedelta
@@ -332,11 +335,12 @@ class TenantSchemaManager:
             logger.info(f"✅ Deployed tenant schema: {tenant_schema_name}")
 
             # Register the new schema in registry
+            # IMPORTANT: Store JSON schema, not str(schema), for reliable reconstruction
             self.schema_registry.register_schema(
                 tenant_id=tenant_id,
                 base_schema_name=base_schema_name,
                 full_schema_name=tenant_schema_name,
-                schema_definition=str(new_schema),  # Store full schema definition
+                schema_definition=tenant_schema_json_str,  # Store JSON, not str(schema)
                 config={"profile": base_schema_name},  # Store profile for reference
             )
             logger.info(f"Registered schema '{base_schema_name}' in schema registry")
@@ -519,14 +523,14 @@ class TenantSchemaManager:
         self, schema_definition: str, schema_name: str
     ) -> Schema:
         """
-        Reconstruct Schema object from stored definition string.
+        Reconstruct Schema object from stored JSON definition.
 
-        This is needed for schema registry - we store schema definitions as strings
-        in the registry, but Vespa ApplicationPackage needs Schema objects.
+        NO FALLBACKS - fails fast if schema definition is invalid.
+        This ensures problems are caught early rather than hidden.
 
         Args:
-            schema_definition: Schema definition as string (from registry)
-            schema_name: Schema name
+            schema_definition: JSON schema definition string (from registry)
+            schema_name: Expected schema name for validation
 
         Returns:
             Reconstructed Schema object
@@ -535,62 +539,28 @@ class TenantSchemaManager:
             SchemaDeploymentException: If reconstruction fails
         """
         try:
-            # The schema definition is stored as the string representation of a Schema object
-            # We need to reconstruct it by parsing the string back to JSON, then to Schema
+            # Parse JSON schema definition
+            schema_json = json.loads(schema_definition)
 
-            # For now, we'll use a simple approach: parse the string as JSON if possible,
-            # otherwise try to reconstruct from the schema structure
-            # This may need refinement based on how pyvespa serializes schemas
-
-
-            # Try to extract JSON-like structure from schema definition
-            # Schema definitions typically start with "schema <name> {"
-            # We'll attempt to reconstruct by re-parsing from template
-
-            # Extract the base schema name (without tenant suffix)
-            # E.g., "video_colpali_smol500_mv_frame_test_tenant" → "video_colpali_smol500_mv_frame"
-            parts = schema_name.rsplit("_", 2)  # Split off last 2 parts (tenant_id parts)
-            if len(parts) >= 2:
-                base_schema_candidate = "_".join(parts[:-2]) if len(parts) > 2 else parts[0]
-            else:
-                base_schema_candidate = schema_name
-
-            # Try to load from template and re-transform
-            try:
-                # Note: This is fragile - ideally we'd store tenant_id in registry
-                # For now, we'll just use the schema name as-is since it's unique
-
-                # Load base schema and re-transform
-                base_schema_json = self._load_base_schema_json(base_schema_candidate)
-                tenant_schema_json = base_schema_json.copy()
-                tenant_schema_json["name"] = schema_name
-                if "document" in tenant_schema_json:
-                    tenant_schema_json["document"]["name"] = schema_name
-
-                return self._parse_schema_from_json(tenant_schema_json, schema_name)
-
-            except Exception:
-                # Fallback: Try to parse the definition string directly
-                # This is a last resort and may not work depending on format
-                logger.warning(
-                    f"Could not reconstruct schema {schema_name} from template. "
-                    "Attempting direct reconstruction from definition."
+            # Validate schema name matches
+            if schema_json.get("name") != schema_name:
+                raise ValueError(
+                    f"Schema name mismatch: expected '{schema_name}', "
+                    f"got '{schema_json.get('name')}'"
                 )
 
-                # If the definition is JSON-like, try parsing it
-                if schema_definition.strip().startswith("{"):
-                    schema_json = json.loads(schema_definition)
-                    return self._parse_schema_from_json(schema_json, schema_name)
-                else:
-                    # Cannot reconstruct - this is a critical error
-                    raise ValueError(
-                        f"Schema definition for {schema_name} is not in a parseable format"
-                    )
+            # Parse to Schema object
+            return self._parse_schema_from_json(schema_json, schema_name)
 
+        except json.JSONDecodeError as e:
+            raise SchemaDeploymentException(
+                f"Schema definition for '{schema_name}' is not valid JSON: {e}. "
+                f"This indicates a bug in schema storage. Schema will be MISSING from deployment!"
+            ) from e
         except Exception as e:
             raise SchemaDeploymentException(
-                f"Failed to reconstruct schema {schema_name} from definition: {e}. "
-                "This schema will be missing from deployment!"
+                f"Failed to reconstruct schema '{schema_name}' from definition: {e}. "
+                f"Schema will be MISSING from deployment!"
             ) from e
 
     def _schema_exists_in_vespa(self, schema_name: str) -> bool:
