@@ -7,21 +7,13 @@ Used by integration tests to create, deploy, and manage test Vespa applications.
 
 import os
 import shutil
-import subprocess
 import tempfile
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Optional
 
 import requests
-from cogniverse_vespa.json_schema_parser import JsonSchemaParser
 
-# Import the REAL deployment classes
-from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-from vespa.package import ApplicationPackage, Validation
-
-from tests.utils.async_polling import wait_for_http_ready
-from tests.utils.docker_utils import cleanup_vespa_container
+from tests.utils.vespa_docker import VespaDockerManager
 
 
 class VespaTestManager:
@@ -52,6 +44,9 @@ class VespaTestManager:
         self.app_dir = None
         self.is_deployed = False
         self.container_name = None
+
+        # Use shared Docker manager
+        self.docker_manager = VespaDockerManager()
 
     def setup_test_environment(self) -> bool:
         """Copy configs and schemas to test directory for isolated testing"""
@@ -132,115 +127,24 @@ class VespaTestManager:
                 print("❌ No schema resources found in tests/system/resources/schemas/")
                 return False
 
-            # Only load actual schema files, not ranking_strategies.json
-            schema_files = list(self.test_schemas_resource_dir.glob("*_schema.json"))
+            print("🚀 Deploying schemas to isolated Vespa...")
 
-            if not schema_files:
-                print("❌ No schema files found in system test resources")
-                return False
+            # Use VespaDockerManager to deploy schemas from resources directory
+            container_info = {
+                "container_name": self.container_name,
+                "http_port": self.http_port,
+                "config_port": self.config_port,
+                "base_url": f"http://localhost:{self.http_port}",
+            }
 
-            print(
-                f"🚀 Deploying {len(schema_files)} base schemas + tenant-scoped variants to isolated Vespa..."
+            self.docker_manager.deploy_schemas(
+                container_info,
+                schemas_dir=self.test_schemas_resource_dir,
+                include_metadata=True
             )
-
-            # Create application package with ALL schemas from resources
-            app_package = ApplicationPackage(name="videosearch")
-            parser = JsonSchemaParser()
-
-            deployed_schemas = []
-            tenant_id = "test_tenant"  # Hardcoded for system tests
-
-            for schema_file in schema_files:
-                try:
-                    print(f"📄 Loading base schema: {schema_file.name}")
-                    base_schema = parser.load_schema_from_json_file(str(schema_file))
-                    app_package.add_schema(base_schema)
-                    deployed_schemas.append(base_schema.name)
-
-                    # Create tenant-scoped version by modifying JSON before parsing
-                    # This ensures rank profiles are included in the schema from the start
-                    tenant_schema_name = f"{base_schema.name}_{tenant_id}"
-                    print(f"📄 Creating tenant-scoped schema: {tenant_schema_name}")
-
-                    # Load JSON, modify name, then parse to preserve all rank profiles
-                    import json
-                    with open(schema_file) as f:
-                        schema_json = json.load(f)
-
-                    # Update schema and document names for tenant
-                    schema_json["name"] = tenant_schema_name
-                    schema_json["document"]["name"] = tenant_schema_name
-
-                    # Create temp file with modified JSON
-                    import tempfile
-                    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp:
-                        json.dump(schema_json, tmp)
-                        tmp_path = tmp.name
-
-                    try:
-                        # Parse the modified JSON to get tenant schema with all rank profiles
-                        tenant_schema = parser.load_schema_from_json_file(tmp_path)
-                        app_package.add_schema(tenant_schema)
-                        deployed_schemas.append(tenant_schema_name)
-                    finally:
-                        # Clean up temp file
-                        import os
-                        os.unlink(tmp_path)
-
-                except Exception as e:
-                    print(f"⚠️  Failed to load {schema_file.name}: {e}")
-
-            if not deployed_schemas:
-                print("❌ No schemas could be loaded")
-                return False
-
-            # Add metadata schemas directly to the same application package
-            print("📄 Adding metadata schemas (organization_metadata, tenant_metadata)")
-            try:
-                # Use consolidated metadata schemas module (single source of truth)
-                from cogniverse_vespa.metadata_schemas import (
-                    add_metadata_schemas_to_package,
-                )
-
-                add_metadata_schemas_to_package(app_package)
-                deployed_schemas.append("organization_metadata")
-                deployed_schemas.append("tenant_metadata")
-            except Exception as e:
-                print(f"⚠️  Failed to add metadata schemas: {e}")
-
-            # Add validation overrides (same as deploy_all_schemas.py)
-            until_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-            validation = Validation(
-                validation_id="content-cluster-removal", until=until_date
-            )
-            schema_removal_validation = Validation(
-                validation_id="schema-removal", until=until_date
-            )
-            if app_package.validations is None:
-                app_package.validations = []
-            app_package.validations.append(validation)
-            app_package.validations.append(schema_removal_validation)
-
-            # Deploy using corrected config server endpoint
-            config_server_endpoint = (
-                "http://localhost:8080"  # Will be replaced with config_port
-            )
-            isolated_vespa_port = self.config_port
-
-            schema_manager = VespaSchemaManager(
-                vespa_endpoint=config_server_endpoint, vespa_port=isolated_vespa_port
-            )
-
-            print(
-                f"🚀 Deploying to config server: http://localhost:{isolated_vespa_port}"
-            )
-            schema_manager._deploy_package(app_package)
 
             print("✅ All schemas deployed successfully!")
-            print(f"   Deployed schemas: {', '.join(deployed_schemas)}")
-
             self.is_deployed = True
-            self.deployed_schemas = deployed_schemas
             return True
 
         except Exception as e:
@@ -268,76 +172,21 @@ class VespaTestManager:
                 f"Starting isolated Vespa Docker container on port {self.http_port}..."
             )
 
-            # Calculate offset ports to avoid conflicts with main Vespa
-            port_offset = self.http_port - 8080  # e.g. if http_port=8081, offset=1
-            config_port = 19071 + port_offset  # e.g. 19072
-            self.config_port = config_port  # Update instance variable
-
-            # Container name based on port to avoid conflicts
-            container_name = f"vespa-test-{self.http_port}"
-
-            # Stop and remove existing container if it exists
-            subprocess.run(["docker", "stop", container_name], capture_output=True)
-            subprocess.run(["docker", "rm", container_name], capture_output=True)
-
-            # Detect platform and choose appropriate Docker image
-            import platform
-
-            machine = platform.machine().lower()
-
-            if machine in ["arm64", "aarch64"]:
-                # Try ARM64 image first on ARM Macs
-                docker_platform = "linux/arm64"
-                print(f"Using ARM64 platform for {machine} architecture")
-            else:
-                docker_platform = "linux/amd64"
-                print(f"Using AMD64 platform for {machine} architecture")
-
-            # Start Vespa Docker container with mapped ports
-            print(
-                f"Starting Vespa container '{container_name}' with ports {self.http_port}:{config_port}"
-            )
-            docker_result = subprocess.run(
-                [
-                    "docker",
-                    "run",
-                    "-d",
-                    "--name",
-                    container_name,
-                    "-p",
-                    f"{self.http_port}:8080",  # Map container 8080 to our test port
-                    "-p",
-                    f"{config_port}:19071",  # Map config server port
-                    "--platform",
-                    docker_platform,  # Use appropriate platform
-                    "vespaengine/vespa",
-                ],
-                capture_output=True,
-                timeout=60,
+            # Use VespaDockerManager to start container
+            # System tests use sequential ports, not module-based ports
+            container_info = self.docker_manager.start_container(
+                module_name="system_test",
+                use_module_ports=False  # Use sequential ports (8081, 19072)
             )
 
-            if docker_result.returncode != 0:
-                print(
-                    f"❌ Failed to start Docker container: {docker_result.stderr.decode()}"
-                )
-                return False
+            # Update instance variables from container info
+            self.container_name = container_info["container_name"]
+            self.http_port = container_info["http_port"]
+            self.config_port = container_info["config_port"]
 
-            print(f"✅ Vespa Docker container '{container_name}' started")
-            self.container_name = container_name
-
-            # Wait for Vespa config server to be ready (Docker containers take time to start)
-            print("Waiting for Vespa config server to be ready...")
-            try:
-                wait_for_http_ready(
-                    url=f"http://localhost:{config_port}/",
-                    timeout=120.0,
-                    expected_status=200,
-                    description=f"Vespa config server on port {config_port}"
-                )
-                print(f"✅ Config server ready on port {config_port}")
-            except Exception as e:
-                print(f"❌ Config server not ready after 120 seconds: {e}")
-                return False
+            # Wait for config server to be ready
+            print("Waiting for Vespa config server...")
+            self.docker_manager.wait_for_config_ready(container_info)
 
             # Setup complete test environment
             print("Setting up isolated test environment...")
@@ -345,30 +194,24 @@ class VespaTestManager:
                 print("❌ Test environment setup failed")
                 return False
 
-            # Deploy ALL schemas from test directory
+            # Deploy ALL schemas from test directory (must be AFTER config ready)
             print("Deploying all schemas from test directory...")
             if not self.deploy_all_schemas():
                 print("❌ Schema deployment failed")
                 return False
 
-            # Wait for application to be ready on the mapped port
-            print(f"Waiting for application to be ready on port {self.http_port}...")
-            try:
-                wait_for_http_ready(
-                    url=f"http://localhost:{self.http_port}/ApplicationStatus",
-                    timeout=120.0,
-                    expected_status=200,
-                    description=f"Vespa application on port {self.http_port}"
-                )
-                print(f"✅ Isolated Vespa ready on port {self.http_port}")
-                self.is_deployed = True
-                return True
-            except Exception as e:
-                print(f"❌ Isolated Vespa not ready after 120 seconds: {e}")
-                return False
+            # Wait for application to be ready (must be AFTER schemas deployed)
+            print("Waiting for application endpoint...")
+            self.docker_manager.wait_for_application_ready(container_info)
+
+            print(f"✅ Isolated Vespa ready on port {self.http_port}")
+            self.is_deployed = True
+            return True
 
         except Exception as e:
             print(f"❌ Failed to start isolated Vespa: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def ingest_test_videos(self) -> bool:
@@ -780,13 +623,14 @@ class VespaTestManager:
                 registry._backend_instances.clear()
                 print("🔧 CLEARED cached backends to restore original config")
 
-        # Stop, remove, and wait for Docker container cleanup
+        # Stop and remove Docker container using shared manager
         if self.container_name:
-            print(f"Stopping Docker container '{self.container_name}'...")
-            if cleanup_vespa_container(self.container_name, timeout=30):
-                print("✅ Container fully removed and resources released")
-            else:
-                print("⚠️  Container cleanup may not have completed fully")
+            container_info = {
+                "container_name": self.container_name,
+                "http_port": self.http_port,
+                "config_port": self.config_port,
+            }
+            self.docker_manager.stop_container(container_info)
 
         # Clean up temporary files
         if self.temp_dir and Path(self.temp_dir).exists():

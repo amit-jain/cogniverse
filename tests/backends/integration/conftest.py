@@ -5,13 +5,10 @@ Provides Vespa Docker instance fixture for testing schema lifecycle.
 """
 
 import logging
-import subprocess
 
 import pytest
-import requests
 
-from tests.utils.async_polling import wait_for_vespa_indexing
-from tests.utils.docker_utils import cleanup_vespa_container, generate_unique_ports
+from tests.utils.vespa_docker import VespaDockerManager
 
 logger = logging.getLogger(__name__)
 
@@ -40,164 +37,36 @@ def vespa_instance():
                 vespa_port=vespa_instance["http_port"]
             )
     """
-    # Generate unique ports based on test module name
-    http_port, config_port = generate_unique_ports(__name__)
-    container_name = f"vespa-backend-test-{http_port}"
+    manager = VespaDockerManager()
 
-    logger.info(
-        f"Backend test using unique ports: HTTP={http_port}, Config={config_port}"
-    )
-
-    # Stop and remove existing container if exists
-    subprocess.run(["docker", "stop", container_name], capture_output=True)
-    subprocess.run(["docker", "rm", container_name], capture_output=True)
-
-    # Detect platform
-    import platform
-
-    machine = platform.machine().lower()
-    if machine in ["arm64", "aarch64"]:
-        docker_platform = "linux/arm64"
-        logger.info(f"Using ARM64 platform for {machine} architecture")
-    else:
-        docker_platform = "linux/amd64"
-        logger.info(f"Using AMD64 platform for {machine} architecture")
-
-    # Start Vespa Docker container
-    logger.info(f"Starting Vespa container '{container_name}' on port {http_port}")
     try:
-        docker_result = subprocess.run(
-            [
-                "docker",
-                "run",
-                "-d",
-                "--name",
-                container_name,
-                "-p",
-                f"{http_port}:8080",  # Map container 8080 to test port
-                "-p",
-                f"{config_port}:19071",  # Map config server port
-                "--platform",
-                docker_platform,
-                "vespaengine/vespa",
-            ],
-            capture_output=True,
-            timeout=60,
-        )
-
-        if docker_result.returncode != 0:
-            pytest.skip(
-                f"Failed to start Docker container: {docker_result.stderr.decode()}"
-            )
-
-        logger.info(f"✅ Vespa Docker container '{container_name}' started")
+        # Start container with module-specific ports
+        container_info = manager.start_container(module_name=__name__, use_module_ports=True)
 
         # Wait for config server to be ready
-        logger.info("Waiting for Vespa config server...")
-        for i in range(120):  # 2 minutes timeout
-            try:
-                response = requests.get(f"http://localhost:{config_port}/", timeout=5)
-                if response.status_code == 200:
-                    logger.info(f"✅ Config server ready on port {config_port}")
-                    break
-            except Exception:
-                pass
-            wait_for_vespa_indexing(delay=1)
-            if i % 10 == 0 and i > 0:
-                logger.info(f"  Still waiting... ({i}s)")
-        else:
-            # Cleanup and skip
-            subprocess.run(["docker", "stop", container_name], capture_output=True)
-            subprocess.run(["docker", "rm", container_name], capture_output=True)
-            pytest.skip("Config server not ready after 120 seconds")
+        manager.wait_for_config_ready(container_info)
 
-        # Deploy base schemas before waiting for application endpoint
+        # Deploy base schemas (must be AFTER config ready, BEFORE application ready)
         logger.info("Deploying base schemas...")
         try:
-            from datetime import datetime, timedelta
-            from pathlib import Path
-
-            from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-            from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-            from vespa.package import ApplicationPackage, Validation
-
-            app_package = ApplicationPackage(name="videosearch")
-            parser = JsonSchemaParser()
-
-            # Load base video schemas
-            schemas_dir = Path("configs/schemas")
-            if schemas_dir.exists():
-                for schema_file in schemas_dir.glob("*_schema.json"):
-                    try:
-                        schema = parser.load_schema_from_json_file(str(schema_file))
-                        app_package.add_schema(schema)
-                        logger.info(f"  Added schema: {schema.name}")
-                    except Exception as e:
-                        logger.warning(f"  Failed to load {schema_file.name}: {e}")
-
-            # Add metadata schemas (using consolidated module)
-            from cogniverse_vespa.metadata_schemas import (
-                add_metadata_schemas_to_package,
-            )
-
-            add_metadata_schemas_to_package(app_package)
-
-            # Add validation overrides
-            until_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-            app_package.validations = [
-                Validation(validation_id="schema-removal", until=until_date),
-                Validation(validation_id="content-cluster-removal", until=until_date),
-            ]
-
-            # Deploy schemas
-            schema_manager = VespaSchemaManager(
-                vespa_endpoint="http://localhost", vespa_port=config_port
-            )
-            schema_manager._deploy_package(app_package)
-            logger.info("✅ Schemas deployed")
-
+            manager.deploy_schemas(container_info, include_metadata=True)
         except Exception as e:
             logger.warning(f"Schema deployment failed: {e}")
             # Continue anyway - some tests might not need schemas
 
-        # Wait for application endpoint to be ready
-        logger.info(f"Waiting for application endpoint on port {http_port}...")
-        for i in range(60):  # 1 minute timeout
-            try:
-                response = requests.get(
-                    f"http://localhost:{http_port}/ApplicationStatus", timeout=5
-                )
-                if response.status_code == 200:
-                    logger.info(f"✅ Vespa ready on port {http_port}")
-                    break
-            except Exception:
-                pass
-            wait_for_vespa_indexing(delay=2)
-        else:
-            # Cleanup and skip
-            subprocess.run(["docker", "stop", container_name], capture_output=True)
-            subprocess.run(["docker", "rm", container_name], capture_output=True)
-            pytest.skip("Application endpoint not ready after 60 seconds")
+        # Wait for application to be ready (must be AFTER schemas deployed)
+        manager.wait_for_application_ready(container_info)
 
         # Yield instance info
-        yield {
-            "http_port": http_port,
-            "config_port": config_port,
-            "base_url": f"http://localhost:{http_port}",
-            "container_name": container_name,
-        }
+        yield container_info
 
     except Exception as e:
         logger.error(f"Failed to start Vespa instance: {e}")
         pytest.skip(f"Failed to start Vespa: {e}")
 
     finally:
-        # Cleanup: Stop, remove, and wait for full resource release
-        logger.info(f"Stopping Docker container '{container_name}'")
-        if cleanup_vespa_container(container_name, timeout=30):
-            logger.info("✅ Container fully removed and resources released")
-        else:
-            logger.warning("⚠️  Container cleanup may not have completed fully")
+        # Cleanup container
+        manager.stop_container()
 
         # Clear singleton state to avoid interference with other test modules
         try:

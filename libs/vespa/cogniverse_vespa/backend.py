@@ -190,29 +190,55 @@ class VespaBackend(Backend):
     def ingest_documents(self, documents: List[Document], schema_name: str) -> Dict[str, Any]:
         """
         Ingest documents into Vespa.
-        
+
         Args:
             documents: List of Document objects to ingest
             schema_name: Schema to ingest documents into
-            
+
         Returns:
             Ingestion results
         """
         # Get schema-specific client
         client = self._get_or_create_ingestion_client(schema_name)
-        
+
         # Process and feed documents using the schema-specific client
         # Each client already knows its schema, no need to pass it
         prepared_docs = []
         for doc in documents:
             prepared = client.process(doc)  # Client uses its own schema
             prepared_docs.append(prepared)
-        
+
         # Feed documents to Vespa
         success_count, failed_docs = client._feed_prepared_batch(
             prepared_docs  # Client uses its own schema
         )
-        
+
+        # Wait for documents to be visible in queries (handle Vespa's eventual consistency)
+        if self.config.get("wait_for_indexing", True) and success_count > 0:
+            from tests.utils.async_polling import wait_for_vespa_document_visible
+
+            timeout = self.config.get("indexing_timeout", 30.0)
+
+            # Wait for successfully fed documents to be queryable
+            for doc in documents:
+                if doc.id not in [fd if isinstance(fd, str) else fd.get("id") for fd in failed_docs]:
+                    try:
+                        # Get the tenant-scoped schema name for verification
+                        target_schema = schema_name
+                        if self._tenant_id and self.tenant_schema_manager:
+                            target_schema = self.tenant_schema_manager.get_tenant_schema_name(
+                                self._tenant_id, schema_name
+                            )
+
+                        wait_for_vespa_document_visible(
+                            vespa_url=f"{self._url}:{self._port}",
+                            schema_name=target_schema,
+                            document_id=doc.id,
+                            timeout=timeout
+                        )
+                    except Exception as e:
+                        logger.warning(f"Document {doc.id} fed but not immediately queryable: {e}")
+
         return {
             "success_count": success_count,
             "failed_count": len(failed_docs),
