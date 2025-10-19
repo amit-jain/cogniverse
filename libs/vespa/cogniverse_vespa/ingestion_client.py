@@ -375,7 +375,7 @@ class VespaPyClient:
                                 f"Failed to feed {doc_id} to schema '{self.schema_name}' "
                                 f"(attempt {batch_retries[doc_id]}): HTTP {status} - {error_msg}"
                             )
-                        except:
+                        except Exception:
                             status = getattr(response, 'status_code', 'unknown')
                             self.logger.error(
                                 f"Failed to feed {doc_id} to schema '{self.schema_name}' "
