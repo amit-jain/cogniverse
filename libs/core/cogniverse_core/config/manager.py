@@ -12,6 +12,8 @@ from cogniverse_core.config.store import SQLiteConfigStore
 from cogniverse_core.config.store_interface import ConfigScope, ConfigStore
 from cogniverse_core.config.unified_config import (
     AgentConfigUnified,
+    BackendConfig,
+    BackendProfileConfig,
     RoutingConfigUnified,
     SystemConfig,
     TelemetryConfigUnified,
@@ -350,6 +352,168 @@ class ConfigManager:
 
         logger.info(f"Set telemetry config for {telemetry_config.tenant_id}:{service}")
         return telemetry_config
+
+    # ========== Backend Configuration ==========
+
+    def get_backend_config(
+        self, tenant_id: str = "default", service: str = "backend"
+    ) -> BackendConfig:
+        """
+        Get backend configuration for tenant.
+
+        Args:
+            tenant_id: Tenant identifier
+            service: Service name
+
+        Returns:
+            BackendConfig instance (may be empty if no tenant overrides)
+        """
+        entry = self.store.get_config(
+            tenant_id=tenant_id,
+            scope=ConfigScope.BACKEND,
+            service=service,
+            config_key="backend_config",
+        )
+
+        if entry is None:
+            # Return empty backend config - system config will be merged in ConfigUtils
+            logger.debug(
+                f"No backend config found for {tenant_id}:{service}, using empty config"
+            )
+            return BackendConfig(tenant_id=tenant_id)
+
+        return BackendConfig.from_dict(entry.config_value)
+
+    def set_backend_config(
+        self,
+        backend_config: BackendConfig,
+        tenant_id: Optional[str] = None,
+        service: str = "backend",
+    ) -> BackendConfig:
+        """
+        Set backend configuration.
+
+        Args:
+            backend_config: BackendConfig instance
+            tenant_id: Optional tenant override
+            service: Service name
+
+        Returns:
+            Updated BackendConfig
+        """
+        if tenant_id:
+            backend_config.tenant_id = tenant_id
+
+        self.store.set_config(
+            tenant_id=backend_config.tenant_id,
+            scope=ConfigScope.BACKEND,
+            service=service,
+            config_key="backend_config",
+            config_value=backend_config.to_dict(),
+        )
+
+        logger.info(f"Set backend config for {backend_config.tenant_id}:{service}")
+        return backend_config
+
+    def get_backend_profile(
+        self, profile_name: str, tenant_id: str = "default", service: str = "backend"
+    ) -> Optional[BackendProfileConfig]:
+        """
+        Get a specific backend profile for tenant.
+
+        Args:
+            profile_name: Profile name
+            tenant_id: Tenant identifier
+            service: Service name
+
+        Returns:
+            BackendProfileConfig if found, None otherwise
+        """
+        backend_config = self.get_backend_config(tenant_id=tenant_id, service=service)
+        return backend_config.get_profile(profile_name)
+
+    def add_backend_profile(
+        self,
+        profile: BackendProfileConfig,
+        tenant_id: str = "default",
+        service: str = "backend",
+    ) -> BackendProfileConfig:
+        """
+        Add or update a backend profile for tenant.
+
+        This adds a complete profile to the tenant's backend config.
+        For partial updates, use update_backend_profile().
+
+        Args:
+            profile: BackendProfileConfig instance
+            tenant_id: Tenant identifier
+            service: Service name
+
+        Returns:
+            Updated BackendProfileConfig
+        """
+        backend_config = self.get_backend_config(tenant_id=tenant_id, service=service)
+        backend_config.add_profile(profile)
+        self.set_backend_config(backend_config, tenant_id=tenant_id, service=service)
+
+        logger.info(
+            f"Added backend profile '{profile.profile_name}' for {tenant_id}:{service}"
+        )
+        return profile
+
+    def update_backend_profile(
+        self,
+        profile_name: str,
+        overrides: Dict[str, Any],
+        base_tenant_id: str = "default",
+        target_tenant_id: Optional[str] = None,
+        service: str = "backend",
+    ) -> BackendProfileConfig:
+        """
+        Update specific fields of a backend profile (tenant-specific tweak).
+
+        This supports partial updates - only specified fields are overridden.
+        Useful for tenant-specific customization of system profiles.
+
+        Args:
+            profile_name: Name of profile to update
+            overrides: Dictionary of fields to override (supports deep merge)
+            base_tenant_id: Tenant to get base profile from (default = "default")
+            target_tenant_id: Tenant to save updated profile to (default = base_tenant_id)
+            service: Service name
+
+        Returns:
+            Updated BackendProfileConfig
+
+        Raises:
+            ValueError: If profile doesn't exist in base tenant
+
+        Example:
+            # Tenant "acme" wants to tweak the embedding model in a system profile
+            manager.update_backend_profile(
+                profile_name="video_colpali_smol500_mv_frame",
+                overrides={"embedding_model": "custom/model"},
+                base_tenant_id="default",  # Get system profile
+                target_tenant_id="acme"     # Save to acme tenant
+            )
+        """
+        if target_tenant_id is None:
+            target_tenant_id = base_tenant_id
+
+        # Get base profile (may be from default tenant or another tenant)
+        base_config = self.get_backend_config(tenant_id=base_tenant_id, service=service)
+        merged_profile = base_config.merge_profile(profile_name, overrides)
+
+        # Save to target tenant
+        target_config = self.get_backend_config(tenant_id=target_tenant_id, service=service)
+        target_config.add_profile(merged_profile)
+        self.set_backend_config(target_config, tenant_id=target_tenant_id, service=service)
+
+        logger.info(
+            f"Updated backend profile '{profile_name}' for {target_tenant_id}:{service} "
+            f"(based on {base_tenant_id})"
+        )
+        return merged_profile
 
     # ========== Generic Configuration Access ==========
 

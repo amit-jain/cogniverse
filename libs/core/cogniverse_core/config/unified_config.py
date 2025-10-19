@@ -344,5 +344,154 @@ class AgentConfigUnified:
         return cls(tenant_id=tenant_id, agent_config=agent_config)
 
 
+@dataclass
+class BackendProfileConfig:
+    """
+    Backend profile configuration for video processing.
+
+    Represents a single processing profile with embedding model,
+    pipeline configuration, and processing strategies.
+    """
+
+    profile_name: str
+    type: str = "video"
+    description: str = ""
+    schema_name: str = ""
+    embedding_model: str = ""
+    pipeline_config: Dict[str, Any] = field(default_factory=dict)
+    strategies: Dict[str, Any] = field(default_factory=dict)
+    embedding_type: str = ""
+    schema_config: Dict[str, Any] = field(default_factory=dict)
+    model_specific: Dict[str, Any] = field(default_factory=dict)
+    process_type: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary"""
+        result = {
+            "type": self.type,
+            "description": self.description,
+            "schema_name": self.schema_name,
+            "embedding_model": self.embedding_model,
+            "pipeline_config": self.pipeline_config,
+            "strategies": self.strategies,
+            "embedding_type": self.embedding_type,
+            "schema_config": self.schema_config,
+        }
+        if self.model_specific:
+            result["model_specific"] = self.model_specific
+        if self.process_type:
+            result["process_type"] = self.process_type
+        return result
+
+    @classmethod
+    def from_dict(cls, profile_name: str, data: Dict[str, Any]) -> "BackendProfileConfig":
+        """Create from dictionary"""
+        return cls(
+            profile_name=profile_name,
+            type=data.get("type", "video"),
+            description=data.get("description", ""),
+            schema_name=data.get("schema_name", ""),
+            embedding_model=data.get("embedding_model", ""),
+            pipeline_config=data.get("pipeline_config", {}),
+            strategies=data.get("strategies", {}),
+            embedding_type=data.get("embedding_type", ""),
+            schema_config=data.get("schema_config", {}),
+            model_specific=data.get("model_specific", {}),
+            process_type=data.get("process_type"),
+        )
+
+
+@dataclass
+class BackendConfig:
+    """Backend configuration with multi-tenant profile support"""
+
+    tenant_id: str = "default"
+    backend_type: str = "vespa"
+    url: str = "http://localhost"
+    port: int = 8080
+    profiles: Dict[str, BackendProfileConfig] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary"""
+        return {
+            "tenant_id": self.tenant_id,
+            "type": self.backend_type,
+            "url": self.url,
+            "port": self.port,
+            "profiles": {
+                name: profile.to_dict()
+                for name, profile in self.profiles.items()
+            },
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "BackendConfig":
+        """Create from dictionary"""
+        profiles_data = data.get("profiles", {})
+        profiles = {
+            name: BackendProfileConfig.from_dict(name, profile_data)
+            for name, profile_data in profiles_data.items()
+        }
+
+        return cls(
+            tenant_id=data.get("tenant_id", "default"),
+            backend_type=data.get("type", "vespa"),
+            url=data.get("url", "http://localhost"),
+            port=data.get("port", 8080),
+            profiles=profiles,
+            metadata=data.get("metadata", {}),
+        )
+
+    def get_profile(self, profile_name: str) -> Optional[BackendProfileConfig]:
+        """Get a specific profile by name"""
+        return self.profiles.get(profile_name)
+
+    def add_profile(self, profile: BackendProfileConfig) -> None:
+        """Add or update a profile"""
+        self.profiles[profile.profile_name] = profile
+
+    def merge_profile(self, profile_name: str, overrides: Dict[str, Any]) -> BackendProfileConfig:
+        """
+        Merge overrides into an existing profile.
+
+        Supports partial updates - only specified fields are overridden.
+        Useful for tenant-specific tweaks to system profiles.
+
+        Args:
+            profile_name: Name of base profile to merge with
+            overrides: Dictionary of fields to override
+
+        Returns:
+            New BackendProfileConfig with merged values
+
+        Raises:
+            ValueError: If base profile doesn't exist
+        """
+        base_profile = self.profiles.get(profile_name)
+        if not base_profile:
+            raise ValueError(f"Base profile '{profile_name}' not found")
+
+        # Deep copy base profile dict and merge overrides
+        merged = base_profile.to_dict()
+        self._deep_merge(merged, overrides)
+
+        return BackendProfileConfig.from_dict(profile_name, merged)
+
+    @staticmethod
+    def _deep_merge(base: Dict[str, Any], overrides: Dict[str, Any]) -> None:
+        """
+        Deep merge overrides into base dict (in-place).
+
+        Recursively merges nested dictionaries.
+        """
+        for key, value in overrides.items():
+            if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+                BackendConfig._deep_merge(base[key], value)
+            else:
+                base[key] = value
+
+
 # ConfigEntry is now defined in config_store_interface.py
 # Import it from there if needed

@@ -7,9 +7,10 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from cogniverse_core.config.manager import get_config_manager
+from cogniverse_core.config.unified_config import BackendConfig
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,8 @@ class ConfigUtils:
         self._system_config = None
         self._routing_config = None
         self._telemetry_config = None
-        self._json_config = None  # Cache for JSON config loaded from COGNIVERSE_CONFIG
+        self._backend_config = None  # Merged backend config (system + tenant)
+        self._json_config = None  # Cache for JSON config (auto-discovered)
 
     def _ensure_system_config(self):
         """Lazy load system config"""
@@ -48,28 +50,122 @@ class ConfigUtils:
                 self.tenant_id
             )
 
+    @staticmethod
+    def _discover_config_file() -> Optional[Path]:
+        """
+        Auto-discover config.json from standard locations.
+
+        Search order:
+        1. COGNIVERSE_CONFIG env var (if set)
+        2. configs/config.json (from current directory)
+        3. ../configs/config.json (one level up)
+        4. ../../configs/config.json (two levels up)
+
+        Returns:
+            Path to config.json if found, None otherwise
+        """
+        # Check COGNIVERSE_CONFIG env var first (backward compatibility)
+        env_path = os.environ.get('COGNIVERSE_CONFIG')
+        if env_path:
+            path = Path(env_path)
+            if path.exists():
+                logger.debug(f"Found config via COGNIVERSE_CONFIG: {path}")
+                return path
+
+        # Check standard locations
+        search_paths = [
+            Path("configs/config.json"),
+            Path("../configs/config.json"),
+            Path("../../configs/config.json"),
+        ]
+
+        for path in search_paths:
+            if path.exists():
+                logger.debug(f"Found config at: {path.resolve()}")
+                return path.resolve()
+
+        return None
+
     def _load_json_config(self):
-        """Load config from JSON file if COGNIVERSE_CONFIG is set"""
+        """Load config from auto-discovered JSON file"""
         if self._json_config is not None:
             return  # Already loaded
 
-        config_path = os.environ.get('COGNIVERSE_CONFIG')
+        config_path = self._discover_config_file()
         if not config_path:
+            logger.warning("No config.json found in standard locations")
             self._json_config = {}
             return
 
         try:
-            config_file = Path(config_path)
-            if config_file.exists():
-                with open(config_file, 'r') as f:
-                    self._json_config = json.load(f)
-                logger.debug(f"Loaded JSON config from {config_path}")
-            else:
-                logger.warning(f"Config file not found: {config_path}")
-                self._json_config = {}
+            with open(config_path, 'r') as f:
+                self._json_config = json.load(f)
+            logger.debug(f"Loaded system config from {config_path}")
         except Exception as e:
             logger.error(f"Error loading JSON config from {config_path}: {e}")
             self._json_config = {}
+
+    def _ensure_backend_config(self):
+        """
+        Lazy load and merge backend config.
+
+        Merges:
+        1. System base config from config.json (backend section)
+        2. Tenant-specific overrides from ConfigManager
+
+        Result is a merged BackendConfig with system profiles + tenant overrides.
+        """
+        if self._backend_config is not None:
+            return  # Already loaded
+
+        # Load system config from JSON
+        self._load_json_config()
+        system_backend_data = self._json_config.get("backend", {})
+
+        # Get tenant-specific overrides from ConfigManager
+        tenant_backend_config = self._config_manager.get_backend_config(self.tenant_id)
+
+        # Merge system base with tenant overrides
+        if system_backend_data:
+            # Create BackendConfig from system JSON
+            system_backend_data["tenant_id"] = "default"  # Mark as system config
+            system_backend_config = BackendConfig.from_dict(system_backend_data)
+
+            # Deep merge tenant overrides into system base
+            merged_profiles = dict(system_backend_config.profiles)  # Start with system profiles
+
+            # Add/override with tenant-specific profiles
+            for profile_name, tenant_profile in tenant_backend_config.profiles.items():
+                merged_profiles[profile_name] = tenant_profile
+
+            # Create merged config
+            self._backend_config = BackendConfig(
+                tenant_id=self.tenant_id,
+                backend_type=(
+                    tenant_backend_config.backend_type
+                    or system_backend_config.backend_type
+                ),
+                url=(
+                    tenant_backend_config.url
+                    if tenant_backend_config.url != "http://localhost"
+                    else system_backend_config.url
+                ),
+                port=(
+                    tenant_backend_config.port
+                    if tenant_backend_config.port != 8080
+                    else system_backend_config.port
+                ),
+                profiles=merged_profiles,
+                metadata={**system_backend_config.metadata, **tenant_backend_config.metadata},
+            )
+        else:
+            # No system config, just use tenant config
+            self._backend_config = tenant_backend_config
+
+        logger.debug(
+            f"Merged backend config for tenant '{self.tenant_id}': "
+            f"{len(self._backend_config.profiles)} profiles available"
+        )
 
     def get(self, key: str, default: Any = None) -> Any:
         """
@@ -80,6 +176,11 @@ class ConfigUtils:
         self._ensure_system_config()
         self._ensure_routing_config()
         self._ensure_telemetry_config()
+        self._ensure_backend_config()
+
+        # Backend config - return merged system + tenant config
+        if key == "backend":
+            return self._backend_config.to_dict()
 
         # System config mappings
         system_keys = {
@@ -136,7 +237,7 @@ class ConfigUtils:
         if key in telemetry_keys:
             return telemetry_keys[key]()
 
-        # Check JSON config for keys not in ConfigManager (like video_processing_profiles)
+        # Check JSON config for other keys (fallback for legacy keys)
         self._load_json_config()
         if key in self._json_config:
             return self._json_config[key]
