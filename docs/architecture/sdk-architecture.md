@@ -32,7 +32,7 @@ Cogniverse is structured as a **UV workspace monorepo** containing 5 independent
 
 ### Key Statistics
 
-- **Total Python Files**: 333 files across all packages
+- **Total Python Files**: 334 files across all packages
 - **Packages**: 5 workspace members in `libs/` directory
 - **Python Version**: >= 3.12 required
 - **Build System**: Hatchling for all packages
@@ -42,11 +42,11 @@ Cogniverse is structured as a **UV workspace monorepo** containing 5 independent
 
 ```
 libs/
-├── core/          # 113 files - Core interfaces and utilities
-├── agents/        # 82 files  - Agent implementations
-├── vespa/         # 67 files  - Vespa backend integration
-├── runtime/       # 45 files  - FastAPI server and ingestion
-└── dashboard/     # 26 files  - Streamlit analytics UI
+├── core/          # 115 files - Core interfaces and utilities
+├── agents/        # 99 files  - Agent implementations
+├── vespa/         # 17 files  - Vespa backend integration
+├── runtime/       # 49 files  - FastAPI server and ingestion
+└── dashboard/     # 54 files  - Streamlit analytics UI
 ```
 
 ---
@@ -114,7 +114,7 @@ cogniverse/
 
 **Package Name**: `cogniverse-core` (installable)
 **Import Name**: `cogniverse_core` (Python import)
-**Files**: 113 Python files
+**Files**: 115 Python files
 
 #### Module Structure
 
@@ -181,7 +181,7 @@ dependencies = [
 
 **Package Name**: `cogniverse-vespa` (installable)
 **Import Name**: `cogniverse_vespa` (Python import)
-**Files**: 67 Python files
+**Files**: 17 Python files
 
 #### Module Structure
 
@@ -233,7 +233,7 @@ cogniverse-core = { workspace = true }
 
 **Package Name**: `cogniverse-agents` (installable)
 **Import Name**: `cogniverse_agents` (Python import)
-**Files**: 82 Python files
+**Files**: 99 Python files
 
 #### Module Structure
 
@@ -290,7 +290,7 @@ cogniverse-core = { workspace = true }
 
 **Package Name**: `cogniverse-runtime` (installable)
 **Import Name**: `cogniverse_runtime` (Python import)
-**Files**: 45 Python files
+**Files**: 49 Python files
 
 #### Module Structure
 
@@ -355,7 +355,7 @@ cogniverse-agents = { workspace = true }
 
 **Package Name**: `cogniverse-dashboard` (installable)
 **Import Name**: `cogniverse_dashboard` (Python import)
-**Files**: 26 Python files
+**Files**: 54 Python files
 
 #### Module Structure
 
@@ -619,7 +619,7 @@ Workspace-level fixtures in `tests/conftest.py`:
 # tests/conftest.py
 import pytest
 from cogniverse_core.config.unified_config import SystemConfig
-from cogniverse_vespa.tenant.tenant_schema_manager import TenantSchemaManager
+from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
 
 @pytest.fixture(scope="session")
 def system_config():
@@ -638,8 +638,8 @@ Integration tests validate cross-package interactions:
 
 ```python
 # tests/routing/integration/test_routing_with_vespa.py
-from cogniverse_agents.routing.routing_agent import RoutingAgent
-from cogniverse_vespa.backends.vespa_search_client import VespaSearchClient
+from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_vespa.vespa_search_client import VespaSearchClient
 from cogniverse_core.common.tenant_utils import with_tenant_context
 
 @pytest.mark.integration
@@ -764,24 +764,24 @@ from cogniverse_core.common.tenant_utils import (
 
 ```python
 # Tenant management
-from cogniverse_vespa.tenant.tenant_schema_manager import TenantSchemaManager
-from cogniverse_vespa.tenant.tenant_backend import TenantAwareVespaBackend
+from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+from cogniverse_vespa.tenant_aware_search_client import TenantAwareSearchClient
 
 # Search clients
-from cogniverse_vespa.backends.vespa_search_client import VespaSearchClient
-from cogniverse_vespa.backends.vespa_admin_client import VespaAdminClient
+from cogniverse_vespa.vespa_search_client import VespaSearchClient
+from cogniverse_vespa.vespa_search_client import VespaSearchClient  # Admin operations via search client
 
 # Ingestion
-from cogniverse_vespa.ingestion.vespa_ingestor import VespaIngestor
+from cogniverse_vespa.ingestion_client import VespaPyClient
 ```
 
 **Agent implementations**:
 
 ```python
 # Agents
-from cogniverse_agents.routing.routing_agent import RoutingAgent
-from cogniverse_agents.search.video_search_agent import VideoSearchAgent
-from cogniverse_agents.orchestration.composing_agent import ComposingAgent
+from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.video_search_agent import VideoSearchAgent
+from cogniverse_agents.composing_agent import ComposingAgent
 
 # Utilities
 from cogniverse_agents.routing.modality_cache import ModalityCacheManager
@@ -843,11 +843,11 @@ class RoutingAgent(BaseAgent, MemoryAwareMixin):
 # In cogniverse_runtime/server/app.py
 
 from cogniverse_core.config.unified_config import SystemConfig
-from cogniverse_vespa.tenant.tenant_schema_manager import TenantSchemaManager
+from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
 
 # Optional imports (only if extras installed)
 try:
-    from cogniverse_agents.routing.routing_agent import RoutingAgent
+    from cogniverse_agents.routing_agent import RoutingAgent
     AGENTS_AVAILABLE = True
 except ImportError:
     AGENTS_AVAILABLE = False
@@ -1138,7 +1138,7 @@ Cogniverse SDK uses a **UV workspace** with **5 independent packages**:
 5. **cogniverse-dashboard**: Streamlit UI (analytics, experiments, Phoenix)
 
 **Key Characteristics**:
-- 333 Python files across packages
+- 334 Python files across packages
 - Clean dependency hierarchy (core → vespa/agents → runtime/dashboard)
 - UV workspace for unified dependency management
 - Python >= 3.12, Hatchling build system

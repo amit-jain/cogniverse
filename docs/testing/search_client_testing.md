@@ -82,7 +82,7 @@ Visual query with embeddings → hybrid_float_bm25
 
 ### Initialize Client
 ```python
-from src.processing.vespa.vespa_search_client import VespaVideoSearchClient
+from cogniverse_vespa.vespa_search_client import VespaSearchClient
 
 client = VespaVideoSearchClient()
 ```

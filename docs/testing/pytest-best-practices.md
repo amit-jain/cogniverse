@@ -180,11 +180,11 @@ uv run pytest tests/agents/
 # ✅ Good: Absolute imports from SDK packages
 from cogniverse_core.config import SystemConfig
 from cogniverse_core.telemetry import TelemetryManager
-from cogniverse_agents.agents.routing_agent import RoutingAgent
-from cogniverse_vespa.backends import VespaBackend
+from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_vespa.backend import VespaBackend
 
 # ❌ Bad: Old src-style imports (deprecated)
-from src.app.agents.routing_agent import RoutingAgent  # ❌ Will fail
+from src.agents.routing_agent import RoutingAgent  # ❌ Will fail
 ```
 
 ---
@@ -234,7 +234,7 @@ def test_vespa_package_imports():
 # tests/test_package_dependencies.py
 import pytest
 from cogniverse_core.config import SystemConfig
-from cogniverse_agents.agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent
 
 def test_agents_depends_on_core():
     """Verify agents package can use core package"""
@@ -386,7 +386,7 @@ def test_tenant_memory_isolation():
 # tests/conftest.py
 import pytest
 from cogniverse_core.config import SystemConfig
-from cogniverse_agents.agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent
 
 @pytest.fixture
 def tenant_a_config():

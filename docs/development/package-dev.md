@@ -550,7 +550,7 @@ def vespa_backend(system_config):
 **2. Isolate Package Tests:**
 ```python
 # tests/agents/unit/test_routing_agent.py
-from cogniverse_agents.agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_core.config import SystemConfig
 
 def test_routing_agent_initialization():
@@ -709,7 +709,7 @@ pip install libs/agents/dist/cogniverse_agents-0.2.0-py3-none-any.whl
 # Run smoke tests
 python -c "
 from cogniverse_core.config import SystemConfig
-from cogniverse_agents.agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent
 
 config = SystemConfig(tenant_id='test')
 agent = RoutingAgent(config)
@@ -761,7 +761,7 @@ from cogniverse_core.config import SystemConfig
 from cogniverse_core.telemetry import TelemetryManager
 
 # cogniverse_agents - agent implementations only
-from cogniverse_agents.agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_agents.agents.video_search_agent import VideoSearchAgent
 
 # ❌ BAD: Mixing concerns
@@ -787,7 +787,7 @@ from cogniverse_core.config import SystemConfig  # ✅ agents depends on core
 # ✅ GOOD: Absolute imports from package root
 from cogniverse_core.config.unified_config import SystemConfig
 from cogniverse_core.telemetry.manager import TelemetryManager
-from cogniverse_agents.agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent
 
 # ❌ BAD: Relative imports across packages
 from ...core.config import SystemConfig  # ❌ Hard to read

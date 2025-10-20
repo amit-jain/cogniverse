@@ -18,7 +18,7 @@ Our routing optimizer uses teacher/student patterns:
 
 ```python
 # GEPA Optimizer with teacher/student
-from src.routing.gepa_optimizer import GEPAOptimizer
+from cogniverse_agents.routing.gepa_optimizer import GEPAOptimizer
 
 optimizer = GEPAOptimizer(
     teacher_model="claude-3-opus",  # API or Modal
@@ -54,7 +54,7 @@ Deploy heavy embedding models on Modal GPUs:
 
 ```python
 # ColPali on Modal instead of local
-from src.embeddings.modal_colpali import ModalColPali
+from cogniverse_runtime.embeddings.modal_colpali import ModalColPali
 
 colpali = ModalColPali(endpoint="modal://colpali-deployment")
 embeddings = await colpali.encode_frames(frames)
@@ -189,7 +189,7 @@ Update `configs/config.json`:
 #### For DSPy Optimization
 
 ```python
-from src.routing.optimizer_factory import OptimizerFactory
+from cogniverse_agents.routing.optimizer_factory import OptimizerFactory
 
 factory = OptimizerFactory()
 
@@ -208,7 +208,7 @@ optimized_router = optimizer.optimize(
 #### For Video Ingestion
 
 ```python
-from src.app.ingestion.pipeline import VideoIngestionPipeline
+from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 
 pipeline = VideoIngestionPipeline(
     vlm_provider="modal",  # Use Modal VLM
@@ -407,7 +407,7 @@ modal billing limit set --monthly 100
 ### Phoenix Integration
 ```python
 # Track Modal service calls in Phoenix
-from src.telemetry.multi_tenant_manager import MultiTenantTelemetryManager
+from cogniverse_core.telemetry.multi_tenant_manager import MultiTenantTelemetryManager
 
 telemetry = MultiTenantTelemetryManager()
 

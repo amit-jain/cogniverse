@@ -15,12 +15,13 @@
 5. [Tenant Context Flow](#tenant-context-flow)
 6. [Memory Isolation](#memory-isolation)
 7. [Telemetry Isolation](#telemetry-isolation)
-8. [Security and Isolation Guarantees](#security-and-isolation-guarantees)
-9. [Tenant ID Formats](#tenant-id-formats)
-10. [Operational Procedures](#operational-procedures)
-11. [Testing Multi-Tenant Systems](#testing-multi-tenant-systems)
-12. [Common Patterns](#common-patterns)
-13. [Troubleshooting](#troubleshooting)
+8. [Backend Configuration](#backend-configuration)
+9. [Security and Isolation Guarantees](#security-and-isolation-guarantees)
+10. [Tenant ID Formats](#tenant-id-formats)
+11. [Operational Procedures](#operational-procedures)
+12. [Testing Multi-Tenant Systems](#testing-multi-tenant-systems)
+13. [Common Patterns](#common-patterns)
+14. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -382,7 +383,7 @@ is_valid = schema_manager.validate_tenant_schema(
 
 ```python
 from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
-from cogniverse_vespa.backends.vespa_search_client import VespaSearchClient
+from cogniverse_vespa.vespa_search_client import VespaSearchClient
 
 # Initialize schema manager
 schema_manager = TenantSchemaManager(
@@ -405,7 +406,7 @@ search_client = VespaSearchClient(
 **Agent Initialization**:
 
 ```python
-from cogniverse_agents.routing.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
 
 # Ensure tenant schemas exist
@@ -690,6 +691,264 @@ Each tenant's traces are isolated in Phoenix:
 - Performance metrics per tenant
 - Debugging scoped to tenant
 - Cost attribution per tenant
+
+---
+
+## Backend Configuration
+
+### Overview
+
+Tenant-specific backend configuration enables per-tenant customization of video processing profiles, embedding models, and search strategies through a hierarchical configuration system.
+
+**Key Features**:
+- **Profile-Based Configuration**: Tenant-specific overrides for video processing profiles
+- **Auto-Discovery**: Automatic config.json loading from standard locations
+- **Deep Merge**: System base config + tenant-specific overrides
+- **Backend Isolation**: Each tenant can use different Vespa clusters or profiles
+
+### Backend Configuration Structure
+
+The backend configuration is defined through `BackendConfig` and `BackendProfileConfig` dataclasses:
+
+```python
+from cogniverse_core.config.unified_config import BackendConfig, BackendProfileConfig
+
+# Backend profile configuration
+@dataclass
+class BackendProfileConfig:
+    profile_name: str                    # e.g., "video_colpali_smol500_mv_frame"
+    schema_name: str                     # Base schema name
+    embedding_model: str                 # Model identifier
+    pipeline_config: Dict[str, Any]      # Frame extraction, transcription settings
+    strategies: Dict[str, Any]           # Segmentation, embedding strategies
+    embedding_type: str                  # "binary" or "float"
+    # ... additional fields
+
+# Backend configuration
+@dataclass
+class BackendConfig:
+    tenant_id: str = "default"
+    backend_type: str = "vespa"
+    profiles: Dict[str, BackendProfileConfig]  # Profile name → config
+    vespa_url: Optional[str] = None
+    vespa_port: int = 8080
+    # ... additional fields
+```
+
+#### Multi-Tenant Backend Architecture
+
+```mermaid
+flowchart TB
+    subgraph Config[Configuration Layer]
+        SystemConfig[System Base Config<br/>3 Profiles Defined]
+        TenantAConfig[Tenant A Config<br/>Override: max_frames=200]
+        TenantBConfig[Tenant B Config<br/>Override: keyframe_fps=2.0]
+    end
+
+    subgraph Application[Application Layer - Tenant A]
+        AppA[SystemConfig<br/>tenant_id: acme]
+        BackendA[BackendConfig<br/>Merged: max_frames=200]
+    end
+
+    subgraph Application2[Application Layer - Tenant B]
+        AppB[SystemConfig<br/>tenant_id: startup]
+        BackendB[BackendConfig<br/>Merged: keyframe_fps=2.0]
+    end
+
+    subgraph VespaSchemas[Vespa - Physical Isolation]
+        SchemaA1[video_colpali_smol500_mv_frame_acme]
+        SchemaA2[video_videoprism_base_mv_chunk_30s_acme]
+        SchemaA3[agent_memories_acme]
+
+        SchemaB1[video_colpali_smol500_mv_frame_startup]
+        SchemaB2[video_videoprism_base_mv_chunk_30s_startup]
+        SchemaB3[agent_memories_startup]
+    end
+
+    SystemConfig --> BackendA
+    TenantAConfig --> BackendA
+    BackendA --> AppA
+
+    SystemConfig --> BackendB
+    TenantBConfig --> BackendB
+    BackendB --> AppB
+
+    AppA --> SchemaA1
+    AppA --> SchemaA2
+    AppA --> SchemaA3
+
+    AppB --> SchemaB1
+    AppB --> SchemaB2
+    AppB --> SchemaB3
+
+    style Config fill:#e1f5ff
+    style Application fill:#fff4e1
+    style Application2 fill:#fff4e1
+    style VespaSchemas fill:#e1ffe1
+```
+
+**Key Principles**:
+1. **Physical Isolation**: Each tenant's data in separate schemas
+2. **Config Independence**: Tenant A's overrides don't affect Tenant B
+3. **Profile Flexibility**: Same base profiles, different settings per tenant
+4. **Automatic Scoping**: Schema names automatically include tenant suffix
+
+### Configuration File Structure
+
+**Location**: Auto-discovered from:
+1. `COGNIVERSE_CONFIG` environment variable
+2. `configs/config.json` (workspace root)
+3. `../configs/config.json` (one level up)
+4. `../../configs/config.json` (two levels up)
+
+**Example**: `configs/config.json`
+
+```json
+{
+  "backend": {
+    "type": "vespa",
+    "url": "http://localhost",
+    "port": 8080,
+    "profiles": {
+      "video_colpali_smol500_mv_frame": {
+        "type": "video",
+        "schema_name": "video_colpali_smol500_mv_frame",
+        "embedding_model": "vidore/colsmol-500m",
+        "pipeline_config": {
+          "extract_keyframes": true,
+          "transcribe_audio": true,
+          "keyframe_fps": 1.0,
+          "max_frames": 100
+        },
+        "strategies": {
+          "segmentation": {
+            "class": "FrameSegmentationStrategy"
+          },
+          "embedding": {
+            "class": "MultiVectorEmbeddingStrategy",
+            "use_binary": true
+          }
+        },
+        "embedding_type": "binary"
+      }
+    }
+  }
+}
+```
+
+### Tenant Configuration Overlay
+
+Tenants can override system-level backend configuration:
+
+**System Config**: `configs/config.json`
+```json
+{
+  "backend": {
+    "profiles": {
+      "video_colpali_smol500_mv_frame": {
+        "pipeline_config": {
+          "max_frames": 100,
+          "keyframe_fps": 1.0
+        }
+      }
+    }
+  }
+}
+```
+
+**Tenant Override**: Via `ConfigManager`
+```python
+from cogniverse_core.config.config_manager import get_config_manager
+
+manager = get_config_manager()
+
+# Tenant "acme" wants more frames
+tenant_override = {
+    "backend": {
+        "profiles": {
+            "video_colpali_smol500_mv_frame": {
+                "pipeline_config": {
+                    "max_frames": 200  # Override: 100 → 200
+                }
+            }
+        }
+    }
+}
+
+manager.set_config(
+    tenant_id="acme",
+    scope=ConfigScope.BACKEND,
+    config=tenant_override
+)
+```
+
+**Result**: Deep merge creates tenant-specific config
+```python
+# Tenant "acme" gets:
+{
+    "max_frames": 200,      # Overridden
+    "keyframe_fps": 1.0     # Inherited from system
+}
+```
+
+#### Deep Merge Visualization
+
+```mermaid
+flowchart LR
+    SystemConfig[System Base Config<br/>max_frames: 100<br/>keyframe_fps: 1.0<br/>transcribe_audio: true] --> Merge{Deep Merge}
+
+    TenantOverride[Tenant Override acme<br/>max_frames: 200] --> Merge
+
+    Merge --> FinalConfig[Final Tenant Config<br/>max_frames: 200 ✓<br/>keyframe_fps: 1.0 ✓<br/>transcribe_audio: true ✓]
+
+    style SystemConfig fill:#e1f5ff
+    style TenantOverride fill:#fff4e1
+    style FinalConfig fill:#e1ffe1
+    style Merge fill:#f5e1ff
+```
+
+**Deep Merge Rules**:
+1. Tenant override values replace system values
+2. System values without tenant override are inherited
+3. Nested dictionaries are merged recursively
+4. Arrays are replaced, not merged (tenant override wins completely)
+
+### Using Backend Configuration
+
+**Initialization**:
+```python
+from cogniverse_core.config.unified_config import SystemConfig
+
+# SystemConfig automatically loads and merges backend config
+config = SystemConfig(tenant_id="acme")
+
+# Access backend configuration
+backend_config = config.backend_config
+assert backend_config.tenant_id == "acme"
+
+# Access profile configuration
+profile = backend_config.profiles["video_colpali_smol500_mv_frame"]
+assert profile.pipeline_config["max_frames"] == 200  # Tenant override applied
+```
+
+**Per-Tenant Backend Isolation**:
+```python
+# Different tenants can use different backend configurations
+config_acme = SystemConfig(tenant_id="acme")
+config_startup = SystemConfig(tenant_id="startup")
+
+# Each gets their own backend config with tenant-specific overrides
+assert config_acme.backend_config.tenant_id == "acme"
+assert config_startup.backend_config.tenant_id == "startup"
+```
+
+### Benefits for Multi-Tenancy
+
+1. **Tenant Customization**: Each tenant can optimize video processing for their use case
+2. **Resource Allocation**: Different tenants can use different max_frames, fps settings
+3. **Cost Control**: Premium tenants get higher quality processing (more frames, higher fps)
+4. **Backend Flexibility**: Tenants can potentially use different Vespa clusters
+5. **Configuration Isolation**: Tenant configs don't interfere with each other
 
 ---
 
@@ -1026,7 +1285,7 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
 
 ```python
 import pytest
-from cogniverse_agents.routing.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent
 
 def test_tenant_isolation():
     """Verify tenants don't interfere with each other"""
@@ -1148,7 +1407,7 @@ def cleanup_tenant_schemas(schema_manager):
 ### Pattern 1: Tenant-Aware Agent Initialization
 
 ```python
-from cogniverse_agents.routing.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
 
 def create_routing_agent(tenant_id: str) -> RoutingAgent:

@@ -181,7 +181,7 @@ You can also use the system programmatically:
 
 ```python
 import asyncio
-from src.agents.composing_agents_main import run_query_programmatically
+from cogniverse_agents.composing_agent import run_query_programmatically
 
 async def search_example():
     query = "Find information about system architecture"
@@ -347,7 +347,7 @@ uvicorn src.agents.video_agent_server:app --port 8003
 The A2A protocol makes it easy to integrate with external systems:
 
 ```python
-from src.tools.a2a_utils import A2AClient
+from cogniverse_core.tools.a2a_utils import A2AClient
 
 client = A2AClient()
 result = await client.send_task("http://your-agent-url", "search query")

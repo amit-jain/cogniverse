@@ -433,7 +433,7 @@ from cogniverse_core.telemetry import TelemetryManager, TelemetryConfig
 from cogniverse_core.common.memory.mem0_memory_manager import Mem0MemoryManager
 
 # Agents
-from cogniverse_agents.agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_agents.agents.video_search_agent import VideoSearchAgent
 
 # Routing

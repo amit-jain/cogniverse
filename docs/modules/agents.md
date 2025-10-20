@@ -33,16 +33,17 @@ The Agents package (`cogniverse-agents`) provides concrete agent implementations
 
 - **Tenant-Aware**: All agents require `tenant_id` parameter
 - **Memory-Enabled**: Integration with Mem0 via MemoryAwareMixin (from core)
-- **Base Class Inheritance**: Extend BaseAgent from cogniverse_core
-- **DSPy Integration**: Declarative LLM programming for optimization
+- **Base Class Inheritance**: Extend DSPyA2AAgentBase from cogniverse_core
+- **DSPy 3.0 Integration**: A2A protocol + DSPy modules for optimization
 - **Production-Ready**: Health checks, graceful degradation, telemetry
 
 ### Package Dependencies
 
 ```python
 # Agents package depends on:
-from cogniverse_core.agents.base_agent import BaseAgent
+from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_core.agents.health_mixin import HealthMixin
 from cogniverse_core.telemetry.manager import TelemetryManager
 from cogniverse_core.config.unified_config import SystemConfig
 ```
@@ -54,30 +55,51 @@ from cogniverse_core.config.unified_config import SystemConfig
 ```
 libs/agents/cogniverse_agents/
 ├── __init__.py
-├── routing/                          # Routing agents
+├── routing_agent.py                 # Main routing agent (1570 lines) ⭐ TOP LEVEL
+├── video_search_agent.py            # Multi-modal video search (1373 lines) ⭐ TOP LEVEL
+├── composing_agent.py               # Multi-agent orchestrator (617 lines) ⭐ TOP LEVEL
+├── audio_analysis_agent.py          # Audio analysis agent
+├── document_agent.py                # Document processing agent
+├── image_search_agent.py            # Image search agent
+├── summarizer_agent.py              # Summarization agent
+├── multi_agent_orchestrator.py      # Orchestration utilities
+├── dspy_agent_optimizer.py          # DSPy optimization utilities
+├── ... (28 total agent files at top level)
+├── routing/                         # Routing utilities and components
 │   ├── __init__.py
-│   ├── routing_agent.py             # Main routing agent
-│   ├── modality_cache.py            # Query modality caching
-│   ├── parallel_executor.py         # Parallel agent execution
-│   └── relationship_extractor.py    # Entity relationship extraction
-├── search/                           # Search agents
+│   ├── parallel_executor.py        # Parallel agent execution
+│   ├── advanced_optimizer.py       # Advanced routing optimization
+│   ├── modality_cache.py           # Query modality caching
+│   ├── relationship_extraction_tools.py  # Relationship extraction
+│   ├── dspy_relationship_router.py # DSPy routing module
+│   ├── query_enhancement_engine.py # Query enhancement
+│   └── ... (37+ utility files)
+├── search/                          # Search utilities and rerankers
 │   ├── __init__.py
-│   ├── video_search_agent.py        # Multi-modal video search
-│   ├── multi_modal_reranker.py      # Reranking logic
-│   └── query_processor.py           # Query processing
-├── orchestration/                    # Composing agents
+│   ├── multi_modal_reranker.py     # Multi-modal reranking
+│   ├── hybrid_reranker.py          # Hybrid reranking
+│   ├── learned_reranker.py         # Learned reranking
+│   └── rerankers/                   # Reranker implementations
+├── orchestrator/                    # Orchestration utilities
 │   ├── __init__.py
-│   └── composing_agent.py           # Multi-agent orchestrator
-└── optimization/                     # Optimization agents
-    ├── __init__.py
-    ├── query_optimizer.py           # Query enhancement
-    └── relationship_boost.py        # Relationship-based boosting
+│   └── ... (orchestration components)
+├── optimizer/                       # Optimization utilities
+│   ├── __init__.py
+│   ├── dspy_agent_optimizer.py
+│   ├── router_optimizer.py
+│   └── providers/                   # Optimizer providers
+├── query/                           # Query processing utilities
+├── results/                         # Result aggregation utilities
+├── tools/                           # Agent tools
+└── workflow/                        # Workflow management
 ```
 
-**Key Files** (82 Python files total):
-- `routing/routing_agent.py`: 347 lines
-- `search/video_search_agent.py`: 612 lines
-- `orchestration/composing_agent.py`: 289 lines
+**Total Files**: 99 Python files (28 main agents at top level + 71 utilities in subdirectories)
+
+**Key Agent Files** (all at top level):
+- `routing_agent.py`: 1570 lines
+- `video_search_agent.py`: 1373 lines
+- `composing_agent.py`: 617 lines
 
 ---
 
@@ -85,9 +107,9 @@ libs/agents/cogniverse_agents/
 
 ### 1. RoutingAgent
 
-**Location**: `libs/agents/cogniverse_agents/routing/routing_agent.py`
-**Purpose**: Intelligent query routing with relationship extraction and DSPy optimization
-**Base Classes**: `BaseAgent`, `MemoryAwareMixin`, `HealthCheckMixin`
+**Location**: `libs/agents/cogniverse_agents/routing_agent.py` (top level)
+**Purpose**: Intelligent query routing with relationship extraction and DSPy 3.0 optimization
+**Base Classes**: `DSPyA2AAgentBase`, `MemoryAwareMixin`
 
 #### Architecture
 
@@ -114,14 +136,14 @@ graph TB
 #### Class Definition
 
 ```python
-# libs/agents/cogniverse_agents/routing/routing_agent.py
+# libs/agents/cogniverse_agents/routing_agent.py
 
-from cogniverse_core.agents.base_agent import BaseAgent
+from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
-from cogniverse_core.agents.health_check_mixin import HealthCheckMixin
 from cogniverse_core.telemetry.manager import TelemetryManager
+import dspy
 
-class RoutingAgent(BaseAgent, MemoryAwareMixin, HealthCheckMixin):
+class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin):
     """
     Intelligent query routing with relationship extraction.
 
@@ -200,7 +222,7 @@ async def route_query(
         decision = self._select_agents(enhanced_query, entities, relationships)
 
         # 6. Record decision
-        span.set_attribute("selected_agents", decision.selected_agents)
+        span.set_attribute("recommended_agent", decision.recommended_agent)
         span.set_attribute("confidence", decision.confidence)
 
         return decision
@@ -290,9 +312,9 @@ routing_agent_config = {
 
 ### 2. VideoSearchAgent
 
-**Location**: `libs/agents/cogniverse_agents/search/video_search_agent.py`
+**Location**: `libs/agents/cogniverse_agents/video_search_agent.py` (top level)
 **Purpose**: Multi-modal video search with ColPali and VideoPrism embeddings
-**Base Classes**: `BaseAgent`, `MemoryAwareMixin`, `HealthCheckMixin`
+**Base Classes**: `DSPyA2AAgentBase`, `MemoryAwareMixin`
 
 #### Multi-Modal Support
 
@@ -322,14 +344,14 @@ graph LR
 #### Class Definition
 
 ```python
-# libs/agents/cogniverse_agents/search/video_search_agent.py
+# libs/agents/cogniverse_agents/video_search_agent.py
 
-from cogniverse_core.agents.base_agent import BaseAgent
+from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
-from cogniverse_vespa.backends.vespa_search_client import VespaSearchClient
-from cogniverse_vespa.tenant.tenant_schema_manager import TenantSchemaManager
+from cogniverse_vespa.vespa_search_client import VespaSearchClient
+from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
 
-class VideoSearchAgent(BaseAgent, MemoryAwareMixin):
+class VideoSearchAgent(DSPyA2AAgentBase, MemoryAwareMixin):
     """
     Multi-modal video search agent with tenant isolation.
 
@@ -389,7 +411,7 @@ class VideoSearchAgent(BaseAgent, MemoryAwareMixin):
 Text-to-video search.
 
 ```python
-async def search_by_text(
+def search_by_text(
     self,
     query: str,
     top_k: int = 10,
@@ -444,7 +466,7 @@ async def search_by_text(
 Video-to-video similarity search.
 
 ```python
-async def search_by_video(
+def search_by_video(
     self,
     video_data: bytes,
     filename: str,
@@ -518,9 +540,9 @@ results_startup = await agent_startup.search_by_text("cooking videos")
 
 ### 3. ComposingAgent
 
-**Location**: `libs/agents/cogniverse_agents/orchestration/composing_agent.py`
+**Location**: `libs/agents/cogniverse_agents/composing_agent.py` (top level)
 **Purpose**: Multi-agent workflow orchestration and coordination
-**Base Classes**: `BaseAgent`
+**Base Classes**: `DSPyA2AAgentBase`
 
 #### Architecture
 
@@ -553,14 +575,14 @@ graph TB
 #### Class Definition
 
 ```python
-# libs/agents/cogniverse_agents/orchestration/composing_agent.py
+# libs/agents/cogniverse_agents/composing_agent.py
 
-from cogniverse_core.agents.base_agent import BaseAgent
-from cogniverse_agents.routing.routing_agent import RoutingAgent
-from cogniverse_agents.search.video_search_agent import VideoSearchAgent
+from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
+from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.video_search_agent import VideoSearchAgent
 from cogniverse_agents.routing.parallel_executor import ParallelAgentExecutor
 
-class ComposingAgent(BaseAgent):
+class ComposingAgent(DSPyA2AAgentBase):
     """
     Orchestrates multi-agent workflows with tenant context.
 
@@ -618,7 +640,7 @@ async def process_query(
         # 2. Prepare agent tasks
         agent_tasks = []
 
-        if "video_search" in routing_decision.selected_agents:
+        if routing_decision.recommended_agent == "video_search":
             agent_tasks.append(
                 ("video_search", routing_decision.enhanced_query, {
                     "top_k": options.get("max_results", 10)
@@ -648,47 +670,85 @@ async def process_query(
 
 ## Agent Architecture
 
-### Base Agent Inheritance
+### DSPy 3.0 + A2A Protocol Base Class
 
-All agents extend `BaseAgent` from `cogniverse_core`:
+All agents extend `DSPyA2AAgentBase` from `cogniverse_core`:
 
 ```python
-# libs/core/cogniverse_core/agents/base_agent.py
+# libs/core/cogniverse_core/agents/dspy_a2a_base.py
 
-class BaseAgent(ABC):
+class DSPyA2AAgentBase(ABC):
     """
-    Abstract base class for all agents.
+    Base class that bridges DSPy 3.0 modules with A2A protocol.
 
-    Provides:
-    - Tenant context management
-    - Configuration access
-    - Health check interface
+    Architecture:
+    - A2A Protocol Layer: Standard endpoints for agent communication
+    - DSPy 3.0 Core: Advanced AI capabilities and optimization
+    - Conversion Layer: A2A ↔ DSPy data format conversion
+
+    Features:
+    - Standard A2A endpoints (/agent.json, /tasks/send, /health)
+    - Automatic data conversion between A2A and DSPy formats
+    - Error handling and fallback mechanisms
+    - Performance tracking and observability
+    - Multi-modal support (text, images, video, audio)
     """
 
     def __init__(
         self,
-        tenant_id: str,  # REQUIRED
-        config: Optional[SystemConfig] = None
+        agent_name: str,
+        agent_description: str,
+        dspy_module: dspy.Module,
+        capabilities: List[str],
+        port: int = 8000,
+        version: str = "1.0.0"
     ):
-        if not tenant_id:
-            raise ValueError("tenant_id is required - no default tenant")
+        """
+        Initialize DSPy-A2A agent.
 
-        self.tenant_id = tenant_id
-        self.config = config or SystemConfig.load()
+        Args:
+            agent_name: Name for A2A protocol
+            agent_description: Agent card description
+            dspy_module: Core DSPy 3.0 module
+            capabilities: List of capabilities
+            port: A2A HTTP server port
+            version: Agent version
+        """
+        # A2A Protocol Configuration
+        self.agent_name = agent_name
+        self.agent_description = agent_description
+        self.capabilities = capabilities
+        self.port = port
+        self.version = version
+
+        # DSPy 3.0 Core
+        self.dspy_module = dspy_module
+
+        # FastAPI app for A2A endpoints
+        self.app = FastAPI(
+            title=f"{agent_name} A2A Agent",
+            description=agent_description,
+            version=version
+        )
+
+        # A2A Client for inter-agent communication
+        self.a2a_client = A2AClient()
 
     @abstractmethod
-    async def execute(self, *args, **kwargs):
-        """Execute agent-specific logic"""
-        pass
+    async def _process_with_dspy(self, dspy_input: Dict) -> Any:
+        """
+        Process request using DSPy module.
 
-    def health_check(self) -> Dict[str, Any]:
-        """Check agent health"""
-        return {
-            "status": "healthy",
-            "tenant_id": self.tenant_id,
-            "agent": self.__class__.__name__
-        }
+        Must be implemented by subclass to define DSPy processing logic.
+        """
+        pass
 ```
+
+**Key Differences from Traditional Base Classes:**
+- **No built-in tenant_id**: Agents implement multi-tenancy via mixins (MemoryAwareMixin) or custom logic
+- **DSPy 3.0 Integration**: Core is a DSPy module, not just configuration
+- **A2A Protocol**: Built-in FastAPI server with standard A2A endpoints
+- **Abstract Method**: `_process_with_dspy()` instead of `execute()`
 
 ### MemoryAwareMixin
 
@@ -828,7 +888,7 @@ assert agent_a.memory_manager is not agent_b.memory_manager
 ### Example 1: Basic Routing
 
 ```python
-from cogniverse_agents.routing.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent
 
 # Initialize agent for tenant
 agent = RoutingAgent(tenant_id="acme")
@@ -839,7 +899,7 @@ decision = await agent.route_query(
     context={"user_preference": "educational"}
 )
 
-print(f"Selected agents: {decision.selected_agents}")
+print(f"Recommended agent: {decision.recommended_agent}")
 print(f"Enhanced query: {decision.enhanced_query}")
 print(f"Confidence: {decision.confidence}")
 ```
@@ -847,7 +907,7 @@ print(f"Confidence: {decision.confidence}")
 ### Example 2: Video Search
 
 ```python
-from cogniverse_agents.search.video_search_agent import VideoSearchAgent
+from cogniverse_agents.video_search_agent import VideoSearchAgent
 
 # Initialize agent
 agent = VideoSearchAgent(
@@ -871,7 +931,7 @@ for result in results:
 ### Example 3: Multi-Agent Orchestration
 
 ```python
-from cogniverse_agents.orchestration.composing_agent import ComposingAgent
+from cogniverse_agents.composing_agent import ComposingAgent
 
 # Initialize composing agent
 orchestrator = ComposingAgent(tenant_id="acme")
@@ -893,7 +953,7 @@ print(f"Confidence: {response['confidence']}")
 ### Example 4: Memory-Aware Search
 
 ```python
-from cogniverse_agents.search.video_search_agent import VideoSearchAgent
+from cogniverse_agents.video_search_agent import VideoSearchAgent
 
 # Initialize with memory
 agent = VideoSearchAgent(tenant_id="acme")
@@ -925,7 +985,7 @@ results2 = await agent.search_by_text("advanced cooking techniques")
 # tests/agents/unit/test_routing_agent.py
 
 import pytest
-from cogniverse_agents.routing.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent
 
 class TestRoutingAgent:
     def test_initialization(self):
@@ -943,7 +1003,7 @@ class TestRoutingAgent:
             query="machine learning videos"
         )
 
-        assert decision.selected_agents
+        assert decision.recommended_agent
         assert decision.enhanced_query
         assert 0.0 <= decision.confidence <= 1.0
 
@@ -967,8 +1027,8 @@ class TestRoutingAgent:
 # tests/agents/integration/test_video_search_integration.py
 
 import pytest
-from cogniverse_agents.search.video_search_agent import VideoSearchAgent
-from cogniverse_vespa.tenant.tenant_schema_manager import TenantSchemaManager
+from cogniverse_agents.video_search_agent import VideoSearchAgent
+from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
 
 @pytest.mark.integration
 class TestVideoSearchAgentIntegration:
@@ -1011,7 +1071,7 @@ class TestVideoSearchAgentIntegration:
 # tests/conftest.py
 
 import pytest
-from cogniverse_vespa.tenant.tenant_schema_manager import TenantSchemaManager
+from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
 
 @pytest.fixture
 def test_tenant_id():

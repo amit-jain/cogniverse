@@ -67,17 +67,23 @@ cogniverse/
 │   │
 │   ├── agents/                   # Agent implementations
 │   │   ├── pyproject.toml
-│   │   └── cogniverse_agents/
-│   │       ├── routing/          # Routing agent
-│   │       ├── search/           # Search agents
+│   │   └── cogniverse_agents/    # FLAT: Main agents at top level
+│   │       ├── routing_agent.py  # Routing agent (1570 lines)
+│   │       ├── video_search_agent.py  # Video search agent
+│   │       ├── composing_agent.py     # Orchestration agent
+│   │       ├── routing/          # Routing utilities
+│   │       ├── search/           # Search utilities
+│   │       ├── orchestrator/     # Orchestration utilities
+│   │       ├── optimizer/        # Optimization utilities
 │   │       └── tools/            # Agent tools
 │   │
 │   ├── vespa/                    # Vespa integration
 │   │   ├── pyproject.toml
-│   │   └── cogniverse_vespa/
-│   │       ├── backends/         # Search backends
-│   │       ├── schema/           # Schema management
-│   │       └── tenant/           # Tenant management
+│   │   └── cogniverse_vespa/     # FLAT: All files at top level
+│   │       ├── tenant_schema_manager.py  # Multi-tenant schemas
+│   │       ├── vespa_search_client.py    # Search client
+│   │       ├── ingestion_client.py       # Ingestion (VespaPyClient)
+│   │       └── json_schema_parser.py     # Schema parsing
 │   │
 │   ├── runtime/                  # Production runtime
 │   │   ├── pyproject.toml
@@ -147,7 +153,7 @@ graph TB
 
 ### Package Responsibilities
 
-#### **cogniverse_core** (113 files)
+#### **cogniverse_core** (115 files)
 Core utilities and interfaces shared across all packages.
 
 **Key Modules**:
@@ -161,7 +167,7 @@ Core utilities and interfaces shared across all packages.
 
 **Dependencies**: None (foundational package)
 
-#### **cogniverse_agents** (101 files)
+#### **cogniverse_agents** (99 files)
 Agent implementations and routing logic.
 
 **Key Modules**:
@@ -172,7 +178,7 @@ Agent implementations and routing logic.
 
 **Dependencies**: `cogniverse_core`, `cogniverse_vespa`
 
-#### **cogniverse_vespa** (16 files)
+#### **cogniverse_vespa** (17 files)
 Vespa integration and tenant management.
 
 **Key Modules**:
@@ -325,14 +331,14 @@ Extracts tenant_id from:
 2. Header: `X-Tenant-ID`
 3. Query param: `?tenant_id=acme` (dev/testing)
 
-#### **TenantSchemaManager** (`libs/vespa/cogniverse_vespa/tenant/tenant_schema_manager.py`)
+#### **TenantSchemaManager** (`libs/vespa/cogniverse_vespa/tenant_schema_manager.py`)
 Manages tenant schema lifecycle:
 - `get_tenant_schema_name(tenant_id, base_schema)` → `{base_schema}_{tenant_id}`
 - `ensure_tenant_schema_exists(tenant_id, base_schema)` → Lazy schema creation
 - `deploy_tenant_schemas(tenant_id)` → Deploy all schemas for tenant
 - `delete_tenant_schemas(tenant_id)` → Cleanup on tenant removal
 
-#### **Tenant-Aware Backends** (`libs/vespa/cogniverse_vespa/backends/`)
+#### **Tenant-Aware Backends** (`libs/vespa/cogniverse_vespa/`)
 All search clients are tenant-aware:
 - Initialize with `tenant_id`
 - Automatically route to tenant-specific schemas
@@ -347,6 +353,107 @@ All search clients are tenant-aware:
 - Phoenix projects per tenant: `{tenant_id}_routing_agent`
 - Separate spans and traces per tenant
 - Full observability isolation
+
+### Backend Configuration (Phase 6)
+
+**Commits**: d307aad, 023ca59
+**Feature**: Tenant-aware backend configuration with profile-based video processing
+
+Phase 6 introduced hierarchical backend configuration enabling per-tenant customization of video processing pipelines:
+
+#### Key Features
+
+**1. Profile-Based Configuration**
+```python
+from cogniverse_core.config.unified_config import BackendConfig, BackendProfileConfig
+
+# Backend profile defines video processing pipeline
+profile = BackendProfileConfig(
+    profile_name="video_colpali_smol500_mv_frame",
+    schema_name="video_colpali_smol500_mv_frame",
+    embedding_model="vidore/colsmol-500m",
+    pipeline_config={
+        "extract_keyframes": True,
+        "keyframe_fps": 1.0,
+        "max_frames": 100,
+        "transcribe_audio": True
+    },
+    strategies={
+        "segmentation": {"class": "FrameSegmentationStrategy"},
+        "embedding": {"class": "MultiVectorEmbeddingStrategy"}
+    },
+    embedding_type="binary"
+)
+```
+
+**2. Auto-Discovery**
+- Automatically loads `config.json` from standard locations:
+  - `COGNIVERSE_CONFIG` environment variable
+  - `configs/config.json` (workspace root)
+  - `../configs/config.json` (one level up)
+- No manual configuration path specification required
+
+**3. Tenant Configuration Overlay**
+- System provides base configuration for all tenants
+- Tenants can override specific settings via `ConfigManager`
+- Deep merge: System base + Tenant overrides = Tenant config
+- Example: Premium tenants get higher `max_frames` (200 vs 100)
+
+**4. Query-Time Resolution**
+- Profile selection at query time (explicit or auto-select)
+- Strategy resolution based on embedding type
+- Tenant schema scoping automatic
+
+**Benefits**:
+- **Customization**: Per-tenant video processing optimization
+- **Resource Control**: Different quality tiers for different tenants
+- **Flexibility**: Runtime profile selection without restart
+- **Isolation**: Tenant configs don't interfere
+
+#### Phase 6 Architecture Diagram
+
+```mermaid
+flowchart TB
+    subgraph Config[Configuration Layer]
+        ConfigFile[config.json<br/>Auto-Discovery]
+        SystemBase[System Base Config<br/>All Profiles]
+        TenantOverride[Tenant Overrides<br/>ConfigManager]
+    end
+
+    subgraph Application[Application Layer]
+        SystemConfig[SystemConfig<br/>tenant_id: acme]
+        BackendConfig[BackendConfig<br/>Merged Configuration]
+    end
+
+    subgraph Runtime[Query Runtime]
+        Query[User Query] --> ProfileResolution[Profile Resolution<br/>Explicit/Auto/Default]
+        ProfileResolution --> StrategyResolution[Strategy Resolution<br/>Binary/Float/Default]
+        StrategyResolution --> TenantScoping[Tenant Scoping<br/>schema + tenant_id]
+    end
+
+    subgraph Vespa[Vespa Backend]
+        ConnectionPool[Connection Pool<br/>Per Schema]
+        Schema1[Schema: video_colpali_acme]
+        Schema2[Schema: video_videoprism_acme]
+    end
+
+    ConfigFile --> SystemBase
+    SystemBase --> BackendConfig
+    TenantOverride --> BackendConfig
+    BackendConfig --> SystemConfig
+    SystemConfig --> ProfileResolution
+
+    TenantScoping --> ConnectionPool
+    ConnectionPool --> Schema1
+    ConnectionPool --> Schema2
+
+    style Config fill:#e1f5ff
+    style Application fill:#fff4e1
+    style Runtime fill:#f5e1ff
+    style Vespa fill:#e1ffe1
+```
+
+**See**: [Multi-Tenant Architecture](multi-tenant.md#backend-configuration) for complete details
 
 ---
 
@@ -504,12 +611,12 @@ from cogniverse_core.config.unified_config import SystemConfig
 from cogniverse_core.telemetry.manager import TelemetryManager
 
 # Agent implementations
-from cogniverse_agents.routing.routing_agent import RoutingAgent
-from cogniverse_agents.search.video_search_agent import VideoSearchAgent
+from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.video_search_agent import VideoSearchAgent
 
 # Vespa integration
-from cogniverse_vespa.tenant.tenant_schema_manager import TenantSchemaManager
-from cogniverse_vespa.backends.vespa_search_client import VespaSearchClient
+from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+from cogniverse_vespa.vespa_search_client import VespaSearchClient
 
 # Runtime
 from cogniverse_runtime.api.middleware.tenant_context import inject_tenant_context

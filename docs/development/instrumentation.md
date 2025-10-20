@@ -1,7 +1,7 @@
 # Cogniverse Study Guide: Instrumentation & Observability Module
 
-**Last Updated:** 2025-10-07
-**Module Path:** `src/app/telemetry/`, `src/evaluation/phoenix/`
+**Last Updated:** 2025-10-19
+**Module Path:** `libs/core/cogniverse_core/telemetry/`, `libs/core/cogniverse_core/evaluation/phoenix/`
 **Purpose:** Phoenix-powered observability and multi-tenant telemetry
 
 ---
@@ -122,7 +122,7 @@ graph TB
 
 ### 1. TelemetryManager
 
-**File:** `src/app/telemetry/manager.py`
+**File:** `libs/core/cogniverse_core/telemetry/manager.py`
 
 The singleton manager for all telemetry operations.
 
@@ -135,7 +135,7 @@ The singleton manager for all telemetry operations.
 #### Usage
 
 ```python
-from src.app.telemetry.manager import get_telemetry_manager
+from cogniverse_core.telemetry.manager import get_telemetry_manager
 
 # Get singleton instance
 telemetry = get_telemetry_manager()
@@ -161,7 +161,7 @@ with telemetry.span(
 #### Configuration
 
 ```python
-from src.app.telemetry.config import TelemetryConfig, TelemetryLevel
+from cogniverse_core.telemetry.config import TelemetryConfig, TelemetryLevel
 
 config = TelemetryConfig(
     enabled=True,
@@ -193,7 +193,7 @@ TELEMETRY_SYNC_EXPORT=true  # Synchronous export for tests
 
 ### 2. TelemetryConfig
 
-**File:** `src/app/telemetry/config.py`
+**File:** `libs/core/cogniverse_core/telemetry/config.py`
 
 Configuration for telemetry system with multi-tenant support.
 
@@ -251,7 +251,7 @@ class BatchExportConfig:
 
 ### 3. ModalityMetricsTracker
 
-**File:** `src/app/telemetry/modality_metrics.py`
+**File:** `libs/core/cogniverse_core/telemetry/modality_metrics.py`
 
 Tracks per-modality performance metrics with rolling windows.
 
@@ -264,8 +264,8 @@ Tracks per-modality performance metrics with rolling windows.
 #### Usage
 
 ```python
-from src.app.telemetry.modality_metrics import ModalityMetricsTracker
-from src.app.search.multi_modal_reranker import QueryModality
+from cogniverse_core.telemetry.modality_metrics import ModalityMetricsTracker
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 tracker = ModalityMetricsTracker(window_size=1000)
 
@@ -323,7 +323,7 @@ for entry in error_prone:
 
 ### 4. PhoenixAnalytics
 
-**File:** `src/evaluation/phoenix/analytics.py`
+**File:** `libs/core/cogniverse_core/evaluation/phoenix/analytics.py`
 
 Analytics and visualization engine for Phoenix traces.
 
@@ -338,7 +338,7 @@ Analytics and visualization engine for Phoenix traces.
 
 ```python
 from datetime import datetime, timedelta
-from src.evaluation.phoenix.analytics import PhoenixAnalytics
+from cogniverse_core.evaluation.phoenix.analytics import PhoenixAnalytics
 
 analytics = PhoenixAnalytics(phoenix_url="http://localhost:6006")
 
@@ -386,7 +386,7 @@ class TraceMetrics:
 ### 1. Agent Instrumentation
 
 ```python
-from src.app.telemetry.manager import get_telemetry_manager
+from cogniverse_core.telemetry.manager import get_telemetry_manager
 
 class VideoSearchAgent:
     def __init__(self, config):
@@ -430,8 +430,8 @@ class VideoSearchAgent:
 ### 2. Routing Agent with Phoenix Projects
 
 ```python
-from src.app.telemetry.manager import get_telemetry_manager
-from src.app.telemetry.config import SERVICE_NAME_ORCHESTRATION
+from cogniverse_core.telemetry.manager import get_telemetry_manager
+from cogniverse_core.telemetry.config import SERVICE_NAME_ORCHESTRATION
 
 class RoutingAgent:
     def __init__(self, config):
@@ -469,7 +469,7 @@ class RoutingAgent:
 ### 3. Error Handling with Spans
 
 ```python
-from src.app.telemetry.manager import get_telemetry_manager
+from cogniverse_core.telemetry.manager import get_telemetry_manager
 from opentelemetry.trace import Status, StatusCode
 
 class SearchService:
@@ -512,8 +512,8 @@ class SearchService:
 
 ```python
 import pytest
-from src.app.telemetry.manager import TelemetryManager
-from src.app.telemetry.config import TelemetryConfig
+from cogniverse_core.telemetry.manager import TelemetryManager
+from cogniverse_core.telemetry.config import TelemetryConfig
 
 @pytest.fixture
 def telemetry_manager():
@@ -771,13 +771,13 @@ def test_multi_tenant_span_isolation():
 ## Key Files Reference
 
 ### Telemetry Module
-- `src/app/telemetry/manager.py` - TelemetryManager singleton (376 lines)
-- `src/app/telemetry/config.py` - Configuration and settings (113 lines)
-- `src/app/telemetry/modality_metrics.py` - Performance metrics tracking (355 lines)
+- `libs/core/cogniverse_core/telemetry/manager.py` - TelemetryManager singleton (376 lines)
+- `libs/core/cogniverse_core/telemetry/config.py` - Configuration and settings (113 lines)
+- `libs/core/cogniverse_core/telemetry/modality_metrics.py` - Performance metrics tracking (355 lines)
 
 ### Phoenix Analytics
-- `src/evaluation/phoenix/analytics.py` - Analytics and visualization (150+ lines)
-- `src/evaluation/core/experiment_tracker.py` - Experiment tracking (See Guide 06)
+- `libs/core/cogniverse_core/evaluation/phoenix/analytics.py` - Analytics and visualization (150+ lines)
+- `libs/core/cogniverse_core/evaluation/core/experiment_tracker.py` - Experiment tracking (See Guide 06)
 
 ### Tests
 - `tests/telemetry/integration/test_multi_tenant_telemetry.py` - Multi-tenant integration tests

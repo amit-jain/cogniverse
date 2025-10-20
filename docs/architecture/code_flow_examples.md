@@ -15,9 +15,9 @@ uv run python scripts/deploy_tenant_schema.py \
 **Code Flow:**
 ```python
 # 1. Schema Manager creates tenant-specific schema
-from src.backends.vespa.schema_manager import SchemaManager
+from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
 
-schema_manager = SchemaManager()
+schema_manager = TenantSchemaManager()
 schema_name = schema_manager.deploy_tenant_schema(
     tenant_id="customer_a",
     profile="video_colpali_smol500_mv_frame"
@@ -55,14 +55,16 @@ uv run python scripts/run_ingestion.py \
 **Code Flow:**
 ```python
 # 1. Pipeline initialization with Phoenix telemetry
-from src.app.ingestion.pipeline import VideoIngestionPipeline
-from src.telemetry.multi_tenant_manager import MultiTenantTelemetryManager
+from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline
+from cogniverse_core.telemetry.manager import TelemetryManager
+from cogniverse_core.config.unified_config import SystemConfig
 
-telemetry = MultiTenantTelemetryManager()
+config = SystemConfig(tenant_id="customer_a")
+telemetry = TelemetryManager(config)
 pipeline = VideoIngestionPipeline(
     profile="video_colpali_smol500_mv_frame",
     tenant_id="customer_a",
-    telemetry=telemetry
+    backend="vespa"
 )
 
 # 2. Process each video with tracing
@@ -93,9 +95,9 @@ curl -X POST http://localhost:8000/api/v1/search \
 **Code Flow:**
 ```python
 # 1. Composing Agent receives request
-from src.app.agents.composing_agent import ComposingAgent
-from src.app.agents.video_search_agent import VideoSearchAgent
-from src.app.agents.text_analysis_agent import TextAnalysisAgent
+from cogniverse_agents.composing_agent import ComposingAgent
+from cogniverse_agents.video_search_agent import VideoSearchAgent
+from cogniverse_agents.text_analysis_agent import TextAnalysisAgent
 
 composing_agent = ComposingAgent()
 
@@ -111,110 +113,251 @@ with telemetry.span("agent.route", tenant_id) as span:
     # Decision: Route to video agent for tutorial content
 
 # 4. Orchestrate agents via A2A protocol
-from src.app.agents.a2a_protocol import A2AMessage, MessageType
+from cogniverse_agents.tools.a2a_utils import create_text_message
 
 # Create search message for video agent
-search_msg = A2AMessage(
-    type=MessageType.REQUEST,
-    source="composing_agent",
-    target="video_search_agent",
-    payload={
-        "query": "machine learning tutorial",
-        "strategy": "hybrid_float_bm25",
-        "tenant_id": tenant_id
-    }
+search_msg = create_text_message(
+    text="machine learning tutorial",
+    role="user"
 )
 
 # 5. Video Search Agent executes search
-video_agent = VideoSearchAgent()
-results = await video_agent.search(
-    query=search_msg.payload["query"],
-    tenant_id=tenant_id,
-    strategy=search_msg.payload["strategy"]
+from cogniverse_agents.video_search_agent import VideoSearchAgent
+
+video_agent = VideoSearchAgent(
+    config=config,
+    profile="video_colpali_smol500_mv_frame"
+)
+results = video_agent.search_by_text(
+    query="machine learning tutorial",
+    top_k=10,
+    ranking="hybrid_binary_bm25_no_description"
 )
 
-# 6. Query Vespa with tenant schema
-from src.backends.vespa.query_builder import VespaQueryBuilder
+# 6. Backend automatically handles tenant-scoped schema
+# Schema name: "video_colpali_smol500_mv_frame_customer_a"
+# VespaBackend routes to correct tenant schema internally
+```
 
-query_builder = VespaQueryBuilder()
-vespa_query = query_builder.build_hybrid_query(
-    text="machine learning tutorial",
-    embedding=query_embedding,
-    schema=f"video_colpali_smol500_mv_frame_{tenant_id}"
+## 3. DSPy Routing Optimization Flow
+
+### Advanced Multi-Stage Optimizer
+
+The routing system uses DSPy's advanced optimization techniques (GEPA, MIPROv2, SIMBA, BootstrapFewShot) to continuously improve routing decisions based on experience.
+
+**Location**: `libs/agents/cogniverse_agents/routing/advanced_optimizer.py`
+
+```python
+# 1. Initialize optimizer for tenant
+from cogniverse_agents.routing.advanced_optimizer import (
+    AdvancedRoutingOptimizer,
+    AdvancedOptimizerConfig
 )
 
-vespa_results = await vespa_app.query(vespa_query)
+config = AdvancedOptimizerConfig(
+    optimizer_strategy="adaptive",  # Auto-selects based on data size
+    experience_replay_size=1000,
+    gepa_threshold=200,             # Use GEPA when 200+ examples
+    mipro_threshold=100,            # Use MIPROv2 when 100+ examples
+    simba_threshold=50,             # Use SIMBA when 50+ examples
+    bootstrap_threshold=20,         # Use Bootstrap when 20+ examples
+    min_experiences_for_training=50
+)
+
+optimizer = AdvancedRoutingOptimizer(
+    tenant_id="customer_a",
+    config=config
+)
 ```
 
-## 3. DSPy Optimization Flow
+### Recording Routing Experiences
 
-### GEPA Optimizer Training
 ```python
-# 1. Collect routing experiences
-from src.app.routing.gepa_optimizer import GEPAOptimizer
-from src.app.routing.experience_buffer import ExperienceBuffer
+# 2. After each routing decision, record the outcome
+from cogniverse_agents.routing.advanced_optimizer import RoutingExperience
 
-buffer = ExperienceBuffer(capacity=10000)
-optimizer = GEPAOptimizer(buffer=buffer)
+reward = await optimizer.record_routing_experience(
+    query="machine learning tutorial",
+    entities=[{"text": "machine learning", "type": "TOPIC"}],
+    relationships=[],
+    enhanced_query="machine learning tutorial videos",
+    chosen_agent="video_search",
+    routing_confidence=0.92,
 
-# 2. Record routing decision
-experience = {
-    "query": "machine learning tutorial",
-    "features": extract_query_features(query),
-    "decision": RoutingTier.BALANCED,
-    "reward": 0.85,  # Based on user feedback
-    "tenant_id": "customer_a"
-}
-buffer.add(experience)
+    # Outcome metrics (collected after agent execution)
+    search_quality=0.85,        # Quality of search results (0-1)
+    agent_success=True,         # Did agent complete successfully
+    user_satisfaction=0.9,      # Explicit user feedback (optional)
+    processing_time=1.2         # Seconds
+)
 
-# 3. Periodic optimization (every 5 minutes)
-if buffer.size() > 1000:
-    with telemetry.span("optimization.gepa", tenant_id) as span:
-        # Sample batch for training
-        batch = buffer.sample(batch_size=100)
-
-        # Update routing model
-        optimizer.update(batch)
-
-        # Save optimized model
-        model_path = f"models/routing/{tenant_id}/gepa_model.pkl"
-        optimizer.save(model_path)
+# Reward computed from weighted combination:
+# reward = (search_quality * 0.4) + (agent_success * 0.3) + (user_satisfaction * 0.3) - (time_penalty)
+# Result: 0.855
 ```
 
-### Optimizer Selection Based on Data
+### Experience Replay and Learning
+
 ```python
-from src.routing.optimizer_factory import OptimizerFactory
+# 3. Experience stored in replay buffer (simple list)
+# libs/agents/cogniverse_agents/routing/advanced_optimizer.py:652-655
 
-factory = OptimizerFactory()
-data_size = len(buffer)
+# Add to experience replay buffer
+self.experience_replay.append(experience)
+if len(self.experience_replay) > self.config.experience_replay_size:
+    self.experience_replay.pop(0)  # FIFO queue
 
-# Select appropriate optimizer
-if data_size < 100:
-    # Bootstrap for cold start
-    optimizer = factory.create_bootstrap_optimizer()
-elif data_size < 1000:
-    # SIMBA for moderate data
-    optimizer = factory.create_simba_optimizer()
-elif data_size < 10000:
-    # MIPRO for substantial data
-    optimizer = factory.create_mipro_optimizer()
+# 4. Automatic optimization triggers when conditions met
+def _should_trigger_optimization(self):
+    return (
+        len(self.experiences) >= self.config.min_experiences_for_training
+        and len(self.experiences) % self.config.update_frequency == 0
+        and len(self.experience_replay) >= self.config.batch_size
+    )
+```
+
+### Multi-Stage DSPy Optimization
+
+```python
+# 5. When optimization triggers, adaptive algorithm selection
+# libs/agents/cogniverse_agents/routing/advanced_optimizer.py:342-363
+
+from dspy.teleprompt import GEPA, MIPROv2, SIMBA, BootstrapFewShot
+
+# Optimizer initialized with DSPy's actual optimizers
+self.gepa_optimizer = GEPA(
+    metric=routing_accuracy_metric,
+    auto="light",
+    reflection_lm=current_lm  # LLM for reflective prompt evolution
+)
+self.mipro_optimizer = MIPROv2(metric=routing_accuracy_metric)
+self.simba_optimizer = SIMBA(metric=routing_accuracy_metric)
+self.bootstrap_optimizer = BootstrapFewShot(metric=routing_accuracy_metric)
+
+# Adaptive selection based on dataset size
+optimization_stages = [
+    ("bootstrap", bootstrap_optimizer, 20),   # 20+ examples
+    ("simba", simba_optimizer, 50),           # 50+ examples
+    ("mipro", mipro_optimizer, 100),          # 100+ examples
+    ("gepa", gepa_optimizer, 200),            # 200+ examples (most advanced)
+]
+
+# Select optimizer based on current experience count
+dataset_size = len(self.experience_replay)
+if dataset_size >= 200:
+    selected_optimizer = gepa_optimizer      # Reflective prompt evolution
+    optimizer_name = "gepa"
+elif dataset_size >= 100:
+    selected_optimizer = mipro_optimizer     # Metric-aware optimization
+    optimizer_name = "mipro"
+elif dataset_size >= 50:
+    selected_optimizer = simba_optimizer     # Similarity-based memory
+    optimizer_name = "simba"
 else:
-    # GEPA for large-scale continuous learning
-    optimizer = factory.create_gepa_optimizer()
+    selected_optimizer = bootstrap_optimizer # Few-shot learning
+    optimizer_name = "bootstrap"
 ```
+
+### Optimization Execution
+
+```python
+# 6. Run optimization on routing module
+import dspy
+
+# Prepare training data from experiences
+trainset = []
+for exp in self.experience_replay[-config.batch_size:]:
+    trainset.append(
+        dspy.Example(
+            query=exp.query,
+            enhanced_query=exp.enhanced_query,
+            agent_type=exp.chosen_agent
+        ).with_inputs("query", "enhanced_query")
+    )
+
+# Compile routing module with selected optimizer
+optimized_module = selected_optimizer.compile(
+    student=routing_module,
+    trainset=trainset
+)
+
+# 7. Update routing module with optimized version
+self.routing_module = optimized_module
+
+# 8. Track optimization metrics
+self.metrics = OptimizationMetrics(
+    total_experiences=len(self.experiences),
+    avg_reward=np.mean([e.reward for e in self.experiences]),
+    successful_routes=sum(1 for e in self.experiences if e.agent_success),
+    failed_routes=sum(1 for e in self.experiences if not e.agent_success),
+    confidence_accuracy=self._compute_confidence_accuracy(),
+    last_updated=datetime.now()
+)
+```
+
+### Complete Workflow
+
+```python
+# Full routing optimization workflow
+from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
+
+# 1. Initialize routing agent with optimizer
+agent = RoutingAgent(tenant_id="customer_a")
+optimizer = AdvancedRoutingOptimizer(tenant_id="customer_a")
+
+# 2. Process user query
+decision = agent.route_query(query="cooking videos")
+
+# 3. Execute search with chosen agent
+results = await video_agent.search_by_text(query="cooking videos")
+
+# 4. Record experience with outcome
+reward = await optimizer.record_routing_experience(
+    query="cooking videos",
+    entities=decision.entities,
+    relationships=[],
+    enhanced_query=decision.enhanced_query,
+    chosen_agent=decision.recommended_agent,
+    routing_confidence=decision.confidence,
+    search_quality=compute_search_quality(results),
+    agent_success=True,
+    processing_time=1.5
+)
+
+# 5. Optimizer automatically triggers training when thresholds met
+# After 200+ experiences, GEPA reflective optimization runs
+# Routing module continuously improves based on feedback
+```
+
+### Key Architecture Differences from Documentation
+
+**What Actually Exists**:
+- ✅ `AdvancedRoutingOptimizer` orchestrates everything
+- ✅ DSPy's GEPA/MIPROv2/SIMBA/Bootstrap (not custom implementations)
+- ✅ `RoutingExperience` dataclass for tracking
+- ✅ Simple list-based experience replay (not separate buffer class)
+- ✅ Adaptive algorithm selection based on dataset size
+- ✅ Continuous learning from routing outcomes
+
+**What Doesn't Exist**:
+- ❌ Standalone `GEPAOptimizer` class
+- ❌ Separate `ExperienceBuffer` class
+- ❌ Custom GEPA implementation
 
 ## 4. Memory-Augmented Search Flow
 
 ### Search with Context
 ```python
 # 1. Initialize memory-aware agent
-from src.memory.mem0_manager import Mem0Manager
-from src.app.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
+from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_agents.video_search_agent import VideoSearchAgent
 
 class MemoryAwareVideoAgent(VideoSearchAgent, MemoryAwareMixin):
-    def __init__(self):
-        super().__init__()
-        self.memory = Mem0Manager()
+    def __init__(self, config):
+        super().__init__(config)
+        self.memory = Mem0MemoryManager(config)
 
 # 2. Retrieve user context
 user_memories = await agent.memory.search(
@@ -248,7 +391,7 @@ await agent.memory.add(
 ### Run A/B Test
 ```python
 # 1. Create experiment
-from src.evaluation.plugins.phoenix_experiment import PhoenixExperimentPlugin
+from cogniverse_core.evaluation.plugins.phoenix_experiment import PhoenixExperimentPlugin
 import phoenix as px
 
 plugin = PhoenixExperimentPlugin()
@@ -294,86 +437,7 @@ comparison = client.compare_experiments(
 print(f"Improvement: {comparison['delta_quality']:.2%}")
 ```
 
-## 6. Configuration Hot Reload Flow
-
-### Dynamic Configuration Update
-```python
-# 1. Update configuration
-from src.common.config_manager import get_config_manager
-
-manager = get_config_manager()
-
-# 2. Change LLM model for tenant
-new_config = SystemConfig(
-    tenant_id="customer_a",
-    llm_model="gpt-4-turbo",  # Upgrade from gpt-4
-    temperature=0.7
-)
-manager.set_system_config(new_config)
-
-# 3. Configuration watcher detects change
-from src.common.config_watcher import ConfigWatcher
-
-watcher = ConfigWatcher(manager)
-
-@watcher.on_change("customer_a", "SYSTEM")
-def reload_llm(config):
-    # Reinitialize LLM with new model
-    global llm_client
-    llm_client = create_llm_client(
-        model=config["llm_model"],
-        temperature=config["temperature"]
-    )
-    logger.info(f"Reloaded LLM: {config['llm_model']}")
-
-# 4. Changes apply immediately without restart
-# Next query uses gpt-4-turbo automatically
-```
-
-## 7. Tiered Cache Flow
-
-### Cache-Aware Processing
-```python
-# 1. Setup tiered cache
-from src.cache.tiered_manager import TieredCacheManager
-
-cache = TieredCacheManager(
-    hot=RedisBackend(),   # 1 hour TTL
-    warm=LocalFSBackend(), # 24 hour TTL
-    cold=S3Backend()      # 30 day TTL
-)
-
-# 2. Check cache before processing
-async def process_video(video_id: str, tenant_id: str):
-    cache_key = f"embeddings/colpali/{video_id}"
-
-    # Try to get from cache
-    embeddings = await cache.get_or_compute(
-        key=cache_key,
-        tenant_id=tenant_id,
-        compute_fn=lambda: generate_embeddings(video_id),
-        cache_hot=False,  # Too large for Redis
-        cache_warm=True,   # Keep locally
-        cache_cold=True    # Long-term storage
-    )
-
-    return embeddings
-
-# 3. Cache hit flow
-# Hot (Redis) → Miss
-# Warm (Local) → Miss
-# Cold (S3) → Hit!
-# Promote to Warm cache
-# Return without computation
-
-# 4. Invalidate on update
-await cache.invalidate_pattern(
-    pattern=f"embeddings/*/{video_id}/*",
-    tenant_id=tenant_id
-)
-```
-
-## 8. Error Recovery Flow
+## 6. Error Recovery Flow
 
 ### Graceful Degradation
 ```python

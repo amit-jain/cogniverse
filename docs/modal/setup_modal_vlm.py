@@ -116,7 +116,7 @@ def test_integration():
         # Test just the model loading first
         result = subprocess.run([
             sys.executable, "-c", 
-            "from src.processing.video_ingestion_pipeline import load_models; "
+            "from cogniverse_runtime.ingestion.pipeline import load_models; "
             "models = load_models('cpu'); "
             "print('✅ Model loading test passed!')"
         ], capture_output=True, text=True)

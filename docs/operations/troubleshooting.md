@@ -96,7 +96,7 @@ example = dspy.Example(
 
 **Prevention:**
 - Validate training data before optimization (see docs/modules/optimization.md)
-- Use example templates from `src/app/agents/dspy_agent_optimizer.py:327-385`
+- Use example templates from `libs/agents/cogniverse_agents/dspy_agent_optimizer.py:327-385`
 - Run unit tests for training data loading
 
 ---
@@ -129,7 +129,7 @@ model_name = "vidore/colsmol-500m"  # 500M params, stable
 - ColQwen: `vidore/colqwen-omni-v0.1`
 
 **Prevention:**
-- Check `src/app/ingestion/strategies.py` for default models
+- Check ingestion pipeline configuration for default models
 - Update documentation when changing models
 - Run ingestion tests before committing model changes
 
@@ -165,7 +165,7 @@ def _register_vespa_provider():
 ```
 
 **Affected Files:**
-- `src/common/mem0_memory_manager.py` (fixed in commit 28c8e45)
+- `libs/core/cogniverse_core/common/mem0_memory_manager.py` (fixed in commit 28c8e45)
 
 **Prevention:**
 - Import system modules (`sys`, `os`, `logging`) at module level
