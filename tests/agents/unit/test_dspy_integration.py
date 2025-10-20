@@ -3071,7 +3071,7 @@ class TestVideoSearchAgent:
         }
 
         # Mock the required dependencies
-        with patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient"):
+        with patch("cogniverse_agents.video_search_agent.get_backend_registry") as mock_registry:
             with patch(
                 "cogniverse_agents.video_search_agent.QueryEncoderFactory"
             ) as mock_encoder_factory:
@@ -3086,12 +3086,16 @@ class TestVideoSearchAgent:
                     "vespa_url": "http://localhost:8080"
                 }
 
+                # Mock backend registry
+                mock_search_backend = Mock()
+                mock_registry.return_value.get_search_backend.return_value = mock_search_backend
+
                 # Mock encoder factory
                 mock_encoder_factory.create_encoder.return_value = Mock()
 
                 agent = VideoSearchAgent(tenant_id="test_tenant")
                 assert agent is not None
-                assert hasattr(agent, "vespa_client")
+                assert hasattr(agent, "search_backend")
                 assert hasattr(agent, "config")
 
     def test_relationship_aware_search_params(self):
@@ -3151,9 +3155,9 @@ class TestVideoSearchAgent:
         assert context.routing_metadata["agent"] == "video_search_agent"
 
     @patch("cogniverse_agents.query_encoders.get_config")
-    @patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient")
+    @patch("cogniverse_agents.video_search_agent.get_backend_registry")
     @patch("cogniverse_agents.video_search_agent.get_config")
-    def test_relevance_score_calculation(self, mock_video_config, mock_vespa_class, mock_encoder_config):
+    def test_relevance_score_calculation(self, mock_video_config, mock_registry, mock_encoder_config):
         """Test relevance score calculation with relationship context"""
 
         # Mock encoder config
@@ -3179,6 +3183,10 @@ class TestVideoSearchAgent:
                 },
                 "vespa_url": "http://localhost:8080"
             }
+
+            # Mock backend registry
+            mock_search_backend = Mock()
+            mock_registry.return_value.get_search_backend.return_value = mock_search_backend
 
             # Mock encoder factory
             mock_encoder_factory.create_encoder.return_value = Mock()
@@ -3214,9 +3222,9 @@ class TestVideoSearchAgent:
             assert relevance <= 1.0
 
     @patch("cogniverse_agents.query_encoders.get_config")
-    @patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient")
+    @patch("cogniverse_agents.video_search_agent.get_backend_registry")
     @patch("cogniverse_agents.video_search_agent.get_config")
-    def test_entity_matching_logic(self, mock_video_config, mock_vespa_class, mock_encoder_config):
+    def test_entity_matching_logic(self, mock_video_config, mock_registry, mock_encoder_config):
         """Test entity matching in results"""
 
         # Mock encoder config
@@ -3242,6 +3250,10 @@ class TestVideoSearchAgent:
                 },
                 "vespa_url": "http://localhost:8080"
             }
+
+            # Mock backend registry
+            mock_search_backend = Mock()
+            mock_registry.return_value.get_search_backend.return_value = mock_search_backend
 
             # Mock encoder factory
             mock_encoder_factory.create_encoder.return_value = Mock()
@@ -3279,9 +3291,9 @@ class TestVideoSearchAgent:
             assert "soccer" in matched_texts
 
     @patch("cogniverse_agents.query_encoders.get_config")
-    @patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient")
+    @patch("cogniverse_agents.video_search_agent.get_backend_registry")
     @patch("cogniverse_agents.video_search_agent.get_config")
-    def test_search_result_enhancement(self, mock_video_config, mock_vespa_class, mock_encoder_config):
+    def test_search_result_enhancement(self, mock_video_config, mock_registry, mock_encoder_config):
         """Test search result enhancement with relationships"""
 
         # Mock encoder config
@@ -3307,6 +3319,10 @@ class TestVideoSearchAgent:
                 },
                 "vespa_url": "http://localhost:8080"
             }
+
+            # Mock backend registry
+            mock_search_backend = Mock()
+            mock_registry.return_value.get_search_backend.return_value = mock_search_backend
 
             # Mock encoder factory
             mock_encoder_factory.create_encoder.return_value = Mock()

@@ -42,6 +42,7 @@ The Agents package (`cogniverse-agents`) provides concrete agent implementations
 ```python
 # Agents package depends on:
 from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
+from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.health_mixin import HealthMixin
 from cogniverse_core.telemetry.manager import TelemetryManager
@@ -818,6 +819,267 @@ class MemoryAwareMixin:
             metadata=metadata
         )
         return True
+```
+
+### TenantAwareAgentMixin
+
+**Location**: `libs/core/cogniverse_core/agents/tenant_aware_mixin.py`
+
+Provides standardized multi-tenant support for all agents, eliminating ~10 lines of duplicated validation code per agent:
+
+```python
+class TenantAwareAgentMixin:
+    """
+    Mixin class that adds multi-tenant capabilities to agents.
+
+    Design Philosophy:
+    - REQUIRED tenant_id: No defaults, explicit tenant identification
+    - Fail-fast validation: Raises ValueError immediately on invalid tenant_id
+    - Context helpers: Provides utilities for tenant-scoped operations
+    - Config integration: Optionally loads tenant-specific configuration
+
+    Key Benefits:
+    - Eliminates ~10 lines of duplicated validation code per agent
+    - Consistent error messages across all agents
+    - Standardized tenant context API
+    - Easy to extend with additional tenant utilities
+    """
+
+    def __init__(
+        self,
+        tenant_id: str,
+        config: Optional[SystemConfig] = None,
+        **kwargs
+    ):
+        """
+        Initialize tenant-aware agent mixin.
+
+        Args:
+            tenant_id: Tenant identifier (REQUIRED - no default)
+            config: Optional system configuration
+            **kwargs: Passed to other base classes in MRO chain
+
+        Raises:
+            ValueError: If tenant_id is empty, None, or invalid format
+        """
+        # Validate tenant_id (fail fast)
+        if not tenant_id:
+            raise ValueError(
+                "tenant_id is required - no default tenant. "
+                "Agents must be explicitly initialized with a valid tenant identifier."
+            )
+
+        # Strip whitespace and validate again
+        tenant_id = tenant_id.strip()
+        if not tenant_id:
+            raise ValueError(
+                "tenant_id cannot be empty or whitespace only. "
+                "Provide a valid tenant identifier (e.g., 'customer_a', 'acme:production')."
+            )
+
+        # Store tenant_id
+        self.tenant_id = tenant_id
+
+        # Store or load configuration
+        self.config = config
+        if config is None:
+            try:
+                self.config = get_config()
+            except Exception as e:
+                logger.warning(f"Failed to load system config for tenant {tenant_id}: {e}")
+                self.config = None
+
+        # Initialize tenant-aware flag
+        self._tenant_initialized = True
+
+        logger.debug(f"Tenant context initialized: {tenant_id}")
+
+        # Call super for MRO chain (if needed)
+        if hasattr(super(), '__init__'):
+            super().__init__(**kwargs)
+
+    def get_tenant_context(self) -> Dict[str, Any]:
+        """
+        Get tenant context for operations.
+
+        Returns a dictionary with tenant information useful for:
+        - Logging and debugging
+        - Telemetry span attributes
+        - Database query filtering
+        - Cache key prefixes
+
+        Returns:
+            Dictionary with tenant context information
+        """
+        context = {"tenant_id": self.tenant_id}
+
+        # Add environment if available from config
+        if self.config:
+            if hasattr(self.config, 'environment'):
+                context["environment"] = self.config.environment
+            elif hasattr(self.config, 'get') and callable(self.config.get):
+                env = self.config.get('environment')
+                if env:
+                    context["environment"] = env
+
+        # Add agent type and name if available
+        if hasattr(self, '__class__'):
+            context["agent_type"] = self.__class__.__name__
+        if hasattr(self, 'agent_name'):
+            context["agent_name"] = self.agent_name
+
+        return context
+
+    def validate_tenant_access(self, resource_tenant_id: str) -> bool:
+        """
+        Validate that this agent can access a resource owned by a tenant.
+
+        Used for:
+        - Cross-tenant data access checks
+        - Security validation
+        - Resource authorization
+
+        Returns:
+            True if agent's tenant matches resource tenant, False otherwise
+        """
+        if not resource_tenant_id:
+            logger.warning(
+                f"Attempted to validate access to resource with no tenant_id "
+                f"(agent tenant: {self.tenant_id})"
+            )
+            return False
+
+        return self.tenant_id == resource_tenant_id
+
+    def get_tenant_scoped_key(self, key: str) -> str:
+        """
+        Generate a tenant-scoped key for caching, storage, etc.
+
+        Example:
+            agent.get_tenant_scoped_key("embeddings/video_123")
+            # Returns: "customer_a:embeddings/video_123"
+        """
+        return f"{self.tenant_id}:{key}"
+
+    def log_tenant_operation(
+        self,
+        operation: str,
+        details: Optional[Dict[str, Any]] = None,
+        level: str = "info"
+    ):
+        """
+        Log an operation with tenant context.
+
+        Example:
+            agent.log_tenant_operation(
+                "search_completed",
+                {"query": "machine learning", "results": 10}
+            )
+            # Logs: [customer_a] [RoutingAgent] search_completed: {'query': 'machine learning', 'results': 10}
+        """
+        log_func = getattr(logger, level, logger.info)
+
+        agent_info = f"[{self.tenant_id}]"
+        if hasattr(self, '__class__'):
+            agent_info += f" [{self.__class__.__name__}]"
+
+        message = f"{agent_info} {operation}"
+        if details:
+            message += f": {details}"
+
+        log_func(message)
+```
+
+#### Usage in Agents
+
+**With Multiple Inheritance (Explicit __init__ calls)**:
+
+```python
+# libs/agents/cogniverse_agents/routing_agent.py
+
+from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
+from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+
+class RoutingAgent(TenantAwareAgentMixin, MemoryAwareMixin):
+    """Routing agent with tenant and memory support"""
+
+    def __init__(self, tenant_id: str, **kwargs):
+        # Initialize tenant support FIRST (validates tenant_id)
+        TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
+
+        # Then initialize memory support
+        MemoryAwareMixin.__init__(self, tenant_id=tenant_id)
+
+        # Now self.tenant_id is available for agent logic
+        logger.info(f"RoutingAgent initialized for tenant: {self.tenant_id}")
+```
+
+**With Multiple Inheritance (Using super() - Alternative)**:
+
+```python
+class VideoSearchAgent(TenantAwareAgentMixin, MemoryAwareMixin):
+    """Video search agent with tenant and memory support"""
+
+    def __init__(self, tenant_id: str, **kwargs):
+        # Using super() with MRO chain
+        super().__init__(tenant_id=tenant_id, **kwargs)
+
+        # Tenant validation already complete
+        logger.info(f"VideoSearchAgent initialized for tenant: {self.tenant_id}")
+```
+
+#### Key Methods
+
+**`get_tenant_context() -> Dict[str, Any]`**
+
+Returns tenant context for logging, telemetry, and debugging:
+
+```python
+agent = RoutingAgent(tenant_id="acme")
+context = agent.get_tenant_context()
+# {
+#     "tenant_id": "acme",
+#     "agent_type": "RoutingAgent",
+#     "agent_name": "routing_agent"
+# }
+```
+
+**`validate_tenant_access(resource_tenant_id: str) -> bool`**
+
+Validates cross-tenant access attempts:
+
+```python
+agent = RoutingAgent(tenant_id="acme")
+
+# Same tenant - allow
+assert agent.validate_tenant_access("acme") is True
+
+# Different tenant - deny
+assert agent.validate_tenant_access("startup") is False
+```
+
+**`get_tenant_scoped_key(key: str) -> str`**
+
+Generates tenant-scoped keys for caching/storage:
+
+```python
+agent = RoutingAgent(tenant_id="acme")
+cache_key = agent.get_tenant_scoped_key("embeddings/video_123")
+# "acme:embeddings/video_123"
+```
+
+**`log_tenant_operation(operation: str, details: Dict, level: str)`**
+
+Logs operations with full tenant context:
+
+```python
+agent = RoutingAgent(tenant_id="acme")
+agent.log_tenant_operation(
+    "search_completed",
+    {"query": "machine learning", "results": 10},
+    level="info"
+)
+# Logs: [acme] [RoutingAgent] search_completed: {'query': 'machine learning', 'results': 10}
 ```
 
 ---

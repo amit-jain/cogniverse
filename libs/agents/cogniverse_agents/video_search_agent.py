@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Literal, Optional
 import numpy as np
 import uvicorn
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 from cogniverse_core.config.utils import get_config
 from cogniverse_core.registries.backend_registry import get_backend_registry
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -233,7 +234,7 @@ class VideoProcessor:
 
 
 # --- Enhanced Video Search Agent ---
-class VideoSearchAgent(MemoryAwareMixin):
+class VideoSearchAgent(MemoryAwareMixin, TenantAwareAgentMixin):
     """
     Enhanced video search agent supporting both text-to-video and video-to-video search.
     Enhanced with memory capabilities for learning from search patterns.
@@ -250,15 +251,15 @@ class VideoSearchAgent(MemoryAwareMixin):
         Raises:
             ValueError: If tenant_id is empty or None
         """
-        if not tenant_id:
-            raise ValueError("tenant_id is required - no default tenant")
+        # Initialize tenant support via TenantAwareAgentMixin
+        # This validates tenant_id and stores it (eliminates duplication)
+        TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
 
         super().__init__()  # Initialize MemoryAwareMixin
         logger.info(f"Initializing VideoSearchAgent for tenant: {tenant_id}...")
 
         # Initialize base configuration
         self.config = get_config()
-        self.tenant_id = tenant_id
 
         # Check environment variables first, then kwargs, then defaults
         vespa_url = kwargs.get("vespa_url") or os.getenv(

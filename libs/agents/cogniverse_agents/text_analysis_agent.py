@@ -8,6 +8,7 @@ from typing import Any, Dict
 
 import dspy
 import uvicorn
+from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 from cogniverse_core.common.a2a_mixin import A2AEndpointsMixin
 from cogniverse_core.common.config_api_mixin import ConfigAPIMixin
 from cogniverse_core.common.dynamic_dspy_mixin import DynamicDSPyMixin
@@ -37,7 +38,7 @@ class TextAnalysisSignature(dspy.Signature):
 
 
 class TextAnalysisAgent(
-    DynamicDSPyMixin, ConfigAPIMixin, A2AEndpointsMixin, HealthCheckMixin
+    DynamicDSPyMixin, ConfigAPIMixin, A2AEndpointsMixin, HealthCheckMixin, TenantAwareAgentMixin
 ):
     """
     Text analysis agent with runtime-configurable DSPy modules.
@@ -54,12 +55,11 @@ class TextAnalysisAgent(
         Raises:
             ValueError: If tenant_id is empty or None
         """
-        if not tenant_id:
-            raise ValueError("tenant_id is required - no default tenant")
+        # Initialize tenant support via TenantAwareAgentMixin
+        # This validates tenant_id and stores it (eliminates duplication)
+        TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
 
         logger.info(f"Initializing TextAnalysisAgent for tenant: {tenant_id}...")
-
-        self.tenant_id = tenant_id
         self.system_config = get_config()
         config_manager = get_config_manager()
 

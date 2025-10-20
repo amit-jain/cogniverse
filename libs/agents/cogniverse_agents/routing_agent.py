@@ -31,6 +31,7 @@ from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
 
 # Production features from RoutingAgent
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 from cogniverse_core.telemetry.modality_metrics import ModalityMetricsTracker
 from dspy import LM
 
@@ -161,7 +162,7 @@ class RoutingConfig:
     mlflow_tracking_uri: str = "http://localhost:5000"
 
 
-class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin):
+class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
     """
     Routing Agent with complete production features and advanced optimization
 
@@ -192,10 +193,10 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin):
         Raises:
             ValueError: If tenant_id is empty or None
         """
-        if not tenant_id:
-            raise ValueError("tenant_id is required - no default tenant")
+        # Initialize tenant support via TenantAwareAgentMixin
+        # This validates tenant_id and stores it (eliminates duplication)
+        TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
 
-        self.tenant_id = tenant_id
         self.config = config or RoutingConfig()
         self.logger = logging.getLogger(__name__)
 
