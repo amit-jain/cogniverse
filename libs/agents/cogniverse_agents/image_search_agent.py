@@ -13,6 +13,7 @@ import dspy
 import numpy as np
 import torch
 from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
+from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 from cogniverse_core.common.models.model_loaders import get_or_load_model
 from PIL import Image
 
@@ -35,7 +36,7 @@ class ImageResult:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
-class ImageSearchAgent(DSPyA2AAgentBase):
+class ImageSearchAgent(TenantAwareAgentMixin, DSPyA2AAgentBase):
     """
     Image search using ColPali multi-vector embeddings
 
@@ -65,10 +66,8 @@ class ImageSearchAgent(DSPyA2AAgentBase):
         Raises:
             ValueError: If tenant_id is empty or None
         """
-        if not tenant_id:
-            raise ValueError("tenant_id is required - no default tenant")
-
-        self.tenant_id = tenant_id
+        # Initialize tenant support via TenantAwareAgentMixin
+        TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
 
         # Create DSPy module
         class ImageSearchSignature(dspy.Signature):
@@ -85,8 +84,9 @@ class ImageSearchAgent(DSPyA2AAgentBase):
                     result=f"Searching images: {query} (mode: {mode})"
                 )
 
-        # Initialize A2A base
-        super().__init__(
+        # Initialize A2A base explicitly to avoid MRO issues with TenantAwareAgentMixin
+        DSPyA2AAgentBase.__init__(
+            self,
             agent_name="ImageSearchAgent",
             agent_description="Image search using ColPali multi-vector embeddings",
             dspy_module=ImageSearchModule(),

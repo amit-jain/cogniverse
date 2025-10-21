@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 import dspy
 import uvicorn
 from cogniverse_core.agents.dspy_integration_mixin import DSPySummaryMixin
+from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 from cogniverse_core.common.a2a_mixin import A2AEndpointsMixin
 from cogniverse_core.common.health_mixin import HealthCheckMixin
 from cogniverse_core.common.vlm_interface import VLMInterface
@@ -103,7 +104,7 @@ class SummaryResult:
     enhancement_applied: bool = False
 
 
-class SummarizerAgent(DSPySummaryMixin, A2AEndpointsMixin, HealthCheckMixin):
+class SummarizerAgent(TenantAwareAgentMixin, DSPySummaryMixin, A2AEndpointsMixin, HealthCheckMixin):
     """
     Intelligent summarizer agent with VLM integration and thinking phase.
     Provides comprehensive analysis and summarization of search results.
@@ -120,13 +121,15 @@ class SummarizerAgent(DSPySummaryMixin, A2AEndpointsMixin, HealthCheckMixin):
         Raises:
             ValueError: If tenant_id is empty or None
         """
-        if not tenant_id:
-            raise ValueError("tenant_id is required - no default tenant")
+        # Initialize tenant support via TenantAwareAgentMixin
+        TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
+
+        # Initialize other mixins explicitly
+        DSPySummaryMixin.__init__(self)
+        A2AEndpointsMixin.__init__(self)
+        HealthCheckMixin.__init__(self)
 
         logger.info(f"Initializing SummarizerAgent for tenant: {tenant_id}...")
-        super().__init__()  # Initialize DSPy mixin
-
-        self.tenant_id = tenant_id
         self.config = get_config()
 
         # Initialize DSPy components

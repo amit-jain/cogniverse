@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 import dspy
 from cogniverse_core.agents.dspy_integration_mixin import DSPyDetailedReportMixin
+from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 from cogniverse_core.common.a2a_mixin import A2AEndpointsMixin
 from cogniverse_core.common.health_mixin import HealthCheckMixin
 from cogniverse_core.common.vlm_interface import VLMInterface
@@ -95,7 +96,7 @@ class ReportResult:
         return self.confidence_assessment.get("overall", 0.0)
 
 
-class DetailedReportAgent(DSPyDetailedReportMixin, A2AEndpointsMixin, HealthCheckMixin):
+class DetailedReportAgent(TenantAwareAgentMixin, DSPyDetailedReportMixin, A2AEndpointsMixin, HealthCheckMixin):
     """Agent for generating comprehensive detailed reports with VLM integration"""
 
     def __init__(self, tenant_id: str, **kwargs):
@@ -109,13 +110,15 @@ class DetailedReportAgent(DSPyDetailedReportMixin, A2AEndpointsMixin, HealthChec
         Raises:
             ValueError: If tenant_id is empty or None
         """
-        if not tenant_id:
-            raise ValueError("tenant_id is required - no default tenant")
+        # Initialize tenant support via TenantAwareAgentMixin
+        TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
+
+        # Initialize other mixins explicitly
+        DSPyDetailedReportMixin.__init__(self)
+        A2AEndpointsMixin.__init__(self)
+        HealthCheckMixin.__init__(self)
 
         logger.info(f"Initializing DetailedReportAgent for tenant: {tenant_id}...")
-        super().__init__()
-
-        self.tenant_id = tenant_id
         self.config = get_config()
         self._initialize_vlm_client()
         self.vlm = VLMInterface()

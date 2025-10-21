@@ -113,8 +113,19 @@ class TenantAwareAgentMixin:
 
         # Call super for MRO chain (if needed)
         # This allows other mixins to receive **kwargs
+        # However, skip if the next class in MRO requires positional arguments
+        # (like DSPyA2AAgentBase) to avoid TypeError
         if hasattr(super(), '__init__'):
-            super().__init__(**kwargs)
+            try:
+                super().__init__(**kwargs)
+            except TypeError as e:
+                # Silently skip if the next class requires positional arguments
+                # This happens with DSPyA2AAgentBase which requires agent_name, etc.
+                # The child class will initialize it explicitly
+                if "missing" in str(e) and "required positional argument" in str(e):
+                    pass
+                else:
+                    raise
 
     def get_tenant_context(self) -> Dict[str, Any]:
         """

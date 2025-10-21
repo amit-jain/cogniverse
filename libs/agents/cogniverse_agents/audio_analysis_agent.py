@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 import dspy
 import numpy as np
 from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
+from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
     AudioEmbeddingGenerator,
 )
@@ -78,7 +79,7 @@ class MusicClassification:
     instruments: List[str] = field(default_factory=list)
 
 
-class AudioAnalysisAgent(DSPyA2AAgentBase):
+class AudioAnalysisAgent(TenantAwareAgentMixin, DSPyA2AAgentBase):
     """
     Audio content analysis using Whisper and Vespa
 
@@ -109,10 +110,8 @@ class AudioAnalysisAgent(DSPyA2AAgentBase):
         Raises:
             ValueError: If tenant_id is empty or None
         """
-        if not tenant_id:
-            raise ValueError("tenant_id is required - no default tenant")
-
-        self.tenant_id = tenant_id
+        # Initialize tenant support via TenantAwareAgentMixin
+        TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
 
         # Create DSPy module
         class AudioSearchSignature(dspy.Signature):
@@ -131,8 +130,9 @@ class AudioAnalysisAgent(DSPyA2AAgentBase):
                     result=f"Searching audio: {query} (mode: {mode})"
                 )
 
-        # Initialize A2A base
-        super().__init__(
+        # Initialize A2A base explicitly to avoid MRO issues with TenantAwareAgentMixin
+        DSPyA2AAgentBase.__init__(
+            self,
             agent_name="AudioAnalysisAgent",
             agent_description="Audio analysis using Whisper and acoustic models",
             dspy_module=AudioSearchModule(),

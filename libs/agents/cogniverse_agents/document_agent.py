@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 import dspy
 from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 from cogniverse_core.common.models.model_loaders import get_or_load_model
 
 from cogniverse_agents.query.encoders import ColPaliQueryEncoder
@@ -38,7 +39,7 @@ class DocumentResult:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
-class DocumentAgent(MemoryAwareMixin, DSPyA2AAgentBase):
+class DocumentAgent(TenantAwareAgentMixin, MemoryAwareMixin, DSPyA2AAgentBase):
     """
     Document analysis and search with dual strategy support
     Enhanced with memory capabilities for learning from search patterns.
@@ -69,12 +70,11 @@ class DocumentAgent(MemoryAwareMixin, DSPyA2AAgentBase):
         Raises:
             ValueError: If tenant_id is empty or None
         """
-        if not tenant_id:
-            raise ValueError("tenant_id is required - no default tenant")
+        # Initialize tenant support via TenantAwareAgentMixin
+        TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
 
-        # Initialize memory mixin first
+        # Initialize memory mixin
         MemoryAwareMixin.__init__(self)
-        self.tenant_id = tenant_id
 
         # Create DSPy module
         class DocumentSearchSignature(dspy.Signature):
