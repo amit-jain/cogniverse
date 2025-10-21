@@ -635,25 +635,84 @@ json.dump(result, open("synthetic_data.json", "w"))
 
 **Export**: JSON format compatible with all optimizer training interfaces
 
-#### 5.5 Routing Optimization Tab
+#### 5.5 Module Optimization Tab
 
-Optimize routing decisions using GRPO/GEPA:
+Optimize routing/workflow modules with automatic DSPy optimizer selection:
+
+**What Gets Optimized (Modules)**:
+- `modality` - Per-modality routing (VIDEO/DOCUMENT/IMAGE/AUDIO)
+- `cross_modal` - Multi-modal fusion decisions
+- `routing` - Entity-based advanced routing
+- `workflow` - Multi-agent workflow orchestration
+- `unified` - Combined routing + workflow planning
+
+**How They Get Optimized (Auto DSPy Optimizer Selection)**:
+- System automatically chooses GEPA/Bootstrap/SIMBA/MIPRO based on training data size
+- < 100 examples → Bootstrap
+- 100-500 examples → SIMBA
+- 500-1000 examples → MIPRO
+- \> 1000 examples → GEPA
 
 **Features**:
-- Integrates with existing routing optimization infrastructure
-- References `AdvancedRoutingOptimizer` from routing module
-- Supports GRPO (Generalized Policy Optimization) and GEPA (General Ensemble Policy Adaptation)
-- Experience buffer for reinforcement learning
+- ✅ **Batch Optimization**: Submit Argo Workflows for long-running optimizations
+- ✅ **Synthetic Data**: Auto-generate training data from Vespa backend
+- ✅ **Automatic Execution**: CronWorkflows check Phoenix traces and optimize when criteria met
+- ✅ **Manual Execution**: Submit workflows on-demand from UI
 
-**Algorithm Selection**:
-- **Bootstrap**: < 100 examples
-- **SIMBA**: 100-500 examples
-- **MIPRO**: 500-1000 examples
-- **GEPA**: > 1000 examples
+**Configuration**:
+- **Tenant ID**: Target tenant for optimization
+- **Module to Optimize**: Which module to optimize (modality/cross_modal/routing/workflow/unified)
+- **Max Iterations**: Maximum DSPy training iterations (10-500)
+- **Use Synthetic Data**: Generate training data from Vespa backend when insufficient Phoenix traces
+- **Advanced**: Synthetic examples count, Vespa sample size, max profiles
+
+**Workflow Submission**:
+```bash
+# Dashboard generates and submits YAML like:
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: routing-opt-modality-
+  namespace: cogniverse
+spec:
+  workflowTemplateRef:
+    name: batch-optimization
+  arguments:
+    parameters:
+    - name: tenant-id
+      value: "default"
+    - name: optimizer-category
+      value: "routing"
+    - name: optimizer-type
+      value: "modality"
+    - name: max-iterations
+      value: "100"
+    - name: use-synthetic-data
+      value: "true"
+```
+
+**Monitor Progress**:
+```bash
+argo list -n cogniverse
+argo get <workflow-name> -n cogniverse
+argo logs <workflow-name> -n cogniverse --follow
+```
+
+**Execution Flow**:
+1. Module optimizer collects Phoenix traces
+2. Generates synthetic data if traces insufficient
+3. Auto-selects DSPy optimizer (Bootstrap/SIMBA/MIPRO/GEPA) based on data size
+4. Trains module's internal DSPy model
+5. Evaluates performance and saves optimized module
+6. Returns metrics (baseline score, optimized score, improvement %)
 
 #### 5.6 DSPy Module Optimization Tab
 
-Teacher-student distillation for local model optimization:
+DSPy module optimization with teacher-student distillation and batch processing:
+
+**Methodology: Teacher-Student Distillation**
+
+Use expensive models (GPT-4/Claude) to train cheap local models (SmolLM/Qwen):
 
 **Configuration**:
 - **Teacher Model**: GPT-4, Claude-3 Opus, Claude-3 Sonnet
@@ -662,6 +721,12 @@ Teacher-student distillation for local model optimization:
 - **Training Examples**: 10-1000
 - **Iterations**: 1-10
 - **Eval Split**: 0.1-0.5
+
+**Benefits**:
+- Use expensive models (GPT-4) to generate training data, then train cheap models (SmolLM)
+- Run locally without API costs after initial training data generation
+- Faster inference (40-60% latency reduction)
+- Maintain 85-95% of teacher accuracy
 
 **Process**:
 ```python
@@ -690,11 +755,74 @@ st.metric("Final Accuracy", "89%", delta="+17%")
 st.metric("Latency Reduction", "-40%")
 ```
 
-**Benefits**:
-- Use expensive models (GPT-4) to train cheap models (SmolLM)
-- Run locally without API costs
-- Faster inference (40-60% latency reduction)
-- Maintain 85-95% of teacher accuracy
+**Execution: Batch Optimization with Argo Workflows**
+
+For long-running optimizations, submit Argo Workflows:
+
+**Features**:
+- ✅ **Batch Processing**: Run DSPy optimization as Kubernetes workflows
+- ✅ **Multiple Optimizers**: GEPA, Bootstrap, SIMBA, MIPRO
+- ✅ **Golden Datasets**: Use evaluation datasets from data/testset/evaluation/
+- 🔜 **Synthetic Data**: Coming soon for DSPy module optimizers
+
+**Configuration**:
+- **Tenant ID**: Target tenant for optimization
+- **DSPy Optimizer**: GEPA/Bootstrap/SIMBA/MIPRO (auto-selected based on dataset size)
+- **Dataset Name**: Golden evaluation dataset (e.g., golden_eval_v1)
+- **Backend Profiles**: Comma-separated list of profiles to use
+- **Max Iterations**: Optimization iterations (10-500)
+- **Learning Rate**: Learning rate for optimization (0.0001-0.1)
+
+**Workflow Submission**:
+```bash
+# Dashboard generates and submits YAML like:
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: dspy-opt-gepa-
+  namespace: cogniverse
+spec:
+  workflowTemplateRef:
+    name: batch-optimization
+  arguments:
+    parameters:
+    - name: tenant-id
+      value: "default"
+    - name: optimizer-category
+      value: "dspy"
+    - name: optimizer-type
+      value: "GEPA"
+    - name: dataset-name
+      value: "golden_eval_v1"
+    - name: profiles
+      value: "video_colpali_smol500_mv_frame"
+    - name: max-iterations
+      value: "100"
+    - name: learning-rate
+      value: "0.001"
+    - name: use-synthetic-data
+      value: "false"
+```
+
+**Workflow Pipeline**:
+1. Validates configuration and dataset existence
+2. Prepares evaluation dataset
+3. Runs DSPy optimization with selected algorithm
+4. Evaluates results and deploys if improvement > 5%
+5. Sends completion notification
+
+**Monitor Progress**:
+```bash
+argo list -n cogniverse
+argo get <workflow-name> -n cogniverse
+argo logs <workflow-name> -n cogniverse --follow
+```
+
+**Algorithm Selection** (auto-selected based on data size):
+- **Bootstrap**: < 100 examples
+- **SIMBA**: 100-500 examples
+- **MIPRO**: 500-1000 examples
+- **GEPA**: > 1000 examples
 
 #### 5.7 Reranking Optimization Tab
 

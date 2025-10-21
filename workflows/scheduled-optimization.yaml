@@ -1,0 +1,447 @@
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: weekly-optimization
+  namespace: cogniverse
+  labels:
+    app: cogniverse
+    workflow-type: optimization
+spec:
+  schedule: "0 3 * * 0"  # Weekly on Sunday at 3 AM UTC
+  timezone: "UTC"
+  concurrencyPolicy: "Forbid"  # Don't run if previous job still running
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 3
+  workflowSpec:
+    entrypoint: optimization-orchestrator
+
+    arguments:
+      parameters:
+      - name: tenant-id
+        value: "default"
+      - name: annotation-threshold
+        value: "50"  # Minimum annotations needed before optimization
+      - name: improvement-threshold
+        value: "5"  # Minimum improvement % to deploy
+
+    templates:
+    # Main orchestrator - runs all optimizers
+    - name: optimization-orchestrator
+      steps:
+      - - name: check-annotation-count
+          template: check-annotation-count
+
+      # Only proceed if we have enough annotations
+      - - name: run-all-optimizers
+          template: run-all-optimizers
+          when: "{{steps.check-annotation-count.outputs.parameters.should-optimize}} == true"
+
+      - - name: send-summary
+          template: send-summary
+
+    # Check if we have enough annotations to optimize
+    - name: check-annotation-count
+      container:
+        image: cogniverse/runtime:2.0.0
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            set -e
+            echo "Checking annotation count for tenant: {{workflow.parameters.tenant-id}}"
+
+            # Query Phoenix for annotation count
+            cd /app
+            ANNOTATION_COUNT=$(uv run python -c "
+            import phoenix as px
+            client = px.Client(endpoint='http://cogniverse-phoenix:6006')
+            project_name = 'cogniverse-{{workflow.parameters.tenant-id}}-search'
+
+            try:
+                spans_df = client.get_spans_dataframe(project_name=project_name)
+                # Count spans with annotations
+                annotated = spans_df[spans_df['attributes.annotation.score'].notna()]
+                print(len(annotated))
+            except:
+                print(0)
+            ")
+
+            echo "Annotation count: $ANNOTATION_COUNT"
+
+            # Check threshold
+            THRESHOLD={{workflow.parameters.annotation-threshold}}
+            if [ $ANNOTATION_COUNT -ge $THRESHOLD ]; then
+              echo "true" > /tmp/should_optimize.txt
+              echo "Sufficient annotations ($ANNOTATION_COUNT >= $THRESHOLD). Proceeding with optimization."
+            else
+              echo "false" > /tmp/should_optimize.txt
+              echo "Insufficient annotations ($ANNOTATION_COUNT < $THRESHOLD). Skipping optimization."
+            fi
+
+            echo "$ANNOTATION_COUNT" > /tmp/annotation_count.txt
+        env:
+        - name: PHOENIX_ENDPOINT
+          value: "http://cogniverse-phoenix:6006"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1"
+      outputs:
+        parameters:
+        - name: should-optimize
+          valueFrom:
+            path: /tmp/should_optimize.txt
+        - name: annotation-count
+          valueFrom:
+            path: /tmp/annotation_count.txt
+
+    # Run all optimizer types in parallel
+    - name: run-all-optimizers
+      parallelism: 3  # Run 3 optimizers at a time
+      steps:
+      # Routing optimizers
+      - - name: optimize-modality
+          template: run-optimizer
+          arguments:
+            parameters:
+            - name: optimizer-type
+              value: "modality"
+            - name: optimizer-category
+              value: "routing"
+
+      - - name: optimize-cross-modal
+          template: run-optimizer
+          arguments:
+            parameters:
+            - name: optimizer-type
+              value: "cross_modal"
+            - name: optimizer-category
+              value: "routing"
+
+      - - name: optimize-routing
+          template: run-optimizer
+          arguments:
+            parameters:
+            - name: optimizer-type
+              value: "routing"
+            - name: optimizer-category
+              value: "routing"
+
+      - - name: optimize-workflow
+          template: run-optimizer
+          arguments:
+            parameters:
+            - name: optimizer-type
+              value: "workflow"
+            - name: optimizer-category
+              value: "routing"
+
+      # DSPy optimizers (run with GEPA by default)
+      - - name: optimize-dspy
+          template: run-dspy-optimizer
+          arguments:
+            parameters:
+            - name: dspy-optimizer
+              value: "GEPA"
+            - name: dataset-name
+              value: "golden_eval_v1"
+
+    # Generic optimizer template
+    - name: run-optimizer
+      inputs:
+        parameters:
+        - name: optimizer-type
+        - name: optimizer-category
+      container:
+        image: cogniverse/runtime:2.0.0
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            set -e
+            echo "Running {{inputs.parameters.optimizer-type}} optimizer..."
+
+            cd /app
+
+            # Generate synthetic data first
+            JAX_PLATFORM_NAME=cpu uv run python -c "
+            import requests
+            import json
+
+            # Generate synthetic training data
+            response = requests.post(
+                'http://cogniverse-runtime:8000/synthetic/generate',
+                json={
+                    'optimizer': '{{inputs.parameters.optimizer-type}}',
+                    'count': 100,
+                    'vespa_sample_size': 200,
+                    'strategies': ['diverse'],
+                    'max_profiles': 3,
+                    'tenant_id': '{{workflow.parameters.tenant-id}}'
+                },
+                timeout=300
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                print(f'Generated {result[\"count\"]} examples')
+                with open('/tmp/synthetic_data.json', 'w') as f:
+                    json.dump(result, f)
+            else:
+                print(f'Synthetic data generation failed: {response.status_code}')
+                exit(1)
+            "
+
+            # Run module optimizer with synthetic data
+            JAX_PLATFORM_NAME=cpu uv run python scripts/run_module_optimization.py \
+              --module {{inputs.parameters.optimizer-type}} \
+              --tenant-id {{workflow.parameters.tenant-id}} \
+              --use-synthetic-data \
+              --output /tmp/optimizer_results.json
+
+            # Check improvement
+            if [ -f /tmp/optimizer_results.json ]; then
+              IMPROVEMENT=$(cat /tmp/optimizer_results.json | python3 -c "import sys, json; print(json.load(sys.stdin).get('improvement', 0))")
+              echo "$IMPROVEMENT" > /tmp/improvement.txt
+              echo "Improvement: ${IMPROVEMENT}%"
+            else
+              echo "0" > /tmp/improvement.txt
+              echo "Optimization failed"
+              exit 1
+            fi
+        env:
+        - name: VESPA_URL
+          value: "http://cogniverse-vespa:8080"
+        - name: PHOENIX_ENDPOINT
+          value: "http://cogniverse-phoenix:6006"
+        - name: TENANT_ID
+          value: "{{workflow.parameters.tenant-id}}"
+        resources:
+          requests:
+            memory: "8Gi"
+            cpu: "4"
+          limits:
+            memory: "16Gi"
+            cpu: "8"
+      outputs:
+        parameters:
+        - name: improvement
+          valueFrom:
+            path: /tmp/improvement.txt
+
+    # DSPy optimizer template
+    - name: run-dspy-optimizer
+      inputs:
+        parameters:
+        - name: dspy-optimizer
+        - name: dataset-name
+      container:
+        image: cogniverse/runtime:2.0.0
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            set -e
+            echo "Running DSPy {{inputs.parameters.dspy-optimizer}} optimizer..."
+
+            cd /app
+            JAX_PLATFORM_NAME=cpu uv run python scripts/run_optimization.py \
+              --tenant-id {{workflow.parameters.tenant-id}} \
+              --optimizer {{inputs.parameters.dspy-optimizer}} \
+              --dataset {{inputs.parameters.dataset-name}} \
+              --max-iterations 100 \
+              --output /tmp/dspy_results.json
+
+            # Check improvement
+            if [ -f /tmp/dspy_results.json ]; then
+              IMPROVEMENT=$(cat /tmp/dspy_results.json | python3 -c "import sys, json; r=json.load(sys.stdin); print((r['optimized_score']-r['baseline_score'])/r['baseline_score']*100)")
+              echo "$IMPROVEMENT" > /tmp/improvement.txt
+              echo "Improvement: ${IMPROVEMENT}%"
+            else
+              echo "0" > /tmp/improvement.txt
+              echo "DSPy optimization failed"
+              exit 1
+            fi
+        env:
+        - name: VESPA_URL
+          value: "http://cogniverse-vespa:8080"
+        - name: PHOENIX_ENDPOINT
+          value: "http://cogniverse-phoenix:6006"
+        - name: TENANT_ID
+          value: "{{workflow.parameters.tenant-id}}"
+        - name: LLM_MODEL
+          value: "ollama/mistral:7b-instruct"
+        - name: OLLAMA_ENDPOINT
+          value: "http://cogniverse-ollama:11434"
+        resources:
+          requests:
+            memory: "16Gi"
+            cpu: "8"
+          limits:
+            memory: "32Gi"
+            cpu: "16"
+      outputs:
+        parameters:
+        - name: improvement
+          valueFrom:
+            path: /tmp/improvement.txt
+
+    # Send summary of all optimizations
+    - name: send-summary
+      container:
+        image: curlimages/curl:latest
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            echo "Weekly Optimization Summary"
+            echo "============================"
+            echo "Tenant: {{workflow.parameters.tenant-id}}"
+            echo "Annotations: {{steps.check-annotation-count.outputs.parameters.annotation-count}}"
+            echo ""
+            echo "Optimizer Results:"
+            echo "- Modality: {{steps.run-all-optimizers.outputs.parameters.optimize-modality-improvement}}%"
+            echo "- Cross-Modal: {{steps.run-all-optimizers.outputs.parameters.optimize-cross-modal-improvement}}%"
+            echo "- Routing: {{steps.run-all-optimizers.outputs.parameters.optimize-routing-improvement}}%"
+            echo "- Workflow: {{steps.run-all-optimizers.outputs.parameters.optimize-workflow-improvement}}%"
+            echo "- DSPy: {{steps.run-all-optimizers.outputs.parameters.optimize-dspy-improvement}}%"
+
+            # Send to webhook (optional)
+            # curl -X POST https://your-webhook-url \
+            #   -H "Content-Type: application/json" \
+            #   -d '{
+            #     "workflow": "weekly-optimization",
+            #     "tenant": "{{workflow.parameters.tenant-id}}",
+            #     "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'",
+            #     "optimizers": {
+            #       "modality": "{{steps.run-all-optimizers.outputs.parameters.optimize-modality-improvement}}",
+            #       "cross_modal": "{{steps.run-all-optimizers.outputs.parameters.optimize-cross-modal-improvement}}",
+            #       "routing": "{{steps.run-all-optimizers.outputs.parameters.optimize-routing-improvement}}",
+            #       "workflow": "{{steps.run-all-optimizers.outputs.parameters.optimize-workflow-improvement}}",
+            #       "dspy": "{{steps.run-all-optimizers.outputs.parameters.optimize-dspy-improvement}}"
+            #     }
+            #   }'
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+
+---
+# Daily optimization (lighter weight - annotation threshold triggered)
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: daily-optimization-check
+  namespace: cogniverse
+  labels:
+    app: cogniverse
+    workflow-type: optimization
+spec:
+  schedule: "0 4 * * *"  # Daily at 4 AM UTC
+  timezone: "UTC"
+  concurrencyPolicy: "Forbid"
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  workflowSpec:
+    entrypoint: quick-optimization
+
+    arguments:
+      parameters:
+      - name: tenant-id
+        value: "default"
+      - name: annotation-threshold
+        value: "20"  # Lower threshold for daily
+
+    templates:
+    - name: quick-optimization
+      steps:
+      - - name: check-annotations
+          template: check-and-optimize
+
+      - - name: notify
+          template: notify-daily
+          when: "{{steps.check-and-optimize.outputs.parameters.ran-optimization}} == true"
+
+    - name: check-and-optimize
+      container:
+        image: cogniverse/runtime:2.0.0
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            set -e
+            echo "Daily optimization check for tenant: {{workflow.parameters.tenant-id}}"
+
+            # Check annotation count since last optimization
+            cd /app
+            ANNOTATION_COUNT=$(uv run python -c "
+            import phoenix as px
+            from datetime import datetime, timedelta
+
+            client = px.Client(endpoint='http://cogniverse-phoenix:6006')
+            project_name = 'cogniverse-{{workflow.parameters.tenant-id}}-search'
+
+            try:
+                # Get annotations from last 24 hours
+                spans_df = client.get_spans_dataframe(
+                    project_name=project_name,
+                    start_time=datetime.now() - timedelta(hours=24)
+                )
+                annotated = spans_df[spans_df['attributes.annotation.score'].notna()]
+                print(len(annotated))
+            except:
+                print(0)
+            ")
+
+            echo "New annotations (last 24h): $ANNOTATION_COUNT"
+
+            THRESHOLD={{workflow.parameters.annotation-threshold}}
+            if [ $ANNOTATION_COUNT -ge $THRESHOLD ]; then
+              echo "Running quick routing optimization..."
+
+              # Just optimize routing (fastest)
+              JAX_PLATFORM_NAME=cpu uv run python scripts/run_module_optimization.py \
+                --module routing \
+                --tenant-id {{workflow.parameters.tenant-id}} \
+                --use-synthetic-data \
+                --output /tmp/results.json
+
+              echo "true" > /tmp/ran_optimization.txt
+              echo "Optimization completed"
+            else
+              echo "false" > /tmp/ran_optimization.txt
+              echo "Insufficient new annotations. Skipping."
+            fi
+        env:
+        - name: PHOENIX_ENDPOINT
+          value: "http://cogniverse-phoenix:6006"
+        - name: VESPA_URL
+          value: "http://cogniverse-vespa:8080"
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2"
+          limits:
+            memory: "8Gi"
+            cpu: "4"
+      outputs:
+        parameters:
+        - name: ran-optimization
+          valueFrom:
+            path: /tmp/ran_optimization.txt
+
+    - name: notify-daily
+      container:
+        image: curlimages/curl:latest
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            echo "Daily optimization completed for tenant: {{workflow.parameters.tenant-id}}"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"

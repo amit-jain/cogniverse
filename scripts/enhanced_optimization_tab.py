@@ -40,7 +40,7 @@ def render_enhanced_optimization_tab():
         "⭐ Search Annotations",
         "📚 Golden Dataset",
         "🔬 Synthetic Data",
-        "🎯 Routing Optimization",
+        "🎯 Module Optimization",
         "🧠 DSPy Optimization",
         "🔄 Reranking Optimization",
         "📈 Profile Selection",
@@ -685,11 +685,159 @@ def _render_synthetic_data_tab():
 
 
 def _render_routing_optimization_tab():
-    """Render routing optimization interface (GRPO/GEPA)"""
-    st.subheader("🎯 Routing Optimization")
-    st.markdown("Optimize routing decisions using GRPO/GEPA algorithms")
+    """Render routing optimization interface"""
+    st.subheader("🎯 Module Optimization")
+    st.markdown("""
+    Optimize routing/workflow modules with automatic DSPy optimizer selection.
 
-    st.info("This functionality is available in the main Optimization tab. Enhanced with automatic triggers coming soon!")
+    **Modules**: modality (per-modality routing), cross_modal (fusion), routing (entity-based), workflow (orchestration), unified (combined)
+
+    **Auto DSPy Optimizer Selection**: System automatically chooses GEPA/Bootstrap/SIMBA/MIPRO based on training data size
+    """)
+
+    # Argo Workflow Integration
+    st.markdown("### 🚀 Batch Optimization with Argo Workflows")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        tenant_id = st.text_input(
+            "Tenant ID",
+            value="default",
+            help="Tenant identifier for optimization"
+        )
+        optimizer_type = st.selectbox(
+            "Module to Optimize",
+            ["modality", "cross_modal", "routing", "workflow", "unified"],
+            help="Which routing/workflow module to optimize (modality=per-modality routing, cross_modal=fusion, routing=entity-based, workflow=orchestration, unified=combined)"
+        )
+
+    with col2:
+        max_iterations = st.number_input(
+            "Max Iterations",
+            min_value=10,
+            max_value=500,
+            value=100,
+            help="Maximum optimization iterations"
+        )
+        use_synthetic = st.checkbox(
+            "Use Synthetic Data",
+            value=True,
+            help="Generate synthetic training data from Vespa backend"
+        )
+
+    with st.expander("⚙️ Advanced Configuration"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            synthetic_count = st.number_input(
+                "Synthetic Examples",
+                min_value=10,
+                max_value=1000,
+                value=200,
+                help="Number of synthetic examples to generate"
+            )
+        with col2:
+            vespa_sample_size = st.number_input(
+                "Vespa Sample Size",
+                min_value=10,
+                max_value=1000,
+                value=500,
+                help="Documents to sample from Vespa"
+            )
+        with col3:
+            max_profiles = st.number_input(
+                "Max Profiles",
+                min_value=1,
+                max_value=10,
+                value=3,
+                help="Maximum backend profiles to use"
+            )
+
+    # Submit workflow button
+    if st.button("🚀 Submit Routing Optimization Workflow", type="primary"):
+        with st.spinner("Submitting Argo Workflow..."):
+            try:
+                import subprocess
+                import tempfile
+                import yaml
+                from datetime import datetime
+
+                # Create workflow specification
+                workflow_spec = {
+                    "apiVersion": "argoproj.io/v1alpha1",
+                    "kind": "Workflow",
+                    "metadata": {
+                        "generateName": f"routing-opt-{optimizer_type}-",
+                        "namespace": "cogniverse"
+                    },
+                    "spec": {
+                        "workflowTemplateRef": {
+                            "name": "batch-optimization"
+                        },
+                        "arguments": {
+                            "parameters": [
+                                {"name": "tenant-id", "value": tenant_id},
+                                {"name": "optimizer-category", "value": "routing"},
+                                {"name": "optimizer-type", "value": optimizer_type},
+                                {"name": "max-iterations", "value": str(max_iterations)},
+                                {"name": "use-synthetic-data", "value": "true" if use_synthetic else "false"}
+                            ]
+                        }
+                    }
+                }
+
+                # Write to temporary file
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+                    yaml.dump(workflow_spec, f)
+                    workflow_file = f.name
+
+                # Submit workflow using kubectl or argo CLI
+                try:
+                    # Try argo CLI first
+                    result = subprocess.run(
+                        ["argo", "submit", workflow_file, "-n", "cogniverse"],
+                        capture_output=True,
+                        text=True,
+                        timeout=30
+                    )
+                    if result.returncode != 0:
+                        # Fallback to kubectl
+                        result = subprocess.run(
+                            ["kubectl", "apply", "-f", workflow_file],
+                            capture_output=True,
+                            text=True,
+                            timeout=30
+                        )
+                except FileNotFoundError:
+                    # If argo CLI not found, use kubectl
+                    result = subprocess.run(
+                        ["kubectl", "apply", "-f", workflow_file],
+                        capture_output=True,
+                        text=True,
+                        timeout=30
+                    )
+
+                if result.returncode == 0:
+                    st.success(f"✅ Workflow submitted successfully!")
+                    st.code(result.stdout, language="text")
+                    st.info("""
+                    **Monitor workflow progress:**
+                    ```bash
+                    argo list -n cogniverse
+                    argo get <workflow-name> -n cogniverse
+                    argo logs <workflow-name> -n cogniverse --follow
+                    ```
+                    """)
+                else:
+                    st.error(f"❌ Workflow submission failed:\n{result.stderr}")
+                    st.warning("Make sure you have kubectl or argo CLI configured and Kubernetes cluster is accessible")
+
+                # Clean up temp file
+                import os
+                os.unlink(workflow_file)
+
+            except Exception as e:
+                st.error(f"❌ Error submitting workflow: {str(e)}")
+                st.info("**Prerequisites:**\n- Kubernetes cluster running\n- kubectl or argo CLI configured\n- cogniverse namespace exists\n- batch-optimization WorkflowTemplate deployed")
 
 
 def _render_dspy_optimization_tab():
@@ -697,78 +845,156 @@ def _render_dspy_optimization_tab():
     st.subheader("🧠 DSPy Module Optimization")
     st.markdown("Teacher-student distillation for local model optimization")
 
-    # Configuration
+    # Argo Workflow Integration
+    st.markdown("### 🚀 Batch DSPy Optimization with Argo Workflows")
+
     col1, col2 = st.columns(2)
     with col1:
-        teacher_model = st.selectbox(
-            "Teacher Model",
-            ["gpt-4", "claude-3-opus", "claude-3-sonnet"],
-            help="Large model to generate training data"
+        tenant_id = st.text_input(
+            "Tenant ID",
+            value="default",
+            key="dspy_tenant",
+            help="Tenant identifier for optimization"
         )
+        optimizer_type = st.selectbox(
+            "DSPy Optimizer",
+            ["GEPA", "Bootstrap", "SIMBA", "MIPRO"],
+            help="Which DSPy optimizer to run"
+        )
+        dataset_name = st.text_input(
+            "Dataset Name",
+            value="golden_eval_v1",
+            help="Name of evaluation dataset in data/testset/evaluation/"
+        )
+
     with col2:
-        student_model = st.selectbox(
-            "Student Model",
-            ["llama3.2:1b", "qwen2.5:3b", "smollm:1.7b"],
-            help="Small local model to train"
+        profiles = st.text_input(
+            "Backend Profiles",
+            value="video_colpali_smol500_mv_frame",
+            help="Comma-separated list of profiles to use"
+        )
+        max_iterations = st.number_input(
+            "Max Iterations",
+            min_value=10,
+            max_value=500,
+            value=100,
+            key="dspy_iterations",
+            help="Maximum optimization iterations"
+        )
+        learning_rate = st.number_input(
+            "Learning Rate",
+            min_value=0.0001,
+            max_value=0.1,
+            value=0.001,
+            format="%.4f",
+            help="Learning rate for optimization"
         )
 
-    # Module selection
-    module_to_optimize = st.selectbox(
-        "DSPy Module to Optimize",
-        [
-            "Routing Classifier",
-            "Query Rewriter",
-            "Result Summarizer",
-            "Relevance Scorer"
-        ]
-    )
+    with st.expander("⚙️ Advanced Configuration"):
+        use_synthetic = st.checkbox(
+            "Use Synthetic Data (Future)",
+            value=False,
+            disabled=True,
+            help="Synthetic data generation for DSPy optimizers - Coming soon!"
+        )
+        st.info("**Note**: Synthetic data generation for DSPy module optimizers is planned but not yet implemented. Currently uses golden evaluation datasets.")
 
-    # Training configuration
-    with st.expander("⚙️ Training Configuration"):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            num_examples = st.number_input("Training Examples", 10, 1000, 100)
-        with col2:
-            num_iterations = st.number_input("Training Iterations", 1, 10, 3)
-        with col3:
-            eval_split = st.slider("Evaluation Split", 0.1, 0.5, 0.2)
+    # Submit workflow button
+    if st.button("🚀 Submit DSPy Optimization Workflow", type="primary"):
+        with st.spinner("Submitting Argo Workflow..."):
+            try:
+                import subprocess
+                import tempfile
+                import yaml
+                from datetime import datetime
 
-    # Start teacher-student optimization
-    if st.button("🚀 Start Teacher-Student Training", type="primary"):
-        with st.spinner(f"Training {student_model} with {teacher_model} guidance..."):
-            st.info("📝 Teacher-student training pipeline:")
-            st.markdown(f"""
-            1. Generate training data using **{teacher_model}**
-            2. Train **{student_model}** on generated data
-            3. Evaluate performance on validation set
-            4. Iterate with MIPRO/BootstrapFewShot
-            """)
+                # Create workflow specification
+                workflow_spec = {
+                    "apiVersion": "argoproj.io/v1alpha1",
+                    "kind": "Workflow",
+                    "metadata": {
+                        "generateName": f"dspy-opt-{optimizer_type.lower()}-",
+                        "namespace": "cogniverse"
+                    },
+                    "spec": {
+                        "workflowTemplateRef": {
+                            "name": "batch-optimization"
+                        },
+                        "arguments": {
+                            "parameters": [
+                                {"name": "tenant-id", "value": tenant_id},
+                                {"name": "optimizer-category", "value": "dspy"},
+                                {"name": "optimizer-type", "value": optimizer_type},
+                                {"name": "dataset-name", "value": dataset_name},
+                                {"name": "profiles", "value": profiles},
+                                {"name": "max-iterations", "value": str(max_iterations)},
+                                {"name": "learning-rate", "value": str(learning_rate)},
+                                {"name": "use-synthetic-data", "value": "false"}
+                            ]
+                        }
+                    }
+                }
 
-            # Placeholder for actual implementation
-            progress_bar = st.progress(0)
-            status_text = st.empty()
+                # Write to temporary file
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+                    yaml.dump(workflow_spec, f)
+                    workflow_file = f.name
 
-            # Simulated progress
-            for i in range(num_iterations):
-                status_text.text(f"Iteration {i + 1}/{num_iterations}...")
-                progress_bar.progress((i + 1) / num_iterations)
+                # Submit workflow using kubectl or argo CLI
+                try:
+                    # Try argo CLI first
+                    result = subprocess.run(
+                        ["argo", "submit", workflow_file, "-n", "cogniverse"],
+                        capture_output=True,
+                        text=True,
+                        timeout=30
+                    )
+                    if result.returncode != 0:
+                        # Fallback to kubectl
+                        result = subprocess.run(
+                            ["kubectl", "apply", "-f", workflow_file],
+                            capture_output=True,
+                            text=True,
+                            timeout=30
+                        )
+                except FileNotFoundError:
+                    # If argo CLI not found, use kubectl
+                    result = subprocess.run(
+                        ["kubectl", "apply", "-f", workflow_file],
+                        capture_output=True,
+                        text=True,
+                        timeout=30
+                    )
 
-                # In real implementation, this would call:
-                # - TeacherStudentOptimizer
-                # - Generate examples with teacher
-                # - Train student with BootstrapFewShot/MIPRO
-                # - Evaluate and log results
+                if result.returncode == 0:
+                    st.success(f"✅ Workflow submitted successfully!")
+                    st.code(result.stdout, language="text")
+                    st.info("""
+                    **Monitor workflow progress:**
+                    ```bash
+                    argo list -n cogniverse
+                    argo get <workflow-name> -n cogniverse
+                    argo logs <workflow-name> -n cogniverse --follow
+                    ```
 
-            st.success(f"✅ Training complete! {student_model} optimized for {module_to_optimize}")
+                    **What happens next:**
+                    1. Validates configuration and dataset
+                    2. Prepares evaluation dataset
+                    3. Runs DSPy optimization with selected algorithm
+                    4. Evaluates results and deploys if improvement > 5%
+                    5. Sends completion notification
+                    """)
+                else:
+                    st.error(f"❌ Workflow submission failed:\n{result.stderr}")
+                    st.warning("Make sure you have kubectl or argo CLI configured and Kubernetes cluster is accessible")
 
-            # Display fake metrics
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Initial Accuracy", "72%")
-            with col2:
-                st.metric("Final Accuracy", "89%", delta="+17%")
-            with col3:
-                st.metric("Latency Reduction", "-40%")
+                # Clean up temp file
+                import os
+                os.unlink(workflow_file)
+
+            except Exception as e:
+                st.error(f"❌ Error submitting workflow: {str(e)}")
+                st.info("**Prerequisites:**\n- Kubernetes cluster running\n- kubectl or argo CLI configured\n- cogniverse namespace exists\n- batch-optimization WorkflowTemplate deployed\n- Dataset exists at data/testset/evaluation/{dataset_name}.csv")
 
 
 def _render_reranking_optimization_tab():

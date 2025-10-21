@@ -10,8 +10,10 @@ spec:
     parameters:
     - name: tenant-id
       value: "default"
+    - name: optimizer-category
+      value: "dspy"  # dspy, routing
     - name: optimizer-type
-      value: "GEPA"  # GEPA, Bootstrap, SIMBA, MIPRO
+      value: "GEPA"  # DSPy: GEPA, Bootstrap, SIMBA, MIPRO | Routing: modality, cross_modal, routing, workflow, unified
     - name: dataset-name
       value: "golden_eval_v1"
     - name: profiles
@@ -20,6 +22,8 @@ spec:
       value: "100"
     - name: learning-rate
       value: "0.001"
+    - name: use-synthetic-data
+      value: "false"  # Generate synthetic data or use dataset
 
   templates:
   # Main optimization pipeline
@@ -48,18 +52,34 @@ spec:
         - |
           set -e
           echo "Validating optimization configuration..."
+          echo "Category: {{workflow.parameters.optimizer-category}}"
+          echo "Type: {{workflow.parameters.optimizer-type}}"
 
-          # Validate optimizer type
-          VALID_OPTIMIZERS="GEPA Bootstrap SIMBA MIPRO"
-          if ! echo "$VALID_OPTIMIZERS" | grep -q "{{workflow.parameters.optimizer-type}}"; then
-            echo "ERROR: Invalid optimizer type: {{workflow.parameters.optimizer-type}}"
-            exit 1
-          fi
+          # Validate optimizer category and type
+          CATEGORY="{{workflow.parameters.optimizer-category}}"
+          TYPE="{{workflow.parameters.optimizer-type}}"
 
-          # Check dataset exists
-          DATASET_PATH="/app/data/testset/evaluation/{{workflow.parameters.dataset-name}}.csv"
-          if [ ! -f "$DATASET_PATH" ]; then
-            echo "ERROR: Dataset not found: $DATASET_PATH"
+          if [ "$CATEGORY" == "dspy" ]; then
+            VALID_OPTIMIZERS="GEPA Bootstrap SIMBA MIPRO"
+            if ! echo "$VALID_OPTIMIZERS" | grep -q "$TYPE"; then
+              echo "ERROR: Invalid DSPy optimizer type: $TYPE"
+              exit 1
+            fi
+
+            # Check dataset exists for DSPy
+            DATASET_PATH="/app/data/testset/evaluation/{{workflow.parameters.dataset-name}}.csv"
+            if [ "{{workflow.parameters.use-synthetic-data}}" == "false" ] && [ ! -f "$DATASET_PATH" ]; then
+              echo "ERROR: Dataset not found: $DATASET_PATH"
+              exit 1
+            fi
+          elif [ "$CATEGORY" == "routing" ]; then
+            VALID_OPTIMIZERS="modality cross_modal routing workflow unified"
+            if ! echo "$VALID_OPTIMIZERS" | grep -q "$TYPE"; then
+              echo "ERROR: Invalid routing optimizer type: $TYPE"
+              exit 1
+            fi
+          else
+            echo "ERROR: Invalid optimizer category: $CATEGORY"
             exit 1
           fi
 
@@ -103,7 +123,7 @@ spec:
           memory: "4Gi"
           cpu: "2"
 
-  # Run DSPy optimization
+  # Run optimization (supports both DSPy and routing optimizers)
   - name: run-optimization
     container:
       image: cogniverse/runtime:2.0.0
@@ -111,21 +131,74 @@ spec:
       args:
         - |
           set -e
-          echo "Running DSPy optimization..."
-          echo "Optimizer: {{workflow.parameters.optimizer-type}}"
-          echo "Dataset: {{workflow.parameters.dataset-name}}"
+          echo "Running {{workflow.parameters.optimizer-category}} optimization..."
+          echo "Optimizer type: {{workflow.parameters.optimizer-type}}"
           echo "Tenant: {{workflow.parameters.tenant-id}}"
 
-          # Run optimization
           cd /app
-          JAX_PLATFORM_NAME=cpu uv run python scripts/run_optimization.py \
-            --tenant-id {{workflow.parameters.tenant-id}} \
-            --optimizer {{workflow.parameters.optimizer-type}} \
-            --dataset {{workflow.parameters.dataset-name}} \
-            --profiles {{workflow.parameters.profiles}} \
-            --max-iterations {{workflow.parameters.max-iterations}} \
-            --learning-rate {{workflow.parameters.learning-rate}} \
-            --output /tmp/optimization_results.json
+
+          # Generate synthetic data if requested
+          if [ "{{workflow.parameters.use-synthetic-data}}" == "true" ] && [ "{{workflow.parameters.optimizer-category}}" == "routing" ]; then
+            echo "Generating synthetic training data..."
+            JAX_PLATFORM_NAME=cpu uv run python -c "
+          import requests
+          import json
+
+          response = requests.post(
+              'http://cogniverse-runtime:8000/synthetic/generate',
+              json={
+                  'optimizer': '{{workflow.parameters.optimizer-type}}',
+                  'count': 200,
+                  'vespa_sample_size': 500,
+                  'strategies': ['diverse', 'entity_rich'],
+                  'max_profiles': 3,
+                  'tenant_id': '{{workflow.parameters.tenant-id}}'
+              },
+              timeout=300
+          )
+
+          if response.status_code == 200:
+              result = response.json()
+              print(f'Generated {result[\"count\"]} synthetic examples')
+              with open('/tmp/synthetic_data.json', 'w') as f:
+                  json.dump(result, f)
+          else:
+              print(f'Synthetic data generation failed: {response.status_code}')
+              exit(1)
+          "
+          fi
+
+          # Run optimizer based on category
+          if [ "{{workflow.parameters.optimizer-category}}" == "dspy" ]; then
+            echo "Running DSPy optimizer..."
+            JAX_PLATFORM_NAME=cpu uv run python scripts/run_optimization.py \
+              --tenant-id {{workflow.parameters.tenant-id}} \
+              --optimizer {{workflow.parameters.optimizer-type}} \
+              --dataset {{workflow.parameters.dataset-name}} \
+              --profiles {{workflow.parameters.profiles}} \
+              --max-iterations {{workflow.parameters.max-iterations}} \
+              --learning-rate {{workflow.parameters.learning-rate}} \
+              --output /tmp/optimization_results.json
+
+          elif [ "{{workflow.parameters.optimizer-category}}" == "routing" ]; then
+            echo "Running module optimizer..."
+
+            # Determine if we should use synthetic data
+            USE_SYNTHETIC_FLAG=""
+            if [ "{{workflow.parameters.use-synthetic-data}}" == "true" ]; then
+              USE_SYNTHETIC_FLAG="--use-synthetic-data"
+            fi
+
+            JAX_PLATFORM_NAME=cpu uv run python scripts/run_module_optimization.py \
+              --module {{workflow.parameters.optimizer-type}} \
+              --tenant-id {{workflow.parameters.tenant-id}} \
+              $USE_SYNTHETIC_FLAG \
+              --max-iterations {{workflow.parameters.max-iterations}} \
+              --output /tmp/optimization_results.json
+          else
+            echo "ERROR: Unknown optimizer category: {{workflow.parameters.optimizer-category}}"
+            exit 1
+          fi
 
           # Check results
           if [ ! -f /tmp/optimization_results.json ]; then
@@ -133,9 +206,19 @@ spec:
             exit 1
           fi
 
-          # Extract metrics
-          BASELINE_SCORE=$(cat /tmp/optimization_results.json | python3 -c "import sys, json; print(json.load(sys.stdin)['baseline_score'])")
-          OPTIMIZED_SCORE=$(cat /tmp/optimization_results.json | python3 -c "import sys, json; print(json.load(sys.stdin)['optimized_score'])")
+          # Extract metrics (handle different result formats)
+          BASELINE_SCORE=$(cat /tmp/optimization_results.json | python3 -c "
+          import sys, json
+          r = json.load(sys.stdin)
+          print(r.get('baseline_score', r.get('baseline_accuracy', 0)))
+          ")
+
+          OPTIMIZED_SCORE=$(cat /tmp/optimization_results.json | python3 -c "
+          import sys, json
+          r = json.load(sys.stdin)
+          print(r.get('optimized_score', r.get('optimized_accuracy', 0)))
+          ")
+
           IMPROVEMENT=$(echo "scale=2; ($OPTIMIZED_SCORE - $BASELINE_SCORE) / $BASELINE_SCORE * 100" | bc)
 
           echo "Baseline score: $BASELINE_SCORE"
