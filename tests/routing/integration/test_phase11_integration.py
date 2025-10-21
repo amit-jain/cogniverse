@@ -12,13 +12,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
+from cogniverse_agents.routing.modality_example import ModalityExample
 from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
-from cogniverse_agents.routing.synthetic_data_generator import (
-    ModalityExample,
-    SyntheticDataGenerator,
-)
 from cogniverse_agents.routing.xgboost_meta_models import TrainingStrategy
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_synthetic import ModalityExampleSchema
 
 
 class TestPhase11Integration:
@@ -35,7 +33,7 @@ class TestPhase11Integration:
     async def test_end_to_end_optimization_workflow(self, temp_model_dir):
         """Test complete optimization workflow from spans to training"""
         # Mock Phoenix client to avoid external dependencies
-        with patch("cogniverse_agents.routing.modality_span_collector.px.Client"):
+        with patch("src.app.routing.modality_span_collector.px.Client"):
             # Step 1: Initialize components
             optimizer = ModalityOptimizer(
                 tenant_id="test-tenant",
@@ -92,22 +90,24 @@ class TestPhase11Integration:
 
     @pytest.mark.asyncio
     async def test_synthetic_data_augmentation(self, temp_model_dir):
-        """Test synthetic data generation and augmentation"""
-        # Initialize generator
-        generator = SyntheticDataGenerator(vespa_client=None)
+        """Test synthetic data generation directly using SyntheticDataService"""
+        from cogniverse_synthetic import SyntheticDataRequest, SyntheticDataService
 
-        # Generate synthetic examples
-        synthetic_examples = await generator.generate_from_ingested_data(
-            QueryModality.VIDEO, target_count=10
-        )
+        # Generate synthetic examples directly
+        service = SyntheticDataService(vespa_client=None, backend_config=None)
+        request = SyntheticDataRequest(optimizer="modality", count=10)
+        response = await service.generate(request)
+
+        # Convert to ModalityExample objects
+        synthetic_examples = [
+            ModalityExample.from_schema(ModalityExampleSchema(**ex))
+            for ex in response.data
+        ]
 
         # Verify synthetic data
         assert len(synthetic_examples) == 10
         assert all(ex.is_synthetic for ex in synthetic_examples)
-        assert all(ex.modality == QueryModality.VIDEO for ex in synthetic_examples)
-        assert all(
-            ex.correct_agent == "video_search_agent" for ex in synthetic_examples
-        )
+        # Note: NEW system generates examples across all modalities, not just VIDEO
 
         # Verify variety in generated queries
         unique_queries = set(ex.query for ex in synthetic_examples)
@@ -161,7 +161,7 @@ class TestPhase11Integration:
     @pytest.mark.asyncio
     async def test_modality_optimizer_with_synthetic_strategy(self, temp_model_dir):
         """Test optimizer with synthetic training strategy"""
-        with patch("cogniverse_agents.routing.modality_span_collector.px.Client"):
+        with patch("src.app.routing.modality_span_collector.px.Client"):
             optimizer = ModalityOptimizer(
                 tenant_id="test-tenant",
                 model_dir=temp_model_dir,
@@ -183,31 +183,43 @@ class TestPhase11Integration:
                 return_value=TrainingStrategy.SYNTHETIC
             )
 
-            # Mock synthetic generation
-            optimizer.synthetic_generator.generate_from_ingested_data = AsyncMock(
-                return_value=[
-                    ModalityExample(
-                        query="synthetic query",
-                        modality=QueryModality.VIDEO,
-                        correct_agent="video_search_agent",
-                        success=True,
-                        is_synthetic=True,
-                    )
-                ]
-            )
+            # Mock SyntheticDataService.generate
+            with patch("src.app.routing.modality_optimizer.SyntheticDataService") as mock_service_class:
+                from cogniverse_synthetic import SyntheticDataResponse
 
-            # Run optimization
-            result = await optimizer.optimize_modality(QueryModality.VIDEO)
+                mock_service = AsyncMock()
+                mock_response = SyntheticDataResponse(
+                    optimizer="modality",
+                    schema_name="ModalityExampleSchema",
+                    count=1,
+                    selected_profiles=[],
+                    profile_selection_reasoning="Test mock",
+                    data=[{
+                        "query": "synthetic query",
+                        "modality": "VIDEO",
+                        "correct_agent": "video_search_agent",
+                        "success": True,
+                        "modality_features": None,
+                        "is_synthetic": True,
+                        "synthetic_source": "modality_optimizer",
+                    }],
+                    metadata={}
+                )
+                mock_service.generate = AsyncMock(return_value=mock_response)
+                mock_service_class.return_value = mock_service
 
-            # Verify synthetic strategy was used
-            assert result["trained"] is True
-            assert result["strategy"] == TrainingStrategy.SYNTHETIC.value
-            assert result["examples_count"] > 0
+                # Run optimization
+                result = await optimizer.optimize_modality(QueryModality.VIDEO)
+
+                # Verify synthetic strategy was used
+                assert result["trained"] is True
+                assert result["strategy"] == TrainingStrategy.SYNTHETIC.value
+                assert result["examples_count"] > 0
 
     @pytest.mark.asyncio
     async def test_optimize_all_modalities(self, temp_model_dir):
         """Test optimizing multiple modalities"""
-        with patch("cogniverse_agents.routing.modality_span_collector.px.Client"):
+        with patch("src.app.routing.modality_span_collector.px.Client"):
             optimizer = ModalityOptimizer(
                 tenant_id="test-tenant",
                 model_dir=temp_model_dir,
@@ -302,7 +314,7 @@ class TestPhase11Integration:
     @pytest.mark.asyncio
     async def test_optimization_summary(self, temp_model_dir):
         """Test getting optimization summary"""
-        with patch("cogniverse_agents.routing.modality_span_collector.px.Client"):
+        with patch("src.app.routing.modality_span_collector.px.Client"):
             optimizer = ModalityOptimizer(
                 tenant_id="test-tenant",
                 model_dir=temp_model_dir,
@@ -327,7 +339,7 @@ class TestPhase11Integration:
 
     def test_modality_context_building(self, temp_model_dir):
         """Test building modeling context from examples"""
-        with patch("cogniverse_agents.routing.modality_span_collector.px.Client"):
+        with patch("src.app.routing.modality_span_collector.px.Client"):
             optimizer = ModalityOptimizer(
                 tenant_id="test-tenant",
                 model_dir=temp_model_dir,

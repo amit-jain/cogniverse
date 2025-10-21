@@ -1252,6 +1252,68 @@ class AdvancedRoutingOptimizer:
             logger.error(f"Routing policy optimization failed: {e}")
             return {"status": "error", "error": str(e)}
 
+    async def generate_synthetic_training_data(
+        self,
+        count: int = 100,
+        vespa_client: Optional[Any] = None,
+        backend_config: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        """
+        Generate synthetic training data using libs/synthetic system
+
+        Args:
+            count: Number of synthetic examples to generate
+            vespa_client: Optional Vespa client for content sampling
+            backend_config: Backend configuration with profiles
+
+        Returns:
+            Number of examples added to experiences
+        """
+        from cogniverse_synthetic import (
+            RoutingExperienceSchema,
+            SyntheticDataRequest,
+            SyntheticDataService,
+        )
+
+        logger.info(f"🔄 Generating {count} synthetic routing examples...")
+
+        # Generate synthetic data directly
+        service = SyntheticDataService(
+            vespa_client=vespa_client,
+            backend_config=backend_config
+        )
+        request = SyntheticDataRequest(optimizer="routing", count=count)
+        response = await service.generate(request)
+
+        # Convert to RoutingExperience objects
+        initial_count = len(self.experiences)
+        for example_data in response.data:
+            experience = RoutingExperience(
+                query=example_data["query"],
+                entities=example_data["entities"],
+                relationships=example_data["relationships"],
+                enhanced_query=example_data["enhanced_query"],
+                chosen_agent=example_data["chosen_agent"],
+                routing_confidence=example_data["routing_confidence"],
+                search_quality=example_data["search_quality"],
+                agent_success=example_data["agent_success"],
+                user_satisfaction=example_data.get("user_satisfaction"),
+                processing_time=example_data.get("processing_time", 0.0),
+                reward=example_data.get("reward"),
+                metadata=example_data.get("metadata", {})
+            )
+            self.experiences.append(experience)
+            self.experience_replay.append(experience)
+
+        added_count = len(self.experiences) - initial_count
+
+        logger.info(
+            f"✅ Added {added_count} synthetic examples to routing experiences "
+            f"(total: {len(self.experiences)})"
+        )
+
+        return added_count
+
     async def reset_optimization(self):
         """Reset optimization state (useful for testing or fresh start)"""
         logger.warning("Resetting advanced optimization state...")

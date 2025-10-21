@@ -3,7 +3,7 @@
 **Package:** `cogniverse_agents`
 **Module Location:** `libs/agents/cogniverse_agents/routing/` (optimization components)
 **Purpose:** DSPy-based multi-stage optimization for routing, modality-specific, and cross-modal decision-making
-**Last Updated:** 2025-10-07
+**Last Updated:** 2025-10-21
 
 ---
 
@@ -18,6 +18,18 @@ libs/agents/cogniverse_agents/routing/
 ├── cross_modal_optimizer.py       # Cross-modal fusion optimization
 ├── optimizer_coordinator.py       # Facade for optimizer routing
 └── optimizer.py                   # Base optimizer with auto-tuning
+
+libs/synthetic/                     # Synthetic data generation system
+├── cogniverse_synthetic/
+│   ├── service.py                 # Main SyntheticDataService
+│   ├── generators/                # Optimizer-specific generators
+│   │   ├── modality.py           # ModalityOptimizer training data
+│   │   ├── cross_modal.py        # CrossModalOptimizer training data
+│   │   ├── routing.py            # AdvancedRoutingOptimizer training data
+│   │   └── workflow.py           # WorkflowIntelligence training data
+│   ├── profile_selector.py       # LLM-based profile selection
+│   ├── backend_querier.py        # Vespa content sampling
+│   └── utils/                    # Pattern extraction and agent inference
 ```
 
 ---
@@ -47,12 +59,17 @@ The Optimization Module provides sophisticated multi-stage optimization for rout
 
 ### Dependencies
 ```python
+# Optimizers
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
 from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
 from cogniverse_agents.routing.unified_optimizer import UnifiedOptimizer
 from cogniverse_agents.routing.optimizer_coordinator import OptimizerCoordinator
 from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
+
+# Synthetic Data Generation
+from cogniverse_synthetic import SyntheticDataService, SyntheticDataRequest, SyntheticDataResponse
+from cogniverse_synthetic import OPTIMIZER_REGISTRY
 ```
 
 ---
@@ -106,13 +123,13 @@ graph TB
 
     SpanCollection --> XGBoost[XGBoost Meta-Models Decision Making<br/>1. TrainingDecisionModel:<br/>• should_train context → bool + expected_improvement<br/>• Features: sample_count, success_rate, days_since_training<br/><br/>2. TrainingStrategyModel:<br/>• select_strategy context → SKIP / SYNTHETIC / HYBRID / REAL<br/>• Progressive strategies based on data availability]
 
-    XGBoost --> Synthetic[Synthetic Data Generation<br/>• Generate training data when real data < 20 examples<br/>• Query Vespa for ingested content<br/>• Create synthetic queries from video metadata<br/>• HYBRID: Mix real + synthetic 1:1 ratio]
+    XGBoost --> SyntheticService[Synthetic Data Generation libs/synthetic<br/>• SyntheticDataService with modular generators<br/>• Profile selector chooses backend schemas<br/>• BackendQuerier samples real Vespa content<br/>• Pattern extraction + agent inference<br/>• Generates ModalityExampleSchema objects]
 
-    Synthetic --> Training[Modality-Specific DSPy Module Training<br/>• ModalityRoutingSignature query, modality → agent + confidence<br/>• ChainOfThought reasoning<br/>• MIPROv2 if ≥50 examples or BootstrapFewShot if <50<br/>• Save trained models per modality]
+    SyntheticService --> Training[Modality-Specific DSPy Module Training<br/>• ModalityRoutingSignature query, modality → agent + confidence<br/>• ChainOfThought reasoning<br/>• MIPROv2 if ≥50 examples or BootstrapFewShot if <50<br/>• Save trained models per modality]
 
     style SpanCollection fill:#e1f5ff
     style XGBoost fill:#fff4e1
-    style Synthetic fill:#ffe1e1
+    style SyntheticService fill:#ffe1e1
     style Training fill:#e1ffe1
 ```
 

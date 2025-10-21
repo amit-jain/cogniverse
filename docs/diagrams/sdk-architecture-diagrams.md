@@ -1,6 +1,6 @@
 # SDK Architecture Diagrams
 
-**Last Updated:** 2025-10-15
+**Last Updated:** 2025-10-21
 **Purpose:** Comprehensive visual documentation of UV workspace SDK architecture
 
 ---
@@ -24,21 +24,26 @@ graph TB
         Core[cogniverse_core<br/>v0.1.0<br/><br/>• Config<br/>• Telemetry<br/>• Evaluation<br/>• Common Utils]
         Agents[cogniverse_agents<br/>v0.1.0<br/><br/>• Agents<br/>• Routing<br/>• Ingestion<br/>• Search]
         Vespa[cogniverse_vespa<br/>v0.1.0<br/><br/>• Backends<br/>• Schema Mgmt<br/>• JSON Parser]
+        Synthetic[cogniverse_synthetic<br/>v0.1.0<br/><br/>• Generators<br/>• Profile Selector<br/>• Backend Querier]
         Runtime[cogniverse_runtime<br/>v0.1.0<br/><br/>• FastAPI Server<br/>• API Endpoints<br/>• Middleware]
         Dashboard[cogniverse_dashboard<br/>v0.1.0<br/><br/>• Streamlit UI<br/>• Analytics<br/>• Management]
     end
 
     Agents -->|depends on| Core
     Vespa -->|depends on| Core
+    Synthetic -->|depends on| Core
+    Synthetic -->|depends on| Vespa
     Runtime -->|depends on| Core
     Runtime -->|depends on| Agents
     Runtime -->|depends on| Vespa
     Dashboard -->|depends on| Core
     Dashboard -->|depends on| Agents
+    Agents -->|uses for training| Synthetic
 
     style Core fill:#e1f5ff,stroke:#0077cc,stroke-width:3px
     style Agents fill:#fff4e1,stroke:#ff9900,stroke-width:2px
     style Vespa fill:#ffe1f5,stroke:#cc0077,stroke-width:2px
+    style Synthetic fill:#fffacd,stroke:#ffd700,stroke-width:2px
     style Runtime fill:#f5e1ff,stroke:#7700cc,stroke-width:2px
     style Dashboard fill:#e1ffe1,stroke:#00cc77,stroke-width:2px
 ```
@@ -54,6 +59,7 @@ graph LR
     subgraph "Integration Layer"
         Agents[cogniverse_agents]
         Vespa[cogniverse_vespa]
+        Synthetic[cogniverse_synthetic]
     end
 
     subgraph "Application Layer"
@@ -63,15 +69,19 @@ graph LR
 
     Core --> Agents
     Core --> Vespa
+    Core --> Synthetic
     Core --> Runtime
     Core --> Dashboard
+    Vespa --> Synthetic
     Agents --> Runtime
     Agents --> Dashboard
     Vespa --> Runtime
+    Synthetic -.->|training data| Agents
 
     style Core fill:#e1f5ff
     style Agents fill:#fff4e1
     style Vespa fill:#ffe1f5
+    style Synthetic fill:#fffacd
     style Runtime fill:#f5e1ff
     style Dashboard fill:#e1ffe1
 ```

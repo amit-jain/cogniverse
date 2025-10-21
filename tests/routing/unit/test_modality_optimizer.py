@@ -9,8 +9,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from cogniverse_agents.routing.modality_example import ModalityExample
 from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
-from cogniverse_agents.routing.synthetic_data_generator import ModalityExample
 from cogniverse_agents.routing.xgboost_meta_models import (
     ModelingContext,
     TrainingStrategy,
@@ -33,19 +33,19 @@ class TestModalityOptimizer:
         """Create mocked components"""
         with (
             patch(
-                "cogniverse_agents.routing.modality_optimizer.ModalitySpanCollector"
+                "src.app.routing.modality_optimizer.ModalitySpanCollector"
             ) as mock_collector,
             patch(
-                "cogniverse_agents.routing.modality_optimizer.ModalityEvaluator"
+                "src.app.routing.modality_optimizer.ModalityEvaluator"
             ) as mock_evaluator,
             patch(
-                "cogniverse_agents.routing.modality_optimizer.SyntheticDataGenerator"
+                "src.app.routing.modality_optimizer.SyntheticDataGenerator"
             ) as mock_generator,
             patch(
-                "cogniverse_agents.routing.modality_optimizer.TrainingDecisionModel"
+                "src.app.routing.modality_optimizer.TrainingDecisionModel"
             ) as mock_decision,
             patch(
-                "cogniverse_agents.routing.modality_optimizer.TrainingStrategyModel"
+                "src.app.routing.modality_optimizer.TrainingStrategyModel"
             ) as mock_strategy,
         ):
 
@@ -340,9 +340,7 @@ class TestModalityOptimizer:
         assert result["training_samples"] == 1
         assert result["strategy"] == TrainingStrategy.PURE_REAL.value
         assert "validation_accuracy" in result
-        assert (
-            "optimizer" in result
-        )  # DSPy optimizer used (MIPROv2 or BootstrapFewShot)
+        assert "optimizer" in result  # DSPy optimizer used (MIPROv2 or BootstrapFewShot)
         assert "model_path" in result
 
     def test_record_training(self, optimizer):

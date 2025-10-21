@@ -9,8 +9,8 @@ import logging
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
+from cogniverse_agents.routing.modality_example import ModalityExample
 from cogniverse_agents.routing.modality_span_collector import ModalitySpanCollector
-from cogniverse_agents.routing.synthetic_data_generator import ModalityExample
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 logger = logging.getLogger(__name__)
@@ -355,7 +355,7 @@ class ModalityEvaluator:
         synthetic_ratio: float,
     ) -> Dict[QueryModality, List[ModalityExample]]:
         """
-        Augment training examples with synthetic data
+        Augment training examples with synthetic data using NEW system
 
         Args:
             training_examples: Existing real examples
@@ -364,12 +364,13 @@ class ModalityEvaluator:
         Returns:
             Augmented training examples
         """
-        from cogniverse_agents.routing.synthetic_data_generator import (
-            SyntheticDataGenerator,
+        from cogniverse_synthetic import (
+            ModalityExampleSchema,
+            SyntheticDataRequest,
+            SyntheticDataService,
         )
 
-        generator = SyntheticDataGenerator(vespa_client=None)
-
+        service = SyntheticDataService(vespa_client=None, backend_config=None)
         augmented_examples = training_examples.copy()
 
         for modality, real_examples in training_examples.items():
@@ -384,9 +385,18 @@ class ModalityEvaluator:
                     f"🎲 Generating {synthetic_count} synthetic examples for {modality.value}"
                 )
 
-                synthetic_examples = await generator.generate_from_ingested_data(
-                    modality, target_count=synthetic_count
+                # Generate using SyntheticDataService directly
+                request = SyntheticDataRequest(
+                    optimizer="modality",
+                    count=synthetic_count
                 )
+                response = await service.generate(request)
+
+                # Convert to ModalityExample objects
+                synthetic_examples = [
+                    ModalityExample.from_schema(ModalityExampleSchema(**ex))
+                    for ex in response.data
+                ]
 
                 # Combine real and synthetic
                 augmented_examples[modality] = real_examples + synthetic_examples
