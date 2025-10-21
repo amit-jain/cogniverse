@@ -76,6 +76,63 @@ Phoenix observability settings:
 - Metric collection intervals
 - Dashboard customization
 
+### Backend Configuration
+Backend-specific settings for video processing and storage:
+- Backend type (vespa, elasticsearch, etc.)
+- Backend connection parameters (URL, port)
+- Profile-based video processing configuration
+- Pipeline settings (frame extraction, transcription)
+- Embedding strategies and models
+- Per-tenant backend overrides
+
+### ConfigScope Enum
+
+Configuration scopes are defined by the `ConfigScope` enum:
+
+```python
+from cogniverse_core.config.store_interface import ConfigScope
+
+class ConfigScope(Enum):
+    SYSTEM = "system"        # Global infrastructure settings
+    AGENT = "agent"          # Per-agent DSPy configuration
+    ROUTING = "routing"      # Routing optimizer settings
+    TELEMETRY = "telemetry"  # Phoenix observability settings
+    BACKEND = "backend"      # Backend and profile configuration
+```
+
+**Usage Example**:
+```python
+from cogniverse_core.config.config_manager import get_config_manager
+from cogniverse_core.config.store_interface import ConfigScope
+
+manager = get_config_manager()
+
+# Set backend configuration for tenant
+backend_config = {
+    "backend": {
+        "profiles": {
+            "video_colpali_smol500_mv_frame": {
+                "pipeline_config": {
+                    "max_frames": 200
+                }
+            }
+        }
+    }
+}
+
+manager.set_config(
+    tenant_id="acme",
+    scope=ConfigScope.BACKEND,  # Use BACKEND scope
+    config=backend_config
+)
+
+# Retrieve backend configuration
+config = manager.get_config(
+    tenant_id="acme",
+    scope=ConfigScope.BACKEND
+)
+```
+
 ## Storage Backends
 
 ### SQLiteConfigStore (Default)
@@ -83,7 +140,7 @@ Phoenix observability settings:
 Local SQLite database for development and single-instance deployments.
 
 ```python
-from src.common.config_manager import get_config_manager
+from cogniverse_core.config.config_manager import get_config_manager
 
 # Automatically uses SQLite at data/config/config.db
 manager = get_config_manager()
@@ -106,8 +163,8 @@ Unified configuration storage in Vespa alongside application data.
 
 ```python
 from vespa.application import Vespa
-from src.common.vespa_config_store import VespaConfigStore
-from src.common.config_manager import ConfigManager
+from cogniverse_core.config.store import VespaConfigStore
+from cogniverse_core.config.config_manager import ConfigManager
 
 # Initialize Vespa store
 vespa_app = Vespa(url="http://localhost:8080")
@@ -141,7 +198,7 @@ curl http://localhost:8080/ApplicationStatus | jq '.schemas'
 Create custom storage backends by implementing the ConfigStore interface:
 
 ```python
-from src.common.config_store_interface import ConfigStore, ConfigEntry, ConfigScope
+from cogniverse_core.config.store_interface import ConfigStore, ConfigEntry, ConfigScope
 from typing import Dict, Any, Optional, List
 import datetime
 
@@ -196,8 +253,8 @@ class RedisConfigStore(ConfigStore):
 Each tenant has completely isolated configuration:
 
 ```python
-from src.common.config_manager import get_config_manager
-from src.common.unified_config import SystemConfig
+from cogniverse_core.config.config_manager import get_config_manager
+from cogniverse_core.config.unified_config import SystemConfig
 
 manager = get_config_manager()
 
@@ -255,8 +312,8 @@ manager.delete_tenant("old_tenant", hard_delete=False)
 ### Dynamic Module Configuration
 
 ```python
-from src.common.agent_config import AgentConfig, ModuleConfig, DSPyModuleType
-from src.common.config_manager import get_config_manager
+from cogniverse_core.config.agent_config import AgentConfig, ModuleConfig, DSPyModuleType
+from cogniverse_core.config.config_manager import get_config_manager
 
 manager = get_config_manager()
 
@@ -288,8 +345,8 @@ manager.set_agent_config(
 ### Optimizer Selection
 
 ```python
-from src.routing.optimizer_factory import OptimizerFactory
-from src.common.config_manager import get_config_manager
+from cogniverse_agents.routing.optimizer_factory import OptimizerFactory
+from cogniverse_core.config.config_manager import get_config_manager
 
 manager = get_config_manager()
 factory = OptimizerFactory()
@@ -317,7 +374,7 @@ optimizer = factory.get_optimizer(
 Every configuration change creates a new version:
 
 ```python
-from src.common.config_store_interface import ConfigScope
+from cogniverse_core.config.store_interface import ConfigScope
 
 # Get configuration history
 history = manager.store.get_config_history(
@@ -360,7 +417,7 @@ print(f"Rolled back LLM: {rolled_back.llm_model}")
 Configuration changes apply immediately without restart:
 
 ```python
-from src.common.config_watcher import ConfigWatcher
+from cogniverse_core.config.config_watcher import ConfigWatcher
 
 # Setup configuration watcher
 watcher = ConfigWatcher(manager)
@@ -446,7 +503,7 @@ print(f"Configs by scope: {stats['configs_per_scope']}")
 ### Configuration Metrics
 
 ```python
-from src.telemetry.metrics_manager import MetricsManager
+from cogniverse_core.telemetry.metrics_manager import MetricsManager
 
 metrics = MetricsManager()
 
@@ -531,7 +588,7 @@ manager.set_system_config(
 ### 3. Use Type-Safe Configurations
 ```python
 # Good: Type-safe dataclass
-from src.common.unified_config import SystemConfig
+from cogniverse_core.config.unified_config import SystemConfig
 config = SystemConfig(
     tenant_id="prod",
     llm_model="gpt-4",
@@ -577,7 +634,7 @@ llm_model = os.getenv("LLM_MODEL", "gpt-4")
 vespa_url = os.getenv("VESPA_URL", "http://localhost:8080")
 
 # New: ConfigManager
-from src.common.config_manager import get_config_manager
+from cogniverse_core.config.config_manager import get_config_manager
 manager = get_config_manager()
 config = manager.get_system_config("default")
 llm_model = config.llm_model

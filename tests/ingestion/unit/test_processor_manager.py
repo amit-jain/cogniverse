@@ -10,9 +10,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
-
-from src.app.ingestion.processor_base import BaseProcessor, BaseStrategy
-from src.app.ingestion.processor_manager import ProcessorManager
+from cogniverse_runtime.ingestion.processor_base import BaseProcessor, BaseStrategy
+from cogniverse_runtime.ingestion.processor_manager import ProcessorManager
 
 
 class MockProcessorA(BaseProcessor):
@@ -88,7 +87,7 @@ class TestProcessorManager:
     def manager(self, mock_logger):
         """Create a processor manager for testing."""
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             # Mock empty processor discovery to avoid loading real processors
             mock_iter.return_value = []
@@ -101,7 +100,7 @@ class TestProcessorManager:
     def test_processor_manager_initialization(self, mock_logger):
         """Test processor manager initialization."""
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -114,7 +113,7 @@ class TestProcessorManager:
     def test_processor_discovery_logging(self, mock_logger):
         """Test that processor discovery is logged."""
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -222,12 +221,12 @@ class TestProcessorManager:
         plugin_dir.mkdir()
 
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             # Return empty for plugin discovery
             mock_iter.return_value = []
 
-            manager = ProcessorManager(mock_logger, plugin_dir=plugin_dir)
+            ProcessorManager(mock_logger, plugin_dir=plugin_dir)
 
             # Should be called once for the plugin dir
             assert mock_iter.call_count == 1
@@ -272,7 +271,7 @@ class TestProcessorManagerIntegration:
     def test_full_processor_lifecycle(self, mock_logger):
         """Test complete processor lifecycle from discovery to cleanup."""
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -304,7 +303,7 @@ class TestProcessorManagerIntegration:
     def test_multiple_processor_instances(self, mock_logger):
         """Test managing multiple instances of different processor types."""
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 

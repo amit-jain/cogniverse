@@ -8,10 +8,9 @@ and individual processors in the ingestion pipeline.
 from unittest.mock import Mock, patch
 
 import pytest
-
-from src.app.ingestion.processing_strategy_set import ProcessingStrategySet
-from src.app.ingestion.processor_manager import ProcessorManager
-from src.app.ingestion.strategies import (
+from cogniverse_runtime.ingestion.processing_strategy_set import ProcessingStrategySet
+from cogniverse_runtime.ingestion.processor_manager import ProcessorManager
+from cogniverse_runtime.ingestion.strategies import (
     ChunkSegmentationStrategy,
     FrameSegmentationStrategy,
 )
@@ -42,7 +41,7 @@ class TestPipelineOrchestration:
     def test_processor_manager_strategy_integration(self, mock_logger, strategy_set):
         """Test that ProcessorManager correctly integrates with strategies."""
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -110,7 +109,7 @@ class TestPipelineOrchestration:
         requirements = strategy_set.get_all_required_processors()
         assert "keyframe" in requirements
 
-    @patch("src.app.ingestion.processors.keyframe_processor.KeyframeProcessor")
+    @patch("cogniverse_runtime.ingestion.processors.keyframe_processor.KeyframeProcessor")
     def test_end_to_end_frame_processing_workflow(
         self,
         mock_keyframe_class,
@@ -138,7 +137,7 @@ class TestPipelineOrchestration:
         mock_keyframe_class.from_config = Mock(return_value=mock_keyframe)
 
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -161,7 +160,7 @@ class TestPipelineOrchestration:
                 sample_video_path, temp_dir
             )
 
-    @patch("src.app.ingestion.processors.chunk_processor.ChunkProcessor")
+    @patch("cogniverse_runtime.ingestion.processors.chunk_processor.ChunkProcessor")
     def test_end_to_end_chunk_processing_workflow(
         self,
         mock_chunk_class,
@@ -187,7 +186,7 @@ class TestPipelineOrchestration:
         mock_chunk_class.from_config = Mock(return_value=mock_chunk)
 
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -231,7 +230,7 @@ class TestPipelineOrchestration:
     ):
         """Test error handling when processors fail in the pipeline."""
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -264,7 +263,7 @@ class TestPipelineOrchestration:
     ):
         """Test that processor caching works consistently across the pipeline."""
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -289,7 +288,7 @@ class TestPipelineOrchestration:
         import threading
 
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 

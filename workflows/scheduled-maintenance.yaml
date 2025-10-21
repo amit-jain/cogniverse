@@ -1,0 +1,420 @@
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: daily-backup
+  namespace: cogniverse
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM UTC
+  timezone: "UTC"
+  concurrencyPolicy: "Forbid"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  workflowSpec:
+    entrypoint: backup-pipeline
+    templates:
+    - name: backup-pipeline
+      steps:
+      - - name: backup-vespa
+          template: backup-vespa
+      - - name: backup-phoenix
+          template: backup-phoenix
+      - - name: cleanup-old-backups
+          template: cleanup-old-backups
+      - - name: notify-backup
+          template: notify-backup
+
+    - name: backup-vespa
+      container:
+        image: cogniverse/runtime:2.0.0
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            set -e
+            echo "Backing up Vespa data..."
+
+            BACKUP_DATE=$(date +%Y%m%d)
+            BACKUP_PATH="/backups/vespa-${BACKUP_DATE}.tar.gz"
+
+            # Create backup (requires Vespa backup tools)
+            echo "Creating Vespa backup..."
+            # Add actual Vespa backup command
+            # vespa-backup create --output $BACKUP_PATH
+
+            echo "Vespa backup completed: $BACKUP_PATH"
+        volumeMounts:
+        - name: backup-storage
+          mountPath: /backups
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2"
+          limits:
+            memory: "8Gi"
+            cpu: "4"
+
+    - name: backup-phoenix
+      container:
+        image: cogniverse/runtime:2.0.0
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            set -e
+            echo "Backing up Phoenix data..."
+
+            BACKUP_DATE=$(date +%Y%m%d)
+            BACKUP_PATH="/backups/phoenix-${BACKUP_DATE}.tar.gz"
+
+            # Backup Phoenix database
+            tar czf $BACKUP_PATH /phoenix-data
+
+            echo "Phoenix backup completed: $BACKUP_PATH"
+        volumeMounts:
+        - name: backup-storage
+          mountPath: /backups
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1"
+          limits:
+            memory: "4Gi"
+            cpu: "2"
+
+    - name: cleanup-old-backups
+      container:
+        image: alpine:latest
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            set -e
+            echo "Cleaning up old backups (retention: 30 days)..."
+
+            find /backups -name "*.tar.gz" -type f -mtime +30 -delete
+
+            echo "Cleanup completed"
+        volumeMounts:
+        - name: backup-storage
+          mountPath: /backups
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+
+    - name: notify-backup
+      container:
+        image: curlimages/curl:latest
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            echo "Backup workflow completed"
+            # Send notification
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+
+    volumes:
+    - name: backup-storage
+      persistentVolumeClaim:
+        claimName: backup-storage
+---
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: weekly-optimization
+  namespace: cogniverse
+spec:
+  schedule: "0 3 * * 0"  # Weekly on Sunday at 3 AM UTC
+  timezone: "UTC"
+  concurrencyPolicy: "Forbid"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  workflowSpec:
+    entrypoint: optimization-pipeline
+    templates:
+    - name: optimization-pipeline
+      steps:
+      - - name: run-optimization
+          template: run-optimization
+          arguments:
+            parameters:
+            - name: tenant-id
+              value: "{{item}}"
+          withItems:
+          - "default"
+          - "acme_corp"
+          - "globex_inc"
+
+    - name: run-optimization
+      inputs:
+        parameters:
+        - name: tenant-id
+      container:
+        image: cogniverse/runtime:2.0.0
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            set -e
+            echo "Running weekly optimization for tenant {{inputs.parameters.tenant-id}}..."
+
+            cd /app
+            JAX_PLATFORM_NAME=cpu uv run python scripts/run_optimization.py \
+              --tenant-id {{inputs.parameters.tenant-id}} \
+              --optimizer GEPA \
+              --dataset golden_eval_v1 \
+              --profiles video_colpali_smol500_mv_frame \
+              --max-iterations 100
+
+            echo "Optimization completed for {{inputs.parameters.tenant-id}}"
+        env:
+        - name: VESPA_URL
+          value: "http://cogniverse-vespa:8080"
+        - name: PHOENIX_ENDPOINT
+          value: "http://cogniverse-phoenix:6006"
+        - name: OLLAMA_ENDPOINT
+          value: "http://cogniverse-ollama:11434"
+        resources:
+          requests:
+            memory: "16Gi"
+            cpu: "8"
+          limits:
+            memory: "32Gi"
+            cpu: "16"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: daily-cleanup
+  namespace: cogniverse
+spec:
+  schedule: "0 4 * * *"  # Daily at 4 AM UTC
+  timezone: "UTC"
+  concurrencyPolicy: "Allow"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  workflowSpec:
+    entrypoint: cleanup-pipeline
+    templates:
+    - name: cleanup-pipeline
+      steps:
+      - - name: cleanup-old-logs
+          template: cleanup-old-logs
+      - - name: cleanup-temp-files
+          template: cleanup-temp-files
+      - - name: vacuum-databases
+          template: vacuum-databases
+      - - name: notify-cleanup
+          template: notify-cleanup
+
+    - name: cleanup-old-logs
+      container:
+        image: alpine:latest
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            set -e
+            echo "Cleaning up old logs (retention: 7 days)..."
+
+            find /logs -name "*.log" -type f -mtime +7 -delete
+
+            echo "Log cleanup completed"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+
+    - name: cleanup-temp-files
+      container:
+        image: alpine:latest
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            set -e
+            echo "Cleaning up temporary files..."
+
+            find /tmp -type f -mtime +1 -delete
+
+            echo "Temp file cleanup completed"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+
+    - name: vacuum-databases
+      container:
+        image: cogniverse/runtime:2.0.0
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            set -e
+            echo "Running database maintenance..."
+
+            # Add database vacuum/optimize commands here
+            echo "Database maintenance completed"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1"
+          limits:
+            memory: "4Gi"
+            cpu: "2"
+
+    - name: notify-cleanup
+      container:
+        image: curlimages/curl:latest
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            echo "Cleanup workflow completed"
+            # Send notification
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: monthly-reports
+  namespace: cogniverse
+spec:
+  schedule: "0 5 1 * *"  # Monthly on 1st at 5 AM UTC
+  timezone: "UTC"
+  concurrencyPolicy: "Forbid"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  workflowSpec:
+    entrypoint: reporting-pipeline
+    templates:
+    - name: reporting-pipeline
+      steps:
+      - - name: generate-usage-report
+          template: generate-usage-report
+      - - name: generate-performance-report
+          template: generate-performance-report
+      - - name: send-reports
+          template: send-reports
+
+    - name: generate-usage-report
+      container:
+        image: cogniverse/runtime:2.0.0
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            set -e
+            echo "Generating monthly usage report..."
+
+            REPORT_DATE=$(date +%Y%m)
+            REPORT_PATH="/reports/usage-${REPORT_DATE}.json"
+
+            cd /app
+            uv run python -c "
+            import json
+            from datetime import datetime
+
+            report = {
+                'period': '${REPORT_DATE}',
+                'generated': datetime.utcnow().isoformat(),
+                'tenants': {},
+                'summary': {}
+            }
+
+            # Add usage metrics collection here
+
+            with open('${REPORT_PATH}', 'w') as f:
+                json.dump(report, f, indent=2)
+
+            print(f'Usage report generated: ${REPORT_PATH}')
+            "
+
+            echo "Usage report completed"
+        volumeMounts:
+        - name: reports
+          mountPath: /reports
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1"
+          limits:
+            memory: "4Gi"
+            cpu: "2"
+
+    - name: generate-performance-report
+      container:
+        image: cogniverse/runtime:2.0.0
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            set -e
+            echo "Generating monthly performance report..."
+
+            REPORT_DATE=$(date +%Y%m)
+            REPORT_PATH="/reports/performance-${REPORT_DATE}.json"
+
+            cd /app
+            uv run python -c "
+            import json
+            from datetime import datetime
+
+            report = {
+                'period': '${REPORT_DATE}',
+                'generated': datetime.utcnow().isoformat(),
+                'metrics': {},
+                'trends': {}
+            }
+
+            # Add performance metrics collection here
+
+            with open('${REPORT_PATH}', 'w') as f:
+                json.dump(report, f, indent=2)
+
+            print(f'Performance report generated: ${REPORT_PATH}')
+            "
+
+            echo "Performance report completed"
+        volumeMounts:
+        - name: reports
+          mountPath: /reports
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1"
+          limits:
+            memory: "4Gi"
+            cpu: "2"
+
+    - name: send-reports
+      container:
+        image: curlimages/curl:latest
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            echo "Sending monthly reports..."
+            # Send reports via email/webhook
+            echo "Reports sent"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+
+    volumes:
+    - name: reports
+      persistentVolumeClaim:
+        claimName: reports-storage

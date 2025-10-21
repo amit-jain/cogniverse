@@ -5,10 +5,9 @@ Unit tests for ModalityEvaluator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-from src.app.routing.modality_evaluator import ModalityEvaluator
-from src.app.routing.synthetic_data_generator import ModalityExample
-from src.app.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.routing.modality_evaluator import ModalityEvaluator
+from cogniverse_agents.routing.synthetic_data_generator import ModalityExample
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 
 class TestModalityEvaluator:
@@ -17,7 +16,7 @@ class TestModalityEvaluator:
     @pytest.fixture
     def mock_span_collector(self):
         """Create mocked span collector"""
-        with patch("src.app.routing.modality_evaluator.ModalitySpanCollector") as mock:
+        with patch("cogniverse_agents.routing.modality_evaluator.ModalitySpanCollector") as mock:
             collector = MagicMock()
             mock.return_value = collector
             yield collector

@@ -7,8 +7,7 @@ Tests real audio transcription functionality using Whisper.
 from unittest.mock import Mock, patch
 
 import pytest
-
-from src.app.ingestion.processors.audio_processor import AudioProcessor
+from cogniverse_runtime.ingestion.processors.audio_processor import AudioProcessor
 
 
 @pytest.mark.unit
@@ -120,7 +119,7 @@ class TestAudioProcessor:
         processor.logger.error.assert_called()
 
     @patch("whisper.load_model")
-    @patch("src.common.utils.output_manager.get_output_manager")
+    @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
     @patch("builtins.open", create=True)
     @patch("json.dump")
     def test_transcribe_audio_success(
@@ -195,7 +194,7 @@ class TestAudioProcessor:
         assert saved_data["full_text"] == "This is a test transcription."
 
     @patch("whisper.load_model")
-    @patch("src.common.utils.output_manager.get_output_manager")
+    @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
     def test_transcribe_audio_with_auto_language(
         self,
         mock_output_manager,
@@ -257,7 +256,7 @@ class TestAudioProcessor:
         )
 
     @patch("whisper.load_model")
-    @patch("src.common.utils.output_manager.get_output_manager")
+    @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
     def test_transcribe_audio_with_cache_miss_and_save(
         self,
         mock_output_manager,
@@ -311,7 +310,7 @@ class TestAudioProcessor:
         mock_model.transcribe.side_effect = Exception("Whisper transcription failed")
         mock_load_model.return_value = mock_model
 
-        with patch("src.common.utils.output_manager.get_output_manager"):
+        with patch("cogniverse_core.common.utils.output_manager.get_output_manager"):
             result = processor.transcribe_audio(sample_video_path)
 
         # Should return error result instead of raising

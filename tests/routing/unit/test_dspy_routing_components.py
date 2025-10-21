@@ -7,24 +7,27 @@ query enhancement, adaptive threshold learning, and advanced optimization.
 
 
 import pytest
-
-from src.app.routing.adaptive_threshold_learner import AdaptiveThresholdLearner
-from src.app.routing.advanced_optimizer import (
+from cogniverse_agents.routing.adaptive_threshold_learner import (
+    AdaptiveThresholdLearner,
+)
+from cogniverse_agents.routing.advanced_optimizer import (
     AdvancedOptimizerConfig,
     AdvancedRoutingOptimizer,
 )
-from src.app.routing.dspy_relationship_router import (
+from cogniverse_agents.routing.dspy_relationship_router import (
     DSPyEntityExtractorModule,
     DSPyRelationshipExtractorModule,
 )
-from src.app.routing.dspy_routing_signatures import (
+from cogniverse_agents.routing.dspy_routing_signatures import (
     AdvancedRoutingSignature,
     BasicQueryAnalysisSignature,
 )
-from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
+from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
 
 # DSPy routing components
-from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
+from cogniverse_agents.routing.relationship_extraction_tools import (
+    RelationshipExtractorTool,
+)
 
 
 class TestDSPyRoutingSignatures:
@@ -102,14 +105,14 @@ class TestAdaptiveThresholdLearner:
 
     def test_learner_initialization(self):
         """Test adaptive threshold learner initialization"""
-        learner = AdaptiveThresholdLearner()
+        learner = AdaptiveThresholdLearner(tenant_id="test-tenant")
         assert learner is not None
         assert hasattr(learner, "config")
         assert hasattr(learner, "threshold_states")
 
     def test_learning_status(self):
         """Test getting learning status"""
-        learner = AdaptiveThresholdLearner()
+        learner = AdaptiveThresholdLearner(tenant_id="test-tenant")
         status = learner.get_learning_status()
 
         assert isinstance(status, dict)
@@ -118,7 +121,7 @@ class TestAdaptiveThresholdLearner:
     @pytest.mark.asyncio
     async def test_record_performance_sample(self):
         """Test recording performance sample"""
-        learner = AdaptiveThresholdLearner()
+        learner = AdaptiveThresholdLearner(tenant_id="test-tenant")
 
         # Test recording performance sample
         try:
@@ -153,7 +156,7 @@ class TestAdvancedRoutingOptimizer:
     def test_optimizer_initialization(self, temp_storage):
         """Test optimizer initialization"""
         config = AdvancedOptimizerConfig(min_experiences_for_training=100)
-        optimizer = AdvancedRoutingOptimizer(config, storage_dir=temp_storage)
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant", config=config, base_storage_dir=temp_storage)
 
         assert optimizer.config == config
         assert len(optimizer.experiences) == 0
@@ -163,7 +166,7 @@ class TestAdvancedRoutingOptimizer:
     async def test_record_experience(self, temp_storage):
         """Test recording routing experience"""
         config = AdvancedOptimizerConfig(min_experiences_for_training=100)
-        optimizer = AdvancedRoutingOptimizer(config, storage_dir=temp_storage)
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant", config=config, base_storage_dir=temp_storage)
 
         reward = await optimizer.record_routing_experience(
             query="test query",
@@ -183,7 +186,7 @@ class TestAdvancedRoutingOptimizer:
     def test_get_optimization_status(self, temp_storage):
         """Test getting optimization status"""
         config = AdvancedOptimizerConfig()
-        optimizer = AdvancedRoutingOptimizer(config, storage_dir=temp_storage)
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant", config=config, base_storage_dir=temp_storage)
 
         status = optimizer.get_optimization_status()
         assert isinstance(status, dict)
@@ -216,10 +219,11 @@ class TestDSPyRoutingIntegration:
         # Initialize components with temporary storage
         extractor = RelationshipExtractorTool()
         pipeline = QueryEnhancementPipeline()
-        AdaptiveThresholdLearner()  # Create but don't assign to unused variable
+        AdaptiveThresholdLearner(tenant_id="test-tenant")  # Create but don't assign to unused variable
         optimizer = AdvancedRoutingOptimizer(
-            AdvancedOptimizerConfig(min_experiences_for_training=10),
-            storage_dir=str(tmp_path / "test_optimizer")
+            tenant_id="test-tenant",
+            config=AdvancedOptimizerConfig(min_experiences_for_training=10),
+            base_storage_dir=str(tmp_path / "test_optimizer")
         )
 
         # Test real interactions (components handle missing models gracefully)

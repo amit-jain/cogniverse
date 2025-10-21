@@ -14,19 +14,19 @@ Requires:
 """
 
 import subprocess
-import time
 from datetime import datetime, timedelta
 
 import pytest
-
-from src.app.routing.contextual_analyzer import ContextualAnalyzer
-from src.app.routing.query_expansion import QueryExpander
-from src.app.search.multi_modal_reranker import (
+from cogniverse_agents.routing.contextual_analyzer import ContextualAnalyzer
+from cogniverse_agents.routing.query_expansion import QueryExpander
+from cogniverse_agents.search.multi_modal_reranker import (
     MultiModalReranker,
     QueryModality,
     SearchResult,
 )
-from src.backends.vespa.vespa_schema_manager import VespaSchemaManager
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
+from tests.utils.async_polling import wait_for_vespa_indexing
 
 
 @pytest.fixture(scope="module")
@@ -98,7 +98,7 @@ def test_vespa_integration():
                 break
         except Exception:
             pass
-        time.sleep(1)
+        wait_for_vespa_indexing(delay=1)
         if i % 10 == 0 and i > 0:
             print(f"   Still waiting... ({i}s)")
     else:

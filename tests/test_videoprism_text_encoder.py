@@ -9,13 +9,11 @@ Tests cover:
 - Performance metrics
 """
 
-import time
 import unittest
 from unittest.mock import MagicMock, Mock, patch
 
 import numpy as np
-
-from src.common.models.videoprism_text_encoder import (
+from cogniverse_core.common.models.videoprism_text_encoder import (
     CircuitBreaker,
     CircuitState,
     ModelPool,
@@ -23,6 +21,8 @@ from src.common.models.videoprism_text_encoder import (
     VideoPrismTextEncoder,
     create_text_encoder,
 )
+
+from tests.utils.async_polling import wait_for_service_startup
 
 
 class TestPerformanceMetrics(unittest.TestCase):
@@ -138,7 +138,7 @@ class TestCircuitBreaker(unittest.TestCase):
                 pass
         
         # Wait for recovery timeout
-        time.sleep(1.1)
+        wait_for_service_startup(delay=1.1, description="model loading")
         
         # Should be half-open now
         self.assertEqual(self.breaker.state, CircuitState.HALF_OPEN)
@@ -156,7 +156,7 @@ class TestCircuitBreaker(unittest.TestCase):
                 pass
         
         # Wait for recovery
-        time.sleep(1.1)
+        wait_for_service_startup(delay=1.1, description="model loading")
         
         # Successful call should close circuit
         result = self.breaker.call(lambda: "recovered")
@@ -215,7 +215,9 @@ class TestVideoPrismTextEncoder(unittest.TestCase):
     
     def setUp(self):
         # Clear class-level cache before each test
-        from src.common.models.videoprism_text_encoder import VideoPrismTextEncoder
+        from cogniverse_core.common.models.videoprism_text_encoder import (
+            VideoPrismTextEncoder,
+        )
         VideoPrismTextEncoder._model_cache.clear()
 
         # Mock VideoPrism module
@@ -224,7 +226,7 @@ class TestVideoPrismTextEncoder(unittest.TestCase):
         self.vp_patch.start()
 
         # Mock the global VIDEOPRISM_AVAILABLE flag
-        import src.common.models.videoprism_text_encoder as encoder_module
+        import cogniverse_core.common.models.videoprism_text_encoder as encoder_module
         encoder_module.VIDEOPRISM_AVAILABLE = True
         encoder_module.vp = self.vp_mock.models
         

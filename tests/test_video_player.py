@@ -13,7 +13,7 @@ from pathlib import Path
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.tools.video_player_tool import VideoPlayerTool
+from cogniverse_agents.tools.video_player_tool import VideoPlayerTool
 
 
 async def test_video_player():

@@ -1,8 +1,9 @@
 # Cogniverse Study Guide: Configuration Management
 
-**Last Updated:** 2025-10-09
-**Module Path:** `src/common/`
-**Purpose:** Multi-tenant, versioned configuration system with pluggable storage backends
+**Last Updated:** 2025-10-15
+**Package:** `cogniverse_core`
+**Module Path:** `libs/core/cogniverse_core/config/`
+**Purpose:** Multi-tenant, versioned configuration system with pluggable storage backends and schema-per-tenant isolation
 
 ---
 
@@ -10,7 +11,7 @@
 
 ### Purpose
 The configuration system provides centralized management for all system configurations with:
-- **Multi-tenant isolation**: Complete configuration separation per tenant using org:tenant format
+- **Multi-tenant isolation**: Complete configuration separation per tenant
 - **Versioning**: Full history tracking with rollback capability
 - **Pluggable backends**: SQLite (default), Vespa, PostgreSQL, or custom
 - **Hot reload**: Configuration changes apply immediately without restart
@@ -18,96 +19,10 @@ The configuration system provides centralized management for all system configur
 - **DSPy integration**: Dynamic optimizer and module configuration
 
 ### Key Components
-- **ConfigManager**: Singleton access to configuration (tenant-aware)
-- **ConfigStore**: Interface for storage backends with tenant isolation
-- **UnifiedConfig**: Type-safe configuration dataclasses with tenant_id
-- **ConfigWatcher**: Hot reload support per tenant
-
----
-
-## Multi-Tenant Configuration
-
-### Tenant ID Format
-
-All configuration is scoped to a **tenant_id** using the org:tenant format:
-
-```
-{organization}:{tenant_name}
-
-Examples:
-- acme:production
-- acme:staging
-- acme:dev
-- initech:production
-```
-
-### Validation Rules
-
-**Organization ID** (`org_id`):
-- Pattern: `^[a-zA-Z0-9_]+$`
-- Examples: `acme`, `org_123`, `ACME`
-- Invalid: `acme-corp`, `acme.com`, `acme corp`
-
-**Tenant Name** (`tenant_name`):
-- Pattern: `^[a-zA-Z0-9_-]+$`
-- Examples: `production`, `dev-2024`, `cust_1`
-- Invalid: `prod.env`, `staging:v2`, `test env`
-
-### Configuration Isolation
-
-Each tenant has completely isolated configuration:
-
-```python
-from src.common.config_manager import get_config_manager
-
-manager = get_config_manager()
-
-# Get acme:production configuration
-acme_prod_config = manager.get_system_config(tenant_id="acme:production")
-
-# Get acme:staging configuration (completely separate)
-acme_staging_config = manager.get_system_config(tenant_id="acme:staging")
-
-# Different configurations for different tenants
-assert acme_prod_config != acme_staging_config
-```
-
-### Per-Tenant Storage Paths
-
-Configuration and data organized by tenant:
-
-```
-base_dir/
-├── acme/                       # Organization
-│   ├── production/             # Tenant
-│   │   ├── config/             # Tenant-specific config
-│   │   ├── data/               # Tenant-specific data
-│   │   └── logs/               # Tenant-specific logs
-│   ├── staging/
-│   └── dev/
-├── initech/
-│   └── production/
-└── hooli/
-    └── customer_123/
-```
-
-### Telemetry Project Naming
-
-Phoenix telemetry projects automatically scoped by tenant:
-
-```python
-# Project name format: cogniverse-{tenant_id}-{component}
-# Examples:
-# - cogniverse-acme_production-video-search
-# - cogniverse-acme_staging-routing-agent
-# - cogniverse-initech_production-summarizer
-
-# Automatically set based on tenant_id
-system_config = SystemConfig(
-    tenant_id="acme:production",
-    phoenix_project_name="cogniverse-acme_production-video-search"
-)
-```
+- **ConfigManager**: Singleton access to configuration
+- **ConfigStore**: Interface for storage backends
+- **UnifiedConfig**: Type-safe configuration dataclasses
+- **ConfigWatcher**: Hot reload support
 
 ---
 
@@ -141,32 +56,34 @@ graph TB
 Global infrastructure settings per tenant:
 
 ```python
-from src.common.unified_config import SystemConfig
+from cogniverse_core.config.unified_config import SystemConfig
 
 system_config = SystemConfig(
-    tenant_id="acme:production",  # REQUIRED - org:tenant format
+    tenant_id="acme",
     llm_model="gpt-4",
     llm_base_url="https://api.openai.com/v1",
     vespa_url="http://localhost:8080",
-    phoenix_project_name="cogniverse-acme_production-system",
+    vespa_config_port=19071,  # For schema deployment
+    phoenix_project_name="acme_project",
     phoenix_enabled=True
 )
 ```
 
-**Settings Include (per tenant)**:
+**Settings Include:**
 - LLM providers and models
 - Vespa backend URLs
-- Phoenix telemetry endpoints (tenant-specific projects)
-- Mem0 memory configuration (tenant-isolated)
-- Resource limits per tenant
+- Phoenix telemetry endpoints
+- Mem0 memory configuration
+- Default resource limits
 
 ### 2. Agent Configuration
-Per-agent DSPy module and optimizer settings:
+Per-agent DSPy module and optimizer settings (per tenant):
 
 ```python
-from src.common.agent_config import AgentConfig, ModuleConfig, DSPyModuleType
+from cogniverse_core.config.agent_config import AgentConfig, ModuleConfig, DSPyModuleType
 
 agent_config = AgentConfig(
+    tenant_id="acme",
     agent_name="video_search_agent",
     module_config=ModuleConfig(
         module_type=DSPyModuleType.REACT,
@@ -185,7 +102,7 @@ agent_config = AgentConfig(
 ```
 
 ### 3. Routing Configuration
-Routing optimizer and strategy settings:
+Per-tenant routing optimizer and strategy settings:
 
 ```mermaid
 graph LR
@@ -207,18 +124,19 @@ graph LR
 
 **Configuration:**
 - Routing tiers (FAST, BALANCED, COMPREHENSIVE)
-- Strategy weights and thresholds
-- Experience buffer configuration
-- GRPO/GEPA optimizer parameters
-- Multi-tenant routing rules
+- Strategy weights and thresholds per tenant
+- Per-tenant experience buffer configuration
+- GRPO/GEPA optimizer parameters per tenant
+- Tenant-isolated routing rules and history
 
 ### 4. Telemetry Configuration
-Phoenix observability settings:
-- Project isolation per tenant
-- Span export configuration (sync vs async)
-- Experiment tracking settings
-- Metric collection intervals
-- Dashboard customization
+Phoenix observability with strict tenant isolation:
+- **Per-tenant Phoenix projects** (automatic project creation)
+- Span export configuration (sync for tests, async for production)
+- Per-tenant experiment tracking
+- Per-tenant metric collection and aggregation
+- Tenant-specific dashboard customization
+- Cross-tenant analytics disabled for security
 
 ---
 
@@ -226,30 +144,26 @@ Phoenix observability settings:
 
 ### SQLite ConfigStore (Default)
 
-Local SQLite database for development and single-instance deployments with tenant isolation.
+Local SQLite database for development and single-instance deployments.
 
 ```python
-from src.common.config_manager import get_config_manager
+from cogniverse_core.config.config_manager import get_config_manager
 
 # Automatically uses SQLite at data/config/config.db
 manager = get_config_manager()
 
 # Get system configuration for specific tenant
-system_config = manager.get_system_config(tenant_id="acme:production")
+system_config = manager.get_system_config(tenant_id="acme")
 print(f"Tenant: {system_config.tenant_id}")
 print(f"LLM: {system_config.llm_model}")
-print(f"Vespa: {system_config.vespa_url}")
-
-# Different tenant, different config
-staging_config = manager.get_system_config(tenant_id="acme:staging")
-assert staging_config.tenant_id != system_config.tenant_id
+print(f"Vespa: {system_config.vespa_url}:{system_config.vespa_config_port}")
 ```
 
 **Features:**
 - Zero configuration setup
 - File-based persistence at `data/config/config.db`
-- Full ACID compliance with tenant isolation
-- Migration path to PostgreSQL while preserving tenant separation
+- Full ACID compliance
+- Migration path to PostgreSQL
 
 ### Vespa ConfigStore
 
@@ -257,15 +171,16 @@ Unified configuration storage in Vespa alongside application data.
 
 ```python
 from vespa.application import Vespa
-from src.common.vespa_config_store import VespaConfigStore
-from src.common.config_manager import ConfigManager
+from cogniverse_vespa.config_store import VespaConfigStore
+from cogniverse_core.config.config_manager import ConfigManager
 
-# Initialize Vespa store
+# Initialize Vespa store (tenant-aware)
 vespa_app = Vespa(url="http://localhost:8080")
 vespa_store = VespaConfigStore(
     vespa_app=vespa_app,
     namespace="config_metadata",
-    document_type="configuration"
+    document_type="configuration",
+    tenant_isolation=True  # Ensures tenant separation
 )
 
 # Use with ConfigManager
@@ -292,7 +207,7 @@ curl http://localhost:8080/ApplicationStatus | jq '.schemas'
 Create custom storage backends by implementing the ConfigStore interface:
 
 ```python
-from src.common.config_store_interface import ConfigStore, ConfigEntry, ConfigScope
+from cogniverse_core.common.config_store_interface import ConfigStore, ConfigEntry, ConfigScope
 from typing import Dict, Any, Optional, List
 import datetime
 
@@ -368,35 +283,44 @@ sequenceDiagram
 **Example:**
 
 ```python
-from src.common.config_manager import get_config_manager
-from src.common.unified_config import SystemConfig
+from cogniverse_core.config.config_manager import get_config_manager
+from cogniverse_core.config.unified_config import SystemConfig
 
 manager = get_config_manager()
 
-# Configure Tenant A
+# Configure Tenant A (enterprise customer)
 tenant_a_config = SystemConfig(
-    tenant_id="tenant_a",
+    tenant_id="acme_corp",
     llm_model="gpt-4",
     llm_base_url="https://api.openai.com/v1",
-    vespa_url="http://vespa-tenant-a:8080",
-    phoenix_project_name="tenant_a_project"
+    vespa_url="http://localhost:8080",
+    vespa_config_port=19071,
+    phoenix_project_name="acme_corp_project",  # Isolated project
+    phoenix_enabled=True
 )
 manager.set_system_config(tenant_a_config)
 
-# Configure Tenant B
+# Configure Tenant B (different customer)
 tenant_b_config = SystemConfig(
-    tenant_id="tenant_b",
+    tenant_id="globex_inc",
     llm_model="claude-3-opus",
     llm_base_url="https://api.anthropic.com",
-    vespa_url="http://vespa-tenant-b:8080",
-    phoenix_project_name="tenant_b_project"
+    vespa_url="http://localhost:8080",
+    vespa_config_port=19071,
+    phoenix_project_name="globex_inc_project",  # Isolated project
+    phoenix_enabled=True
 )
 manager.set_system_config(tenant_b_config)
 
 # Configurations are completely isolated
-config_a = manager.get_system_config("tenant_a")
-config_b = manager.get_system_config("tenant_b")
+config_a = manager.get_system_config("acme_corp")
+config_b = manager.get_system_config("globex_inc")
 assert config_a.llm_model != config_b.llm_model
+assert config_a.phoenix_project_name != config_b.phoenix_project_name
+
+# Each tenant gets isolated Vespa schemas
+# acme_corp → video_colpali_mv_frame_acme_corp
+# globex_inc → video_colpali_mv_frame_globex_inc
 ```
 
 ### Tenant Lifecycle Management
@@ -429,13 +353,14 @@ manager.delete_tenant("old_tenant", hard_delete=False)
 ### Dynamic Module Configuration
 
 ```python
-from src.common.agent_config import AgentConfig, ModuleConfig, DSPyModuleType
-from src.common.config_manager import get_config_manager
+from cogniverse_core.config.agent_config import AgentConfig, ModuleConfig, DSPyModuleType
+from cogniverse_core.config.config_manager import get_config_manager
 
 manager = get_config_manager()
 
-# Configure Video Search Agent with ReAct
+# Configure Video Search Agent with ReAct (per tenant)
 video_agent_config = AgentConfig(
+    tenant_id="acme_corp",
     agent_name="video_search_agent",
     module_config=ModuleConfig(
         module_type=DSPyModuleType.REACT,
@@ -453,7 +378,7 @@ video_agent_config = AgentConfig(
 )
 
 manager.set_agent_config(
-    tenant_id="acme:production",
+    tenant_id="acme_corp",
     agent_name="video_search_agent",
     agent_config=video_agent_config
 )
@@ -462,14 +387,14 @@ manager.set_agent_config(
 ### Optimizer Selection
 
 ```python
-from src.routing.optimizer_factory import OptimizerFactory
-from src.common.config_manager import get_config_manager
+from cogniverse_agents.routing.optimizer_factory import OptimizerFactory
+from cogniverse_core.config.config_manager import get_config_manager
 
 manager = get_config_manager()
 factory = OptimizerFactory()
 
-# Get routing configuration
-routing_config = manager.get_routing_config("default")
+# Get routing configuration (per tenant)
+routing_config = manager.get_routing_config("acme_corp")
 
 # Select optimizer based on data availability
 optimizer = factory.get_optimizer(
@@ -493,11 +418,11 @@ optimizer = factory.get_optimizer(
 Every configuration change creates a new version:
 
 ```python
-from src.common.config_store_interface import ConfigScope
+from cogniverse_core.common.config_store_interface import ConfigScope
 
-# Get configuration history
+# Get configuration history (tenant-isolated)
 history = manager.store.get_config_history(
-    tenant_id="acme:production",
+    tenant_id="acme_corp",
     scope=ConfigScope.SYSTEM,
     service="system",
     config_key="system_config",
@@ -514,21 +439,25 @@ for entry in history:
 
 ```python
 # Get current version
-current = manager.get_system_config("acme:production")
+current = manager.get_system_config("acme_corp")
 print(f"Current LLM: {current.llm_model}")
 
-# Rollback to specific version
+# Rollback to specific version (tenant-safe)
 manager.rollback_config(
-    tenant_id="acme:production",
+    tenant_id="acme_corp",
     scope=ConfigScope.SYSTEM,
     service="system",
     config_key="system_config",
     target_version=5
 )
 
-# Verify rollback
-rolled_back = manager.get_system_config("default")
+# Verify rollback (only affects acme_corp)
+rolled_back = manager.get_system_config("acme_corp")
 print(f"Rolled back LLM: {rolled_back.llm_model}")
+
+# Other tenants unaffected
+other_tenant = manager.get_system_config("globex_inc")
+assert other_tenant.llm_model == "claude-3-opus"  # Unchanged
 ```
 
 ---
@@ -538,9 +467,9 @@ print(f"Rolled back LLM: {rolled_back.llm_model}")
 Configuration changes apply immediately without restart:
 
 ```python
-from src.common.config_watcher import ConfigWatcher
+from cogniverse_core.config.config_watcher import ConfigWatcher
 
-# Setup configuration watcher
+# Setup configuration watcher (tenant-aware)
 watcher = ConfigWatcher(manager)
 
 # Register callback for configuration changes
@@ -628,7 +557,7 @@ print(f"Configs by scope: {stats['configs_per_scope']}")
 ### Configuration Metrics
 
 ```python
-from src.telemetry.metrics_manager import MetricsManager
+from cogniverse_core.telemetry.metrics_manager import MetricsManager
 
 metrics = MetricsManager()
 
@@ -678,15 +607,16 @@ manager.set_system_config(
 
 ```python
 # ✅ Good: Type-safe dataclass
-from src.common.unified_config import SystemConfig
+from cogniverse_core.config.unified_config import SystemConfig
 config = SystemConfig(
-    tenant_id="prod",
+    tenant_id="acme_corp",
     llm_model="gpt-4",
-    vespa_url="http://vespa:8080"
+    vespa_url="http://localhost:8080",
+    vespa_config_port=19071
 )
 
 # ❌ Bad: Raw dictionaries
-config = {"tenant_id": "prod", "llm_model": "gpt-4"}  # No validation
+config = {"tenant_id": "acme_corp", "llm_model": "gpt-4"}  # No validation
 ```
 
 ### 4. Implement Configuration Templates
@@ -723,14 +653,14 @@ manager.apply_template(
 ```python
 # Check if configuration exists
 configs = manager.store.list_configs(
-    tenant_id="acme:production",
+    tenant_id="acme_corp",
     scope=ConfigScope.SYSTEM
 )
 print(f"Available configs: {configs}")
 
 # Initialize missing configuration
-if not manager.has_system_config("acme:production"):
-    manager.set_system_config(SystemConfig(tenant_id="acme:production"))
+if not manager.has_system_config("acme_corp"):
+    manager.set_system_config(SystemConfig(tenant_id="acme_corp"))
 ```
 
 ### Version Conflicts
@@ -745,7 +675,7 @@ try:
     )
 except VersionConflictError:
     # Reload and retry
-    latest = manager.get_system_config("default")
+    latest = manager.get_system_config("acme_corp")
     # Merge changes and retry
 ```
 
@@ -787,12 +717,12 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/common/integration/ -v
 ---
 
 **Related Guides:**
-- [multi-tenant-management.md](multi-tenant-management.md) - Complete multi-tenant architecture guide
-- [deployment.md](deployment.md) - Multi-tenant deployment procedures
-- [00_ARCHITECTURE_OVERVIEW.md](./00_ARCHITECTURE_OVERVIEW.md) - System design
-- [03_COMMON_MODULE.md](./03_COMMON_MODULE.md) - Shared utilities
-- [19_SETUP_INSTALLATION.md](./19_SETUP_INSTALLATION.md) - Installation
+- [../architecture/sdk-architecture.md](../architecture/sdk-architecture.md) - SDK structure
+- [../architecture/multi-tenant.md](../architecture/multi-tenant.md) - Multi-tenant architecture
+- [../modules/common.md](../modules/common.md) - Common utilities
+- [setup-installation.md](./setup-installation.md) - Installation
+- [deployment.md](./deployment.md) - Deployment
 
 ---
 
-**Next**: [deployment.md](deployment.md) - Multi-tenant deployment
+**Next**: [deployment.md](./deployment.md)

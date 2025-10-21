@@ -5,10 +5,11 @@ Unit tests for evaluation evaluators modules.
 from unittest.mock import AsyncMock
 
 import pytest
-from phoenix.experiments.types import EvaluationResult
-
-from src.evaluation.evaluators.base_evaluator import NoSpanEvaluator, no_span
-from src.evaluation.evaluators.reference_free import (
+from cogniverse_core.evaluation.evaluators.base_evaluator import (
+    NoSpanEvaluator,
+    no_span,
+)
+from cogniverse_core.evaluation.evaluators.reference_free import (
     CompositeEvaluator,
     LLMRelevanceEvaluator,
     QueryResultRelevanceEvaluator,
@@ -17,6 +18,7 @@ from src.evaluation.evaluators.reference_free import (
     TemporalCoverageEvaluator,
     create_reference_free_evaluators,
 )
+from phoenix.experiments.types import EvaluationResult
 
 
 class TestBaseEvaluator:

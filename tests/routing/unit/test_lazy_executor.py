@@ -3,9 +3,8 @@ Unit tests for LazyModalityExecutor
 """
 
 import pytest
-
-from src.app.routing.lazy_executor import LazyModalityExecutor
-from src.app.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.routing.lazy_executor import LazyModalityExecutor
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 
 class TestLazyModalityExecutor:

@@ -5,8 +5,7 @@ Unit tests for ParallelAgentExecutor
 import asyncio
 
 import pytest
-
-from src.app.routing.parallel_executor import ParallelAgentExecutor
+from cogniverse_agents.routing.parallel_executor import ParallelAgentExecutor
 
 
 class TestParallelAgentExecutor:

@@ -3,8 +3,7 @@ Unit tests for evaluation metrics.
 """
 
 import pytest
-
-from src.evaluation.metrics.custom import (
+from cogniverse_core.evaluation.metrics.custom import (
     calculate_map,
     calculate_metrics_suite,
     calculate_mrr,

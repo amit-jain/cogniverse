@@ -7,8 +7,7 @@ Tests audio transcription functionality using Whisper models.
 from unittest.mock import Mock, patch
 
 import pytest
-
-from src.app.ingestion.processors.audio_processor import AudioProcessor
+from cogniverse_runtime.ingestion.processors.audio_processor import AudioProcessor
 
 
 class TestAudioProcessor:
@@ -108,7 +107,7 @@ class TestAudioProcessor:
         mock_load_model.return_value = mock_model
 
         with patch(
-            "src.common.utils.output_manager.get_output_manager"
+            "cogniverse_core.common.utils.output_manager.get_output_manager"
         ) as mock_get_output_manager:
             mock_output_manager = Mock()
             mock_output_manager.get_processing_dir.return_value = temp_dir
@@ -147,7 +146,7 @@ class TestAudioProcessor:
         mock_load_model.return_value = mock_model
 
         with patch(
-            "src.common.utils.output_manager.get_output_manager"
+            "cogniverse_core.common.utils.output_manager.get_output_manager"
         ) as mock_get_output_manager:
             mock_output_manager = Mock()
             mock_output_manager.get_processing_dir.return_value = temp_dir
@@ -178,7 +177,7 @@ class TestAudioProcessor:
         mock_load_model.return_value = mock_model
 
         with patch(
-            "src.common.utils.output_manager.get_output_manager"
+            "cogniverse_core.common.utils.output_manager.get_output_manager"
         ) as mock_get_output_manager:
             mock_output_manager = Mock()
             mock_output_manager.get_processing_dir.return_value = temp_dir
@@ -203,7 +202,7 @@ class TestAudioProcessor:
         mock_load_model.return_value = mock_model
 
         with patch(
-            "src.common.utils.output_manager.get_output_manager"
+            "cogniverse_core.common.utils.output_manager.get_output_manager"
         ) as mock_output_manager:
             mock_output_manager_instance = Mock()
             mock_output_manager_instance.get_processing_dir.return_value = temp_dir
@@ -224,7 +223,7 @@ class TestAudioProcessor:
         mock_load_model.return_value = mock_model
 
         with patch(
-            "src.common.utils.output_manager.get_output_manager"
+            "cogniverse_core.common.utils.output_manager.get_output_manager"
         ) as mock_output_manager:
             mock_output_manager_instance = Mock()
             mock_output_manager_instance.get_processing_dir.return_value = temp_dir
@@ -242,7 +241,7 @@ class TestAudioProcessor:
         with (
             patch("whisper.load_model") as mock_load_model,
             patch(
-                "src.common.utils.output_manager.get_output_manager"
+                "cogniverse_core.common.utils.output_manager.get_output_manager"
             ) as mock_get_output_manager,
         ):
 
@@ -280,7 +279,7 @@ class TestAudioProcessor:
 
         with (
             patch(
-                "src.common.utils.output_manager.get_output_manager"
+                "cogniverse_core.common.utils.output_manager.get_output_manager"
             ) as mock_get_output_manager,
             patch("builtins.open", create=True) as mock_open,
             patch("json.dump") as mock_json_dump,

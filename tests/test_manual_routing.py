@@ -4,14 +4,14 @@ Test manual routing in the composing agent
 """
 
 import asyncio
-import json
-from pathlib import Path
 
 # Add project root to path
 import sys
+from pathlib import Path
+
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.app.agents.composing_agents_main import route_and_execute_query
+from cogniverse_agents.composing_agents_main import route_and_execute_query
 
 
 async def test_manual_routing():

@@ -3,13 +3,14 @@
 Manage golden datasets - merge, update, and export
 """
 
-import sys
-from pathlib import Path
-import json
-import pandas as pd
 import argparse
-from typing import Dict, List, Optional
+import json
+import sys
 from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional
+
+import pandas as pd
 
 sys.path.append(str(Path(__file__).parent.parent))
 
@@ -396,13 +397,13 @@ def main():
         print(f"Queries with scores: {stats['queries_with_scores']}")
         
         if "avg_score" in stats:
-            print(f"\nScore Statistics:")
+            print("\nScore Statistics:")
             print(f"  Average: {stats['avg_score']:.3f}")
             print(f"  Min: {stats['min_score']:.3f}")
             print(f"  Max: {stats['max_score']:.3f}")
         
         if stats["difficulty_distribution"]:
-            print(f"\nDifficulty Distribution:")
+            print("\nDifficulty Distribution:")
             for difficulty, count in stats["difficulty_distribution"].items():
                 print(f"  {difficulty}: {count}")
     

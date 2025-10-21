@@ -1,5 +1,7 @@
 # Utils Module - Comprehensive Study Guide
 
+**Package:** `cogniverse_core`
+**Module Location:** `libs/core/cogniverse_core/common/utils/`
 **Last Updated:** 2025-10-07
 **Purpose:** Production utilities for retry logic, logging, query processing, and configuration management
 
@@ -40,12 +42,12 @@ import numpy as np
 import torch
 
 # Internal
-from src.common.config_utils import get_config
+from cogniverse_core.config.unified_config import get_config
 ```
 
-### Module Location
+## Package Structure
 ```
-src/common/utils/
+libs/core/cogniverse_core/common/utils/
 ├── retry.py                           # Retry utilities with exponential backoff
 ├── logging_config.py                  # Centralized logging configuration
 ├── comprehensive_query_utils.py       # Query building for all ranking strategies
@@ -165,7 +167,7 @@ class RetryConfig:
 - Configurable exception types for selective retrying
 - Delay capping prevents excessive wait times
 
-**Source:** `src/common/utils/retry.py:19-45`
+**Source:** `libs/core/cogniverse_core/common/utils/retry.py:19-45`
 
 ---
 
@@ -196,7 +198,7 @@ def retry_with_backoff(
 - Preserves function signature with @wraps
 - Supports both parameterized and non-parameterized usage
 
-**Source:** `src/common/utils/retry.py:48-122`
+**Source:** `libs/core/cogniverse_core/common/utils/retry.py:48-122`
 
 ---
 
@@ -223,7 +225,7 @@ class RetryableOperation:
 - Automatic cleanup on exit
 - Lambda-friendly execution interface
 
-**Source:** `src/common/utils/retry.py:125-179`
+**Source:** `libs/core/cogniverse_core/common/utils/retry.py:125-179`
 
 ---
 
@@ -271,7 +273,7 @@ def setup_logging(
 14:30:16 - DEBUG - Encoded query with 2 tokens
 ```
 
-**Source:** `src/common/utils/logging_config.py:9-69`
+**Source:** `libs/core/cogniverse_core/common/utils/logging_config.py:9-69`
 
 ---
 
@@ -303,7 +305,7 @@ def binarize_token_vectors_hex(vectors: torch.Tensor) -> Dict[str, str]:
 2. Pack bits: 8 binary values → 1 byte
 3. Convert to hex string for Vespa
 
-**Source:** `src/common/utils/comprehensive_query_utils.py:11-21`
+**Source:** `libs/core/cogniverse_core/common/utils/comprehensive_query_utils.py:11-21`
 
 ---
 
@@ -340,7 +342,7 @@ def build_query_params(
 - **Hybrid**: Combines text filtering with visual ranking
 - **Rerank**: BM25 candidates, then neural reranking
 
-**Source:** `src/common/utils/comprehensive_query_utils.py:32-114`
+**Source:** `libs/core/cogniverse_core/common/utils/comprehensive_query_utils.py:32-114`
 
 ---
 
@@ -380,7 +382,7 @@ def benchmark_all_strategies(
 }
 ```
 
-**Source:** `src/common/utils/comprehensive_query_utils.py:117-208`
+**Source:** `libs/core/cogniverse_core/common/utils/comprehensive_query_utils.py:117-208`
 
 ---
 
@@ -414,7 +416,7 @@ def build_binary_query_params(
 1. **Phase 1 (Binary)**: Fast candidate retrieval using binary embeddings
 2. **Phase 2 (Float)**: Accurate reranking using float embeddings
 
-**Source:** `src/common/utils/vespa_query_utils.py:48-92`
+**Source:** `libs/core/cogniverse_core/common/utils/vespa_query_utils.py:48-92`
 
 ---
 
@@ -437,7 +439,7 @@ def build_hybrid_query_params(
     """
 ```
 
-**Source:** `src/common/utils/vespa_query_utils.py:140-177`
+**Source:** `libs/core/cogniverse_core/common/utils/vespa_query_utils.py:140-177`
 
 ---
 
@@ -494,7 +496,7 @@ class PromptManager:
 }
 ```
 
-**Source:** `src/common/utils/prompt_manager.py:15-230`
+**Source:** `libs/core/cogniverse_core/common/utils/prompt_manager.py:15-230`
 
 ---
 
@@ -523,7 +525,7 @@ def get_supported_ranking_strategies(profile: str) -> list:
 | `direct_video_frame*` | ✅ bm25_only | ✅ float_float, binary_binary, float_binary, phased | ✅ hybrid_float_bm25, hybrid_binary_bm25 |
 | `colqwen profiles` | ❌ | ✅ float_float, binary_binary, float_binary, phased | ❌ |
 
-**Source:** `src/common/utils/profile_utils.py:6-61`
+**Source:** `libs/core/cogniverse_core/common/utils/profile_utils.py:6-61`
 
 ---
 
@@ -587,7 +589,7 @@ def get_output_manager() -> OutputManager:
     return _output_manager
 ```
 
-**Source:** `src/common/utils/output_manager.py:12-128`
+**Source:** `libs/core/cogniverse_core/common/utils/output_manager.py:12-128`
 
 ---
 
@@ -596,7 +598,7 @@ def get_output_manager() -> OutputManager:
 ### Example 1: Retry Logic for API Calls
 
 ```python
-from src.common.utils.retry import retry_with_backoff, RetryConfig
+from cogniverse_core.common.utils.retry import retry_with_backoff, RetryConfig
 import requests
 
 # Configure retry for HTTP errors
@@ -636,7 +638,7 @@ Total time: ~15 seconds with jitter
 ### Example 2: Structured Logging for Agents
 
 ```python
-from src.common.utils.logging_config import setup_logging
+from cogniverse_core.common.utils.logging_config import setup_logging
 import logging
 
 # Setup agent logging
@@ -675,7 +677,7 @@ ConnectionError: Connection refused
 ### Example 3: Building Queries for All Ranking Strategies
 
 ```python
-from src.common.utils.comprehensive_query_utils import (
+from cogniverse_core.common.utils.comprehensive_query_utils import (
     build_query_params,
     binarize_token_vectors_hex,
     float_query_token_vectors
@@ -740,7 +742,7 @@ hybrid_float_bm25:
 ### Example 4: Prompt Management with Artifacts
 
 ```python
-from src.common.utils.prompt_manager import PromptManager
+from cogniverse_core.common.utils.prompt_manager import PromptManager
 
 # Initialize with default artifact search
 pm = PromptManager()
@@ -787,7 +789,7 @@ Output:
 ### Example 5: Output Directory Management
 
 ```python
-from src.common.utils.output_manager import get_output_manager
+from cogniverse_core.common.utils.output_manager import get_output_manager
 
 # Get singleton instance
 output_mgr = get_output_manager()
@@ -868,7 +870,7 @@ tests/common/integration/test_retry_real_services.py
 ```bash
 # Create test script
 cat > test_retry.py << 'EOF'
-from src.common.utils.retry import retry_with_backoff, RetryConfig
+from cogniverse_core.common.utils.retry import retry_with_backoff, RetryConfig
 import time
 
 attempts = []
@@ -895,7 +897,7 @@ python test_retry.py
 ```bash
 # Run comprehensive benchmark
 python -c "
-from src.common.utils.comprehensive_query_utils import (
+from cogniverse_core.common.utils.comprehensive_query_utils import (
     benchmark_all_strategies,
     print_benchmark_results
 )
@@ -1168,8 +1170,8 @@ The Utils Module provides production-ready utilities that support the entire Cog
 - `11_CACHE_MODULE.md` - Caching system utilities
 
 **Key Source Files:**
-- `src/common/utils/retry.py` - Retry logic
-- `src/common/utils/logging_config.py` - Logging configuration
-- `src/common/utils/comprehensive_query_utils.py` - Query building
-- `src/common/utils/prompt_manager.py` - Prompt management
-- `src/common/utils/output_manager.py` - Output directory management
+- `libs/core/cogniverse_core/common/utils/retry.py` - Retry logic
+- `libs/core/cogniverse_core/common/utils/logging_config.py` - Logging configuration
+- `libs/core/cogniverse_core/common/utils/comprehensive_query_utils.py` - Query building
+- `libs/core/cogniverse_core/common/utils/prompt_manager.py` - Prompt management
+- `libs/core/cogniverse_core/common/utils/output_manager.py` - Output directory management

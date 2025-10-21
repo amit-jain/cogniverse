@@ -10,12 +10,10 @@ Complete workflow for agentic router optimization:
 """
 
 import os
-import sys
-import json
-import time
 import subprocess
+import sys
+import time
 from pathlib import Path
-from typing import Dict, Any
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -43,7 +41,7 @@ def run_orchestrator(config_path: str = "config.json") -> str:
         )
         
         if result.returncode != 0:
-            print(f"❌ Orchestrator failed:")
+            print("❌ Orchestrator failed:")
             print(f"STDOUT: {result.stdout}")
             print(f"STDERR: {result.stderr}")
             raise Exception(f"Orchestrator failed with code {result.returncode}")

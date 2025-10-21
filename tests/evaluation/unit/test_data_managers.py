@@ -7,9 +7,8 @@ from unittest.mock import Mock, mock_open, patch
 
 import pandas as pd
 import pytest
-
-from src.evaluation.data.datasets import DatasetManager
-from src.evaluation.data.traces import TraceManager
+from cogniverse_core.evaluation.data.datasets import DatasetManager
+from cogniverse_core.evaluation.data.traces import TraceManager
 
 
 class TestDatasetManager:
@@ -19,9 +18,9 @@ class TestDatasetManager:
     def manager(self, mock_phoenix_client):
         """Create dataset manager with mocked storage."""
         with patch(
-            "src.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
         ):
-            with patch("src.evaluation.data.storage.trace"):
+            with patch("cogniverse_core.evaluation.data.storage.trace"):
                 manager = DatasetManager()
                 # Mock the removed methods that DatasetManager still expects
                 manager.storage.create_dataset = Mock(return_value="test_dataset_id")
@@ -213,9 +212,9 @@ class TestTraceManager:
     def manager(self, mock_phoenix_client):
         """Create trace manager with mocked storage."""
         with patch(
-            "src.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
         ):
-            with patch("src.evaluation.data.storage.trace"):
+            with patch("cogniverse_core.evaluation.data.storage.trace"):
                 manager = TraceManager()
                 # Mock the removed methods that TraceManager still expects
                 manager.storage.update_trace_metadata = Mock(return_value=True)

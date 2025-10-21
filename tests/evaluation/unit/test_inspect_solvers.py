@@ -5,8 +5,7 @@ Unit tests for Inspect AI solvers.
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-
-from src.evaluation.inspect_tasks.solvers import CogniverseRetrievalSolver
+from cogniverse_core.evaluation.inspect_tasks.solvers import CogniverseRetrievalSolver
 
 
 class TestCogniverseRetrievalSolver:
@@ -15,7 +14,7 @@ class TestCogniverseRetrievalSolver:
     @pytest.fixture
     def mock_search_service(self):
         """Create mock search service."""
-        with patch("src.evaluation.inspect_tasks.solvers.SearchService") as mock_cls:
+        with patch("cogniverse_core.evaluation.inspect_tasks.solvers.SearchService") as mock_cls:
             mock_service = Mock()
             mock_service.search = Mock(
                 return_value=[
@@ -48,7 +47,7 @@ class TestCogniverseRetrievalSolver:
     @pytest.fixture
     def mock_config(self):
         """Create mock config."""
-        with patch("src.evaluation.inspect_tasks.solvers.get_config") as mock_get:
+        with patch("cogniverse_core.evaluation.inspect_tasks.solvers.get_config") as mock_get:
             mock_get.return_value = {
                 "vespa": {"url": "http://localhost:8080"},
                 "profiles": {"test_profile": {"embedding_model": "test_model"}},
@@ -96,7 +95,7 @@ class TestCogniverseRetrievalSolver:
     @pytest.mark.asyncio
     async def test_solver_error_handling(self, mock_config):
         """Test solver error handling."""
-        with patch("src.evaluation.inspect_tasks.solvers.SearchService") as mock_cls:
+        with patch("cogniverse_core.evaluation.inspect_tasks.solvers.SearchService") as mock_cls:
             mock_cls.side_effect = Exception("Connection failed")
 
             solver = CogniverseRetrievalSolver(
@@ -143,7 +142,7 @@ class TestCogniverseRetrievalSolver:
         # Ground truth IS implemented in src.evaluation.core.ground_truth
         # Import from the CORRECT location where it actually exists
         with patch(
-            "src.evaluation.core.ground_truth.get_ground_truth_strategy"
+            "cogniverse_core.evaluation.core.ground_truth.get_ground_truth_strategy"
         ) as mock_gt:
             mock_strategy = Mock()
             mock_strategy.extract_ground_truth = AsyncMock(
@@ -200,14 +199,16 @@ class TestResultRankingAnalyzer:
     async def test_ranking_analyzer_initialization(self):
         """Test analyzer initialization."""
         with patch(
-            "src.evaluation.inspect_tasks.solvers.ResultRankingAnalyzer"
+            "cogniverse_core.evaluation.inspect_tasks.solvers.ResultRankingAnalyzer"
         ) as MockAnalyzer:
             mock_analyzer = Mock()
             mock_analyzer.metric = "ndcg"
             mock_analyzer.k = 10
             MockAnalyzer.return_value = mock_analyzer
 
-            from src.evaluation.inspect_tasks.solvers import ResultRankingAnalyzer
+            from cogniverse_core.evaluation.inspect_tasks.solvers import (
+                ResultRankingAnalyzer,
+            )
 
             analyzer = ResultRankingAnalyzer(metric="ndcg", k=10)
 
@@ -219,7 +220,7 @@ class TestResultRankingAnalyzer:
     async def test_ranking_analysis(self):
         """Test ranking analysis functionality."""
         with patch(
-            "src.evaluation.inspect_tasks.solvers.ResultRankingAnalyzer"
+            "cogniverse_core.evaluation.inspect_tasks.solvers.ResultRankingAnalyzer"
         ) as MockAnalyzer:
             # Create an AsyncMock that acts as a callable
             async def mock_analyzer_call(state, gen):
@@ -230,7 +231,9 @@ class TestResultRankingAnalyzer:
             mock_analyzer.metric = "ndcg"
             MockAnalyzer.return_value = mock_analyzer
 
-            from src.evaluation.inspect_tasks.solvers import ResultRankingAnalyzer
+            from cogniverse_core.evaluation.inspect_tasks.solvers import (
+                ResultRankingAnalyzer,
+            )
 
             analyzer = ResultRankingAnalyzer(metric="ndcg")
 
@@ -261,14 +264,16 @@ class TestRelevanceJudgmentCollector:
     async def test_judgment_collector_initialization(self):
         """Test collector initialization."""
         with patch(
-            "src.evaluation.inspect_tasks.solvers.RelevanceJudgmentCollector"
+            "cogniverse_core.evaluation.inspect_tasks.solvers.RelevanceJudgmentCollector"
         ) as MockCollector:
             mock_collector = Mock()
             mock_collector.threshold = 0.7
             mock_collector.binary = True
             MockCollector.return_value = mock_collector
 
-            from src.evaluation.inspect_tasks.solvers import RelevanceJudgmentCollector
+            from cogniverse_core.evaluation.inspect_tasks.solvers import (
+                RelevanceJudgmentCollector,
+            )
 
             collector = RelevanceJudgmentCollector(threshold=0.7, binary=True)
 
@@ -280,7 +285,7 @@ class TestRelevanceJudgmentCollector:
     async def test_relevance_judgment_collection(self):
         """Test relevance judgment collection."""
         with patch(
-            "src.evaluation.inspect_tasks.solvers.RelevanceJudgmentCollector"
+            "cogniverse_core.evaluation.inspect_tasks.solvers.RelevanceJudgmentCollector"
         ) as MockCollector:
             # Create an AsyncMock that acts as a callable
             async def mock_collector_call(state, gen):
@@ -291,7 +296,9 @@ class TestRelevanceJudgmentCollector:
             mock_collector.threshold = 0.5
             MockCollector.return_value = mock_collector
 
-            from src.evaluation.inspect_tasks.solvers import RelevanceJudgmentCollector
+            from cogniverse_core.evaluation.inspect_tasks.solvers import (
+                RelevanceJudgmentCollector,
+            )
 
             collector = RelevanceJudgmentCollector(threshold=0.5)
 
@@ -324,14 +331,16 @@ class TestTemporalQueryProcessor:
     async def test_temporal_processor_initialization(self):
         """Test processor initialization."""
         with patch(
-            "src.evaluation.inspect_tasks.solvers.TemporalQueryProcessor"
+            "cogniverse_core.evaluation.inspect_tasks.solvers.TemporalQueryProcessor"
         ) as MockProcessor:
             mock_processor = Mock()
             mock_processor.time_window = "1h"
             mock_processor.ordering = "desc"
             MockProcessor.return_value = mock_processor
 
-            from src.evaluation.inspect_tasks.solvers import TemporalQueryProcessor
+            from cogniverse_core.evaluation.inspect_tasks.solvers import (
+                TemporalQueryProcessor,
+            )
 
             processor = TemporalQueryProcessor(time_window="1h", ordering="desc")
 
@@ -343,7 +352,7 @@ class TestTemporalQueryProcessor:
     async def test_temporal_query_processing(self):
         """Test temporal query processing."""
         with patch(
-            "src.evaluation.inspect_tasks.solvers.TemporalQueryProcessor"
+            "cogniverse_core.evaluation.inspect_tasks.solvers.TemporalQueryProcessor"
         ) as MockProcessor:
             # Create an AsyncMock that acts as a callable
             async def mock_processor_call(state, gen):
@@ -357,7 +366,9 @@ class TestTemporalQueryProcessor:
             mock_processor.ordering = "asc"
             MockProcessor.return_value = mock_processor
 
-            from src.evaluation.inspect_tasks.solvers import TemporalQueryProcessor
+            from cogniverse_core.evaluation.inspect_tasks.solvers import (
+                TemporalQueryProcessor,
+            )
 
             processor = TemporalQueryProcessor(ordering="asc")
 
@@ -390,14 +401,14 @@ class TestSolverChaining:
     @pytest.mark.asyncio
     async def test_chain_multiple_solvers(self):
         """Test chaining multiple solvers."""
-        with patch("src.evaluation.inspect_tasks.solvers.get_config") as mock_config:
+        with patch("cogniverse_core.evaluation.inspect_tasks.solvers.get_config") as mock_config:
             mock_config.return_value = {
                 "profiles": {},
                 "vespa": {"url": "http://localhost:8080"},
             }
 
             with patch(
-                "src.evaluation.inspect_tasks.solvers.SearchService"
+                "cogniverse_core.evaluation.inspect_tasks.solvers.SearchService"
             ) as mock_service:
                 mock_service.return_value.search.return_value = []
 
@@ -424,14 +435,14 @@ class TestSolverChaining:
         """Test parallel solver execution."""
         import asyncio
 
-        with patch("src.evaluation.inspect_tasks.solvers.get_config") as mock_config:
+        with patch("cogniverse_core.evaluation.inspect_tasks.solvers.get_config") as mock_config:
             mock_config.return_value = {
                 "profiles": {},
                 "vespa": {"url": "http://localhost:8080"},
             }
 
             with patch(
-                "src.evaluation.inspect_tasks.solvers.SearchService"
+                "cogniverse_core.evaluation.inspect_tasks.solvers.SearchService"
             ) as mock_service:
                 mock_service.return_value.search.return_value = []
 
@@ -466,7 +477,7 @@ class TestSolverConfiguration:
             },
         }
 
-        with patch("src.evaluation.inspect_tasks.solvers.get_config") as mock_config:
+        with patch("cogniverse_core.evaluation.inspect_tasks.solvers.get_config") as mock_config:
             mock_config.return_value = custom_config
 
             solver = CogniverseRetrievalSolver(
@@ -479,7 +490,7 @@ class TestSolverConfiguration:
     @pytest.mark.unit
     def test_solver_with_invalid_profile(self):
         """Test solver with invalid profile."""
-        with patch("src.evaluation.inspect_tasks.solvers.get_config") as mock_config:
+        with patch("cogniverse_core.evaluation.inspect_tasks.solvers.get_config") as mock_config:
             mock_config.return_value = {
                 "profiles": {},
                 "vespa": {"url": "http://localhost:8080"},
@@ -496,7 +507,7 @@ class TestSolverConfiguration:
     @pytest.mark.asyncio
     async def test_solver_config_override(self):
         """Test solver configuration override."""
-        with patch("src.evaluation.inspect_tasks.solvers.get_config") as mock_config:
+        with patch("cogniverse_core.evaluation.inspect_tasks.solvers.get_config") as mock_config:
             mock_config.return_value = {
                 "profiles": {},
                 "vespa": {"url": "http://localhost:8080"},
@@ -511,7 +522,7 @@ class TestSolverConfiguration:
 
             # Configuration should be applied
             with patch(
-                "src.evaluation.inspect_tasks.solvers.SearchService"
+                "cogniverse_core.evaluation.inspect_tasks.solvers.SearchService"
             ) as mock_service:
                 mock_service.return_value.search.return_value = []
                 await solver(state, None)

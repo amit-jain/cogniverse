@@ -4,11 +4,12 @@ Helper script to set up Modal VLM service for video processing pipeline.
 This script automates the deployment and configuration process.
 """
 
-import subprocess
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
+
 
 def check_modal_installation():
     """Check if Modal is installed and authenticated."""
@@ -101,7 +102,7 @@ def update_config(endpoint_url):
         with open(config_path, 'w') as f:
             json.dump(config, f, indent=2)
         
-        print(f"✅ Updated config.json with endpoint URL")
+        print("✅ Updated config.json with endpoint URL")
         return True
         
     except Exception as e:
@@ -115,7 +116,7 @@ def test_integration():
         # Test just the model loading first
         result = subprocess.run([
             sys.executable, "-c", 
-            "from src.processing.video_ingestion_pipeline import load_models; "
+            "from cogniverse_runtime.ingestion.pipeline import load_models; "
             "models = load_models('cpu'); "
             "print('✅ Model loading test passed!')"
         ], capture_output=True, text=True)

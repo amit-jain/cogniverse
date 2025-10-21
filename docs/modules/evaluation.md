@@ -1,8 +1,32 @@
 # Evaluation Module Study Guide
 
 **Last Updated:** 2025-10-07
-**Module Location:** `src/evaluation/`
+**Package:** `cogniverse_core`
+**Module Location:** `libs/core/cogniverse_core/evaluation/`
 **Purpose:** Experiment tracking, routing evaluation, and Phoenix analytics for performance measurement and optimization feedback
+
+---
+
+## Package Structure
+
+```
+libs/core/cogniverse_core/evaluation/
+├── __init__.py                          # Package initialization
+├── core/
+│   ├── experiment_tracker.py            # ExperimentTracker main class
+│   └── dataset_manager.py               # Dataset management
+├── evaluators/
+│   ├── routing_evaluator.py             # RoutingEvaluator
+│   ├── quality_evaluators.py            # Quality metrics
+│   └── llm_evaluators.py                # LLM-based evaluators
+├── phoenix/
+│   ├── analytics.py                     # PhoenixAnalytics
+│   └── client.py                        # Phoenix client utilities
+├── span_evaluator.py                    # SpanEvaluator
+└── data/
+    ├── golden_datasets.py               # Golden dataset management
+    └── loaders.py                       # Data loaders
+```
 
 ---
 
@@ -59,9 +83,9 @@ The Evaluation Module provides **comprehensive experiment tracking and performan
 ### Dependencies
 
 **Internal:**
-- `src.app.telemetry`: Phoenix client for querying spans
-- `src.common.core.registry`: Strategy and profile registry
-- `src.evaluation.data`: Dataset management
+- `cogniverse_core.telemetry`: Phoenix client for querying spans
+- `cogniverse_core.common.registry`: Strategy and profile registry
+- `cogniverse_core.evaluation.data`: Dataset management
 
 **External:**
 - `phoenix`: Phoenix observability platform
@@ -458,7 +482,7 @@ sequenceDiagram
 
 ### 1. ExperimentTracker
 
-**File:** `src/evaluation/core/experiment_tracker.py`
+**File:** `libs/core/cogniverse_core/evaluation/core/experiment_tracker.py`
 
 **Purpose:** Track and visualize experiments using Inspect AI evaluation framework with Phoenix integration.
 
@@ -651,7 +675,7 @@ print(tables["profile_summary"])
 
 ### 2. RoutingEvaluator
 
-**File:** `src/evaluation/evaluators/routing_evaluator.py`
+**File:** `libs/core/cogniverse_core/evaluation/evaluators/routing_evaluator.py`
 
 **Purpose:** Evaluate routing decisions separately from search quality.
 
@@ -786,7 +810,7 @@ print(f"Retrieved {len(spans)} routing decisions")
 
 ### 3. PhoenixAnalytics
 
-**File:** `src/evaluation/phoenix/analytics.py`
+**File:** `libs/core/cogniverse_core/evaluation/phoenix/analytics.py`
 
 **Purpose:** Analytics and visualization for Phoenix traces.
 
@@ -939,7 +963,7 @@ print(f"Outliers: {report['summary']['outlier_percentage']:.1f}%")
 
 ### 4. SpanEvaluator
 
-**File:** `src/evaluation/span_evaluator.py`
+**File:** `libs/core/cogniverse_core/evaluation/span_evaluator.py`
 
 **Purpose:** Evaluate existing spans in Phoenix using various evaluators.
 
@@ -1063,7 +1087,7 @@ for eval_name, stats in summary["results"].items():
 """
 Complete experiment workflow with Phoenix visualization.
 """
-from src.evaluation.core.experiment_tracker import ExperimentTracker
+from cogniverse_core.evaluation.core.experiment_tracker import ExperimentTracker
 
 # Initialize tracker
 tracker = ExperimentTracker(
@@ -1139,7 +1163,7 @@ Profile: frame_based_colpali
 """
 Analyze routing decision quality from Phoenix spans.
 """
-from src.evaluation.evaluators.routing_evaluator import RoutingEvaluator
+from cogniverse_core.evaluation.evaluators.routing_evaluator import RoutingEvaluator
 from datetime import datetime, timedelta
 
 # Initialize evaluator for routing project
@@ -1221,7 +1245,7 @@ Per-Agent Metrics:
 """
 Generate analytics reports with visualizations.
 """
-from src.evaluation.phoenix.analytics import PhoenixAnalytics
+from cogniverse_core.evaluation.phoenix.analytics import PhoenixAnalytics
 from datetime import datetime, timedelta
 
 analytics = PhoenixAnalytics(phoenix_url="http://localhost:6006")
@@ -1324,7 +1348,7 @@ print(f"\n✅ Full report saved to outputs/analytics_report.json")
 Evaluate existing Phoenix spans and upload results.
 """
 import asyncio
-from src.evaluation.span_evaluator import SpanEvaluator
+from cogniverse_core.evaluation.span_evaluator import SpanEvaluator
 
 async def evaluate_historical_spans():
     """Evaluate spans from the past week."""
@@ -1416,9 +1440,9 @@ Production monitoring with routing + analytics + span evaluation.
 """
 import asyncio
 from datetime import datetime, timedelta
-from src.evaluation.evaluators.routing_evaluator import RoutingEvaluator
-from src.evaluation.phoenix.analytics import PhoenixAnalytics
-from src.evaluation.span_evaluator import SpanEvaluator
+from cogniverse_core.evaluation.evaluators.routing_evaluator import RoutingEvaluator
+from cogniverse_core.evaluation.phoenix.analytics import PhoenixAnalytics
+from cogniverse_core.evaluation.span_evaluator import SpanEvaluator
 
 async def production_monitoring_pipeline():
     """Complete monitoring pipeline for production system."""
@@ -1821,11 +1845,11 @@ The Evaluation Module provides **comprehensive experiment tracking and performan
 
 **For detailed examples and production configurations, see:**
 - Architecture Overview: `docs/study_guides/00_ARCHITECTURE_OVERVIEW.md`
-- Routing Module: `docs/study_guides/02_ROUTING_MODULE.md`
-- Telemetry Module: `docs/study_guides/05_TELEMETRY_MODULE.md`
+- Routing Module: `docs/modules/routing.md`
+- Telemetry Module: `docs/modules/telemetry.md`
 
 **Source Files:**
-- ExperimentTracker: `src/evaluation/core/experiment_tracker.py:25-742`
-- RoutingEvaluator: `src/evaluation/evaluators/routing_evaluator.py:43-376`
-- PhoenixAnalytics: `src/evaluation/phoenix/analytics.py:38-917`
-- SpanEvaluator: `src/evaluation/span_evaluator.py:25-364`
+- ExperimentTracker: `libs/core/cogniverse_core/evaluation/core/experiment_tracker.py`
+- RoutingEvaluator: `libs/core/cogniverse_core/evaluation/evaluators/routing_evaluator.py`
+- PhoenixAnalytics: `libs/core/cogniverse_core/evaluation/phoenix/analytics.py`
+- SpanEvaluator: `libs/core/cogniverse_core/evaluation/span_evaluator.py`

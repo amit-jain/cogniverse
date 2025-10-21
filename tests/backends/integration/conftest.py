@@ -4,11 +4,11 @@ Integration test configuration for backend tests.
 Provides Vespa Docker instance fixture for testing schema lifecycle.
 """
 
-import pytest
-import subprocess
-import time
-import requests
 import logging
+
+import pytest
+
+from tests.utils.vespa_docker import VespaDockerManager
 
 logger = logging.getLogger(__name__)
 
@@ -18,14 +18,15 @@ def vespa_instance():
     """
     Start isolated Vespa Docker instance for backend integration tests.
 
-    Uses port 8082 to avoid conflicts with:
+    Uses unique ports per test module to avoid conflicts with:
     - Main Vespa (8080)
-    - System tests (8081)
+    - System tests (different module, different ports)
+    - Other test modules (deterministic hash-based port assignment)
 
     Yields:
         dict: Vespa connection info with keys:
-            - http_port: Vespa HTTP port (8082)
-            - config_port: Vespa config server port (19073)
+            - http_port: Vespa HTTP port (unique per module)
+            - config_port: Vespa config server port (unique per module)
             - base_url: Full HTTP URL
             - container_name: Docker container name
 
@@ -36,115 +37,55 @@ def vespa_instance():
                 vespa_port=vespa_instance["http_port"]
             )
     """
-    http_port = 8082
-    config_port = 19073  # Config server port (19071 + port_offset)
-    container_name = f"vespa-test-{http_port}"
+    manager = VespaDockerManager()
 
-    # Stop and remove existing container if exists
-    subprocess.run(["docker", "stop", container_name], capture_output=True)
-    subprocess.run(["docker", "rm", container_name], capture_output=True)
-
-    # Detect platform
-    import platform
-    machine = platform.machine().lower()
-    if machine in ["arm64", "aarch64"]:
-        docker_platform = "linux/arm64"
-        logger.info(f"Using ARM64 platform for {machine} architecture")
-    else:
-        docker_platform = "linux/amd64"
-        logger.info(f"Using AMD64 platform for {machine} architecture")
-
-    # Start Vespa Docker container
-    logger.info(f"Starting Vespa container '{container_name}' on port {http_port}")
     try:
-        docker_result = subprocess.run(
-            [
-                "docker",
-                "run",
-                "-d",
-                "--name",
-                container_name,
-                "-p",
-                f"{http_port}:8080",  # Map container 8080 to test port
-                "-p",
-                f"{config_port}:19071",  # Map config server port
-                "--platform",
-                docker_platform,
-                "vespaengine/vespa",
-            ],
-            capture_output=True,
-            timeout=60,
-        )
-
-        if docker_result.returncode != 0:
-            pytest.skip(f"Failed to start Docker container: {docker_result.stderr.decode()}")
-
-        logger.info(f"✅ Vespa Docker container '{container_name}' started")
+        # Start container with module-specific ports
+        container_info = manager.start_container(module_name=__name__, use_module_ports=True)
 
         # Wait for config server to be ready
-        logger.info("Waiting for Vespa config server...")
-        for i in range(120):  # 2 minutes timeout
-            try:
-                response = requests.get(f"http://localhost:{config_port}/", timeout=5)
-                if response.status_code == 200:
-                    logger.info(f"✅ Config server ready on port {config_port}")
-                    break
-            except:
-                pass
-            time.sleep(1)
-            if i % 10 == 0 and i > 0:
-                logger.info(f"  Still waiting... ({i}s)")
-        else:
-            # Cleanup and skip
-            subprocess.run(["docker", "stop", container_name], capture_output=True)
-            subprocess.run(["docker", "rm", container_name], capture_output=True)
-            pytest.skip(f"Config server not ready after 120 seconds")
+        manager.wait_for_config_ready(container_info)
 
-        # Wait for application endpoint to be ready
-        logger.info(f"Waiting for application endpoint on port {http_port}...")
-        for i in range(60):  # 1 minute timeout
-            try:
-                response = requests.get(f"http://localhost:{http_port}/ApplicationStatus", timeout=5)
-                if response.status_code == 200:
-                    logger.info(f"✅ Vespa ready on port {http_port}")
-                    break
-            except:
-                pass
-            time.sleep(2)
-        else:
-            # Cleanup and skip
-            subprocess.run(["docker", "stop", container_name], capture_output=True)
-            subprocess.run(["docker", "rm", container_name], capture_output=True)
-            pytest.skip(f"Application endpoint not ready after 60 seconds")
+        # Deploy base schemas (must be AFTER config ready, BEFORE application ready)
+        logger.info("Deploying base schemas...")
+        try:
+            manager.deploy_schemas(container_info, include_metadata=True)
+        except Exception as e:
+            logger.warning(f"Schema deployment failed: {e}")
+            # Continue anyway - some tests might not need schemas
+
+        # Wait for application to be ready (must be AFTER schemas deployed)
+        manager.wait_for_application_ready(container_info)
 
         # Yield instance info
-        yield {
-            "http_port": http_port,
-            "config_port": config_port,
-            "base_url": f"http://localhost:{http_port}",
-            "container_name": container_name,
-        }
+        yield container_info
 
     except Exception as e:
         logger.error(f"Failed to start Vespa instance: {e}")
         pytest.skip(f"Failed to start Vespa: {e}")
 
     finally:
-        # Cleanup: Stop and remove container
-        logger.info(f"Stopping Docker container '{container_name}'")
-        try:
-            stop_result = subprocess.run(
-                ["docker", "stop", container_name], capture_output=True, timeout=30
-            )
-            remove_result = subprocess.run(
-                ["docker", "rm", container_name], capture_output=True, timeout=30
-            )
+        # Cleanup container
+        manager.stop_container()
 
-            if stop_result.returncode == 0 and remove_result.returncode == 0:
-                logger.info("✅ Stopped and removed Docker container")
-            else:
-                logger.warning(
-                    f"⚠️  Issues stopping container: stop={stop_result.returncode}, rm={remove_result.returncode}"
-                )
+        # Clear singleton state to avoid interference with other test modules
+        try:
+            from cogniverse_core.config.manager import ConfigManager
+            from cogniverse_core.registries.backend_registry import get_backend_registry
+            from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+
+            # Clear TenantSchemaManager singleton
+            TenantSchemaManager._clear_instance()
+
+            # Clear backend registry instances
+            registry = get_backend_registry()
+            if hasattr(registry, "_backend_instances"):
+                registry._backend_instances.clear()
+
+            # Clear ConfigManager singleton
+            if hasattr(ConfigManager, "_instance"):
+                ConfigManager._instance = None
+
+            logger.info("✅ Cleared singleton state")
         except Exception as e:
-            logger.warning(f"⚠️  Error stopping Docker container: {e}")
+            logger.warning(f"⚠️  Error clearing singleton state: {e}")

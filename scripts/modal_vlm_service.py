@@ -3,12 +3,11 @@ Modal VLM Service for Video Processing Pipeline
 Based on Modal's SGLang VLM example, modified to accept direct image data.
 """
 
-import os
-import time
 import base64
-import io
-import zipfile
+import os
 import tempfile
+import time
+import zipfile
 from pathlib import Path
 from typing import Optional
 from uuid import uuid4
@@ -189,7 +188,7 @@ class VLMModel:
                 question=prompt
             )
             
-            print(f"🤖 SGLang execution completed")
+            print("🤖 SGLang execution completed")
             
             duration = round((time.monotonic_ns() - start) / 1e9, 2)
             print(f"✅ Request {request_id} completed in {duration} seconds")
@@ -250,11 +249,10 @@ class VLMModel:
             "frame_mapping": {frame_filename: frame_key}
         }
         """
-        import tempfile
-        import zipfile
-        import os
         import base64
+        import os
         from uuid import uuid4
+
         import sglang as sgl
         
         upload_id = str(uuid4())
@@ -356,20 +354,18 @@ class VLMModel:
 @app.function(timeout=30 * 60, volumes=volumes)  # 30 minute timeout for uploads
 @modal.asgi_app()
 def upload_app():
+
     from fastapi import FastAPI, Request
-    import json
     
     upload_web_app = FastAPI()
     
     @upload_web_app.post("/")
     async def upload_frames(request: Request):
         """Upload and extract zip file containing frames."""
-        import tempfile
-        import zipfile
         import os
-        from uuid import uuid4
         import time
         from pathlib import Path
+        from uuid import uuid4
         
         request_data = await request.body()
         upload_id = str(uuid4())

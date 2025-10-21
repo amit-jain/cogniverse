@@ -9,11 +9,10 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
-
-from src.app.ingestion.processors.embedding_generator.embedding_generator import (
+from cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator import (
     EmbeddingResult,
 )
-from src.app.ingestion.processors.embedding_generator.embedding_generator_impl import (
+from cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator_impl import (
     EmbeddingGeneratorImpl,
 )
 
@@ -51,7 +50,7 @@ class TestEmbeddingGeneratorImpl:
             "embedding_type": "frame_based",  # Will NOT load model
         }
 
-    @patch("src.common.models.get_or_load_model")
+    @patch("cogniverse_core.common.models.get_or_load_model")
     def test_initialization_with_model_load(
         self, mock_get_model, basic_config, mock_logger, mock_backend_client
     ):
@@ -74,7 +73,7 @@ class TestEmbeddingGeneratorImpl:
 
         mock_get_model.assert_called_once_with("test_model", basic_config, mock_logger)
 
-    @patch("src.common.models.get_or_load_model")
+    @patch("cogniverse_core.common.models.get_or_load_model")
     def test_initialization_frame_based_no_model_load(
         self, mock_get_model, frame_based_config, mock_logger, mock_backend_client
     ):
@@ -90,7 +89,7 @@ class TestEmbeddingGeneratorImpl:
         # Model should not be loaded for frame_based
         mock_get_model.assert_not_called()
 
-    @patch("src.common.models.get_or_load_model")
+    @patch("cogniverse_core.common.models.get_or_load_model")
     def test_initialization_videoprism_model(
         self, mock_get_model, mock_logger, mock_backend_client
     ):
@@ -109,7 +108,7 @@ class TestEmbeddingGeneratorImpl:
         assert generator.videoprism_loader == mock_loader
         assert generator.model is None
 
-    @patch("src.common.models.get_or_load_model")
+    @patch("cogniverse_core.common.models.get_or_load_model")
     def test_load_model_error_handling(
         self, mock_get_model, basic_config, mock_logger, mock_backend_client
     ):
@@ -128,7 +127,7 @@ class TestEmbeddingGeneratorImpl:
         # Frame-based should NOT load model
         config = {"embedding_type": "frame_based"}
         with patch(
-            "src.common.models.get_or_load_model", return_value=(Mock(), Mock())
+            "cogniverse_core.common.models.get_or_load_model", return_value=(Mock(), Mock())
         ):
             generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
             assert generator._should_load_model() is False
@@ -138,7 +137,7 @@ class TestEmbeddingGeneratorImpl:
         for embedding_type in test_cases:
             config = {"embedding_type": embedding_type}
             with patch(
-                "src.common.models.get_or_load_model", return_value=(Mock(), Mock())
+                "cogniverse_core.common.models.get_or_load_model", return_value=(Mock(), Mock())
             ):
                 generator = EmbeddingGeneratorImpl(
                     config, mock_logger, mock_backend_client

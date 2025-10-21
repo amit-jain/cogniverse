@@ -1,5 +1,7 @@
 # Search & Reranking Module Study Guide
 
+**Package:** `cogniverse_agents`
+**Module Location:** `libs/agents/cogniverse_agents/search/`
 **Last Updated:** 2025-10-07
 **Purpose:** Comprehensive guide to the search and reranking system for multi-modal result optimization
 
@@ -28,9 +30,10 @@ The Search & Reranking Module provides intelligent post-retrieval result optimiz
 - **Configurable Backend**: Pure heuristic, pure learned, or hybrid approaches
 - **Search Service**: Unified search orchestration with query encoding and backend integration
 
-### Module Location
+## Package Structure
+
 ```
-src/app/search/
+libs/agents/cogniverse_agents/search/
 ├── base.py                    # Base interfaces (SearchResult, SearchBackend)
 ├── service.py                 # Unified search service
 ├── multi_modal_reranker.py    # Heuristic multi-modal reranking
@@ -613,7 +616,7 @@ async def rerank(
 ### Example 1: Basic Search with SearchService
 
 ```python
-from src.app.search.service import SearchService
+from cogniverse_agents.search.service import SearchService
 
 # Initialize search service
 config = {
@@ -640,7 +643,7 @@ for result in results:
 ### Example 2: Heuristic Multi-Modal Reranking
 
 ```python
-from src.app.search.multi_modal_reranker import (
+from cogniverse_agents.search.multi_modal_reranker import (
     MultiModalReranker,
     QueryModality
 )
@@ -684,7 +687,7 @@ for result in reranked[:5]:
 ### Example 3: Learned Reranking with Cohere
 
 ```python
-from src.app.search.learned_reranker import LearnedReranker
+from cogniverse_agents.search.learned_reranker import LearnedReranker
 
 # Initialize with Cohere model
 reranker = LearnedReranker(model="cohere/rerank-english-v3.0")
@@ -705,9 +708,9 @@ print(f"Max rerank: {info['max_results_to_rerank']}")
 ### Example 4: Hybrid Weighted Ensemble
 
 ```python
-from src.app.search.hybrid_reranker import HybridReranker
-from src.app.search.multi_modal_reranker import MultiModalReranker
-from src.app.search.learned_reranker import LearnedReranker
+from cogniverse_agents.search.hybrid_reranker import HybridReranker
+from cogniverse_agents.search.multi_modal_reranker import MultiModalReranker
+from cogniverse_agents.search.learned_reranker import LearnedReranker
 
 # Initialize hybrid reranker
 hybrid = HybridReranker(
@@ -738,7 +741,7 @@ for result in reranked[:3]:
 ### Example 5: Configurable Reranker (Production)
 
 ```python
-from src.app.search.multi_modal_reranker import (
+from cogniverse_agents.search.multi_modal_reranker import (
     ConfigurableMultiModalReranker,
     QueryModality
 )
@@ -765,7 +768,7 @@ if info['enabled']:
 ### Example 6: Cascade Strategy for Efficiency
 
 ```python
-from src.app.search.hybrid_reranker import HybridReranker
+from cogniverse_agents.search.hybrid_reranker import HybridReranker
 
 # Cascade: Fast heuristic filter → Expensive learned rerank
 hybrid = HybridReranker(strategy="cascade")
@@ -851,7 +854,7 @@ await cache.set(cache_key, reranked, ttl=3600)
 
 ```python
 # Track reranking performance
-from src.app.telemetry.context import rerank_span
+from cogniverse_core.telemetry.context import rerank_span
 
 with rerank_span(
     tenant_id="user_123",

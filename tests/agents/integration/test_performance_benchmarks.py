@@ -16,13 +16,16 @@ from unittest.mock import patch
 
 import psutil
 import pytest
-
-from src.app.agents.detailed_report_agent import DetailedReportAgent
-from src.app.agents.routing_agent import RoutingAgent
-from src.app.agents.summarizer_agent import SummarizerAgent
-from src.app.routing.adaptive_threshold_learner import AdaptiveThresholdLearner
-from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
-from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
+from cogniverse_agents.detailed_report_agent import DetailedReportAgent
+from cogniverse_agents.routing.adaptive_threshold_learner import (
+    AdaptiveThresholdLearner,
+)
+from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
+from cogniverse_agents.routing.relationship_extraction_tools import (
+    RelationshipExtractorTool,
+)
+from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.summarizer_agent import SummarizerAgent
 
 
 @pytest.mark.integration
@@ -81,7 +84,7 @@ class TestPerformanceBenchmarks:
 
     def test_routing_agent_performance(self):
         """Benchmark routing agent response times"""
-        with patch("src.common.config_utils.get_config") as mock_config:
+        with patch("cogniverse_core.config.utils.get_config") as mock_config:
             mock_config.return_value = {
                 "video_agent_url": "http://localhost:8002",
                 "summarizer_agent_url": "http://localhost:8003",
@@ -255,7 +258,7 @@ class TestPerformanceBenchmarks:
 
         # Do one warmup operation to load models
         try:
-            with patch("src.common.config_utils.get_config") as mock_config:
+            with patch("cogniverse_core.config.utils.get_config") as mock_config:
                 mock_config.return_value = {
                     "video_agent_url": "http://localhost:8002",
                     "summarizer_agent_url": "http://localhost:8003",
@@ -280,7 +283,7 @@ class TestPerformanceBenchmarks:
             try:
                 query = f"Test query {i} for memory leak detection"
 
-                with patch("src.common.config_utils.get_config") as mock_config:
+                with patch("cogniverse_core.config.utils.get_config") as mock_config:
                     mock_config.return_value = {
                         "video_agent_url": "http://localhost:8002",
                         "summarizer_agent_url": "http://localhost:8003",
@@ -336,7 +339,7 @@ class TestPerformanceBenchmarks:
 
     def test_concurrent_request_capacity(self):
         """Test system capacity under concurrent load"""
-        with patch("src.common.config_utils.get_config") as mock_config:
+        with patch("cogniverse_core.config.utils.get_config") as mock_config:
             mock_config.return_value = {
                 "video_agent_url": "http://localhost:8002",
                 "summarizer_agent_url": "http://localhost:8003",
@@ -394,7 +397,7 @@ class TestAdaptiveThresholdPerformance:
 
     def test_threshold_learning_performance(self):
         """Test performance of threshold learning under load"""
-        learner = AdaptiveThresholdLearner()
+        learner = AdaptiveThresholdLearner(tenant_id="test_tenant")
 
         # Simulate performance samples
         num_samples = 100

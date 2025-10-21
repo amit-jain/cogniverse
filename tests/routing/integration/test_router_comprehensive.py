@@ -13,8 +13,16 @@ import pytest
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.app.routing.base import GenerationType, RoutingDecision, SearchModality
-from src.app.routing.router import ComprehensiveRouter, RoutingTier, TieredRouter
+from cogniverse_agents.routing.base import (
+    GenerationType,
+    RoutingDecision,
+    SearchModality,
+)
+from cogniverse_agents.routing.router import (
+    ComprehensiveRouter,
+    RoutingTier,
+    TieredRouter,
+)
 
 
 class TestTieredRouterInitialization:
@@ -35,7 +43,7 @@ class TestTieredRouterInitialization:
             "cache_config": {"enable_caching": True},
         }
 
-        with patch("src.app.routing.router.GLiNERRoutingStrategy"):
+        with patch("cogniverse_agents.routing.router.GLiNERRoutingStrategy"):
             router = TieredRouter(config)
             assert router.config == config
             assert len(router.strategies) >= 2  # At least 2 strategies enabled
@@ -59,10 +67,10 @@ class TestTieredRouterInitialization:
         config.keyword_config = {}
         config.ensemble_config = None  # Add ensemble_config attribute
 
-        with patch("src.app.routing.router.GLiNERRoutingStrategy"):
-            with patch("src.app.routing.router.LLMRoutingStrategy"):
-                with patch("src.app.routing.router.LangExtractRoutingStrategy"):
-                    with patch("src.app.routing.router.KeywordRoutingStrategy"):
+        with patch("cogniverse_agents.routing.router.GLiNERRoutingStrategy"):
+            with patch("cogniverse_agents.routing.router.LLMRoutingStrategy"):
+                with patch("cogniverse_agents.routing.router.LangExtractRoutingStrategy"):
+                    with patch("cogniverse_agents.routing.router.KeywordRoutingStrategy"):
                         router = TieredRouter(config)
                         assert router.config == config
                         # Check that langextract was not initialized
@@ -82,8 +90,8 @@ class TestTieredRouterInitialization:
         config.keyword_config = {}
         config.ensemble_config = None  # Add ensemble_config attribute
 
-        with patch("src.app.routing.router.GLiNERRoutingStrategy"):
-            with patch("src.app.routing.router.KeywordRoutingStrategy"):
+        with patch("cogniverse_agents.routing.router.GLiNERRoutingStrategy"):
+            with patch("cogniverse_agents.routing.router.KeywordRoutingStrategy"):
                 router = TieredRouter(config)
                 assert RoutingTier.FAST_PATH in router.strategies
                 assert RoutingTier.FALLBACK in router.strategies

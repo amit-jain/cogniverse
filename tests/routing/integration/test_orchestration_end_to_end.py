@@ -9,8 +9,7 @@ Tests the complete orchestration workflow:
 
 
 import pytest
-
-from src.app.agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent
 
 
 @pytest.mark.asyncio
@@ -20,14 +19,14 @@ class TestOrchestrationEndToEnd:
     @pytest.fixture
     async def routing_agent(self):
         """Create routing agent for testing"""
-        from src.app.agents.routing_agent import RoutingConfig
+        from cogniverse_agents.routing_agent import RoutingConfig
 
         config = RoutingConfig(
             model_name="ollama/gemma3:4b",
             base_url="http://localhost:11434",
             confidence_threshold=0.7,
         )
-        agent = RoutingAgent(config=config)
+        agent = RoutingAgent(tenant_id="test-tenant", config=config)
         yield agent
 
     async def test_multi_modal_query_triggers_orchestration(self, routing_agent):
@@ -156,14 +155,14 @@ class TestRoutingDecisions:
 
     async def test_multi_modal_routing_decision(self, router_config):
         """Test multi-modal routing decision"""
-        from src.app.agents.routing_agent import RoutingConfig
+        from cogniverse_agents.routing_agent import RoutingConfig
 
         config = RoutingConfig(
             model_name="ollama/gemma3:4b",
             base_url="http://localhost:11434",
             confidence_threshold=0.7,
         )
-        agent = RoutingAgent(config=config)
+        agent = RoutingAgent(tenant_id="test-tenant", config=config)
 
         result = await agent.route_query(
             "Find videos and documents about AI",
@@ -175,14 +174,14 @@ class TestRoutingDecisions:
 
     async def test_summary_routing_decision(self, router_config):
         """Test summary routing decision"""
-        from src.app.agents.routing_agent import RoutingConfig
+        from cogniverse_agents.routing_agent import RoutingConfig
 
         config = RoutingConfig(
             model_name="ollama/gemma3:4b",
             base_url="http://localhost:11434",
             confidence_threshold=0.7,
         )
-        agent = RoutingAgent(config=config)
+        agent = RoutingAgent(tenant_id="test-tenant", config=config)
 
         result = await agent.route_query(
             "Summarize this content",
@@ -194,14 +193,14 @@ class TestRoutingDecisions:
 
     async def test_detailed_report_routing_decision(self, router_config):
         """Test detailed report routing decision"""
-        from src.app.agents.routing_agent import RoutingConfig
+        from cogniverse_agents.routing_agent import RoutingConfig
 
         config = RoutingConfig(
             model_name="ollama/gemma3:4b",
             base_url="http://localhost:11434",
             confidence_threshold=0.7,
         )
-        agent = RoutingAgent(config=config)
+        agent = RoutingAgent(tenant_id="test-tenant", config=config)
 
         result = await agent.route_query(
             "Provide detailed analysis of this topic",

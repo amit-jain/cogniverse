@@ -14,8 +14,8 @@ import pytest
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.app.routing import TieredRouter
-from src.app.routing.base import GenerationType, SearchModality
+from cogniverse_agents.routing import TieredRouter
+from cogniverse_agents.routing.base import GenerationType, SearchModality
 
 
 @pytest.fixture

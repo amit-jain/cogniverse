@@ -3,8 +3,7 @@
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-
-from src.app.agents.query_analysis_tool_v3 import (
+from cogniverse_agents.query_analysis_tool_v3 import (
     QueryAnalysisToolV3,
     QueryComplexity,
     QueryContext,
@@ -133,7 +132,7 @@ class TestQueryAnalysisV3OllamaIntegration:
         self, ollama_config, mock_ollama_query_client
     ):
         """Test query analysis with SmolLM3 model"""
-        with patch("src.app.agents.query_analysis_tool_v3.get_config") as mock_config:
+        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
             mock_config.return_value = {
                 **ollama_config,
                 "query_analysis_model": "smollm3:8b",
@@ -141,7 +140,7 @@ class TestQueryAnalysisV3OllamaIntegration:
 
             # Mock routing agent initialization to avoid external dependencies
             with patch(
-                "src.app.agents.query_analysis_tool_v3.RoutingAgent"
+                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
             ) as mock_routing_class:
                 mock_routing_class.return_value = None
 
@@ -171,14 +170,14 @@ class TestQueryAnalysisV3OllamaIntegration:
         self, ollama_config, mock_ollama_query_client, sample_conversation_context
     ):
         """Test complex query analysis with Qwen model"""
-        with patch("src.app.agents.query_analysis_tool_v3.get_config") as mock_config:
+        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
             mock_config.return_value = {
                 **ollama_config,
                 "query_analysis_model": "qwen:7b",
             }
 
             with patch(
-                "src.app.agents.query_analysis_tool_v3.RoutingAgent"
+                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
             ) as mock_routing_class:
                 mock_routing_class.return_value = None
 
@@ -215,11 +214,11 @@ class TestQueryAnalysisV3OllamaIntegration:
         self, ollama_config, mock_ollama_query_client
     ):
         """Test thinking phase with Ollama-powered reasoning"""
-        with patch("src.app.agents.query_analysis_tool_v3.get_config") as mock_config:
+        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
             mock_config.return_value = {**ollama_config, "reasoning_model": "qwen:7b"}
 
             with patch(
-                "src.app.agents.query_analysis_tool_v3.RoutingAgent"
+                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
             ) as mock_routing_class:
                 mock_routing_class.return_value = None
 
@@ -253,14 +252,14 @@ class TestQueryAnalysisV3OllamaIntegration:
         self, ollama_config, sample_conversation_context
     ):
         """Test query expansion using conversation context"""
-        with patch("src.app.agents.query_analysis_tool_v3.get_config") as mock_config:
+        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
             mock_config.return_value = {
                 **ollama_config,
                 "expansion_model": "smollm3:8b",
             }
 
             with patch(
-                "src.app.agents.query_analysis_tool_v3.RoutingAgent"
+                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
             ) as mock_routing_class:
                 mock_routing_class.return_value = None
 
@@ -300,11 +299,11 @@ class TestQueryAnalysisV3OllamaIntegration:
         self, ollama_config, mock_routing_agent
     ):
         """Test integration with routing agent using Ollama"""
-        with patch("src.app.agents.query_analysis_tool_v3.get_config") as mock_config:
+        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
             mock_config.return_value = ollama_config
 
             with patch(
-                "src.app.agents.query_analysis_tool_v3.RoutingAgent"
+                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
             ) as mock_routing_class:
                 mock_routing_class.return_value = mock_routing_agent
 
@@ -340,11 +339,11 @@ class TestQueryAnalysisV3OllamaIntegration:
     @pytest.mark.asyncio
     async def test_multimodal_query_detection(self, ollama_config):
         """Test detection of multimodal queries"""
-        with patch("src.app.agents.query_analysis_tool_v3.get_config") as mock_config:
+        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
             mock_config.return_value = ollama_config
 
             with patch(
-                "src.app.agents.query_analysis_tool_v3.RoutingAgent"
+                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
             ) as mock_routing_class:
                 mock_routing_class.return_value = None
 
@@ -370,11 +369,11 @@ class TestQueryAnalysisV3OllamaIntegration:
     @pytest.mark.asyncio
     async def test_temporal_query_analysis(self, ollama_config):
         """Test analysis of temporal queries"""
-        with patch("src.app.agents.query_analysis_tool_v3.get_config") as mock_config:
+        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
             mock_config.return_value = ollama_config
 
             with patch(
-                "src.app.agents.query_analysis_tool_v3.RoutingAgent"
+                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
             ) as mock_routing_class:
                 mock_routing_class.return_value = None
 
@@ -402,11 +401,11 @@ class TestQueryAnalysisV3OllamaIntegration:
     @pytest.mark.asyncio
     async def test_entity_and_keyword_extraction(self, ollama_config):
         """Test entity and keyword extraction capabilities"""
-        with patch("src.app.agents.query_analysis_tool_v3.get_config") as mock_config:
+        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
             mock_config.return_value = ollama_config
 
             with patch(
-                "src.app.agents.query_analysis_tool_v3.RoutingAgent"
+                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
             ) as mock_routing_class:
                 mock_routing_class.return_value = None
 
@@ -442,11 +441,11 @@ class TestQueryAnalysisV3OllamaIntegration:
     @pytest.mark.asyncio
     async def test_confidence_scoring_integration(self, ollama_config):
         """Test confidence scoring across different query types"""
-        with patch("src.app.agents.query_analysis_tool_v3.get_config") as mock_config:
+        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
             mock_config.return_value = ollama_config
 
             with patch(
-                "src.app.agents.query_analysis_tool_v3.RoutingAgent"
+                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
             ) as mock_routing_class:
                 mock_routing_class.return_value = None
 
@@ -474,11 +473,11 @@ class TestQueryAnalysisV3WorkflowIntegration:
     @pytest.mark.asyncio
     async def test_end_to_end_simple_search_workflow(self, ollama_config):
         """Test complete workflow for simple search query"""
-        with patch("src.app.agents.query_analysis_tool_v3.get_config") as mock_config:
+        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
             mock_config.return_value = ollama_config
 
             with patch(
-                "src.app.agents.query_analysis_tool_v3.RoutingAgent"
+                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
             ) as mock_routing_class:
                 mock_routing_class.return_value = None
 
@@ -508,11 +507,11 @@ class TestQueryAnalysisV3WorkflowIntegration:
         self, ollama_config, sample_conversation_context
     ):
         """Test complete workflow for analytical query"""
-        with patch("src.app.agents.query_analysis_tool_v3.get_config") as mock_config:
+        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
             mock_config.return_value = ollama_config
 
             with patch(
-                "src.app.agents.query_analysis_tool_v3.RoutingAgent"
+                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
             ) as mock_routing_class:
                 mock_routing_class.return_value = None
 
@@ -554,11 +553,11 @@ class TestQueryAnalysisV3WorkflowIntegration:
     @pytest.mark.asyncio
     async def test_statistics_and_monitoring_integration(self, ollama_config):
         """Test statistics collection and monitoring"""
-        with patch("src.app.agents.query_analysis_tool_v3.get_config") as mock_config:
+        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
             mock_config.return_value = ollama_config
 
             with patch(
-                "src.app.agents.query_analysis_tool_v3.RoutingAgent"
+                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
             ) as mock_routing_class:
                 mock_routing_class.return_value = None
 
@@ -599,7 +598,7 @@ class TestQueryAnalysisV3ErrorHandlingIntegration:
     @pytest.mark.asyncio
     async def test_routing_agent_failure_handling(self, ollama_config):
         """Test handling of routing agent failures"""
-        with patch("src.app.agents.query_analysis_tool_v3.get_config") as mock_config:
+        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
             mock_config.return_value = ollama_config
 
             # Mock routing agent that fails
@@ -609,7 +608,7 @@ class TestQueryAnalysisV3ErrorHandlingIntegration:
             )
 
             with patch(
-                "src.app.agents.query_analysis_tool_v3.RoutingAgent"
+                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
             ) as mock_routing_class:
                 mock_routing_class.return_value = mock_failing_agent
 
@@ -631,11 +630,11 @@ class TestQueryAnalysisV3ErrorHandlingIntegration:
     @pytest.mark.asyncio
     async def test_thinking_phase_error_handling(self, ollama_config):
         """Test handling of thinking phase errors"""
-        with patch("src.app.agents.query_analysis_tool_v3.get_config") as mock_config:
+        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
             mock_config.return_value = ollama_config
 
             with patch(
-                "src.app.agents.query_analysis_tool_v3.RoutingAgent"
+                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
             ) as mock_routing_class:
                 mock_routing_class.return_value = None
 
@@ -657,11 +656,11 @@ class TestQueryAnalysisV3ErrorHandlingIntegration:
     @pytest.mark.asyncio
     async def test_empty_and_edge_case_queries(self, ollama_config):
         """Test handling of empty and edge case queries"""
-        with patch("src.app.agents.query_analysis_tool_v3.get_config") as mock_config:
+        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
             mock_config.return_value = ollama_config
 
             with patch(
-                "src.app.agents.query_analysis_tool_v3.RoutingAgent"
+                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
             ) as mock_routing_class:
                 mock_routing_class.return_value = None
 

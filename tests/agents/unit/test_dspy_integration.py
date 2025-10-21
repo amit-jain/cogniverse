@@ -7,45 +7,46 @@ from unittest.mock import AsyncMock, Mock, mock_open, patch
 # DSPy imports
 import dspy
 import pytest
-
-from src.app.agents.detailed_report_agent import DetailedReportAgent
+from cogniverse_agents.detailed_report_agent import DetailedReportAgent
 
 # Phase 1-3 imports for integration tests
-from src.app.agents.dspy_a2a_agent_base import DSPyA2AAgentBase, SimpleDSPyA2AAgent
-from src.app.agents.dspy_agent_optimizer import (
+from cogniverse_agents.dspy_a2a_agent_base import DSPyA2AAgentBase, SimpleDSPyA2AAgent
+from cogniverse_agents.dspy_agent_optimizer import (
     DSPyAgentOptimizerPipeline,
     DSPyAgentPromptOptimizer,
 )
-from src.app.agents.dspy_integration_mixin import (
+from cogniverse_agents.dspy_integration_mixin import (
     DSPyDetailedReportMixin,
     DSPyIntegrationMixin,
     DSPyQueryAnalysisMixin,
     DSPyRoutingMixin,
     DSPySummaryMixin,
 )
-from src.app.agents.query_analysis_tool_v3 import QueryAnalysisToolV3
-from src.app.agents.routing_agent import RoutingAgent, RoutingDecision
-
-# Agent imports
-from src.app.agents.summarizer_agent import SummarizerAgent
-
-# Phase 5 imports for enhanced agent testing
-from src.app.agents.video_search_agent import VideoSearchAgent
-from src.app.routing.dspy_relationship_router import (
+from cogniverse_agents.query_analysis_tool_v3 import QueryAnalysisToolV3
+from cogniverse_agents.routing.dspy_relationship_router import (
     DSPyAdvancedRoutingModule,
     DSPyRelationshipExtractorModule,
 )
-from src.app.routing.dspy_routing_signatures import (
+from cogniverse_agents.routing.dspy_routing_signatures import (
     BasicQueryAnalysisSignature,
     QueryEnhancementSignature,
     RelationshipExtractionSignature,
 )
-from src.app.routing.query_enhancement_engine import (
+from cogniverse_agents.routing.query_enhancement_engine import (
     DSPyQueryEnhancerModule,
     QueryEnhancementPipeline,
     QueryRewriter,
 )
-from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
+from cogniverse_agents.routing.relationship_extraction_tools import (
+    RelationshipExtractorTool,
+)
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDecision
+
+# Agent imports
+from cogniverse_agents.summarizer_agent import SummarizerAgent
+
+# Phase 5 imports for enhanced agent testing
+from cogniverse_agents.video_search_agent import VideoSearchAgent
 
 
 @pytest.mark.unit
@@ -234,8 +235,8 @@ class TestDSPySpecializedMixins:
 class TestDSPyAgentIntegration:
     """Test DSPy integration with actual agent classes."""
 
-    @patch("src.app.agents.routing_agent.DSPyAdvancedRoutingModule")
-    @patch("src.app.agents.routing_agent.AdvancedRoutingOptimizer")
+    @patch("cogniverse_agents.routing_agent.DSPyAdvancedRoutingModule")
+    @patch("cogniverse_agents.routing_agent.AdvancedRoutingOptimizer")
     def test_routing_agent_dspy_integration(self, mock_optimizer, mock_routing_module):
         """Test DSPy integration in RoutingAgent."""
         # Mock the routing modules to avoid loading models
@@ -253,8 +254,8 @@ class TestDSPyAgentIntegration:
         assert hasattr(agent, "route_query")
         assert hasattr(agent, "get_routing_statistics")
 
-    @patch("src.app.agents.summarizer_agent.get_config")
-    @patch("src.app.agents.summarizer_agent.VLMInterface")
+    @patch("cogniverse_agents.summarizer_agent.get_config")
+    @patch("cogniverse_agents.summarizer_agent.VLMInterface")
     def test_summarizer_agent_dspy_integration(self, mock_vlm, mock_config):
         """Test DSPy integration in SummarizerAgent."""
         mock_vlm.return_value = Mock()
@@ -278,8 +279,8 @@ class TestDSPyAgentIntegration:
         assert "enabled" in metadata
         assert metadata["agent_type"] in ["summary_generation", "query_analysis"]
 
-    @patch("src.app.agents.detailed_report_agent.get_config")
-    @patch("src.app.agents.detailed_report_agent.VLMInterface")
+    @patch("cogniverse_agents.detailed_report_agent.get_config")
+    @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     def test_detailed_report_agent_dspy_integration(self, mock_vlm, mock_config):
         """Test DSPy integration in DetailedReportAgent."""
         mock_vlm.return_value = Mock()
@@ -303,7 +304,7 @@ class TestDSPyAgentIntegration:
         assert "enabled" in metadata
         assert metadata["agent_type"] in ["detailed_report", "query_analysis"]
 
-    @patch("src.app.agents.query_analysis_tool_v3.RoutingAgent")
+    @patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent")
     def test_query_analysis_tool_dspy_integration(self, mock_routing_agent):
         """Test DSPy integration in QueryAnalysisToolV3."""
         mock_routing_agent.return_value = Mock()
@@ -614,7 +615,7 @@ class TestDSPyEndToEndIntegration:
         }
 
         # Test QueryAnalysisToolV3 with direct prompt setting
-        with patch("src.app.agents.query_analysis_tool_v3.RoutingAgent"):
+        with patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent"):
             tool = QueryAnalysisToolV3(enable_agent_integration=False)
 
             # Manually set the optimization data
@@ -789,7 +790,9 @@ class TestDSPy30RoutingSignatures:
 
     def test_advanced_routing_signature_structure(self):
         """Test AdvancedRoutingSignature for complex routing decisions"""
-        from src.app.routing.dspy_routing_signatures import AdvancedRoutingSignature
+        from cogniverse_agents.routing.dspy_routing_signatures import (
+            AdvancedRoutingSignature,
+        )
 
         assert issubclass(AdvancedRoutingSignature, dspy.Signature)
 
@@ -828,7 +831,7 @@ class TestDSPy30RoutingSignatures:
 
     def test_signature_factory_function(self):
         """Test signature factory for dynamic signature selection"""
-        from src.app.routing.dspy_routing_signatures import (
+        from cogniverse_agents.routing.dspy_routing_signatures import (
             AdvancedRoutingSignature,
             MetaRoutingSignature,
             create_routing_signature,
@@ -842,7 +845,7 @@ class TestDSPy30RoutingSignatures:
 
     def test_pydantic_models_for_structured_output(self):
         """Test Pydantic models for DSPy 3.0 structured outputs"""
-        from src.app.routing.dspy_routing_signatures import (
+        from cogniverse_agents.routing.dspy_routing_signatures import (
             EntityInfo,
             RelationshipTuple,
             RoutingDecision,
@@ -946,7 +949,7 @@ class TestDSPyRedundancyAnalysis:
         # - MetaRoutingSignature (new capability)
         # - AdaptiveThresholdSignature (new capability)
 
-        from src.app.routing.dspy_routing_signatures import (
+        from cogniverse_agents.routing.dspy_routing_signatures import (
             AdvancedRoutingSignature,
             EntityExtractionSignature,
         )
@@ -994,7 +997,7 @@ class TestRelationshipExtraction:
     def test_relationship_extractor_tool_initialization(self):
         """Test RelationshipExtractorTool can be initialized"""
         try:
-            from src.app.routing.relationship_extraction_tools import (
+            from cogniverse_agents.routing.relationship_extraction_tools import (
                 RelationshipExtractorTool,
             )
 
@@ -1009,7 +1012,7 @@ class TestRelationshipExtraction:
     async def test_comprehensive_relationship_extraction(self):
         """Test comprehensive relationship extraction workflow"""
         try:
-            from src.app.routing.relationship_extraction_tools import (
+            from cogniverse_agents.routing.relationship_extraction_tools import (
                 RelationshipExtractorTool,
             )
 
@@ -1048,7 +1051,7 @@ class TestRelationshipExtraction:
     def test_gliner_relationship_extractor_initialization(self):
         """Test GLiNERRelationshipExtractor initialization"""
         try:
-            from src.app.routing.relationship_extraction_tools import (
+            from cogniverse_agents.routing.relationship_extraction_tools import (
                 GLiNERRelationshipExtractor,
             )
 
@@ -1065,7 +1068,7 @@ class TestRelationshipExtraction:
     def test_spacy_dependency_analyzer_initialization(self):
         """Test SpaCyDependencyAnalyzer initialization"""
         try:
-            from src.app.routing.relationship_extraction_tools import (
+            from cogniverse_agents.routing.relationship_extraction_tools import (
                 SpaCyDependencyAnalyzer,
             )
 
@@ -1081,7 +1084,7 @@ class TestRelationshipExtraction:
 
     def test_entity_extraction_fallback(self):
         """Test entity extraction with fallback when models unavailable"""
-        from src.app.routing.relationship_extraction_tools import (
+        from cogniverse_agents.routing.relationship_extraction_tools import (
             GLiNERRelationshipExtractor,
         )
 
@@ -1112,7 +1115,9 @@ class TestDSPyModules:
 
     def test_dspy_entity_extractor_module_structure(self):
         """Test DSPyEntityExtractorModule structure"""
-        from src.app.routing.dspy_relationship_router import DSPyEntityExtractorModule
+        from cogniverse_agents.routing.dspy_relationship_router import (
+            DSPyEntityExtractorModule,
+        )
 
         module = DSPyEntityExtractorModule()
         assert module is not None
@@ -1132,7 +1137,9 @@ class TestDSPyModules:
     @pytest.mark.ci_fast
     def test_dspy_basic_routing_module_structure(self):
         """Test DSPyBasicRoutingModule structure"""
-        from src.app.routing.dspy_relationship_router import DSPyBasicRoutingModule
+        from cogniverse_agents.routing.dspy_relationship_router import (
+            DSPyBasicRoutingModule,
+        )
 
         module = DSPyBasicRoutingModule()
         assert module is not None
@@ -1152,7 +1159,9 @@ class TestDSPyModules:
 
     def test_basic_routing_query_analysis(self):
         """Test basic routing query analysis functionality"""
-        from src.app.routing.dspy_relationship_router import DSPyBasicRoutingModule
+        from cogniverse_agents.routing.dspy_relationship_router import (
+            DSPyBasicRoutingModule,
+        )
 
         module = DSPyBasicRoutingModule()
 
@@ -1193,7 +1202,9 @@ class TestDSPyModules:
 
     def test_entity_extraction_module_functionality(self):
         """Test entity extraction module functionality"""
-        from src.app.routing.dspy_relationship_router import DSPyEntityExtractorModule
+        from cogniverse_agents.routing.dspy_relationship_router import (
+            DSPyEntityExtractorModule,
+        )
 
         module = DSPyEntityExtractorModule()
 
@@ -1328,7 +1339,7 @@ class TestDSPyFactoryFunctions:
 
     def test_create_entity_extractor_module(self):
         """Test entity extractor module factory"""
-        from src.app.routing.dspy_relationship_router import (
+        from cogniverse_agents.routing.dspy_relationship_router import (
             create_entity_extractor_module,
         )
 
@@ -1338,7 +1349,7 @@ class TestDSPyFactoryFunctions:
 
     def test_create_relationship_extractor_module(self):
         """Test relationship extractor module factory"""
-        from src.app.routing.dspy_relationship_router import (
+        from cogniverse_agents.routing.dspy_relationship_router import (
             create_relationship_extractor_module,
         )
 
@@ -1348,7 +1359,9 @@ class TestDSPyFactoryFunctions:
 
     def test_create_basic_routing_module(self):
         """Test basic routing module factory"""
-        from src.app.routing.dspy_relationship_router import create_basic_routing_module
+        from cogniverse_agents.routing.dspy_relationship_router import (
+            create_basic_routing_module,
+        )
 
         module = create_basic_routing_module()
         assert module is not None
@@ -1356,7 +1369,7 @@ class TestDSPyFactoryFunctions:
 
     def test_create_advanced_routing_module(self):
         """Test advanced routing module factory"""
-        from src.app.routing.dspy_relationship_router import (
+        from cogniverse_agents.routing.dspy_relationship_router import (
             create_advanced_routing_module,
         )
 
@@ -1366,7 +1379,7 @@ class TestDSPyFactoryFunctions:
 
     def test_relationship_extractor_tool_factory(self):
         """Test relationship extractor tool factory"""
-        from src.app.routing.relationship_extraction_tools import (
+        from cogniverse_agents.routing.relationship_extraction_tools import (
             create_relationship_extractor,
         )
 
@@ -1380,7 +1393,9 @@ class TestDSPyIntegrationReadiness:
 
     def test_phase2_modules_ready_for_query_enhancement(self):
         """Test that Phase 2 modules produce outputs suitable for Phase 3 query enhancement"""
-        from src.app.routing.dspy_relationship_router import DSPyEntityExtractorModule
+        from cogniverse_agents.routing.dspy_relationship_router import (
+            DSPyEntityExtractorModule,
+        )
 
         entity_module = DSPyEntityExtractorModule()
         relationship_module = DSPyRelationshipExtractorModule()
@@ -1419,7 +1434,9 @@ class TestDSPyIntegrationReadiness:
 
     def test_phase2_signature_compatibility(self):
         """Test that Phase 2 uses signatures compatible with DSPy 3.0"""
-        from src.app.routing.dspy_routing_signatures import EntityExtractionSignature
+        from cogniverse_agents.routing.dspy_routing_signatures import (
+            EntityExtractionSignature,
+        )
 
         # Verify signatures are DSPy 3.0 compatible
         assert issubclass(EntityExtractionSignature, dspy.Signature)
@@ -1762,7 +1779,9 @@ class TestQueryEnhancementFactory:
 
     def test_create_query_rewriter(self):
         """Test query rewriter factory function"""
-        from src.app.routing.query_enhancement_engine import create_query_rewriter
+        from cogniverse_agents.routing.query_enhancement_engine import (
+            create_query_rewriter,
+        )
 
         rewriter = create_query_rewriter()
         assert rewriter is not None
@@ -1770,7 +1789,9 @@ class TestQueryEnhancementFactory:
 
     def test_create_dspy_query_enhancer(self):
         """Test DSPy query enhancer factory function"""
-        from src.app.routing.query_enhancement_engine import create_dspy_query_enhancer
+        from cogniverse_agents.routing.query_enhancement_engine import (
+            create_dspy_query_enhancer,
+        )
 
         enhancer = create_dspy_query_enhancer()
         assert enhancer is not None
@@ -1778,7 +1799,9 @@ class TestQueryEnhancementFactory:
 
     def test_create_enhancement_pipeline(self):
         """Test enhancement pipeline factory function"""
-        from src.app.routing.query_enhancement_engine import create_enhancement_pipeline
+        from cogniverse_agents.routing.query_enhancement_engine import (
+            create_enhancement_pipeline,
+        )
 
         pipeline = create_enhancement_pipeline()
         assert pipeline is not None
@@ -1935,7 +1958,9 @@ class TestDSPyComponentsIntegration:
         """Test complete pipeline: A2A input → relationship extraction → query enhancement"""
 
         # Phase 1: A2A-DSPy integration
-        from src.app.routing.dspy_routing_signatures import BasicQueryAnalysisSignature
+        from cogniverse_agents.routing.dspy_routing_signatures import (
+            BasicQueryAnalysisSignature,
+        )
 
         # Create a simple DSPy module for testing
         class TestModule(dspy.Module):
@@ -2018,7 +2043,7 @@ class TestDSPyComponentsIntegration:
         assert "primary_intent" in phase1_fields
 
         # Test Phase 2 signatures
-        from src.app.routing.dspy_routing_signatures import (
+        from cogniverse_agents.routing.dspy_routing_signatures import (
             RelationshipExtractionSignature,
         )
 
@@ -2031,7 +2056,9 @@ class TestDSPyComponentsIntegration:
         )  # Uses 'relationships' not 'extracted_relationships'
 
         # Test Phase 3 signatures
-        from src.app.routing.dspy_routing_signatures import QueryEnhancementSignature
+        from cogniverse_agents.routing.dspy_routing_signatures import (
+            QueryEnhancementSignature,
+        )
 
         phase3_fields = QueryEnhancementSignature.model_fields
         assert "original_query" in phase3_fields
@@ -2118,7 +2145,7 @@ class TestDSPyComponentsIntegration:
             assert isinstance(phase2_result["relationships"], list)
 
         # Test Phase 2 → Phase 3 data compatibility
-        from src.app.routing.query_enhancement_engine import QueryRewriter
+        from cogniverse_agents.routing.query_enhancement_engine import QueryRewriter
 
         rewriter = QueryRewriter()
         phase3_result = rewriter.enhance_query(
@@ -2149,7 +2176,7 @@ class TestDSPyComponentsIntegration:
         }
 
         with patch(
-            "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
+            "cogniverse_agents.routing.relationship_extraction_tools.RelationshipExtractorTool"
         ) as mock_extractor_class:
             mock_extractor_instance = Mock()
             mock_extractor_instance.extract_comprehensive_relationships = AsyncMock(
@@ -2208,7 +2235,7 @@ class TestDSPyComponentsIntegration:
         }
 
         with patch(
-            "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
+            "cogniverse_agents.routing.relationship_extraction_tools.RelationshipExtractorTool"
         ) as mock_extractor_class:
             mock_extractor_instance = Mock()
             mock_extractor_instance.extract_comprehensive_relationships = AsyncMock(
@@ -2216,7 +2243,7 @@ class TestDSPyComponentsIntegration:
             )
             mock_extractor_class.return_value = mock_extractor_instance
 
-            from src.app.routing.query_enhancement_engine import (
+            from cogniverse_agents.routing.query_enhancement_engine import (
                 QueryEnhancementPipeline,
             )
 
@@ -2271,7 +2298,7 @@ class TestRoutingAgent:
     @pytest.mark.ci_fast
     def test_routing_agent_initialization(self):
         """Test Enhanced Routing Agent initialization"""
-        from src.app.agents.routing_agent import RoutingConfig
+        from cogniverse_agents.routing_agent import RoutingConfig
 
         # Test with default config
         agent = RoutingAgent(tenant_id="test_tenant")
@@ -2366,7 +2393,11 @@ class TestRoutingAgent:
     def test_routing_decision_structure(self):
         """Test routing decision data structure"""
 
-        from src.app.routing.base import GenerationType, RoutingDecision, SearchModality
+        from cogniverse_agents.routing.base import (
+            GenerationType,
+            RoutingDecision,
+            SearchModality,
+        )
 
         decision = RoutingDecision(
             search_modality=SearchModality.VIDEO,
@@ -2400,8 +2431,8 @@ class TestMultiAgentOrchestrator:
 
     def test_orchestrator_initialization(self):
         """Test Multi-Agent Orchestrator initialization"""
-        from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
-        from src.app.agents.workflow_intelligence import OptimizationStrategy
+        from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
+        from cogniverse_agents.workflow_intelligence import OptimizationStrategy
 
         # Test default initialization
         orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant")
@@ -2424,7 +2455,7 @@ class TestMultiAgentOrchestrator:
 
     def test_workflow_plan_structure(self):
         """Test workflow plan data structures"""
-        from src.app.agents.multi_agent_orchestrator import (
+        from cogniverse_agents.multi_agent_orchestrator import (
             TaskStatus,
             WorkflowPlan,
             WorkflowStatus,
@@ -2459,7 +2490,7 @@ class TestMultiAgentOrchestrator:
 
     def test_execution_order_calculation(self):
         """Test execution order calculation with dependencies"""
-        from src.app.agents.multi_agent_orchestrator import (
+        from cogniverse_agents.multi_agent_orchestrator import (
             MultiAgentOrchestrator,
             WorkflowTask,
         )
@@ -2506,7 +2537,7 @@ class TestMultiAgentOrchestrator:
 
     def test_orchestration_statistics(self):
         """Test orchestration statistics tracking"""
-        from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
+        from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
 
         orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant")
 
@@ -2535,7 +2566,7 @@ class TestA2AGateway:
 
     def test_gateway_initialization(self):
         """Test A2A Enhanced Gateway initialization"""
-        from src.app.agents.a2a_gateway import A2AGateway
+        from cogniverse_agents.a2a_gateway import A2AGateway
 
         # Test direct initialization
         gateway = A2AGateway()
@@ -2551,7 +2582,7 @@ class TestA2AGateway:
 
     def test_request_response_models(self):
         """Test A2A request and response data models"""
-        from src.app.agents.a2a_gateway import (
+        from cogniverse_agents.a2a_gateway import (
             A2AQueryRequest,
             A2AQueryResponse,
             OrchestrationRequest,
@@ -2593,7 +2624,7 @@ class TestA2AGateway:
         """Test emergency response fallback logic"""
         from datetime import datetime
 
-        from src.app.agents.a2a_gateway import (
+        from cogniverse_agents.a2a_gateway import (
             A2AGateway,
             A2AQueryRequest,
         )
@@ -2621,7 +2652,7 @@ class TestA2AGateway:
 
     def test_response_time_statistics(self):
         """Test response time statistics tracking"""
-        from src.app.agents.a2a_gateway import A2AGateway
+        from cogniverse_agents.a2a_gateway import A2AGateway
 
         gateway = A2AGateway()
 
@@ -2647,7 +2678,7 @@ class TestWorkflowIntelligence:
 
     def test_workflow_intelligence_initialization(self):
         """Test Workflow Intelligence initialization"""
-        from src.app.agents.workflow_intelligence import (
+        from cogniverse_agents.workflow_intelligence import (
             OptimizationStrategy,
             WorkflowIntelligence,
             create_workflow_intelligence,
@@ -2678,7 +2709,7 @@ class TestWorkflowIntelligence:
         """Test workflow execution data structures"""
         from datetime import datetime
 
-        from src.app.agents.workflow_intelligence import (
+        from cogniverse_agents.workflow_intelligence import (
             AgentPerformance,
             WorkflowExecution,
         )
@@ -2717,7 +2748,7 @@ class TestWorkflowIntelligence:
 
     def test_query_type_classification(self):
         """Test query type classification logic"""
-        from src.app.agents.workflow_intelligence import WorkflowIntelligence
+        from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
 
         intelligence = WorkflowIntelligence()
 
@@ -2785,7 +2816,7 @@ class TestWorkflowIntelligence:
         """Test workflow template data structure"""
         from datetime import datetime
 
-        from src.app.agents.workflow_intelligence import WorkflowTemplate
+        from cogniverse_agents.workflow_intelligence import WorkflowTemplate
 
         template = WorkflowTemplate(
             template_id="video_analysis_template",
@@ -2812,7 +2843,7 @@ class TestWorkflowIntelligence:
 
     def test_optimization_strategy_enum(self):
         """Test optimization strategy enumeration"""
-        from src.app.agents.workflow_intelligence import OptimizationStrategy
+        from cogniverse_agents.workflow_intelligence import OptimizationStrategy
 
         # Test all optimization strategies exist
         assert OptimizationStrategy.PERFORMANCE_BASED.value == "performance_based"
@@ -2823,7 +2854,7 @@ class TestWorkflowIntelligence:
 
     def test_intelligence_statistics(self):
         """Test workflow intelligence statistics"""
-        from src.app.agents.workflow_intelligence import (
+        from cogniverse_agents.workflow_intelligence import (
             WorkflowExecution,
             WorkflowIntelligence,
         )
@@ -2871,7 +2902,7 @@ class TestSystemIntegration:
 
     def test_enhanced_routing_to_orchestration_flow(self):
         """Test flow from enhanced routing to orchestration"""
-        from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
+        from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
 
         # Create components
         router = RoutingAgent(tenant_id="test_tenant")
@@ -2896,7 +2927,7 @@ class TestSystemIntegration:
 
     def test_gateway_to_intelligence_integration(self):
         """Test A2A Gateway integration with Workflow Intelligence"""
-        from src.app.agents.a2a_gateway import A2AGateway
+        from cogniverse_agents.a2a_gateway import A2AGateway
 
         # Create gateway with intelligence enabled
         gateway = A2AGateway(enable_orchestration=True)
@@ -2910,11 +2941,11 @@ class TestSystemIntegration:
 
     def test_dspy_signatures_compatibility(self):
         """Test DSPy signatures work across Phase 4 components"""
-        from src.app.agents.multi_agent_orchestrator import (
+        from cogniverse_agents.multi_agent_orchestrator import (
             ResultAggregatorSignature,
             WorkflowPlannerSignature,
         )
-        from src.app.agents.workflow_intelligence import (
+        from cogniverse_agents.workflow_intelligence import (
             TemplateGeneratorSignature,
             WorkflowOptimizationSignature,
         )
@@ -2944,29 +2975,29 @@ class TestSystemIntegration:
         assert router is not None
 
         # Test 2: Workflow Intelligence (independent)
-        from src.app.agents.workflow_intelligence import WorkflowIntelligence
+        from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
 
         intelligence = WorkflowIntelligence(enable_persistence=False)
         assert intelligence is not None
 
         # Test 3: Multi-Agent Orchestrator (depends on router, uses intelligence)
-        from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
+        from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
 
         orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", routing_agent=router)
         assert orchestrator is not None
         assert orchestrator.routing_agent is router
 
         # Test 4: A2A Gateway (depends on router and orchestrator)
-        from src.app.agents.a2a_gateway import A2AGateway
+        from cogniverse_agents.a2a_gateway import A2AGateway
 
         gateway = A2AGateway(enable_orchestration=True)
         assert gateway is not None
 
     def test_phase4_error_handling_consistency(self):
         """Test error handling consistency across Phase 4 components"""
-        from src.app.agents.a2a_gateway import A2AGateway
-        from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
-        from src.app.agents.workflow_intelligence import WorkflowIntelligence
+        from cogniverse_agents.a2a_gateway import A2AGateway
+        from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
+        from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
 
         # All components should handle initialization errors gracefully
         try:
@@ -2991,9 +3022,9 @@ class TestSystemIntegration:
 
     def test_phase4_statistics_consistency(self):
         """Test statistics reporting consistency across Phase 4 components"""
-        from src.app.agents.a2a_gateway import A2AGateway
-        from src.app.agents.multi_agent_orchestrator import MultiAgentOrchestrator
-        from src.app.agents.workflow_intelligence import WorkflowIntelligence
+        from cogniverse_agents.a2a_gateway import A2AGateway
+        from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
+        from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
 
         # All statistics should return dict with consistent structure
         router = RoutingAgent(tenant_id="test_tenant")
@@ -3024,8 +3055,8 @@ class TestSystemIntegration:
 class TestVideoSearchAgent:
     """Unit tests for Enhanced Video Search Agent"""
 
-    @patch("src.app.agents.query_encoders.get_config")
-    @patch("src.app.agents.video_search_agent.get_config")
+    @patch("cogniverse_agents.query_encoders.get_config")
+    @patch("cogniverse_agents.video_search_agent.get_config")
     def test_video_search_agent_initialization(self, mock_video_config, mock_encoder_config):
         """Test Enhanced Video Search Agent initialization"""
 
@@ -3040,9 +3071,9 @@ class TestVideoSearchAgent:
         }
 
         # Mock the required dependencies
-        with patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient"):
+        with patch("cogniverse_agents.video_search_agent.get_backend_registry") as mock_registry:
             with patch(
-                "src.app.agents.video_search_agent.QueryEncoderFactory"
+                "cogniverse_agents.video_search_agent.QueryEncoderFactory"
             ) as mock_encoder_factory:
                 # Create a mock config that returns profiles dict
                 mock_video_config.return_value = {
@@ -3055,17 +3086,21 @@ class TestVideoSearchAgent:
                     "vespa_url": "http://localhost:8080"
                 }
 
+                # Mock backend registry
+                mock_search_backend = Mock()
+                mock_registry.return_value.get_search_backend.return_value = mock_search_backend
+
                 # Mock encoder factory
                 mock_encoder_factory.create_encoder.return_value = Mock()
 
                 agent = VideoSearchAgent(tenant_id="test_tenant")
                 assert agent is not None
-                assert hasattr(agent, "vespa_client")
+                assert hasattr(agent, "search_backend")
                 assert hasattr(agent, "config")
 
     def test_relationship_aware_search_params(self):
         """Test RelationshipAwareSearchParams structure"""
-        from src.app.agents.video_search_agent import (
+        from cogniverse_agents.video_search_agent import (
             RelationshipAwareSearchParams,
         )
 
@@ -3094,7 +3129,7 @@ class TestVideoSearchAgent:
 
     def test_enhanced_search_context(self):
         """Test SearchContext structure"""
-        from src.app.agents.video_search_agent import (
+        from cogniverse_agents.video_search_agent import (
             RelationshipAwareSearchParams,
             SearchContext,
         )
@@ -3119,10 +3154,10 @@ class TestVideoSearchAgent:
         assert context.confidence == 0.8
         assert context.routing_metadata["agent"] == "video_search_agent"
 
-    @patch("src.app.agents.query_encoders.get_config")
-    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
-    @patch("src.app.agents.video_search_agent.get_config")
-    def test_relevance_score_calculation(self, mock_video_config, mock_vespa_class, mock_encoder_config):
+    @patch("cogniverse_agents.query_encoders.get_config")
+    @patch("cogniverse_agents.video_search_agent.get_backend_registry")
+    @patch("cogniverse_agents.video_search_agent.get_config")
+    def test_relevance_score_calculation(self, mock_video_config, mock_registry, mock_encoder_config):
         """Test relevance score calculation with relationship context"""
 
         # Mock encoder config
@@ -3136,7 +3171,7 @@ class TestVideoSearchAgent:
         }
 
         with patch(
-            "src.app.agents.video_search_agent.QueryEncoderFactory"
+            "cogniverse_agents.video_search_agent.QueryEncoderFactory"
         ) as mock_encoder_factory:
             # Create a mock config that returns profiles dict
             mock_video_config.return_value = {
@@ -3148,6 +3183,10 @@ class TestVideoSearchAgent:
                 },
                 "vespa_url": "http://localhost:8080"
             }
+
+            # Mock backend registry
+            mock_search_backend = Mock()
+            mock_registry.return_value.get_search_backend.return_value = mock_search_backend
 
             # Mock encoder factory
             mock_encoder_factory.create_encoder.return_value = Mock()
@@ -3182,10 +3221,10 @@ class TestVideoSearchAgent:
             assert relevance > 0.0
             assert relevance <= 1.0
 
-    @patch("src.app.agents.query_encoders.get_config")
-    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
-    @patch("src.app.agents.video_search_agent.get_config")
-    def test_entity_matching_logic(self, mock_video_config, mock_vespa_class, mock_encoder_config):
+    @patch("cogniverse_agents.query_encoders.get_config")
+    @patch("cogniverse_agents.video_search_agent.get_backend_registry")
+    @patch("cogniverse_agents.video_search_agent.get_config")
+    def test_entity_matching_logic(self, mock_video_config, mock_registry, mock_encoder_config):
         """Test entity matching in results"""
 
         # Mock encoder config
@@ -3199,7 +3238,7 @@ class TestVideoSearchAgent:
         }
 
         with patch(
-            "src.app.agents.video_search_agent.QueryEncoderFactory"
+            "cogniverse_agents.video_search_agent.QueryEncoderFactory"
         ) as mock_encoder_factory:
             # Create a mock config that returns profiles dict
             mock_video_config.return_value = {
@@ -3211,6 +3250,10 @@ class TestVideoSearchAgent:
                 },
                 "vespa_url": "http://localhost:8080"
             }
+
+            # Mock backend registry
+            mock_search_backend = Mock()
+            mock_registry.return_value.get_search_backend.return_value = mock_search_backend
 
             # Mock encoder factory
             mock_encoder_factory.create_encoder.return_value = Mock()
@@ -3247,10 +3290,10 @@ class TestVideoSearchAgent:
             assert "robots" in matched_texts
             assert "soccer" in matched_texts
 
-    @patch("src.app.agents.query_encoders.get_config")
-    @patch("src.app.agents.video_search_agent.TenantAwareVespaSearchClient")
-    @patch("src.app.agents.video_search_agent.get_config")
-    def test_search_result_enhancement(self, mock_video_config, mock_vespa_class, mock_encoder_config):
+    @patch("cogniverse_agents.query_encoders.get_config")
+    @patch("cogniverse_agents.video_search_agent.get_backend_registry")
+    @patch("cogniverse_agents.video_search_agent.get_config")
+    def test_search_result_enhancement(self, mock_video_config, mock_registry, mock_encoder_config):
         """Test search result enhancement with relationships"""
 
         # Mock encoder config
@@ -3264,7 +3307,7 @@ class TestVideoSearchAgent:
         }
 
         with patch(
-            "src.app.agents.video_search_agent.QueryEncoderFactory"
+            "cogniverse_agents.video_search_agent.QueryEncoderFactory"
         ) as mock_encoder_factory:
             # Create a mock config that returns profiles dict
             mock_video_config.return_value = {
@@ -3276,6 +3319,10 @@ class TestVideoSearchAgent:
                 },
                 "vespa_url": "http://localhost:8080"
             }
+
+            # Mock backend registry
+            mock_search_backend = Mock()
+            mock_registry.return_value.get_search_backend.return_value = mock_search_backend
 
             # Mock encoder factory
             mock_encoder_factory.create_encoder.return_value = Mock()

@@ -5,8 +5,7 @@ Unit tests for Inspect AI scorers.
 from unittest.mock import Mock
 
 import pytest
-
-from src.evaluation.inspect_tasks.scorers import (
+from cogniverse_core.evaluation.inspect_tasks.scorers import (
     AlignmentScorer,
     FailureAnalysisScorer,
     TemporalAccuracyScorer,

@@ -9,10 +9,9 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
-
-from src.app.ingestion.processing_strategy_set import ProcessingStrategySet
-from src.app.ingestion.processor_manager import ProcessorManager
-from src.app.ingestion.strategies import (
+from cogniverse_runtime.ingestion.processing_strategy_set import ProcessingStrategySet
+from cogniverse_runtime.ingestion.processor_manager import ProcessorManager
+from cogniverse_runtime.ingestion.strategies import (
     AudioTranscriptionStrategy,
     ChunkSegmentationStrategy,
     FrameSegmentationStrategy,
@@ -62,9 +61,9 @@ class TestEndToEndVideoProcessing:
             embedding=embedding_strategy,
         )
 
-    @patch("src.app.ingestion.processors.keyframe_processor.KeyframeProcessor")
-    @patch("src.app.ingestion.processors.audio_processor.AudioProcessor")
-    @patch("src.app.ingestion.processors.embedding_processor.EmbeddingProcessor")
+    @patch("cogniverse_runtime.ingestion.processors.keyframe_processor.KeyframeProcessor")
+    @patch("cogniverse_runtime.ingestion.processors.audio_processor.AudioProcessor")
+    @patch("cogniverse_runtime.ingestion.processors.embedding_processor.EmbeddingProcessor")
     def test_complete_frame_based_pipeline(
         self,
         mock_embedding_class,
@@ -130,7 +129,7 @@ class TestEndToEndVideoProcessing:
 
         # Create processor manager with mocked processors
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -169,9 +168,9 @@ class TestEndToEndVideoProcessing:
             mock_audio.transcribe_audio.assert_called_once_with(sample_video_path)
             mock_embedding.generate_embeddings.assert_called_once()
 
-    @patch("src.app.ingestion.processors.chunk_processor.ChunkProcessor")
-    @patch("src.app.ingestion.processors.audio_processor.AudioProcessor")
-    @patch("src.app.ingestion.processors.embedding_processor.EmbeddingProcessor")
+    @patch("cogniverse_runtime.ingestion.processors.chunk_processor.ChunkProcessor")
+    @patch("cogniverse_runtime.ingestion.processors.audio_processor.AudioProcessor")
+    @patch("cogniverse_runtime.ingestion.processors.embedding_processor.EmbeddingProcessor")
     def test_complete_chunk_based_pipeline(
         self,
         mock_embedding_class,
@@ -232,7 +231,7 @@ class TestEndToEndVideoProcessing:
 
         # Create processor manager
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -315,7 +314,7 @@ class TestEndToEndVideoProcessing:
                 return {"embeddings": {"frame_embeddings": []}}
 
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -383,7 +382,7 @@ class TestEndToEndVideoProcessing:
                 return {"embeddings": {"frame_embeddings": []}}
 
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -406,9 +405,9 @@ class TestEndToEndVideoProcessing:
             with pytest.raises(Exception, match="Audio processing failed"):
                 audio_processor.transcribe_audio(sample_video_path)
 
-    @patch("src.app.ingestion.processors.keyframe_processor.KeyframeProcessor")
-    @patch("src.app.ingestion.processors.audio_processor.AudioProcessor")
-    @patch("src.app.ingestion.processors.embedding_processor.EmbeddingProcessor")
+    @patch("cogniverse_runtime.ingestion.processors.keyframe_processor.KeyframeProcessor")
+    @patch("cogniverse_runtime.ingestion.processors.audio_processor.AudioProcessor")
+    @patch("cogniverse_runtime.ingestion.processors.embedding_processor.EmbeddingProcessor")
     def test_pipeline_data_flow_validation(
         self,
         mock_embedding_class,
@@ -461,7 +460,7 @@ class TestEndToEndVideoProcessing:
         mock_embedding_class.from_config = Mock(return_value=mock_embedding)
 
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -517,7 +516,7 @@ class TestEndToEndVideoProcessing:
         strategy_set = ProcessingStrategySet(segmentation=frame_strategy)
 
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 
@@ -553,7 +552,8 @@ class TestEndToEndVideoProcessing:
     ):
         """Test pipeline safety under concurrent processing scenarios."""
         import threading
-        import time
+
+        from tests.utils.async_polling import simulate_processing_delay
 
         # Mock thread-safe processor
         class ThreadSafeProcessor:
@@ -571,7 +571,7 @@ class TestEndToEndVideoProcessing:
             def extract_keyframes(self, *args, **kwargs):
                 with self._lock:
                     self.call_count += 1
-                    time.sleep(0.01)  # Simulate processing time
+                    simulate_processing_delay(delay=0.01, description="concurrent processing")
                     return {
                         "video_id": f"video_{self.call_count}",
                         "total_keyframes": 1,
@@ -606,7 +606,7 @@ class TestEndToEndVideoProcessing:
                 return {"embeddings": {"frame_embeddings": []}}
 
         with patch(
-            "src.app.ingestion.processor_manager.pkgutil.iter_modules"
+            "cogniverse_runtime.ingestion.processor_manager.pkgutil.iter_modules"
         ) as mock_iter:
             mock_iter.return_value = []
 

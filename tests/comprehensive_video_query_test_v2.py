@@ -29,22 +29,21 @@ Tests video search functionality using two complementary query sets:
 Comprehensive evaluation with MRR, Recall@k, and NDCG@k metrics.
 """
 
-import json
-import numpy as np
-import sys
 import argparse
-import os
-from pathlib import Path
-from typing import List, Dict, Any, Tuple
-from tabulate import tabulate
-import pandas as pd
+import json
+import sys
 from datetime import datetime
+from pathlib import Path
+from typing import Dict, List
+
+import numpy as np
+import pandas as pd
+from tabulate import tabulate
 
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
-from src.common.config_utils import get_config
-from src.app.search.service import SearchService
-
+from cogniverse_agents.search.service import SearchService
+from cogniverse_core.config.utils import get_config
 
 # Enhanced ground truth queries combining frame descriptions, transcripts, and human annotations
 GROUND_TRUTH_QA_QUERIES = [
@@ -781,7 +780,7 @@ def main():
     print("\n=== COMPREHENSIVE VIDEO QUERY TEST v2 ===")
     print(f"Testing {len(args.profiles)} profiles with {query_description}")
     print(detailed_breakdown)
-    print(f"Metrics: MRR, Recall@k, NDCG@k\n")
+    print("Metrics: MRR, Recall@k, NDCG@k\n")
     
     all_results = []
     

@@ -8,11 +8,12 @@ This tool allows you to:
 3. Build a dataset incrementally
 """
 
-import click
 import json
-from pathlib import Path
 import sys
-from typing import List, Dict, Any
+from pathlib import Path
+from typing import Any, Dict
+
+import click
 
 sys.path.append(str(Path(__file__).parent.parent))
 

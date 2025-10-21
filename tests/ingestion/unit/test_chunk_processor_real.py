@@ -9,8 +9,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
-
-from src.app.ingestion.processors.chunk_processor import ChunkProcessor
+from cogniverse_runtime.ingestion.processors.chunk_processor import ChunkProcessor
 
 
 @pytest.mark.unit
@@ -146,7 +145,7 @@ class TestChunkProcessor:
         assert success is False
         processor.logger.error.assert_called()
 
-    @patch("src.common.utils.output_manager.get_output_manager")
+    @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
     @patch("builtins.open", create=True)
     @patch("json.dump")
     def test_extract_chunks_success(
@@ -208,7 +207,7 @@ class TestChunkProcessor:
         assert saved_metadata["chunk_overlap"] == 2.0
         assert saved_metadata["chunks_extracted"] == 4
 
-    @patch("src.common.utils.output_manager.get_output_manager")
+    @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
     def test_extract_chunks_no_overlap(
         self, mock_output_manager, no_overlap_processor, temp_dir, sample_video_path
     ):
@@ -258,7 +257,7 @@ class TestChunkProcessor:
         # Should log error
         processor.logger.error.assert_called()
 
-    @patch("src.common.utils.output_manager.get_output_manager")
+    @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
     def test_extract_chunks_with_failed_extraction(
         self, mock_output_manager, processor, temp_dir, sample_video_path
     ):
@@ -361,7 +360,7 @@ class TestChunkProcessor:
             patch.object(processor, "_get_video_duration", return_value=80.0),
             patch.object(processor, "_extract_chunk", return_value=True),
             patch(
-                "src.common.utils.output_manager.get_output_manager"
+                "cogniverse_core.common.utils.output_manager.get_output_manager"
             ) as mock_output_manager,
             patch("builtins.open", create=True),
             patch("json.dump"),

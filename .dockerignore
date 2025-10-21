@@ -1,0 +1,85 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# Data and outputs (exclude from image)
+data/
+outputs/
+*.log
+logs/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Docker
+.dockerignore
+Dockerfile
+docker-compose.yml
+*.dockerfile
+
+# Documentation
+*.md
+docs/
+README.md
+
+# Old source (not needed in new architecture)
+src/
+
+# Scripts (not needed in runtime)
+scripts/
+
+# Tests (not needed in production)
+tests/
+*.test.py
+
+# Config that should be mounted
+config.yml
+config.yaml
+.env
+.env.*
+
+# Notebooks
+*.ipynb
+.ipynb_checkpoints/
+
+# OS
+Thumbs.db

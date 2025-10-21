@@ -10,8 +10,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
-from src.app.routing.mlflow_integration import ExperimentConfig, MLflowIntegration
+from cogniverse_agents.routing.mlflow_integration import (
+    ExperimentConfig,
+    MLflowIntegration,
+)
 
 
 @pytest.mark.unit
@@ -74,7 +76,7 @@ class TestMLflowCoreIntegration:
     def test_component_imports_successfully(self):
         """Test that all MLflow components can be imported"""
         # These imports should not raise exceptions
-        from src.app.routing.mlflow_integration import (
+        from cogniverse_agents.routing.mlflow_integration import (
             ABTestConfig,
             ExperimentConfig,
             ModelVersionInfo,
@@ -104,7 +106,7 @@ class TestMLflowCoreIntegration:
 class TestMLflowIntegrationReadiness:
     """Test that MLflow integration is ready for use in the DSPy system"""
 
-    @patch("src.app.routing.mlflow_integration.mlflow")
+    @patch("cogniverse_agents.routing.mlflow_integration.mlflow")
     def test_integration_with_dspy_system(self, mock_mlflow):
         """Test MLflow integration can work with DSPy routing system"""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -127,7 +129,9 @@ class TestMLflowIntegrationReadiness:
 
     def test_factory_function_exists(self):
         """Test factory function for creating MLflow integration"""
-        from src.app.routing.mlflow_integration import create_mlflow_integration
+        from cogniverse_agents.routing.mlflow_integration import (
+            create_mlflow_integration,
+        )
 
         assert callable(create_mlflow_integration)
 

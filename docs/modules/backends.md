@@ -1,945 +1,1944 @@
-# Backends Module Study Guide (Vespa Integration)
+# Backends Module (Vespa Integration)
 
-**Last Updated:** 2025-10-09
-**Purpose:** Comprehensive guide to multi-tenant Vespa search backend integration, schema management, and embedding format handling
-**Module Location:** `src/backends/vespa/`
+**Package:** `libs/vespa/cogniverse_vespa/`
+**Purpose:** Vespa backend integration with multi-tenant schema management
+**Last Updated:** 2025-10-15
 
 ---
 
 ## Table of Contents
+
 1. [Module Overview](#module-overview)
-2. [Multi-Tenant Architecture](#multi-tenant-architecture)
-3. [Core Components](#core-components)
-4. [Data Flow](#data-flow)
-5. [Usage Examples](#usage-examples)
-6. [Production Considerations](#production-considerations)
+2. [Package Structure](#package-structure)
+3. [Multi-Tenant Schema Management](#multi-tenant-schema-management)
+4. [Search Client](#search-client)
+5. [Ingestion Client](#ingestion-client)
+6. [Usage Examples](#usage-examples)
 7. [Testing](#testing)
 
 ---
 
 ## Module Overview
 
-### Purpose
-The Backends module provides multi-tenant integration with Vespa for vector and hybrid search, handling:
-- **Multi-Tenant Schema Management**: Schema-per-tenant isolation with lazy creation
-- **Tenant-Aware Search**: Automatic tenant routing for all search operations
-- **Embedding Formats**: Binary vs float conversion for optimal search performance
-- **Search Strategies**: 14+ ranking strategies (BM25, ColPali, hybrid)
-- **Document Processing**: Strategy-aware format handling with tenant isolation
-- **Batch Ingestion**: Production-ready document feeding with retry logic
+The Vespa package (`cogniverse-vespa`) provides backend integration for vector and hybrid search with multi-tenant support.
 
 ### Key Features
-1. **Schema-Per-Tenant Isolation**: Complete physical data separation between tenants
-2. **14 Ranking Strategies**: From pure text (BM25) to hybrid visual+text search
-3. **Multi-Format Support**: Float (accuracy) and binary (speed) embeddings
-4. **Strategy Recommendation**: Automatic strategy selection based on query characteristics
-5. **Schema-Driven Processing**: Automatic field mapping based on Vespa schema definitions
-6. **Production-Ready Feeding**: Configurable batch sizes, workers, retry logic
-7. **Format Conversion**: Numpy → Hex-encoded bfloat16/int8 for Vespa
-8. **Tenant ID Validation**: Parse and validate org:tenant format at all entry points
 
-### Dependencies
-- **External**: PyVespa (official Vespa client), NumPy, Torch (for bfloat16 conversion)
-- **Internal**: `src/common/document.py`, `src/common/config_utils.py`, `src/common/utils/retry.py`, `src/common/tenant_utils.py`
+1. **Multi-Tenant Schema Management**: Physical isolation via schema-per-tenant
+2. **Search Backend**: Video search with ColPali and VideoPrism embeddings
+3. **Ingestion**: Batch document feeding with retry logic
+4. **Schema Deployment**: JSON-based schema parsing and deployment
+5. **Tenant Isolation**: Dedicated schemas for each tenant
+
+### Design Principles
+
+- **Tenant-Aware**: All clients require tenant-specific schema names
+- **Schema-Per-Tenant**: Physical data isolation via dedicated Vespa schemas
+- **Core Integration**: Depends only on `cogniverse_core` package
+- **Production-Ready**: Retry logic, health checks, batch processing
+
+### Package Dependencies
+
+```python
+# Vespa package depends on:
+from cogniverse_core.config.unified_config import SystemConfig
+from cogniverse_core.telemetry.manager import TelemetryManager
+```
+
+**External Dependencies**:
+- `pyvespa>=0.59.0`: Official Vespa Python client
+- `numpy>=1.24.0`: Array operations
 
 ---
 
-## Multi-Tenant Architecture
+## Package Structure
+
+```
+libs/vespa/cogniverse_vespa/
+├── __init__.py
+├── tenant_schema_manager.py        # Multi-tenant schema management (702 lines)
+├── vespa_schema_manager.py         # Schema deployment
+├── vespa_search_client.py          # Search operations (975 lines)
+├── ingestion_client.py             # Ingestion client (VespaPyClient class)
+├── json_schema_parser.py           # JSON schema parsing (238 lines)
+├── backend.py                      # Backend abstraction
+├── search_backend.py               # Search backend implementation
+├── tenant_aware_search_client.py   # Tenant-aware search wrapper
+├── embedding_processor.py          # Embedding processing
+├── config.py                       # Configuration management
+├── config_store.py                 # Config storage
+├── memory_config.py                # Memory configuration
+├── memory_store.py                 # Memory storage
+├── metadata_schemas.py             # Metadata schema definitions
+├── ranking_strategy_extractor.py   # Ranking strategy extraction
+└── strategy_aware_processor.py     # Strategy-aware processing
+```
+
+**Total Files**: 17 Python files (all at top level, NO subdirectories)
+
+**Key Files**:
+- `tenant_schema_manager.py`: 702 lines - Core tenant management
+- `vespa_search_client.py`: 975 lines - Search operations
+- `json_schema_parser.py`: 238 lines - Schema parsing
+- `ingestion_client.py`: PyVespa wrapper for ingestion
+
+**Note**: Schema templates (.sd files) are located in `configs/schemas/` at project root, not in the package
+
+---
+
+## Backend Configuration Architecture
 
 ### Overview
 
-Cogniverse implements **schema-per-tenant** architecture where each tenant receives dedicated Vespa schemas with complete physical data isolation. This prevents any possibility of cross-tenant data access.
+Cogniverse uses a **profile-based backend configuration system** with multi-tenant support. Configuration is loaded from `config.json` with auto-discovery and supports deep merging of system base config with tenant-specific overlays.
 
-### Tenant Hierarchy
+**Key Features**:
+- **Auto-Discovery**: Automatic config.json discovery from standard locations
+- **Profile-Based**: Multiple processing profiles per backend (ColPali, VideoPrism, ColQwen-Omni, etc.)
+- **Tenant Overlays**: Tenant-specific config merges with system base
+- **Deep Merge**: System profiles + Tenant overrides = Merged configuration
+- **Type-Safe**: BackendConfig and BackendProfileConfig dataclasses
 
-**Organization:Tenant Format**:
+### Configuration Auto-Discovery
+
+**Search Order** (defined in `cogniverse_core/config/utils.py:_discover_config_file()`):
+
+1. `COGNIVERSE_CONFIG` environment variable (if set)
+2. `configs/config.json` (from current directory)
+3. `../configs/config.json` (one level up)
+4. `../../configs/config.json` (two levels up)
+
+```python
+# Automatic discovery - no environment variables needed!
+from cogniverse_core.config.utils import ConfigUtils
+
+config_utils = ConfigUtils(tenant_id="acme")
+backend_config = config_utils.get("backend")  # Auto-discovered and merged
 ```
-{org}:{tenant}
 
-Examples:
-- acme:production
-- acme:staging
-- initech:production
-```
-
-**Validation Rules**:
-- `org_id`: Alphanumeric and underscore only (`^[a-zA-Z0-9_]+$`)
-- `tenant_name`: Alphanumeric, underscore, and hyphen (`^[a-zA-Z0-9_-]+$`)
-
-### Multi-Tenant Backend Architecture
+#### Auto-Discovery Flow
 
 ```mermaid
-graph TB
-    Client[Client Application]
+flowchart TD
+    Start[SystemConfig initialized<br/>tenant_id: acme] --> CheckEnv{COGNIVERSE_CONFIG<br/>env var set?}
 
-    Client --> TenantSearch[TenantAwareVespaSearchClient<br/>• Parse tenant_id org:tenant<br/>• Validate tenant exists<br/>• Route to tenant schema<br/>• Prevent cross-tenant access]
+    CheckEnv -->|Yes| LoadEnv[Load from env var path]
+    CheckEnv -->|No| Check1[Check: configs/config.json]
 
-    TenantSearch --> TenantMgr[TenantSchemaManager<br/>• Schema-per-tenant isolation<br/>• Lazy schema creation<br/>• Tenant registration<br/>• Schema naming: profile_org_tenant]
+    Check1 --> Exists1{File exists?}
+    Exists1 -->|Yes| Load1[Load configs/config.json]
+    Exists1 -->|No| Check2[Check: ../configs/config.json]
 
-    TenantMgr --> Schemas[Tenant-Specific Schemas]
+    Check2 --> Exists2{File exists?}
+    Exists2 -->|Yes| Load2[Load ../configs/config.json]
+    Exists2 -->|No| Check3[Check: ../../configs/config.json]
 
-    Schemas --> AcmeProd[(acme:production<br/>video_colpali_acme_production<br/>video_videoprism_acme_production)]
-    Schemas --> AcmeDev[(acme:dev<br/>video_colpali_acme_dev<br/>video_videoprism_acme_dev)]
-    Schemas --> InitechProd[(initech:production<br/>video_colpali_initech_production)]
+    Check3 --> Exists3{File exists?}
+    Exists3 -->|Yes| Load3[Load ../../configs/config.json]
+    Exists3 -->|No| UseDefaults[Use hardcoded defaults]
 
-    TenantMgr --> MetaSchemas[Metadata Schemas]
-    MetaSchemas --> OrgMeta[(organization_metadata)]
-    MetaSchemas --> TenantMeta[(tenant_metadata)]
+    LoadEnv --> Parse[Parse JSON]
+    Load1 --> Parse
+    Load2 --> Parse
+    Load3 --> Parse
+    UseDefaults --> Merge
 
-    style Client fill:#e1f5ff
-    style TenantSearch fill:#fff4e1
-    style TenantMgr fill:#f5e1ff
-    style Schemas fill:#e1ffe1
-    style MetaSchemas fill:#ffe1e1
+    Parse --> SystemBase[System Base Config]
+    SystemBase --> GetTenantOverride[Check for tenant override<br/>ConfigScope.BACKEND<br/>tenant_id: acme]
+
+    GetTenantOverride --> HasOverride{Tenant override<br/>exists?}
+
+    HasOverride -->|Yes| LoadOverride[Load tenant config from<br/>ConfigManager]
+    HasOverride -->|No| Merge{Deep Merge}
+
+    LoadOverride --> Merge
+
+    Merge --> FinalConfig[Final Backend Config<br/>System base + Tenant overlays]
+
+    style Start fill:#e1f5ff
+    style FinalConfig fill:#e1ffe1
+    style Merge fill:#f5e1ff
+    style Parse fill:#fff4e1
 ```
 
-### Schema Naming Convention
+### Backend Configuration Structure
 
-Each tenant receives dedicated schemas with the naming pattern:
+#### config.json Structure
 
-```
-{profile}_{org}_{tenant}
-
-Examples:
-- video_colpali_smol500_mv_frame_acme_production
-- video_videoprism_base_mv_chunk_30s_acme_staging
-- video_colqwen_omni_mv_chunk_30s_initech_production
-```
-
-**Benefits**:
-- Complete schema isolation per tenant
-- Zero possibility of cross-tenant data leakage
-- Independent schema lifecycle management
-- Tenant-specific configuration and tuning
-
----
-
-## Core Components
-
-### 1. TenantSchemaManager (`tenant_schema_manager.py`)
-
-**Purpose**: Manages lifecycle of tenant-specific Vespa schemas with lazy creation and automatic tenant isolation.
-
-**Key Responsibilities**:
-- Register new tenants and create dedicated schemas
-- Lazy schema creation on first tenant access
-- Manage organization and tenant metadata schemas
-- Enforce schema-per-tenant isolation
-
-**Key Methods**:
-
-#### `__init__(vespa_url, vespa_port)`
-Initialize schema manager.
-```python
-from src.backends.vespa.tenant_schema_manager import TenantSchemaManager
-
-manager = TenantSchemaManager(
-    vespa_url="http://localhost",
-    vespa_port=8080
-)
-```
-
-#### `register_tenant(tenant_id, profile_configs)`
-Register new tenant and create schemas lazily.
-```python
-# Register tenant with automatic schema creation
-manager.register_tenant(
-    tenant_id="acme:production",
-    profile_configs=[
-        "video_colpali_smol500_mv_frame",
-        "video_videoprism_base_mv_chunk_30s"
-    ]
-)
-
-# Creates schemas:
-# - video_colpali_smol500_mv_frame_acme_production
-# - video_videoprism_base_mv_chunk_30s_acme_production
-```
-
-#### `get_schema_name(profile, tenant_id)`
-Get tenant-specific schema name.
-```python
-schema_name = manager.get_schema_name(
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id="acme:production"
-)
-# Returns: "video_colpali_smol500_mv_frame_acme_production"
-```
-
-#### `delete_tenant_schemas(tenant_id)`
-Delete all schemas for a tenant.
-```python
-deleted_count = manager.delete_tenant_schemas("acme:staging")
-# Deletes all schemas for acme:staging tenant
-```
-
-**Metadata Schemas**:
-
-The TenantSchemaManager maintains two global metadata schemas:
-
-```python
-# organization_metadata - stores organization information
+```json
 {
-    "org_id": "acme",
-    "description": "ACME Corporation",
-    "created_at": "2025-10-09T10:00:00Z",
-    "metadata": {...}
-}
-
-# tenant_metadata - stores tenant information
-{
-    "tenant_id": "acme:production",
-    "org_id": "acme",
-    "tenant_name": "production",
-    "description": "Production environment",
-    "created_at": "2025-10-09T10:30:00Z",
-    "metadata": {...}
+  "backend": {
+    "type": "vespa",
+    "url": "http://localhost",
+    "port": 8080,
+    "profiles": {
+      "video_colpali_smol500_mv_frame": {
+        "type": "video",
+        "description": "Frame-based ColPali for patch-level visual search",
+        "schema_name": "video_colpali_smol500_mv_frame",
+        "embedding_model": "vidore/colsmol-500m",
+        "pipeline_config": {
+          "extract_keyframes": true,
+          "transcribe_audio": true,
+          "keyframe_fps": 1.0
+        },
+        "strategies": {
+          "segmentation": {"class": "FrameSegmentationStrategy", "params": {}},
+          "embedding": {"class": "MultiVectorEmbeddingStrategy", "params": {}}
+        },
+        "embedding_type": "frame_based",
+        "schema_config": {
+          "num_patches": 1024,
+          "embedding_dim": 128,
+          "binary_dim": 16
+        }
+      },
+      "video_videoprism_base_mv_chunk_30s": {
+        "type": "video",
+        "description": "VideoPrism for 30-second chunk embeddings",
+        "schema_name": "video_videoprism_base_mv_chunk_30s",
+        "embedding_model": "videoprism_public_v1_base_hf",
+        "embedding_type": "direct_video_segment",
+        "schema_config": {
+          "embedding_dim": 768,
+          "binary_dim": 96
+        }
+      }
+    }
+  }
 }
 ```
 
----
+#### BackendProfileConfig Dataclass
 
-### 2. TenantAwareVespaSearchClient (`tenant_aware_vespa_search_client.py`)
-
-**Purpose**: Automatic tenant-aware query routing ensuring all search operations are isolated to the correct tenant schema.
-
-**Key Responsibilities**:
-- Parse and validate tenant_id from requests
-- Route queries to tenant-specific schemas
-- Prevent cross-tenant data access
-- Handle tenant-not-found errors
-
-**Key Attributes**:
 ```python
-profile: str                # Profile name (e.g., "video_colpali_smol500_mv_frame")
-schema_manager: TenantSchemaManager  # Schema manager for tenant routing
-query_encoder: QueryEncoder # Profile-specific encoder
-```
+from cogniverse_core.config.unified_config import BackendProfileConfig
 
-**Key Methods**:
-
-#### `__init__(profile, vespa_url, vespa_port)`
-Initialize tenant-aware search client.
-```python
-from src.backends.vespa.tenant_aware_vespa_search_client import TenantAwareVespaSearchClient
-
-client = TenantAwareVespaSearchClient(
-    profile="video_colpali_smol500_mv_frame",
-    vespa_url="http://localhost",
-    vespa_port=8080
-)
-```
-
-#### `search(query_params, tenant_id, embeddings)`
-Execute tenant-isolated search.
-```python
-results = client.search(
-    query_params={
-        "query": "person walking in park",
-        "ranking": "hybrid_float_bm25",
-        "top_k": 10
+profile = BackendProfileConfig(
+    profile_name="video_colpali_smol500_mv_frame",
+    type="video",
+    description="Frame-based ColPali processing",
+    schema_name="video_colpali_smol500_mv_frame",  # Vespa schema name
+    embedding_model="vidore/colsmol-500m",
+    pipeline_config={
+        "extract_keyframes": True,
+        "transcribe_audio": True,
+        "keyframe_fps": 1.0
     },
-    tenant_id="acme:production",  # REQUIRED - no defaults
-    embeddings=query_embeddings   # Optional, auto-generated if None
-)
-
-# Automatically routes to: video_colpali_smol500_mv_frame_acme_production
-# Returns: List[Dict] with video_id, frame_id, relevance, timestamps, etc.
-```
-
-**Tenant Routing Flow**:
-```python
-1. Parse tenant_id → validate format → ("acme", "production")
-2. Get schema name → "video_colpali_smol500_mv_frame_acme_production"
-3. Check schema exists → raise error if tenant not found
-4. Execute query on tenant-specific schema
-5. Return results (isolated to tenant)
-```
-
-**Error Handling**:
-```python
-# Invalid tenant_id
-search(..., tenant_id="invalid")
-# Raises: ValueError("tenant_id must be in org:tenant format")
-
-# Tenant not found
-search(..., tenant_id="nonexistent:tenant")
-# Raises: ValueError("Tenant 'nonexistent:tenant' not found")
-
-# Missing tenant_id
-search(..., tenant_id=None)
-# Raises: ValueError("tenant_id is required for tenant-aware search")
-```
-
----
-
-### 3. VespaVideoSearchClient (`vespa_search_client.py`)
-
-**Purpose**: Main search client with 14 ranking strategies and automatic strategy recommendation.
-
-**Note**: This is the base search client. For multi-tenant deployments, use `TenantAwareVespaSearchClient` instead.
-
-**Key Attributes**:
-```python
-vespa_url: str              # Vespa server URL
-vespa_port: int             # Vespa server port
-vespa_schema: str           # Active schema name
-query_encoder: QueryEncoder # Automatic encoder initialization based on schema
-```
-
-**Key Methods**:
-
-#### `search(query_params, embeddings, schema)`
-Unified search supporting all 14 ranking strategies.
-```python
-results = client.search(
-    query_params={
-        "query": "person walking in park",
-        "ranking": "hybrid_float_bm25",  # or any RankingStrategy
-        "top_k": 10,
-        "start_date": "2024-01-01",
-        "end_date": "2024-12-31"
+    strategies={
+        "segmentation": {"class": "FrameSegmentationStrategy"},
+        "embedding": {"class": "MultiVectorEmbeddingStrategy"}
     },
-    embeddings=query_embeddings,  # Optional, auto-generated if None
-    schema="video_colpali_smol500_mv_frame_acme_production"
+    embedding_type="frame_based",
+    schema_config={
+        "num_patches": 1024,
+        "embedding_dim": 128,
+        "binary_dim": 16
+    }
 )
 ```
 
-#### `RankingStrategy.recommend_strategy(has_visual, has_text, speed_priority)`
-Automatic strategy selection.
+**Profile Fields**:
+- `profile_name`: Unique identifier for the profile
+- `schema_name`: Vespa schema name (without tenant suffix)
+- `embedding_model`: HuggingFace model ID or local path
+- `pipeline_config`: Video processing pipeline settings
+- `strategies`: Processing strategy classes and params
+- `embedding_type`: Type of embeddings (frame_based, video_chunks, direct_video_segment)
+- `schema_config`: Schema-specific metadata (dimensions, patches, etc.)
+
+#### BackendConfig Dataclass
+
 ```python
-from src.backends.vespa.vespa_search_client import RankingStrategy
+from cogniverse_core.config.unified_config import BackendConfig, BackendProfileConfig
 
-strategy = RankingStrategy.recommend_strategy(
-    has_visual_component=True,
-    has_text_component=True,
-    speed_priority=False  # True → binary, False → float
-)
-# Returns: RankingStrategy.HYBRID_FLOAT_BM25 (best accuracy)
-```
-
-**Ranking Strategies**:
-
-| Strategy | Speed | Accuracy | Use Case | Requires Embeddings |
-|----------|-------|----------|----------|---------------------|
-| BM25_ONLY | Fastest | Good (text only) | Pure text queries | No |
-| BINARY_BINARY | Fast | Good approximation | Speed-critical visual | Yes (binary) |
-| FLOAT_FLOAT | Slowest | Highest visual | Maximum precision | Yes (float) |
-| FLOAT_BINARY | Fast | Very good | Balanced speed/accuracy | Yes (float) |
-| PHASED | Fast | High | Binary recall + float rerank | Yes (both) |
-| HYBRID_FLOAT_BM25 | Slow | Highest overall | Complex visual+text | Yes (float) |
-| HYBRID_BINARY_BM25 | Fast | Good hybrid | Fast visual+text | Yes (binary) |
-
----
-
-### 4. VespaEmbeddingProcessor (`embedding_processor.py`)
-
-**Purpose**: Convert numpy embeddings to Vespa-specific formats (hex-encoded bfloat16/int8).
-
-**Key Methods**:
-
-#### `process_embeddings(raw_embeddings)`
-Main entry point for embedding conversion.
-```python
-from src.backends.vespa.embedding_processor import VespaEmbeddingProcessor
-
-processor = VespaEmbeddingProcessor(
-    logger=logger,
-    model_name="vidore/colsmol-500m",
-    schema_name="video_colpali_smol500_mv_frame_acme_production"
-)
-
-raw_embeddings = np.random.randn(1024, 128)  # ColPali patch embeddings
-
-processed = processor.process_embeddings(raw_embeddings)
-# Returns:
-# {
-#   "embedding": {
-#     0: "3F9A4B2C...",  # Hex-encoded bfloat16 for patch 0
-#     1: "4A1B3C5D...",
-#     ...
-#   },
-#   "embedding_binary": {
-#     0: "A3F2B1C4...",  # Hex-encoded int8 binary for patch 0
-#     1: "B2A1D3E5...",
-#     ...
-#   }
-# }
-```
-
-**Format Types**:
-
-1. **Float Embeddings** (bfloat16 hex):
-   - Patch-based (ColPali): `{0: "3F9A...", 1: "4B2C...", ...}`
-   - Single-vector (VideoPrism): `[0.123, 0.456, ...]`
-
-2. **Binary Embeddings** (int8 hex):
-   - Binarize: `np.where(embeddings > 0, 1, 0)`
-   - Pack bits: `np.packbits(binary, axis=1).astype(int8)`
-   - Hex-encode: Convert to hex string
-
----
-
-### 5. VespaPyClient (`ingestion_client.py`)
-
-**Purpose**: Production-ready Vespa client for batch document feeding with retry logic.
-
-**Key Attributes**:
-```python
-schema_name: str           # Vespa schema to use (tenant-specific)
-app: Vespa                 # PyVespa application instance
-feed_config: Dict          # Production feeding parameters
-```
-
-**Key Methods**:
-
-#### `__init__(config, logger)`
-Initialize client from config.
-```python
-from src.backends.vespa.ingestion_client import VespaPyClient
-
-client = VespaPyClient(
-    config={
-        "schema_name": "video_colpali_smol500_mv_frame_acme_production",
-        "vespa_url": "http://localhost",
-        "vespa_port": 8080,
-        "feed_max_queue_size": 500,
-        "feed_max_workers": 4
-    },
-    logger=logger
-)
-```
-
-#### `process(doc)`
-Convert universal Document to Vespa format.
-```python
-from src.common.document import Document
-
-doc = Document(
-    id="video123_frame_5",
-    embeddings={
-        "embedding": {"data": np.random.randn(1024, 128)}
-    },
-    metadata={
-        "frame_id": 5,
-        "start_time": 2.5,
-        "end_time": 3.0,
-        "audio_transcript": "Discussion about AI safety"
+config = BackendConfig(
+    tenant_id="acme",
+    backend_type="vespa",
+    url="http://localhost",
+    port=8080,
+    profiles={
+        "video_colpali_smol500_mv_frame": profile1,
+        "video_videoprism_base_mv_chunk_30s": profile2
     }
 )
 
-vespa_doc = client.process(doc)
-# Returns Vespa document with embeddings processed to tenant schema
+# Get specific profile
+profile = config.get_profile("video_colpali_smol500_mv_frame")
+
+# Add new profile
+config.add_profile(new_profile)
+```
+
+### Tenant Configuration Overlay
+
+#### Deep Merge Algorithm
+
+System base config + Tenant-specific overrides = Merged configuration
+
+```mermaid
+graph TB
+    SystemConfig[System Base Config<br/>config.json backend section] --> Merge[Deep Merge Algorithm]
+    TenantConfig[Tenant Override Config<br/>ConfigManager.get_backend_config] --> Merge
+    Merge --> MergedConfig[Merged BackendConfig<br/>System profiles + Tenant profiles]
+
+    SystemConfig -.->|"type: vespa<br/>url: localhost<br/>profiles: [colpali, videoprism]"| Merge
+    TenantConfig -.->|"url: custom-vespa.acme.com<br/>profiles: [acme_custom_profile]"| Merge
+    MergedConfig -.->|"All system profiles +<br/>Tenant custom profiles +<br/>Tenant URL override"| Result[Available to Application]
+```
+
+**Merge Rules** (from `config/utils.py:_ensure_backend_config()`):
+
+1. **Profiles**: Dict merge - tenant profiles override system profiles with same name
+2. **Backend Type**: Tenant value OR system value (tenant takes precedence)
+3. **URL**: Tenant value if not default, otherwise system value
+4. **Port**: Tenant value if not default, otherwise system value
+5. **Metadata**: Dict merge - tenant metadata extends system metadata
+
+```python
+# System config.json
+{
+  "backend": {
+    "url": "http://localhost",
+    "port": 8080,
+    "profiles": {
+      "video_colpali": {...},
+      "video_videoprism": {...}
+    }
+  }
+}
+
+# Tenant "acme" override (stored in ConfigManager)
+tenant_config = BackendConfig(
+    tenant_id="acme",
+    url="http://vespa.acme.com",
+    port=8080,
+    profiles={
+        "acme_custom_profile": {...}
+    }
+)
+
+# Merged result for tenant "acme"
+# → url: http://vespa.acme.com (tenant override)
+# → profiles: {video_colpali, video_videoprism, acme_custom_profile} (merged)
+```
+
+#### Partial Profile Updates
+
+```python
+from cogniverse_core.config.unified_config import BackendConfig
+
+# Merge overrides into existing profile
+modified_profile = config.merge_profile(
+    profile_name="video_colpali_smol500_mv_frame",
+    overrides={
+        "pipeline_config": {"keyframe_fps": 2.0},  # Only override FPS
+        "embedding_model": "vidore/colsmol-500m-v2"  # Update model
+    }
+)
+
+# Original profile unchanged, returns new profile with merged values
+```
+
+### Using Backend Configuration
+
+#### Example 1: Load Merged Config for Tenant
+
+```python
+from cogniverse_core.config.utils import ConfigUtils
+
+# Auto-discovers config.json and merges with tenant overrides
+config_utils = ConfigUtils(tenant_id="acme")
+
+# Get merged backend config
+backend_dict = config_utils.get("backend")
+
+# Access profile
+profiles = backend_dict["profiles"]
+colpali_profile = profiles["video_colpali_smol500_mv_frame"]
+```
+
+#### Example 2: Get BackendConfig Object
+
+```python
+from cogniverse_core.config.manager import ConfigManager
+from cogniverse_core.config.unified_config import BackendConfig
+
+manager = ConfigManager()
+
+# Get tenant backend config (includes system base + tenant overlay merge)
+backend_config: BackendConfig = manager.get_backend_config(tenant_id="acme")
+
+# Get specific profile
+profile = backend_config.get_profile("video_colpali_smol500_mv_frame")
+
+print(f"Schema: {profile.schema_name}")
+print(f"Model: {profile.embedding_model}")
+print(f"Strategies: {profile.strategies.keys()}")
+```
+
+#### Example 3: Set Tenant-Specific Backend Config
+
+```python
+from cogniverse_core.config.manager import ConfigManager
+from cogniverse_core.config.unified_config import BackendConfig, BackendProfileConfig
+
+manager = ConfigManager()
+
+# Create tenant-specific profile
+tenant_profile = BackendProfileConfig(
+    profile_name="acme_high_fps",
+    schema_name="video_colpali_smol500_mv_frame",
+    embedding_model="vidore/colsmol-500m",
+    pipeline_config={"keyframe_fps": 5.0},  # 5 FPS instead of 1 FPS
+    embedding_type="frame_based"
+)
+
+# Set tenant backend config
+tenant_backend = BackendConfig(
+    tenant_id="acme",
+    url="http://vespa.acme.com",
+    profiles={"acme_high_fps": tenant_profile}
+)
+
+manager.set_backend_config(tenant_backend)
+```
+
+### Architecture Diagram
+
+```mermaid
+graph TB
+    App[Application] --> ConfigUtils[ConfigUtils<br/>tenant_id='acme']
+
+    ConfigUtils --> AutoDiscover[Auto-Discover<br/>config.json]
+    AutoDiscover --> SearchPath1[1. COGNIVERSE_CONFIG env]
+    AutoDiscover --> SearchPath2[2. configs/config.json]
+    AutoDiscover --> SearchPath3[3. ../configs/config.json]
+
+    ConfigUtils --> LoadSystem[Load System Base<br/>backend section]
+    ConfigUtils --> LoadTenant[Load Tenant Override<br/>ConfigManager]
+
+    LoadSystem --> Merge[Deep Merge]
+    LoadTenant --> Merge
+
+    Merge --> MergedBackend[Merged BackendConfig]
+    MergedBackend --> Profiles{Available Profiles}
+
+    Profiles --> ColPali[video_colpali<br/>System]
+    Profiles --> VideoPrism[video_videoprism<br/>System]
+    Profiles --> AcmeCustom[acme_custom<br/>Tenant Override]
+
+    MergedBackend --> VespaBackend[VespaBackend]
+    VespaBackend --> Application[Application Logic]
 ```
 
 ---
 
-## Data Flow
+## Backend Abstraction Layer
 
-### End-to-End Multi-Tenant Document Ingestion Flow
+### VespaBackend Class
 
-```
-1. INGESTION PIPELINE (with tenant_id)
-   ↓
-   Universal Document {
-     id: "video123_frame_5",
-     embeddings: {"embedding": {"data": np.ndarray(1024, 128)}},
-     metadata: {frame_id, timestamps, transcript, ...}
-   }
-   ↓
-2. TENANT SCHEMA MANAGER
-   parse_tenant_id("acme:production")
-   ├── Validate org_id: "acme"
-   ├── Validate tenant_name: "production"
-   └── Get schema: "video_colpali_smol500_mv_frame_acme_production"
-   ↓
-3. VESPA PY CLIENT
-   process(doc)
-   ├── Strategy-aware requirements check
-   │   └── What embeddings does this schema need?
-   ├── Embedding processing
-   │   ├── Float: np.ndarray → hex-encoded bfloat16 dict
-   │   └── Binary: np.ndarray → binarized → packed int8 → hex dict
-   ├── Field mapping (schema-driven)
-   │   └── Only add fields that exist in schema definition
-   └── Create Vespa document structure
-   ↓
-4. BATCH FEEDING (tenant-isolated)
-   _feed_prepared_batch(documents, batch_size=100)
-   ├── Production config: 500 queue, 4 workers, 8 connections
-   ├── app.feed_iterable(iter, schema, namespace, callback)
-   ├── Per-document callback tracking
-   └── Retry with exponential backoff
-   ↓
-5. VESPA STORAGE (tenant-specific schema)
-   Documents indexed in tenant schema:
-   - video_colpali_smol500_mv_frame_acme_production
-   ├── Float embeddings for precise ranking
-   ├── Binary embeddings for fast retrieval
-   └── Text fields for BM25 search
-   (Completely isolated from other tenants)
+**Location**: `libs/vespa/cogniverse_vespa/backend.py`
+
+**Purpose**: Unified backend interface that wraps VespaSearchBackend and VespaPyClient, providing a single abstraction for both search and ingestion operations.
+
+```python
+from cogniverse_vespa.backend import VespaBackend
+
+# Initialize with merged config
+backend = VespaBackend()
+backend.initialize({
+    "tenant_id": "acme",
+    "schema_name": "video_colpali_smol500_mv_frame_acme",
+    "backend": {
+        "url": "http://localhost",
+        "port": 8080,
+        "profiles": {...}
+    }
+})
+
+# Search
+results = await backend.search(query="cooking video", top_k=10)
+
+# Ingest
+await backend.ingest_documents(documents)
 ```
 
-### End-to-End Multi-Tenant Search Flow
+**Key Features**:
+- **Unified Interface**: Single class for search + ingestion
+- **Profile-Aware**: Automatically uses profile config from BackendConfig
+- **Tenant-Aware**: Handles tenant schema routing internally
+- **Lazy Initialization**: Components created on-demand per operation
 
+### Architecture Diagram
+
+```mermaid
+graph TB
+    App[Application Code] --> VespaBackend[VespaBackend<br/>Unified Interface]
+
+    VespaBackend --> SearchBackend[VespaSearchBackend]
+    VespaBackend --> IngestionClient[VespaPyClient]
+
+    VespaBackend --> SchemaManager[VespaSchemaManager]
+    VespaBackend --> TenantManager[TenantSchemaManager]
+
+    SearchBackend --> VespaSearchClient[VespaSearchClient]
+    VespaSearchClient --> Vespa[Vespa Instance]
+
+    IngestionClient --> PyVespa[PyVespa feed_iterable]
+    PyVespa --> Vespa
+
+    SchemaManager --> Vespa
+    TenantManager --> Vespa
 ```
-1. USER QUERY (with tenant_id)
-   "Show me videos of robotics demonstrations"
-   tenant_id: "acme:production"
-   ↓
-2. TENANT ID PARSING
-   parse_tenant_id("acme:production")
-   ├── Extract org_id: "acme"
-   ├── Extract tenant_name: "production"
-   └── Validate format and components
-   ↓
-3. SCHEMA ROUTING
-   TenantSchemaManager.get_schema_name(
-       profile="video_colpali_smol500_mv_frame",
-       tenant_id="acme:production"
-   )
-   └── Returns: "video_colpali_smol500_mv_frame_acme_production"
-   ↓
-4. QUERY ENCODING
-   ├── Query encoder (ColPali) generates embeddings
-   └── embeddings: np.ndarray(1024, 128)
-   ↓
-5. STRATEGY SELECTION
-   recommend_strategy(has_visual=True, has_text=True, speed_priority=False)
-   └── Recommended: HYBRID_FLOAT_BM25 (best accuracy)
-   ↓
-6. TENANT-AWARE SEARCH
-   TenantAwareVespaSearchClient.search(
-     query_params={
-       "query": "robotics demonstrations",
-       "ranking": "hybrid_float_bm25",
-       "top_k": 10
-     },
-     tenant_id="acme:production",
-     embeddings=embeddings
-   )
-   ├── Build YQL: nearestNeighbor(embedding, qt)
-   ├── Convert embeddings to Vespa format
-   ├── Add text query for BM25 component
-   └── Execute on tenant schema: video_colpali_smol500_mv_frame_acme_production
-   ↓
-7. VESPA RANKING (tenant-isolated)
-   Ranking Profile: hybrid_float_bm25
-   ├── First Phase: Visual similarity (ColPali max_sim)
-   │   └── Retrieve top 1000 candidates from acme:production only
-   ├── Second Phase: BM25 text re-ranking
-   │   └── Rerank top 100 with text similarity
-   └── Return top 10 results (acme:production data only)
-   ↓
-8. RETURN TO USER
-   Results isolated to acme:production tenant
-   (Zero possibility of seeing data from other tenants)
+
+**Why VespaBackend?**
+- **Eliminates Vespa-specific imports**: Application code doesn't import VespaSearchClient or VespaPyClient directly
+- **Simplified API**: One class instead of multiple clients
+- **Consistent interface**: Same initialization and method signatures
+- **Future-proof**: Can swap Vespa with other backends without changing application code
+
+---
+
+## Profile-Based Architecture
+
+### What is a Profile?
+
+A **profile** is a complete video processing configuration that defines:
+1. **Embedding Model**: Which model to use (ColPali, VideoPrism, ColQwen-Omni)
+2. **Processing Pipeline**: Keyframe extraction, transcription, description generation
+3. **Segmentation Strategy**: Frame-based, chunk-based, or direct video
+4. **Vespa Schema**: Which schema structure to use
+5. **Ranking Strategies**: How to score and rank results
+
+### Profile Types
+
+#### Multi-Profile Architecture
+
+```mermaid
+flowchart TB
+    subgraph Profiles[Backend Profiles]
+        ColPali[video_colpali_smol500_mv_frame<br/>Frame-Based<br/>1024 patches × 128-dim<br/>Binary embeddings]
+        VideoPrism[video_videoprism_base_mv_chunk_30s<br/>Direct Video<br/>768-dim global<br/>30s chunks]
+        ColQwen[video_colqwen_omni_mv_chunk_30s<br/>Chunk-Based<br/>Multi-modal<br/>Audio + Visual]
+    end
+
+    subgraph QueryTime[Query-Time Selection]
+        Query[User Query] --> AutoSelect{Auto-Select Profile}
+        AutoSelect -->|has_video| SelectVideoPrism
+        AutoSelect -->|Fine-grained search| SelectColPali
+        AutoSelect -->|Multimodal| SelectColQwen
+    end
+
+    subgraph Strategies[Processing Strategies]
+        SelectColPali[ColPali] --> FrameSeg[FrameSegmentationStrategy<br/>1 FPS keyframe extraction]
+        SelectVideoPrism[VideoPrism] --> DirectVideo[DirectVideoStrategy<br/>No frame extraction]
+        SelectColQwen[ColQwen] --> ChunkSeg[ChunkSegmentationStrategy<br/>30s audio+visual chunks]
+    end
+
+    subgraph VespaSchemas[Vespa Schemas per Tenant]
+        FrameSeg --> ColPaliSchema[video_colpali_smol500_mv_frame_acme<br/>Multi-vector binary]
+        DirectVideo --> VideoPrismSchema[video_videoprism_base_mv_chunk_30s_acme<br/>Global float vectors]
+        ChunkSeg --> ColQwenSchema[video_colqwen_omni_mv_chunk_30s_acme<br/>Multi-modal vectors]
+    end
+
+    style Profiles fill:#e1f5ff
+    style QueryTime fill:#fff4e1
+    style Strategies fill:#f5e1ff
+    style VespaSchemas fill:#e1ffe1
+```
+
+#### Frame-Based Profiles
+**Example**: `video_colpali_smol500_mv_frame`
+- Extracts keyframes at fixed FPS (1-5 FPS)
+- Generates patch-level embeddings per frame
+- Schema: Multi-vector with 1024 patches × 128 dimensions
+- Best for: Fine-grained visual search, specific objects/text in frames
+
+#### Chunk-Based Profiles
+**Example**: `video_colqwen_omni_mv_chunk_30s`
+- Segments video into 30-second chunks
+- Processes audio + visual together
+- Schema: Multi-vector with multimodal understanding
+- Best for: Semantic content search, audio+visual comprehension
+
+#### Direct Video Profiles
+**Example**: `video_videoprism_base_mv_chunk_30s`
+- Native video understanding without keyframes
+- Global 768-dim or 1024-dim embeddings
+- Schema: High-dimensional global vectors
+- Best for: Video-level semantic similarity, scene understanding
+
+### Profile Selection at Query Time
+
+```python
+from cogniverse_core.config.utils import ConfigUtils
+
+config = ConfigUtils(tenant_id="acme")
+backend_config = config.get("backend")
+
+# List available profiles
+profiles = backend_config["profiles"].keys()
+# → ['video_colpali_smol500_mv_frame', 'video_videoprism_base_mv_chunk_30s', ...]
+
+# Select profile dynamically
+profile_name = "video_colpali_smol500_mv_frame"
+profile = backend_config["profiles"][profile_name]
+
+# Initialize backend with selected profile
+from cogniverse_vespa.backend import VespaBackend
+
+backend = VespaBackend()
+backend.initialize({
+    "tenant_id": "acme",
+    "schema_name": profile["schema_name"],
+    "profile": profile_name,
+    "backend": backend_config
+})
+```
+
+### Creating Custom Profiles
+
+```python
+# Add new profile to tenant config
+custom_profile = BackendProfileConfig(
+    profile_name="acme_ultra_high_quality",
+    schema_name="video_colpali_smol500_mv_frame",  # Reuse existing schema
+    embedding_model="vidore/colsmol-500m",
+    pipeline_config={
+        "extract_keyframes": True,
+        "keyframe_fps": 10.0,  # 10 FPS for ultra-high temporal resolution
+        "transcribe_audio": True,
+        "generate_descriptions": True
+    },
+    strategies={
+        "segmentation": {
+            "class": "FrameSegmentationStrategy",
+            "params": {"fps": 10.0, "max_frames": 10000}
+        },
+        "embedding": {"class": "MultiVectorEmbeddingStrategy"}
+    },
+    embedding_type="frame_based"
+)
+
+# Save to tenant config
+backend_config.add_profile(custom_profile)
+manager.set_backend_config(backend_config)
+```
+
+### Advanced Query-Time Resolution
+
+The `VespaSearchBackend` implements sophisticated 3-step query-time resolution for profiles and strategies:
+
+#### Resolution Flow
+
+```mermaid
+flowchart TD
+    Start[Query Request] --> ProfileCheck{Has explicit<br/>profile param?}
+
+    ProfileCheck -->|Yes| UseExplicitProfile[Use Explicit Profile]
+    ProfileCheck -->|No| AutoSelect{Query has<br/>video/image?}
+
+    AutoSelect -->|has_video| UseVideoPrism[Profile: video_videoprism]
+    AutoSelect -->|has_image| UseImage[Profile: image_colpali]
+    AutoSelect -->|Neither| UseDefault[Use Default Profile]
+
+    UseExplicitProfile --> StrategyCheck
+    UseVideoPrism --> StrategyCheck
+    UseImage --> StrategyCheck
+    UseDefault --> StrategyCheck
+
+    StrategyCheck{Has explicit<br/>ranking param?} -->|Yes| UseExplicitStrategy[Use Explicit Strategy]
+    StrategyCheck -->|No| EmbeddingCheck{Embedding<br/>type?}
+
+    EmbeddingCheck -->|binary| UseBinary[Strategy: hybrid_binary_bm25]
+    EmbeddingCheck -->|float| UseFloat[Strategy: hybrid_float_bm25]
+    EmbeddingCheck -->|other| UseDefaultStrategy[Use Profile Default]
+
+    UseExplicitStrategy --> TenantScoping
+    UseBinary --> TenantScoping
+    UseFloat --> TenantScoping
+    UseDefaultStrategy --> TenantScoping
+
+    TenantScoping[Step 3: Tenant Scoping<br/>schema_name + tenant_id] --> ExecuteSearch[Execute Search]
+
+    style Start fill:#e1f5ff
+    style ExecuteSearch fill:#e1ffe1
+    style ProfileCheck fill:#fff4e1
+    style StrategyCheck fill:#fff4e1
+    style EmbeddingCheck fill:#fff4e1
+```
+
+#### Implementation Details
+
+**1. Profile Resolution** (`_resolve_profile_for_query`):
+```python
+def _resolve_profile_for_query(
+    self,
+    query: Dict[str, Any],
+    tenant_id: str
+) -> str:
+    """
+    Resolve profile name from query request.
+
+    Priority order:
+    1. Explicit 'profile' parameter in query
+    2. Auto-selection based on query type (has_video, has_image)
+    3. Default profile from backend config
+    """
+    # Explicit profile
+    if "profile" in query:
+        return query["profile"]
+
+    # Auto-selection
+    if query.get("has_video"):
+        return "video_videoprism_base_mv_chunk_30s"
+    elif query.get("has_image"):
+        return "image_colpali_frame"
+
+    # Default
+    return self.backend_config.default_profile
+```
+
+**2. Strategy Resolution** (`_resolve_strategy_for_profile`):
+```python
+def _resolve_strategy_for_profile(
+    self,
+    profile_name: str,
+    query: Dict[str, Any]
+) -> str:
+    """
+    Resolve ranking strategy for profile.
+
+    Priority order:
+    1. Explicit 'ranking' parameter in query
+    2. Auto-selection based on embedding type
+    3. Default strategy from profile config
+    """
+    # Explicit strategy
+    if "ranking" in query:
+        return query["ranking"]
+
+    # Get profile
+    profile = self.backend_config.profiles[profile_name]
+
+    # Auto-select based on embedding type
+    if profile.embedding_type == "binary":
+        return "hybrid_binary_bm25_no_description"
+    elif profile.embedding_type == "float":
+        return "hybrid_float_bm25"
+
+    # Default
+    return profile.default_ranking_strategy
+```
+
+**3. Tenant Schema Scoping** (`_apply_tenant_scoping`):
+```python
+def _apply_tenant_scoping(
+    self,
+    profile: BackendProfileConfig,
+    tenant_id: str
+) -> str:
+    """
+    Transform schema name to include tenant suffix.
+
+    Examples:
+      video_colpali_smol500_mv_frame + "acme"
+        → video_colpali_smol500_mv_frame_acme
+    """
+    return f"{profile.schema_name}_{tenant_id}"
+```
+
+#### Usage Example
+
+**Request with Auto-Resolution**:
+```python
+# Client request without explicit profile/strategy
+query = {
+    "query_text": "machine learning tutorial",
+    "top_k": 10,
+    # No 'profile' or 'ranking' specified
+}
+
+# Backend auto-resolves:
+# 1. Profile: Uses default "video_colpali_smol500_mv_frame"
+# 2. Strategy: Auto-selects "hybrid_binary_bm25_no_description" (binary embedding)
+# 3. Schema: Transforms to "video_colpali_smol500_mv_frame_acme"
+
+results = backend.search(query, tenant_id="acme")
+```
+
+**Request with Explicit Parameters**:
+```python
+query = {
+    "query_text": "cooking videos",
+    "profile": "video_videoprism_base_mv_chunk_30s",  # Explicit
+    "ranking": "float_float",  # Explicit
+    "top_k": 20
+}
+
+# Backend uses explicit values:
+# 1. Profile: "video_videoprism_base_mv_chunk_30s" (explicit)
+# 2. Strategy: "float_float" (explicit)
+# 3. Schema: "video_videoprism_base_mv_chunk_30s_acme" (tenant-scoped)
+
+results = backend.search(query, tenant_id="acme")
+```
+
+#### Benefits
+
+1. **Flexibility**: Clients can control or let backend auto-select
+2. **Sensible Defaults**: Automatic selection based on query characteristics
+3. **Tenant Isolation**: Automatic schema scoping per tenant
+4. **Performance**: Strategy selection optimized for embedding type
+5. **Simplicity**: Clients don't need to know all configuration details
+
+---
+
+## Connection Pool Management
+
+### Overview
+
+The `VespaSearchBackend` implements connection pooling for efficient Vespa client management with health monitoring and automatic recovery.
+
+**Key Features**:
+- **Connection Reuse**: Pool of healthy Vespa clients per schema
+- **Health Monitoring**: Background health checks with circuit breaker pattern
+- **Automatic Recovery**: Failed connections marked unhealthy and recovered
+- **Schema-Specific Pools**: Separate connection pools per tenant schema
+- **Metrics Tracking**: Connection health metrics via SearchMetrics
+
+### Architecture
+
+```mermaid
+flowchart TB
+    Backend[VespaSearchBackend] --> GetPool[Get ConnectionPool<br/>for schema]
+
+    GetPool --> CheckHealthy{Healthy<br/>connections<br/>available?}
+
+    CheckHealthy -->|Yes| SelectConn[Select Connection<br/>Round-Robin]
+    CheckHealthy -->|No| Error[Raise NoHealthyConnectionsError]
+
+    SelectConn --> ExecuteQuery[Execute Query]
+
+    ExecuteQuery --> QuerySuccess{Query<br/>successful?}
+
+    QuerySuccess -->|Yes| ResetErrors[Reset error_count = 0]
+    QuerySuccess -->|No| IncrementErrors[Increment error_count]
+
+    IncrementErrors --> CheckThreshold{error_count >= 3?}
+
+    CheckThreshold -->|Yes| MarkUnhealthy[Mark Connection Unhealthy<br/>is_healthy = False]
+    CheckThreshold -->|No| ReturnConn[Return Connection to Pool]
+
+    MarkUnhealthy --> TriggerRecovery[Background Health Check<br/>Attempts Recovery]
+
+    TriggerRecovery --> HealthCheckLoop{Health Check<br/>Query Succeeds?}
+
+    HealthCheckLoop -->|Yes| RecoverConn[Mark Healthy<br/>is_healthy = True<br/>error_count = 0]
+    HealthCheckLoop -->|No| StayUnhealthy[Remain Unhealthy<br/>Retry Next Interval]
+
+    ResetErrors --> ReturnConn
+    RecoverConn --> ReturnConn
+
+    style Backend fill:#e1f5ff
+    style ExecuteQuery fill:#fff4e1
+    style MarkUnhealthy fill:#ffe1e1
+    style RecoverConn fill:#e1ffe1
+    style Error fill:#ffe1e1
+```
+
+### Connection Pool Implementation
+
+**Location**: `libs/vespa/cogniverse_vespa/search_backend.py` (lines 106-256)
+
+#### ConnectionPool Class
+
+```python
+class ConnectionPool:
+    """
+    Manage pool of Vespa connections with health monitoring.
+
+    Features:
+    - Connection reuse for performance
+    - Health checks with circuit breaker
+    - Automatic connection recovery
+    - Thread-safe operations
+    """
+
+    def __init__(
+        self,
+        schema_name: str,
+        max_connections: int = 10,
+        health_check_interval: float = 30.0
+    ):
+        self.schema_name = schema_name
+        self.max_connections = max_connections
+        self.health_check_interval = health_check_interval
+
+        self._connections: List[VespaConnection] = []
+        self._lock = threading.Lock()
+        self._health_check_thread = None
+
+    def get_connection(self) -> VespaConnection:
+        """Get healthy connection from pool (round-robin)"""
+        with self._lock:
+            healthy = [c for c in self._connections if c.is_healthy]
+
+            if not healthy:
+                raise NoHealthyConnectionsError(
+                    f"No healthy connections for schema {self.schema_name}"
+                )
+
+            # Round-robin selection
+            conn = healthy[0]
+            self._connections.remove(conn)
+            self._connections.append(conn)
+
+            return conn
+
+    def mark_unhealthy(self, connection: VespaConnection):
+        """Mark connection as unhealthy for recovery"""
+        with self._lock:
+            connection.is_healthy = False
+            connection.last_error = datetime.now()
+
+    def health_check_loop(self):
+        """Background thread for connection health monitoring"""
+        while True:
+            time.sleep(self.health_check_interval)
+
+            with self._lock:
+                for conn in self._connections:
+                    if not conn.is_healthy:
+                        # Try to recover
+                        if conn.check_health():
+                            logger.info(f"Connection recovered: {conn}")
+```
+
+#### VespaConnection Class
+
+```python
+class VespaConnection:
+    """
+    Wrapper for Vespa client with health tracking.
+
+    Attributes:
+        client: Vespa application instance
+        schema_name: Target schema name
+        is_healthy: Current health status
+        last_error: Timestamp of last failure
+        error_count: Consecutive error count
+    """
+
+    def __init__(self, client: Vespa, schema_name: str):
+        self.client = client
+        self.schema_name = schema_name
+        self.is_healthy = True
+        self.last_error: Optional[datetime] = None
+        self.error_count = 0
+
+    def check_health(self) -> bool:
+        """
+        Execute health check query.
+
+        Returns:
+            True if connection is healthy
+        """
+        try:
+            # Simple query to test connection
+            result = self.client.query(
+                yql=f"select * from {self.schema_name} limit 1",
+                timeout=5
+            )
+
+            self.is_healthy = True
+            self.error_count = 0
+            return True
+
+        except Exception as e:
+            self.error_count += 1
+            self.last_error = datetime.now()
+
+            # Circuit breaker: too many failures
+            if self.error_count >= 3:
+                self.is_healthy = False
+                logger.error(f"Connection failed health check: {e}")
+
+            return False
+
+    def execute_query(self, query: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute query with automatic health tracking.
+
+        Raises:
+            ConnectionError: If connection is unhealthy
+        """
+        if not self.is_healthy:
+            raise ConnectionError(
+                f"Connection unhealthy for {self.schema_name}"
+            )
+
+        try:
+            result = self.client.query(**query)
+            self.error_count = 0
+            return result
+
+        except Exception as e:
+            self.error_count += 1
+            self.last_error = datetime.now()
+
+            if self.error_count >= 3:
+                self.is_healthy = False
+
+            raise
+```
+
+### Usage in VespaSearchBackend
+
+```python
+class VespaSearchBackend:
+    def __init__(self, config: Dict[str, Any]):
+        # Connection pools per schema
+        self._connection_pools: Dict[str, ConnectionPool] = {}
+
+    def _get_connection_pool(self, schema_name: str) -> ConnectionPool:
+        """Get or create connection pool for schema"""
+        if schema_name not in self._connection_pools:
+            pool = ConnectionPool(
+                schema_name=schema_name,
+                max_connections=10,
+                health_check_interval=30.0
+            )
+            pool.start_health_checks()
+
+            self._connection_pools[schema_name] = pool
+
+        return self._connection_pools[schema_name]
+
+    def search(
+        self,
+        query: Dict[str, Any],
+        tenant_id: str
+    ) -> List[Dict[str, Any]]:
+        """Execute search using pooled connection"""
+
+        # Resolve profile and strategy
+        profile = self._resolve_profile_for_query(query, tenant_id)
+        strategy = self._resolve_strategy_for_profile(profile, query)
+        schema_name = f"{profile}__{tenant_id}"
+
+        # Get connection from pool
+        pool = self._get_connection_pool(schema_name)
+
+        try:
+            conn = pool.get_connection()
+
+            # Execute query
+            results = conn.execute_query({
+                "yql": self._build_yql(query, strategy),
+                "ranking": strategy,
+                "hits": query.get("top_k", 10)
+            })
+
+            return results
+
+        except Exception as e:
+            # Mark connection unhealthy
+            pool.mark_unhealthy(conn)
+
+            # Try alternate connection
+            conn = pool.get_connection()
+            return conn.execute_query(query)
+```
+
+### Health Metrics
+
+**SearchMetrics Integration**:
+```python
+class SearchMetrics:
+    """Track search backend metrics including connection health"""
+
+    def record_connection_health(
+        self,
+        schema_name: str,
+        is_healthy: bool,
+        error_count: int
+    ):
+        """Record connection health metrics"""
+        self.metrics[schema_name] = {
+            "healthy": is_healthy,
+            "error_count": error_count,
+            "last_check": datetime.now()
+        }
+
+    def get_pool_health(self, schema_name: str) -> Dict[str, Any]:
+        """Get health metrics for connection pool"""
+        pool = self.pools.get(schema_name)
+
+        if not pool:
+            return {"status": "no_pool"}
+
+        healthy_count = sum(
+            1 for c in pool._connections if c.is_healthy
+        )
+
+        return {
+            "total_connections": len(pool._connections),
+            "healthy_connections": healthy_count,
+            "unhealthy_connections": len(pool._connections) - healthy_count,
+            "health_check_interval": pool.health_check_interval
+        }
+```
+
+### Benefits
+
+1. **Performance**: Connection reuse eliminates connection overhead per query
+2. **Reliability**: Automatic recovery from transient failures
+3. **Observability**: Health metrics for monitoring connection status
+4. **Scalability**: Per-schema pools isolate tenant impact
+5. **Resilience**: Circuit breaker prevents cascading failures
+
+### Configuration
+
+```python
+# Configure connection pool in backend config
+backend_config = {
+    "vespa": {
+        "connection_pool": {
+            "max_connections": 10,         # Max connections per schema
+            "health_check_interval": 30.0, # Health check frequency (seconds)
+            "circuit_breaker_threshold": 3 # Failures before marking unhealthy
+        }
+    }
+}
+```
+
+---
+
+## Multi-Tenant Schema Management
+
+### TenantSchemaManager
+
+**Location**: `libs/vespa/cogniverse_vespa/tenant_schema_manager.py`
+**Purpose**: Manage tenant-specific Vespa schemas with physical isolation
+
+See [Multi-Tenant Architecture](../architecture/multi-tenant.md) for comprehensive details.
+
+#### Architecture
+
+```mermaid
+graph TB
+    API[API Request<br/>tenant_id: acme] --> Middleware[Tenant Middleware]
+    Middleware --> SchemaManager[TenantSchemaManager]
+
+    SchemaManager --> CheckCache{Schema in cache?}
+    CheckCache -->|Yes| UseSchema[Use schema: video_frames_acme]
+    CheckCache -->|No| LoadTemplate[Load base template]
+
+    LoadTemplate --> Transform[Transform for tenant:<br/>video_frames → video_frames_acme]
+    Transform --> Deploy[Deploy to Vespa]
+    Deploy --> Cache[Cache deployment]
+    Cache --> UseSchema
+
+    UseSchema --> VespaClient[VespaSearchClient<br/>schema=video_frames_acme]
+    VespaClient --> Search[Search tenant data]
+
+    style API fill:#e1f5ff
+    style SchemaManager fill:#fff4e1
+    style VespaClient fill:#e1ffe1
+```
+
+#### Key Methods
+
+```python
+from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+
+# Initialize manager (singleton per Vespa endpoint)
+schema_manager = TenantSchemaManager(
+    vespa_url="http://localhost",
+    vespa_port=8080
+)
+
+# Get tenant-specific schema name
+schema_name = schema_manager.get_tenant_schema_name(
+    tenant_id="acme",
+    base_schema_name="video_colpali_smol500_mv_frame"
+)
+# Returns: "video_colpali_smol500_mv_frame_acme"
+
+# Ensure schema exists (idempotent)
+schema_manager.ensure_tenant_schema_exists(
+    tenant_id="acme",
+    base_schema_name="video_colpali_smol500_mv_frame"
+)
+# Creates schema if not exists
+
+# List tenant schemas
+schemas = schema_manager.list_tenant_schemas("acme")
+# Returns: ['video_colpali_smol500_mv_frame_acme', 'agent_memories_acme']
+
+# Deploy new schema for tenant
+schema_manager.deploy_tenant_schema(
+    tenant_id="startup",
+    base_schema_name="video_colpali_smol500_mv_frame"
+)
+```
+
+#### Schema Naming Convention
+
+**Pattern**: `{base_schema}_{tenant_id}`
+
+**Examples**:
+
+| Base Schema | Tenant ID | Tenant Schema |
+|------------|-----------|---------------|
+| video_colpali_smol500_mv_frame | acme | video_colpali_smol500_mv_frame_acme |
+| video_videoprism_base_mv_chunk_30s | startup | video_videoprism_base_mv_chunk_30s_startup |
+| agent_memories | acme:production | agent_memories_acme_production |
+
+#### Schema Lifecycle
+
+1. **Load Template**: Base schema from `configs/schemas/{base_schema}_schema.json`
+2. **Transform**: Rename schema and document to include tenant suffix
+3. **Deploy**: Create Vespa application package and deploy
+4. **Cache**: Store deployment in memory for fast lookups
+
+---
+
+## Search Client
+
+### VespaSearchClient
+
+**Location**: `libs/vespa/cogniverse_vespa/backends/vespa_search_client.py`
+**Purpose**: Search operations with tenant-specific schema routing
+
+#### Tenant-Aware Initialization
+
+```python
+from cogniverse_vespa.vespa_search_client import VespaSearchClient
+from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+
+# 1. Ensure tenant schema exists
+schema_manager = TenantSchemaManager()
+schema_manager.ensure_tenant_schema_exists(
+    tenant_id="acme",
+    base_schema_name="video_colpali_smol500_mv_frame"
+)
+
+# 2. Get tenant schema name
+tenant_schema = schema_manager.get_tenant_schema_name(
+    tenant_id="acme",
+    base_schema_name="video_colpali_smol500_mv_frame"
+)
+# Returns: "video_colpali_smol500_mv_frame_acme"
+
+# 3. Initialize client with tenant schema
+client = VespaSearchClient(
+    host="localhost",
+    port=8080,
+    schema=tenant_schema  # Tenant-specific!
+)
+```
+
+#### Search Operations
+
+```python
+# Text search (tenant-scoped)
+results = client.search(
+    query="cooking videos",
+    top_k=10,
+    ranking="hybrid_binary_bm25"
+)
+# Searches ONLY video_colpali_smol500_mv_frame_acme
+# Physical isolation - no access to other tenants' data
+
+# Results structure
+for result in results:
+    print(f"Video: {result['video_title']}")
+    print(f"Frame: {result['frame_id']}")
+    print(f"Score: {result['relevance']}")
+    print(f"Time: {result['start_time']}s")
+```
+
+#### Multi-Tenant Search Example
+
+```python
+# Two tenants searching independently
+
+# Tenant A: acme
+schema_mgr = TenantSchemaManager()
+schema_mgr.ensure_tenant_schema_exists("acme", "video_frames")
+
+client_acme = VespaSearchClient(
+    host="localhost",
+    port=8080,
+    schema=schema_mgr.get_tenant_schema_name("acme", "video_frames")
+)
+results_acme = client_acme.search("cooking videos")
+# Only searches video_frames_acme
+
+
+# Tenant B: startup
+schema_mgr.ensure_tenant_schema_exists("startup", "video_frames")
+
+client_startup = VespaSearchClient(
+    host="localhost",
+    port=8080,
+    schema=schema_mgr.get_tenant_schema_name("startup", "video_frames")
+)
+results_startup = client_startup.search("cooking videos")
+# Only searches video_frames_startup
+
+# Complete physical isolation
+```
+
+#### Ranking Strategies
+
+The client supports multiple ranking strategies:
+
+| Strategy | Type | Use Case |
+|----------|------|----------|
+| bm25_only | Text | Pure text search (no embeddings) |
+| float_float | Visual | Highest accuracy (slow) |
+| binary_binary | Visual | Fast visual search |
+| hybrid_float_bm25 | Hybrid | Best accuracy (visual + text) |
+| hybrid_binary_bm25 | Hybrid | Fast hybrid search |
+
+```python
+# Pure text search (fast)
+results = client.search(
+    query="machine learning tutorial",
+    ranking="bm25_only"
+)
+
+# Visual + text hybrid (best accuracy)
+results = client.search(
+    query="robot arm demonstration",
+    ranking="hybrid_float_bm25"
+)
+```
+
+---
+
+## Ingestion Client
+
+### VespaPyClient
+
+**Location**: `libs/vespa/cogniverse_vespa/ingestion_client.py`
+**Purpose**: PyVespa wrapper for document ingestion with automatic format conversion
+
+#### Architecture
+
+```mermaid
+graph TB
+    Documents[Documents<br/>cogniverse_core.Document] --> Client[VespaPyClient]
+    Client --> Process[process(doc)<br/>Convert to Vespa format]
+
+    Process --> Embeddings[VespaEmbeddingProcessor<br/>Float + Binary + Hex]
+    Process --> Fields[Map to schema fields]
+
+    Embeddings --> VespaDoc[Vespa Document]
+    Fields --> VespaDoc
+
+    VespaDoc --> Feed[app.feed_iterable()<br/>PyVespa batch feed]
+    Feed --> Retry[Automatic Retry<br/>pyvespa handles retries]
+    Retry --> Success[Track Success/Failure]
+
+    style Documents fill:#e1f5ff
+    style Client fill:#fff4e1
+    style Success fill:#e1ffe1
+```
+
+#### Tenant-Aware Ingestion
+
+```python
+from cogniverse_vespa.ingestion_client import VespaPyClient
+from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+from cogniverse_core.common.document import Document
+
+# 1. Ensure tenant schema exists
+schema_manager = TenantSchemaManager()
+schema_manager.ensure_tenant_schema_exists(
+    tenant_id="acme",
+    base_schema_name="video_colpali_smol500_mv_frame"
+)
+
+# 2. Get tenant schema name
+tenant_schema = schema_manager.get_tenant_schema_name(
+    tenant_id="acme",
+    base_schema_name="video_colpali_smol500_mv_frame"
+)
+
+# 3. Initialize client with configuration
+config = {
+    "schema_name": tenant_schema,  # video_colpali_smol500_mv_frame_acme
+    "base_schema_name": "video_colpali_smol500_mv_frame",
+    "vespa_url": "http://localhost",
+    "vespa_port": 8080,
+    "feed_max_queue_size": 500,
+    "feed_max_workers": 4,
+    "feed_max_connections": 8
+}
+
+client = VespaPyClient(config=config)
+
+# 4. Connect to Vespa
+client.connect()
+
+# 5. Process documents and feed
+processed_docs = [client.process(doc) for doc in documents]
+success_count, failed_ids = client._feed_prepared_batch(processed_docs, batch_size=100)
+print(f"Ingested {success_count}/{len(documents)} documents to {tenant_schema}")
+```
+
+#### Document Processing
+
+```python
+from cogniverse_core.common.document import Document
+import numpy as np
+
+# Create Document (universal format)
+doc = Document(
+    id="video123_segment_0",
+    content="Chopping vegetables",
+    metadata={
+        "start_time": 2.5,
+        "end_time": 3.0,
+        "segment_index": 0,
+        "total_segments": 10,
+        "audio_transcript": "First, we chop the vegetables",
+        "description": "Cooking tutorial scene"
+    },
+    embeddings={
+        "embedding": np.random.randn(1024, 128)  # ColPali embeddings
+    }
+)
+
+# Process converts to Vespa format automatically:
+# 1. Extracts embeddings and converts to hex/binary (VespaEmbeddingProcessor)
+# 2. Maps Document fields to schema fields
+# 3. Adds creation timestamp
+# 4. Creates proper Vespa document structure
+vespa_doc = client.process(doc)
+
+# vespa_doc structure:
+# {
+#     "put": "id:video:video_colpali_smol500_mv_frame_acme::video123_segment_0",
+#     "fields": {
+#         "creation_timestamp": 1729350000000,
+#         "embedding": "0x4142...",  # Hex-encoded float embeddings
+#         "embedding_binary": [1, 0, 1, ...],  # Binary embeddings
+#         "start_time": 2.5,
+#         "end_time": 3.0,
+#         "segment_id": 0,
+#         "total_segments": 10,
+#         "audio_transcript": "First, we chop the vegetables",
+#         "segment_description": "Cooking tutorial scene"
+#     }
+# }
+```
+
+#### Batch Feed Configuration
+
+```python
+# Production-ready configuration (via config dict or environment variables)
+config = {
+    "schema_name": tenant_schema,
+    "base_schema_name": "video_colpali_smol500_mv_frame",
+    "vespa_url": "http://localhost",
+    "vespa_port": 8080,
+
+    # Feed configuration (can be overridden by environment variables)
+    "feed_max_queue_size": 500,      # VESPA_FEED_MAX_QUEUE_SIZE
+    "feed_max_workers": 4,            # VESPA_FEED_MAX_WORKERS
+    "feed_max_connections": 8,        # VESPA_FEED_MAX_CONNECTIONS
+    "feed_compress": "auto"           # VESPA_FEED_COMPRESS
+}
+
+# Or use environment variables:
+# export VESPA_FEED_MAX_QUEUE_SIZE=1000
+# export VESPA_FEED_MAX_WORKERS=8
+# export VESPA_FEED_MAX_CONNECTIONS=16
+
+client = VespaPyClient(config=config)
+
+# Feed uses pyvespa's feed_iterable with these settings automatically
+```
+
+---
+
+## Schema Deployment
+
+### JSON Schema Parser
+
+**Location**: `libs/vespa/cogniverse_vespa/json_schema_parser.py`
+**Purpose**: Parse JSON schema definitions to PyVespa objects
+
+#### Schema Template Structure
+
+Base schemas are stored in `configs/schemas/`:
+
+```json
+{
+  "name": "video_colpali_smol500_mv_frame",
+  "document": {
+    "name": "video_colpali_smol500_mv_frame",
+    "fields": [
+      {
+        "name": "video_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "embedding",
+        "type": "tensor<float>(patch{}, v[128])",
+        "indexing": ["attribute"]
+      }
+    ]
+  },
+  "rank_profiles": [
+    {
+      "name": "colpali",
+      "inputs": [
+        {"name": "query(qt)", "type": "tensor<float>(querytoken{}, v[128])"}
+      ],
+      "first_phase": {
+        "expression": "sum(reduce(sum(query(qt) * attribute(embedding), v), max, patch), querytoken)"
+      }
+    }
+  ]
+}
+```
+
+#### Parsing and Deployment
+
+```python
+from cogniverse_vespa.json_schema_parser import JsonSchemaParser
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
+# Parse JSON schema
+parser = JsonSchemaParser()
+schema = parser.load_schema_from_json_file(
+    "configs/schemas/video_colpali_smol500_mv_frame_schema.json"
+)
+
+# Deploy schema
+schema_manager = VespaSchemaManager(
+    vespa_endpoint="http://localhost",
+    vespa_port=19071  # Config server port
+)
+
+schema_manager.deploy_schema(schema, app_name="videosearch")
 ```
 
 ---
 
 ## Usage Examples
 
-### Example 1: Multi-Tenant Setup and Search
+### Example 1: Tenant Onboarding
 
 ```python
-from src.backends.vespa.tenant_schema_manager import TenantSchemaManager
-from src.backends.vespa.tenant_aware_vespa_search_client import TenantAwareVespaSearchClient
+from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
 
-# Initialize schema manager
-schema_manager = TenantSchemaManager(
-    vespa_url="http://localhost",
-    vespa_port=8080
-)
-
-# Register tenant (creates schemas lazily)
-schema_manager.register_tenant(
-    tenant_id="acme:production",
-    profile_configs=["video_colpali_smol500_mv_frame"]
-)
-
-# Initialize tenant-aware search client
-search_client = TenantAwareVespaSearchClient(
-    profile="video_colpali_smol500_mv_frame",
-    vespa_url="http://localhost",
-    vespa_port=8080
-)
-
-# Execute tenant-isolated search
-results = search_client.search(
-    query_params={
-        "query": "person walking in park",
-        "ranking": "hybrid_float_bm25",
-        "top_k": 10
-    },
-    tenant_id="acme:production"  # Required
-)
-
-# Results only from acme:production schema
-for result in results:
-    print(f"Video: {result['video_title']}")
-    print(f"  Frame {result['frame_id']} @ {result['start_time']}s")
-    print(f"  Relevance: {result['relevance']:.3f}")
-```
-
-### Example 2: Multi-Tenant Document Ingestion
-
-```python
-from src.backends.vespa.tenant_schema_manager import TenantSchemaManager
-from src.backends.vespa.ingestion_client import VespaPyClient
-from src.common.document import Document
-from src.common.tenant_utils import parse_tenant_id
-import numpy as np
-
-# Parse tenant ID
-tenant_id = "acme:production"
-org_id, tenant_name = parse_tenant_id(tenant_id)
-
-# Get tenant-specific schema name
+# New tenant "acme" starts using the system
 schema_manager = TenantSchemaManager()
-schema_name = schema_manager.get_schema_name(
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id=tenant_id
-)
-# Returns: "video_colpali_smol500_mv_frame_acme_production"
 
-# Initialize client with tenant schema
-client = VespaPyClient(
-    config={
-        "schema_name": schema_name,  # Tenant-specific schema
-        "vespa_url": "http://localhost",
-        "vespa_port": 8080,
-        "feed_max_queue_size": 500,
-        "feed_max_workers": 4
-    },
-    logger=logger
-)
-
-client.connect()
-
-# Create documents
-documents = []
-for i in range(100):
-    doc = Document(
-        id=f"video123_frame_{i}",
-        embeddings={
-            "embedding": {"data": np.random.randn(1024, 128)}
-        },
-        metadata={
-            "frame_id": i,
-            "start_time": i * 0.5,
-            "end_time": (i + 1) * 0.5,
-            "frame_description": f"Frame {i} description",
-            "audio_transcript": f"Transcript for frame {i}"
-        }
-    )
-    documents.append(doc)
-
-# Process and feed to tenant schema
-vespa_docs = [client.process(doc) for doc in documents]
-success_count, failed_ids = client._feed_prepared_batch(
-    documents=vespa_docs,
-    batch_size=100
-)
-
-print(f"Fed {success_count} documents to {tenant_id}")
-```
-
-### Example 3: Cross-Tenant Isolation Verification
-
-```python
-from src.backends.vespa.tenant_aware_vespa_search_client import TenantAwareVespaSearchClient
-
-client = TenantAwareVespaSearchClient(
-    profile="video_colpali_smol500_mv_frame",
-    vespa_url="http://localhost",
-    vespa_port=8080
-)
-
-# Search in acme:production
-results_acme_prod = client.search(
-    query_params={"query": "test video", "ranking": "bm25_only", "top_k": 10},
-    tenant_id="acme:production"
-)
-
-# Search in acme:staging (different tenant, completely isolated data)
-results_acme_staging = client.search(
-    query_params={"query": "test video", "ranking": "bm25_only", "top_k": 10},
-    tenant_id="acme:staging"
-)
-
-# Results are completely different - no shared data
-assert results_acme_prod != results_acme_staging
-print(f"Production results: {len(results_acme_prod)}")
-print(f"Staging results: {len(results_acme_staging)}")
-print("Complete tenant isolation verified!")
-```
-
-### Example 4: Tenant Schema Management
-
-```python
-from src.backends.vespa.tenant_schema_manager import TenantSchemaManager
-
-manager = TenantSchemaManager(
-    vespa_url="http://localhost",
-    vespa_port=8080
-)
-
-# Register new tenant with multiple profiles
-manager.register_tenant(
-    tenant_id="acme:dev",
-    profile_configs=[
-        "video_colpali_smol500_mv_frame",
-        "video_videoprism_base_mv_chunk_30s",
-        "video_colqwen_omni_mv_chunk_30s"
-    ]
-)
-
-# Creates schemas:
-# - video_colpali_smol500_mv_frame_acme_dev
-# - video_videoprism_base_mv_chunk_30s_acme_dev
-# - video_colqwen_omni_mv_chunk_30s_acme_dev
-
-# Get schema names
-colpali_schema = manager.get_schema_name(
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id="acme:dev"
-)
-print(f"ColPali schema: {colpali_schema}")
-
-# Delete tenant schemas
-deleted_count = manager.delete_tenant_schemas("acme:dev")
-print(f"Deleted {deleted_count} schemas for acme:dev")
-```
-
-### Example 5: Strategy Benchmarking (Multi-Tenant)
-
-```python
-from src.backends.vespa.tenant_aware_vespa_search_client import TenantAwareVespaSearchClient
-
-client = TenantAwareVespaSearchClient(
-    profile="video_colpali_smol500_mv_frame",
-    vespa_url="http://localhost",
-    vespa_port=8080
-)
-
-# Compare strategies on same query within single tenant
-strategies = [
-    "bm25_only",
-    "binary_binary",
-    "float_float",
-    "hybrid_float_bm25"
+# Deploy all required schemas for tenant
+schemas_to_deploy = [
+    "video_colpali_smol500_mv_frame",
+    "video_videoprism_base_mv_chunk_30s",
+    "agent_memories"
 ]
 
-results_by_strategy = {}
-for strategy in strategies:
-    results = client.search(
-        query_params={
-            "query": "Boston Dynamics robot demonstration",
-            "ranking": strategy,
-            "top_k": 10
-        },
-        tenant_id="acme:production"
+for base_schema in schemas_to_deploy:
+    schema_manager.ensure_tenant_schema_exists(
+        tenant_id="acme",
+        base_schema_name=base_schema
     )
-    results_by_strategy[strategy] = results
-    print(f"{strategy}: {len(results)} results")
+    print(f"✅ Deployed {base_schema} for acme")
 
-# All strategies search same tenant data (acme:production)
-# Results vary by ranking strategy, not by tenant
+# List all schemas for tenant
+deployed_schemas = schema_manager.list_tenant_schemas("acme")
+print(f"Tenant 'acme' schemas: {deployed_schemas}")
+# ['video_colpali_smol500_mv_frame_acme',
+#  'video_videoprism_base_mv_chunk_30s_acme',
+#  'agent_memories_acme']
 ```
 
----
+### Example 2: Tenant-Scoped Search
 
-## Production Considerations
-
-### 1. Tenant Isolation Guarantees
-
-**Schema-Per-Tenant Architecture**:
-- Each tenant has dedicated Vespa schemas
-- Zero possibility of cross-tenant data leakage
-- Automatic routing enforced at search client level
-- Validation at all entry points (parse_tenant_id)
-
-**Tenant Validation**:
 ```python
-from src.common.tenant_utils import parse_tenant_id, validate_org_id, validate_tenant_name
+from cogniverse_vespa.vespa_search_client import VespaSearchClient
+from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
 
-# Always validate before using tenant_id
-try:
-    org_id, tenant_name = parse_tenant_id("acme:production")
-    validate_org_id(org_id)
-    validate_tenant_name(tenant_name)
-except ValueError as e:
-    # Handle invalid tenant_id
-    logger.error(f"Invalid tenant_id: {e}")
+def search_for_tenant(tenant_id: str, query: str) -> list:
+    """
+    Search videos for specific tenant.
+
+    Args:
+        tenant_id: Tenant identifier
+        query: Search query
+
+    Returns:
+        Search results from tenant-specific schema
+    """
+    # Get tenant schema
+    schema_manager = TenantSchemaManager()
+    schema_manager.ensure_tenant_schema_exists(
+        tenant_id=tenant_id,
+        base_schema_name="video_colpali_smol500_mv_frame"
+    )
+
+    tenant_schema = schema_manager.get_tenant_schema_name(
+        tenant_id=tenant_id,
+        base_schema_name="video_colpali_smol500_mv_frame"
+    )
+
+    # Initialize client
+    client = VespaSearchClient(
+        host="localhost",
+        port=8080,
+        schema=tenant_schema
+    )
+
+    # Search
+    results = client.search(
+        query=query,
+        top_k=10,
+        ranking="hybrid_float_bm25"
+    )
+
+    return results
+
+
+# Use for different tenants
+acme_results = search_for_tenant("acme", "cooking videos")
+startup_results = search_for_tenant("startup", "cooking videos")
+
+# Completely isolated - different data sets
 ```
 
-### 2. Embedding Format Selection
+### Example 3: Tenant-Scoped Ingestion
 
-**Float Embeddings (bfloat16 hex)**:
-- **Use when**: Accuracy is critical, acceptable latency (~50-200ms)
-- **Tradeoff**: Higher precision, slower search, larger storage
-- **Strategies**: FLOAT_FLOAT, HYBRID_FLOAT_BM25, HYBRID_BM25_FLOAT
-- **Storage**: ~2KB per frame for ColPali (1024 patches × 128 dims × 2 bytes)
-
-**Binary Embeddings (int8 hex)**:
-- **Use when**: Speed is critical, high throughput needed
-- **Tradeoff**: Lower precision (~90-95% of float accuracy), 10x faster, 16x smaller storage
-- **Strategies**: BINARY_BINARY, HYBRID_BINARY_BM25, HYBRID_BM25_BINARY
-- **Storage**: ~128 bytes per frame (1024 patches × 128 bits / 8)
-
-**Hybrid (Binary 1st phase + Float 2nd phase)**:
-- **Use when**: Best of both worlds - fast retrieval, precise reranking
-- **Tradeoff**: Requires storing both formats (2.1KB total)
-- **Strategies**: PHASED, FLOAT_BINARY
-- **Recommended**: Default choice for production video search
-
-### 3. Batch Feeding Configuration
-
-**Production-Ready Settings**:
 ```python
-feed_config = {
-    "max_queue_size": 500,      # Higher = better throughput, more memory
-    "max_workers": 4,            # CPU cores / 2 for CPU-bound tasks
-    "max_connections": 8,        # 2x max_workers for I/O overlap
-    "compress": "auto"           # Enable compression for network efficiency
-}
+from cogniverse_vespa.ingestion_client import VespaPyClient
+from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+import numpy as np
+
+def ingest_videos_for_tenant(
+    tenant_id: str,
+    video_frames: list
+) -> tuple[int, list]:
+    """
+    Ingest video frames for specific tenant.
+
+    Args:
+        tenant_id: Tenant identifier
+        video_frames: List of frame documents
+
+    Returns:
+        (success_count, failed_ids)
+    """
+    # Get tenant schema
+    schema_manager = TenantSchemaManager()
+    schema_manager.ensure_tenant_schema_exists(
+        tenant_id=tenant_id,
+        base_schema_name="video_colpali_smol500_mv_frame"
+    )
+
+    tenant_schema = schema_manager.get_tenant_schema_name(
+        tenant_id=tenant_id,
+        base_schema_name="video_colpali_smol500_mv_frame"
+    )
+
+    # Initialize VespaPyClient
+    config = {
+        "schema_name": tenant_schema,
+        "vespa_url": "http://localhost",
+        "vespa_port": 8080
+    }
+    client = VespaPyClient(config=config)
+    client.connect()
+
+    # Process and ingest
+    processed_docs = [client.process(doc) for doc in video_frames]
+    success_count, failed_ids = client._feed_prepared_batch(processed_docs, batch_size=100)
+
+    print(f"Ingested {success_count}/{len(video_frames)} frames")
+    print(f"Schema: {tenant_schema}")
+
+    return success_count, failed_ids
+
+
+# Ingest for tenant "acme"
+frames_acme = [
+    {
+        "id": f"acme_video1_frame_{i}",
+        "fields": {
+            "video_id": "video1",
+            "frame_id": i,
+            "embedding": np.random.randn(1024, 128),
+            "video_title": "Cooking Tutorial"
+        }
+    }
+    for i in range(100)
+]
+
+success, failed = ingest_videos_for_tenant("acme", frames_acme)
+# Ingests to video_colpali_smol500_mv_frame_acme
 ```
 
-**Tuning Guidelines**:
-- **High throughput** (>1000 docs/sec): Increase `max_workers` to 8-16, `max_queue_size` to 1000
-- **Memory constrained**: Reduce `max_queue_size` to 100-200
-- **Network constrained**: Enable `compress: true`, reduce `batch_size` to 50
-- **Error-prone network**: Enable retry logic, reduce `max_connections` to 4
+### Example 4: Agent Integration
 
-### 4. Multi-Tenant Schema Design
+```python
+from cogniverse_agents.video_search_agent import VideoSearchAgent
 
-**Tenant-Specific Schema Naming**:
-- Pattern: `{profile}_{org}_{tenant}`
-- Example: `video_colpali_smol500_mv_frame_acme_production`
-- Enforced by TenantSchemaManager
+# Agent automatically handles tenant schema management
+agent = VideoSearchAgent(
+    tenant_id="acme",  # REQUIRED
+    vespa_host="localhost",
+    vespa_port=8080,
+    profile="video_colpali_smol500_mv_frame"
+)
 
-**Field Indexing** (same for all tenant schemas):
-- **attribute + fast-search**: IDs, timestamps for filtering
-- **index + enable-bm25**: Text fields for search
-- **attribute only**: Embeddings
-- **summary**: Fields to return in results
+# Agent internally:
+# 1. Uses TenantSchemaManager to ensure schema exists
+# 2. Gets tenant-specific schema name
+# 3. Initializes VespaSearchClient with tenant schema
+# 4. All searches automatically scoped to tenant
 
-**Metadata Schemas** (global, shared across tenants):
-- `organization_metadata`: Organization info
-- `tenant_metadata`: Tenant info
-- Not isolated - used for tenant management only
-
-### 5. Performance Benchmarks
-
-**Search Latency** (ColPali, 10K frames per tenant):
-- **BM25_ONLY**: 5-10ms (no embeddings)
-- **BINARY_BINARY**: 20-30ms (fast visual)
-- **FLOAT_FLOAT**: 150-200ms (precise visual)
-- **HYBRID_FLOAT_BM25**: 180-250ms (best accuracy)
-- **PHASED**: 40-60ms (binary recall + float rerank)
-
-**Note**: Latency is per-tenant. Multiple tenants do not significantly impact individual tenant performance due to schema isolation.
-
-**Storage Requirements** (per frame per tenant):
-- **Float embeddings**: 2KB
-- **Binary embeddings**: 128 bytes
-- **Text fields**: 500 bytes avg
-- **Total per frame**: ~2.6KB
-
-**Scaling**: 100 tenants × 10K frames × 2.6KB = 2.6GB (manageable)
+results = await agent.search_by_text("cooking videos")
+# Searches video_colpali_smol500_mv_frame_acme
+```
 
 ---
 
 ## Testing
 
-### Key Test Files
+### Unit Tests
 
-**Unit Tests**:
-- `tests/backends/unit/test_embedding_processor.py` - Embedding format conversion
-- `tests/backends/unit/test_strategy_aware_processor.py` - Strategy requirement detection
-- `tests/backends/unit/test_tenant_schema_manager.py` - Tenant schema management
-- `tests/backends/unit/test_tenant_aware_search.py` - Tenant-aware search routing
+**Location**: `tests/backends/unit/`
 
-**Integration Tests**:
-- `tests/ingestion/integration/test_backend_ingestion.py` - End-to-end document feeding
-- `tests/system/test_real_system_integration.py` - Real Vespa connection and search
-- `tests/agents/integration/test_video_search_agent_integration.py` - Multi-tenant search integration
+```python
+# tests/backends/unit/test_tenant_schema_manager.py
 
-**Test Scenarios**:
+import pytest
+from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
 
-1. **Tenant Isolation**:
-   ```python
-   # Verify cross-tenant isolation
-   client = TenantAwareVespaSearchClient(profile="video_colpali_smol500_mv_frame")
+class TestTenantSchemaManager:
+    def test_schema_name_generation(self):
+        """Test tenant schema naming"""
+        manager = TenantSchemaManager()
 
-   results_tenant1 = client.search(
-       {"query": "test", "ranking": "bm25_only", "top_k": 10},
-       tenant_id="acme:production"
-   )
+        # Simple format
+        schema = manager.get_tenant_schema_name("acme", "video_frames")
+        assert schema == "video_frames_acme"
 
-   results_tenant2 = client.search(
-       {"query": "test", "ranking": "bm25_only", "top_k": 10},
-       tenant_id="initech:production"
-   )
+        # Org:tenant format
+        schema = manager.get_tenant_schema_name("acme:production", "video_frames")
+        assert schema == "video_frames_acme_production"
 
-   # Verify no overlap
-   assert set(r['id'] for r in results_tenant1).isdisjoint(
-       set(r['id'] for r in results_tenant2)
-   )
-   ```
+    def test_schema_exists_check(self):
+        """Test schema existence check"""
+        manager = TenantSchemaManager()
 
-2. **Schema Management**:
-   ```python
-   manager = TenantSchemaManager()
+        # First call deploys schema
+        result = manager.ensure_tenant_schema_exists("test_tenant", "video_frames")
+        assert result is True
 
-   # Register tenant
-   manager.register_tenant("acme:dev", ["video_colpali_smol500_mv_frame"])
+        # Second call returns cached result
+        result = manager.ensure_tenant_schema_exists("test_tenant", "video_frames")
+        assert result is True
 
-   # Verify schema exists
-   schema_name = manager.get_schema_name(
-       "video_colpali_smol500_mv_frame",
-       "acme:dev"
-   )
-   assert schema_name == "video_colpali_smol500_mv_frame_acme_dev"
+    def test_tenant_isolation(self):
+        """Verify tenants have separate schemas"""
+        manager = TenantSchemaManager()
 
-   # Delete and verify
-   manager.delete_tenant_schemas("acme:dev")
-   ```
+        schema_a = manager.get_tenant_schema_name("tenant_a", "video_frames")
+        schema_b = manager.get_tenant_schema_name("tenant_b", "video_frames")
 
-3. **Tenant ID Validation**:
-   ```python
-   from src.common.tenant_utils import parse_tenant_id
+        assert schema_a != schema_b
+        assert schema_a == "video_frames_tenant_a"
+        assert schema_b == "video_frames_tenant_b"
+```
 
-   # Valid formats
-   assert parse_tenant_id("acme:production") == ("acme", "production")
-   assert parse_tenant_id("org_123:tenant-456") == ("org_123", "tenant-456")
+### Integration Tests
 
-   # Invalid formats
-   with pytest.raises(ValueError):
-       parse_tenant_id("invalid")  # Missing colon
+**Location**: `tests/backends/integration/`
 
-   with pytest.raises(ValueError):
-       parse_tenant_id("acme-corp:prod")  # Hyphen in org (invalid)
-   ```
+```python
+# tests/backends/integration/test_vespa_search_integration.py
+
+import pytest
+from cogniverse_vespa.vespa_search_client import VespaSearchClient
+from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+
+@pytest.mark.integration
+class TestVespaSearchIntegration:
+    @pytest.fixture
+    def tenant_id(self):
+        return "test_tenant_integration"
+
+    @pytest.fixture
+    def client(self, tenant_id):
+        """Create client with real Vespa connection"""
+        # Ensure schema exists
+        schema_manager = TenantSchemaManager()
+        schema_manager.ensure_tenant_schema_exists(
+            tenant_id,
+            "video_colpali_smol500_mv_frame"
+        )
+
+        # Get tenant schema
+        tenant_schema = schema_manager.get_tenant_schema_name(
+            tenant_id,
+            "video_colpali_smol500_mv_frame"
+        )
+
+        # Create client
+        client = VespaSearchClient(
+            host="localhost",
+            port=8080,
+            schema=tenant_schema
+        )
+        return client
+
+    def test_search_with_tenant_schema(self, client):
+        """Test search uses tenant schema"""
+        results = client.search(
+            query="test query",
+            top_k=5
+        )
+
+        assert isinstance(results, list)
+        # Results depend on ingested data
+
+    def test_tenant_isolation(self):
+        """Verify tenants cannot access each other's data"""
+        schema_manager = TenantSchemaManager()
+
+        # Setup tenant A
+        schema_manager.ensure_tenant_schema_exists("tenant_a", "video_frames")
+        client_a = VespaSearchClient(
+            host="localhost",
+            port=8080,
+            schema=schema_manager.get_tenant_schema_name("tenant_a", "video_frames")
+        )
+
+        # Setup tenant B
+        schema_manager.ensure_tenant_schema_exists("tenant_b", "video_frames")
+        client_b = VespaSearchClient(
+            host="localhost",
+            port=8080,
+            schema=schema_manager.get_tenant_schema_name("tenant_b", "video_frames")
+        )
+
+        # Search with both clients
+        results_a = client_a.search("test")
+        results_b = client_b.search("test")
+
+        # Results are from different schemas (different data)
+        # Physical isolation ensures no cross-tenant access
+```
+
+### Test Fixtures
+
+```python
+# tests/conftest.py
+
+import pytest
+from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+
+@pytest.fixture
+def test_tenant_id():
+    """Unique tenant ID for tests"""
+    import uuid
+    return f"test_tenant_{uuid.uuid4().hex[:8]}"
+
+@pytest.fixture
+def schema_manager():
+    """TenantSchemaManager instance"""
+    return TenantSchemaManager(
+        vespa_url="localhost",
+        vespa_port=8080
+    )
+
+@pytest.fixture
+def cleanup_tenant_schemas(test_tenant_id, schema_manager):
+    """Cleanup tenant schemas after test"""
+    yield
+
+    # Cleanup
+    schema_manager.delete_tenant_schemas(test_tenant_id)
+```
 
 ---
 
-**Key File References**:
-- `src/backends/vespa/tenant_schema_manager.py` - Multi-tenant schema management
-- `src/backends/vespa/tenant_aware_vespa_search_client.py` - Tenant-aware search routing
-- `src/backends/vespa/vespa_search_client.py` - Base search client (14 strategies)
-- `src/backends/vespa/embedding_processor.py` - Embedding format conversion
-- `src/backends/vespa/ingestion_client.py` - Production document feeding
-- `src/common/tenant_utils.py` - Tenant ID parsing and validation
+## Best Practices
 
-**Related Documentation**:
-- [Multi-Tenant Management](../operations/multi-tenant-management.md) - Complete tenant lifecycle guide
-- [Agents Module](agents.md) - Tenant-aware agent initialization
-- [Deployment Guide](../operations/deployment.md) - Multi-tenant deployment procedures
+### 1. Always Use TenantSchemaManager
+
+```python
+# ✅ Good: Use TenantSchemaManager
+schema_manager = TenantSchemaManager()
+schema_manager.ensure_tenant_schema_exists("acme", "video_frames")
+tenant_schema = schema_manager.get_tenant_schema_name("acme", "video_frames")
+
+client = VespaSearchClient(schema=tenant_schema)
+
+# ❌ Bad: Hardcode schema names
+client = VespaSearchClient(schema="video_frames")  # No tenant isolation!
+```
+
+### 2. Ensure Schemas Exist Before Use
+
+```python
+# Always ensure schema exists before creating client
+schema_manager.ensure_tenant_schema_exists(tenant_id, base_schema)
+
+# Then create client
+client = VespaSearchClient(
+    schema=schema_manager.get_tenant_schema_name(tenant_id, base_schema)
+)
+```
+
+### 3. Test Tenant Isolation
+
+```python
+# Always verify tenants are isolated
+def test_tenant_isolation():
+    schema_a = schema_manager.get_tenant_schema_name("tenant_a", "video_frames")
+    schema_b = schema_manager.get_tenant_schema_name("tenant_b", "video_frames")
+
+    assert schema_a != schema_b
+```
+
+### 4. Use Batch Ingestion
+
+```python
+# ✅ Good: Batch ingestion
+config = {"schema_name": tenant_schema}
+client = VespaPyClient(config=config)
+client.connect()
+processed = [client.process(doc) for doc in documents]
+success, failed = client._feed_prepared_batch(processed, batch_size=100)
+
+# ❌ Bad: Individual document feeding
+for doc in documents:
+    client.feed_single(doc)  # Slow!
+```
 
 ---
 
-**Last Updated:** 2025-10-09
-**Maintainer:** Development Team
-**Status:** Phase 7 Multi-Tenant Architecture Complete
+## Related Documentation
+
+- [SDK Architecture](../architecture/sdk-architecture.md) - Package structure
+- [Multi-Tenant Architecture](../architecture/multi-tenant.md) - Tenant isolation details
+- [Agents Module](./agents.md) - Agent integration with Vespa backend
+- [Common Module](./common.md) - Shared utilities
+
+---
+
+**Summary**: The Vespa package provides tenant-aware backend integration with physical data isolation via schema-per-tenant. All clients are tenant-scoped, and TenantSchemaManager handles schema lifecycle management transparently.

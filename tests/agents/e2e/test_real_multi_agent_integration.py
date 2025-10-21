@@ -16,14 +16,14 @@ import pytest
 
 # E2E tests require Ollama server with smollm3:8b model
 # Run with: pytest tests/agents/e2e/test_real_multi_agent_integration.py -v
-from src.app.agents.detailed_report_agent import DetailedReportAgent
-from src.app.agents.dspy_agent_optimizer import (
+from cogniverse_agents.detailed_report_agent import DetailedReportAgent
+from cogniverse_agents.dspy_agent_optimizer import (
     DSPyAgentOptimizerPipeline,
     DSPyAgentPromptOptimizer,
 )
-from src.app.agents.query_analysis_tool_v3 import QueryAnalysisToolV3
-from src.app.agents.routing_agent import RoutingAgent
-from src.app.agents.summarizer_agent import SummarizerAgent
+from cogniverse_agents.query_analysis_tool_v3 import QueryAnalysisToolV3
+from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.summarizer_agent import SummarizerAgent
 
 # Configure logging for tests
 logging.basicConfig(level=logging.INFO)
@@ -153,8 +153,8 @@ class TestRealAgentRoutingIntegration:
 
         with dspy.context(lm=mock_lm), \
              patch.object(RoutingAgent, "_configure_dspy", return_value=None), \
-             patch("src.app.agents.dspy_a2a_agent_base.FastAPI"), \
-             patch("src.app.agents.dspy_a2a_agent_base.A2AClient"):
+             patch("cogniverse_agents.dspy_a2a_agent_base.FastAPI"), \
+             patch("cogniverse_agents.dspy_a2a_agent_base.A2AClient"):
             routing_agent = RoutingAgent(tenant_id="test_tenant", port=8001, enable_telemetry=False)
 
         # Test routing decisions for different query types
@@ -213,16 +213,15 @@ class TestRealAgentSpecializationIntegration:
         from unittest.mock import patch
 
         import dspy
-
-        from src.app.agents.summarizer_agent import SummaryRequest
+        from cogniverse_agents.summarizer_agent import SummaryRequest
 
         # E2E test - requires real Ollama, works in production
         # Configure DSPy with correct model before creating agent
         test_lm = dspy.LM(model="ollama/gemma3:4b", api_base="http://localhost:11434")
 
         with dspy.context(lm=test_lm), \
-             patch("src.app.agents.dspy_a2a_agent_base.FastAPI"), \
-             patch("src.app.agents.dspy_a2a_agent_base.A2AClient"):
+             patch("cogniverse_agents.dspy_a2a_agent_base.FastAPI"), \
+             patch("cogniverse_agents.dspy_a2a_agent_base.A2AClient"):
             summarizer = SummarizerAgent(tenant_id="test_tenant")
 
             # Test content summarization - use SummaryRequest with search_results
@@ -275,11 +274,11 @@ class TestRealAgentSpecializationIntegration:
         """Test real detailed report generation with local Ollama model."""
         from unittest.mock import patch
 
-        from src.app.agents.detailed_report_agent import ReportRequest
+        from cogniverse_agents.detailed_report_agent import ReportRequest
 
         # E2E test - requires real Ollama, works in production
-        with patch("src.app.agents.dspy_a2a_agent_base.FastAPI"), \
-             patch("src.app.agents.dspy_a2a_agent_base.A2AClient"):
+        with patch("cogniverse_agents.dspy_a2a_agent_base.FastAPI"), \
+             patch("cogniverse_agents.dspy_a2a_agent_base.A2AClient"):
             report_agent = DetailedReportAgent(tenant_id="test_tenant")
 
             # Mock search results for testing
@@ -437,7 +436,7 @@ class TestRealEndToEndWorkflow:
         """Test complete multi-agent workflow with real LLMs."""
         from unittest.mock import patch
 
-        from src.app.agents.summarizer_agent import SummaryRequest
+        from cogniverse_agents.summarizer_agent import SummaryRequest
 
         # Initialize all agents
         query_analyzer = QueryAnalysisToolV3(
@@ -448,8 +447,8 @@ class TestRealEndToEndWorkflow:
 
         # E2E test - requires real Ollama, works in production
         with patch.object(RoutingAgent, "_configure_dspy", return_value=None), \
-             patch("src.app.agents.dspy_a2a_agent_base.FastAPI"), \
-             patch("src.app.agents.dspy_a2a_agent_base.A2AClient"):
+             patch("cogniverse_agents.dspy_a2a_agent_base.FastAPI"), \
+             patch("cogniverse_agents.dspy_a2a_agent_base.A2AClient"):
             routing_agent = RoutingAgent(tenant_id="test_tenant", port=8001, enable_telemetry=False)
             summarizer = SummarizerAgent(tenant_id="test_tenant")
 

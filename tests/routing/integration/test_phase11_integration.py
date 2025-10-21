@@ -11,15 +11,14 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-from src.app.routing.cross_modal_optimizer import CrossModalOptimizer
-from src.app.routing.modality_optimizer import ModalityOptimizer
-from src.app.routing.synthetic_data_generator import (
+from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
+from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
+from cogniverse_agents.routing.synthetic_data_generator import (
     ModalityExample,
     SyntheticDataGenerator,
 )
-from src.app.routing.xgboost_meta_models import TrainingStrategy
-from src.app.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.routing.xgboost_meta_models import TrainingStrategy
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 
 class TestPhase11Integration:
@@ -36,7 +35,7 @@ class TestPhase11Integration:
     async def test_end_to_end_optimization_workflow(self, temp_model_dir):
         """Test complete optimization workflow from spans to training"""
         # Mock Phoenix client to avoid external dependencies
-        with patch("src.app.routing.modality_span_collector.px.Client"):
+        with patch("cogniverse_agents.routing.modality_span_collector.px.Client"):
             # Step 1: Initialize components
             optimizer = ModalityOptimizer(
                 tenant_id="test-tenant",
@@ -162,7 +161,7 @@ class TestPhase11Integration:
     @pytest.mark.asyncio
     async def test_modality_optimizer_with_synthetic_strategy(self, temp_model_dir):
         """Test optimizer with synthetic training strategy"""
-        with patch("src.app.routing.modality_span_collector.px.Client"):
+        with patch("cogniverse_agents.routing.modality_span_collector.px.Client"):
             optimizer = ModalityOptimizer(
                 tenant_id="test-tenant",
                 model_dir=temp_model_dir,
@@ -208,7 +207,7 @@ class TestPhase11Integration:
     @pytest.mark.asyncio
     async def test_optimize_all_modalities(self, temp_model_dir):
         """Test optimizing multiple modalities"""
-        with patch("src.app.routing.modality_span_collector.px.Client"):
+        with patch("cogniverse_agents.routing.modality_span_collector.px.Client"):
             optimizer = ModalityOptimizer(
                 tenant_id="test-tenant",
                 model_dir=temp_model_dir,
@@ -303,7 +302,7 @@ class TestPhase11Integration:
     @pytest.mark.asyncio
     async def test_optimization_summary(self, temp_model_dir):
         """Test getting optimization summary"""
-        with patch("src.app.routing.modality_span_collector.px.Client"):
+        with patch("cogniverse_agents.routing.modality_span_collector.px.Client"):
             optimizer = ModalityOptimizer(
                 tenant_id="test-tenant",
                 model_dir=temp_model_dir,
@@ -328,7 +327,7 @@ class TestPhase11Integration:
 
     def test_modality_context_building(self, temp_model_dir):
         """Test building modeling context from examples"""
-        with patch("src.app.routing.modality_span_collector.px.Client"):
+        with patch("cogniverse_agents.routing.modality_span_collector.px.Client"):
             optimizer = ModalityOptimizer(
                 tenant_id="test-tenant",
                 model_dir=temp_model_dir,

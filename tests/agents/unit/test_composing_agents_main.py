@@ -18,6 +18,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+# Save original sys.modules state before mocking
+_original_sys_modules = {}
+_mocked_module_names = []
+
 # Mock external modules that aren't available in test environment
 mock_modules = {
     "google": MagicMock(),
@@ -31,7 +35,13 @@ mock_modules = {
     "gliner": MagicMock(),
 }
 
+# Track module names we're about to mock
+_mocked_module_names.extend(list(mock_modules.keys()))
+
+# Save original state and apply mocks
 for module_name, mock_module in mock_modules.items():
+    if module_name in sys.modules:
+        _original_sys_modules[module_name] = sys.modules[module_name]
     sys.modules[module_name] = mock_module
 
 
@@ -48,6 +58,32 @@ sys.modules["google.adk.runners"].Runner = MagicMock
 sys.modules["google.adk.sessions"].InMemorySessionService = MagicMock
 sys.modules["gliner"].GLiNER = MagicMock
 sys.modules["google.genai.types"].Part = MagicMock
+
+# Track additional module attributes we modified
+_mocked_module_names.extend(
+    [
+        "google.adk.tools",
+        "google.adk.agents",
+        "google.adk.runners",
+        "google.adk.sessions",
+        "gliner",
+        "google.genai.types",
+    ]
+)
+
+
+# Clean up function to restore sys.modules immediately when module exits
+def _cleanup_sys_modules():
+    """Restore sys.modules to pre-mock state"""
+    for module_name in _mocked_module_names:
+        if module_name in sys.modules:
+            if isinstance(sys.modules[module_name], MagicMock):
+                if module_name in _original_sys_modules:
+                    # Restore original module
+                    sys.modules[module_name] = _original_sys_modules[module_name]
+                else:
+                    # Remove mock module that wasn't there originally
+                    del sys.modules[module_name]
 
 
 # Mock config before any imports to handle module-level initialization
@@ -75,12 +111,12 @@ mock_config = MockConfig(
 )
 
 # Apply multiple config mocks to handle different access patterns
-config_patcher = patch("src.common.config_utils.get_config", return_value=mock_config)
+config_patcher = patch("cogniverse_core.config.utils.get_config", return_value=mock_config)
 config_patcher.start()
 
 # Also mock the config import in the composing_agents_main module specifically
 composing_config_patcher = patch(
-    "src.app.agents.composing_agents_main.get_config", return_value=mock_config
+    "cogniverse_agents.composing_agents_main.get_config", return_value=mock_config
 )
 composing_config_patcher.start()
 
@@ -88,8 +124,8 @@ composing_config_patcher.start()
 class TestEnhancedA2AClientTool:
     """Test the enhanced A2A client tool for agent communication"""
 
-    @patch("src.tools.a2a_utils.A2AClient")
-    @patch("src.common.config_utils.get_config")
+    @patch("cogniverse_agents.tools.a2a_utils.A2AClient")
+    @patch("cogniverse_core.config.utils.get_config")
     def test_tool_initialization(self, mock_get_config, mock_a2a_client):
         """Test basic tool initialization"""
         # Mock config
@@ -102,7 +138,7 @@ class TestEnhancedA2AClientTool:
         mock_a2a_client.return_value = mock_client_instance
 
         # Now import and test
-        from src.app.agents.composing_agents_main import EnhancedA2AClientTool
+        from cogniverse_agents.composing_agents_main import EnhancedA2AClientTool
 
         tool = EnhancedA2AClientTool(
             name="TestAgent",
@@ -117,8 +153,8 @@ class TestEnhancedA2AClientTool:
         assert tool.result_type == "video"
         assert hasattr(tool, "client")
 
-    @patch("src.tools.a2a_utils.A2AClient")
-    @patch("src.common.config_utils.get_config")
+    @patch("cogniverse_agents.tools.a2a_utils.A2AClient")
+    @patch("cogniverse_core.config.utils.get_config")
     def test_tool_initialization_default_result_type(
         self, mock_get_config, mock_a2a_client
     ):
@@ -127,7 +163,7 @@ class TestEnhancedA2AClientTool:
         mock_config.get.return_value = 60.0
         mock_get_config.return_value = mock_config
 
-        from src.app.agents.composing_agents_main import EnhancedA2AClientTool
+        from cogniverse_agents.composing_agents_main import EnhancedA2AClientTool
 
         tool = EnhancedA2AClientTool(
             name="TestAgent",
@@ -139,8 +175,8 @@ class TestEnhancedA2AClientTool:
 
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
-    @patch("src.app.agents.composing_agents_main.format_search_results")
-    @patch("src.common.config_utils.get_config")
+    @patch("cogniverse_agents.composing_agents_main.format_search_results")
+    @patch("cogniverse_core.config.utils.get_config")
     async def test_execute_success(self, mock_get_config, mock_format):
         """Test successful execution with proper result formatting"""
         # Mock config
@@ -155,7 +191,7 @@ class TestEnhancedA2AClientTool:
 
         mock_format.return_value = "Formatted video results"
 
-        from src.app.agents.composing_agents_main import EnhancedA2AClientTool
+        from cogniverse_agents.composing_agents_main import EnhancedA2AClientTool
 
         tool = EnhancedA2AClientTool(
             name="TestAgent",
@@ -183,8 +219,8 @@ class TestEnhancedA2AClientTool:
         )
 
     @pytest.mark.asyncio
-    @patch("src.app.agents.composing_agents_main.format_search_results")
-    @patch("src.common.config_utils.get_config")
+    @patch("cogniverse_agents.composing_agents_main.format_search_results")
+    @patch("cogniverse_core.config.utils.get_config")
     async def test_execute_with_temporal_parameters(self, mock_get_config, mock_format):
         """Test execution with start_date and end_date parameters"""
         # Mock config
@@ -194,7 +230,7 @@ class TestEnhancedA2AClientTool:
 
         mock_format.return_value = "Formatted results"
 
-        from src.app.agents.composing_agents_main import EnhancedA2AClientTool
+        from cogniverse_agents.composing_agents_main import EnhancedA2AClientTool
 
         tool = EnhancedA2AClientTool(
             name="TestAgent",
@@ -225,14 +261,14 @@ class TestEnhancedA2AClientTool:
         )
 
     @pytest.mark.asyncio
-    @patch("src.common.config_utils.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     async def test_execute_agent_error_response(self, mock_get_config):
         """Test handling of error response from agent"""
         mock_config = MagicMock()
         mock_config.get.return_value = 60.0
         mock_get_config.return_value = mock_config
 
-        from src.app.agents.composing_agents_main import EnhancedA2AClientTool
+        from cogniverse_agents.composing_agents_main import EnhancedA2AClientTool
 
         tool = EnhancedA2AClientTool(
             name="TestAgent",
@@ -252,14 +288,14 @@ class TestEnhancedA2AClientTool:
         assert "Error from TestAgent: Connection failed" in result["formatted_results"]
 
     @pytest.mark.asyncio
-    @patch("src.common.config_utils.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     async def test_execute_exception_handling(self, mock_get_config):
         """Test exception handling during execution"""
         mock_config = MagicMock()
         mock_config.get.return_value = 60.0
         mock_get_config.return_value = mock_config
 
-        from src.app.agents.composing_agents_main import EnhancedA2AClientTool
+        from cogniverse_agents.composing_agents_main import EnhancedA2AClientTool
 
         tool = EnhancedA2AClientTool(
             name="TestAgent",
@@ -282,14 +318,14 @@ class TestEnhancedA2AClientTool:
 class TestQueryAnalysisTool:
     """Test the query analysis tool for intent detection and routing"""
 
-    @patch("src.common.config_utils.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     def test_tool_initialization_keyword_mode(self, mock_get_config):
         """Test initialization in keyword mode"""
         mock_config = MagicMock()
         mock_config.get.return_value = {"mode": "keyword"}
         mock_get_config.return_value = mock_config
 
-        from src.app.agents.composing_agents_main import QueryAnalysisTool
+        from cogniverse_agents.composing_agents_main import QueryAnalysisTool
 
         tool = QueryAnalysisTool()
 
@@ -303,13 +339,13 @@ class TestQueryAnalysisTool:
         mock_gliner.from_pretrained.return_value = mock_model
 
         # Create a new tool instance with GLiNER config
-        with patch("src.app.agents.composing_agents_main.config") as mock_config:
+        with patch("cogniverse_agents.composing_agents_main.config") as mock_config:
             mock_config.get.return_value = {
                 "mode": "gliner_only",
                 "current_gliner_model": "gliner-test-model",
             }
 
-            from src.app.agents.composing_agents_main import QueryAnalysisTool
+            from cogniverse_agents.composing_agents_main import QueryAnalysisTool
 
             tool = QueryAnalysisTool()
 
@@ -319,14 +355,14 @@ class TestQueryAnalysisTool:
 
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
-    @patch("src.common.config_utils.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     async def test_keyword_based_analysis_video_intent(self, mock_get_config):
         """Test keyword-based analysis detecting video search intent"""
         mock_config = MagicMock()
         mock_config.get.return_value = {"mode": "keyword"}
         mock_get_config.return_value = mock_config
 
-        from src.app.agents.composing_agents_main import QueryAnalysisTool
+        from cogniverse_agents.composing_agents_main import QueryAnalysisTool
 
         tool = QueryAnalysisTool()
         result = await tool.execute("show me video clips of meetings")
@@ -338,14 +374,14 @@ class TestQueryAnalysisTool:
         assert result["cleaned_query"] == "show me video clips of meetings"
 
     @pytest.mark.asyncio
-    @patch("src.common.config_utils.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     async def test_keyword_based_analysis_text_intent(self, mock_get_config):
         """Test keyword-based analysis detecting text search intent"""
         mock_config = MagicMock()
         mock_config.get.return_value = {"mode": "keyword"}
         mock_get_config.return_value = mock_config
 
-        from src.app.agents.composing_agents_main import QueryAnalysisTool
+        from cogniverse_agents.composing_agents_main import QueryAnalysisTool
 
         tool = QueryAnalysisTool()
         result = await tool.execute("find document reports about analysis")
@@ -357,7 +393,7 @@ class TestQueryAnalysisTool:
     @pytest.mark.asyncio
     async def test_keyword_based_analysis_default_both(self):
         """Test keyword-based analysis defaulting to both search types when no keywords match"""
-        from src.app.agents.composing_agents_main import QueryAnalysisTool
+        from cogniverse_agents.composing_agents_main import QueryAnalysisTool
 
         # Use a query with no specific keywords to trigger the fallback to both
         tool = QueryAnalysisTool()
@@ -368,14 +404,14 @@ class TestQueryAnalysisTool:
         assert result["needs_text_search"] is True
         assert result["routing_method"] == "keyword"
 
-    @patch("src.common.config_utils.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     def test_extract_temporal_info_yesterday(self, mock_get_config):
         """Test temporal extraction for 'yesterday' pattern"""
         mock_config = MagicMock()
         mock_config.get.return_value = {"mode": "keyword"}
         mock_get_config.return_value = mock_config
 
-        from src.app.agents.composing_agents_main import QueryAnalysisTool
+        from cogniverse_agents.composing_agents_main import QueryAnalysisTool
 
         tool = QueryAnalysisTool()
         today = datetime.date.today()
@@ -387,14 +423,14 @@ class TestQueryAnalysisTool:
         assert temporal_info["end_date"] == today.strftime("%Y-%m-%d")
         assert temporal_info["detected_pattern"] == r"yesterday"
 
-    @patch("src.common.config_utils.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     def test_extract_temporal_info_specific_dates(self, mock_get_config):
         """Test temporal extraction for specific date patterns"""
         mock_config = MagicMock()
         mock_config.get.return_value = {"mode": "keyword"}
         mock_get_config.return_value = mock_config
 
-        from src.app.agents.composing_agents_main import QueryAnalysisTool
+        from cogniverse_agents.composing_agents_main import QueryAnalysisTool
 
         tool = QueryAnalysisTool()
 
@@ -410,14 +446,14 @@ class TestQueryAnalysisTool:
         assert temporal_info["start_date"] == "2024-01-15"
         assert temporal_info["end_date"] == "2024-01-20"
 
-    @patch("src.common.config_utils.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     def test_extract_temporal_info_no_pattern(self, mock_get_config):
         """Test temporal extraction when no temporal patterns are found"""
         mock_config = MagicMock()
         mock_config.get.return_value = {"mode": "keyword"}
         mock_get_config.return_value = mock_config
 
-        from src.app.agents.composing_agents_main import QueryAnalysisTool
+        from cogniverse_agents.composing_agents_main import QueryAnalysisTool
 
         tool = QueryAnalysisTool()
         temporal_info = tool._extract_temporal_info("find videos about cats")
@@ -430,9 +466,9 @@ class TestRouteAndExecuteQuery:
 
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
-    @patch("src.tools.a2a_utils.A2AClient")
-    @patch("src.tools.a2a_utils.format_search_results")
-    @patch("src.common.config_utils.get_config")
+    @patch("cogniverse_agents.tools.a2a_utils.A2AClient")
+    @patch("cogniverse_agents.tools.a2a_utils.format_search_results")
+    @patch("cogniverse_core.config.utils.get_config")
     async def test_manual_routing(self, mock_get_config, mock_format, mock_a2a_client):
         """Test manual routing to a specific agent"""
         preferred_agent = "http://localhost:9001"
@@ -450,7 +486,7 @@ class TestRouteAndExecuteQuery:
         }
         mock_format.return_value = "Formatted results"
 
-        from src.app.agents.composing_agents_main import route_and_execute_query
+        from cogniverse_agents.composing_agents_main import route_and_execute_query
 
         result = await route_and_execute_query(
             query="test query", top_k=5, preferred_agent=preferred_agent
@@ -464,9 +500,9 @@ class TestRouteAndExecuteQuery:
         assert f"Manual: {preferred_agent}" in result["agents_called"]
 
     @pytest.mark.asyncio
-    @patch("src.app.agents.composing_agents_main.query_analyzer")
-    @patch("src.app.agents.composing_agents_main.video_search_tool")
-    @patch("src.common.config_utils.get_config")
+    @patch("cogniverse_agents.composing_agents_main.query_analyzer")
+    @patch("cogniverse_agents.composing_agents_main.video_search_tool")
+    @patch("cogniverse_core.config.utils.get_config")
     async def test_automatic_routing_video_search(
         self, mock_get_config, mock_video_tool, mock_analyzer
     ):
@@ -489,7 +525,7 @@ class TestRouteAndExecuteQuery:
             }
         )
 
-        from src.app.agents.composing_agents_main import route_and_execute_query
+        from cogniverse_agents.composing_agents_main import route_and_execute_query
 
         result = await route_and_execute_query("test video query", top_k=10)
 
@@ -508,8 +544,8 @@ class TestRouteAndExecuteQuery:
         )
 
     @pytest.mark.asyncio
-    @patch("src.app.agents.composing_agents_main.query_analyzer")
-    @patch("src.common.config_utils.get_config")
+    @patch("cogniverse_agents.composing_agents_main.query_analyzer")
+    @patch("cogniverse_core.config.utils.get_config")
     async def test_automatic_routing_text_search_unavailable(
         self, mock_get_config, mock_analyzer
     ):
@@ -525,7 +561,7 @@ class TestRouteAndExecuteQuery:
 
         mock_analyzer.execute = AsyncMock(return_value=mock_analysis)
 
-        from src.app.agents.composing_agents_main import route_and_execute_query
+        from cogniverse_agents.composing_agents_main import route_and_execute_query
 
         result = await route_and_execute_query("find text documents")
 
@@ -536,8 +572,8 @@ class TestRouteAndExecuteQuery:
         assert "not available" in result["text_search_results"]["error"]
 
     @pytest.mark.asyncio
-    @patch("src.app.agents.composing_agents_main.query_analyzer")
-    @patch("src.common.config_utils.get_config")
+    @patch("cogniverse_agents.composing_agents_main.query_analyzer")
+    @patch("cogniverse_core.config.utils.get_config")
     async def test_routing_exception_handling(self, mock_get_config, mock_analyzer):
         """Test exception handling in routing"""
         mock_config = MagicMock()
@@ -545,7 +581,7 @@ class TestRouteAndExecuteQuery:
 
         mock_analyzer.execute = AsyncMock(side_effect=Exception("Analysis failed"))
 
-        from src.app.agents.composing_agents_main import route_and_execute_query
+        from cogniverse_agents.composing_agents_main import route_and_execute_query
 
         result = await route_and_execute_query("test query")
 
@@ -558,8 +594,8 @@ class TestRouteAndExecuteQuery:
 class TestWebInterfaceAndConfiguration:
     """Test web interface startup and configuration validation"""
 
-    @patch("src.app.agents.composing_agents_main.os.system")
-    @patch("src.app.agents.composing_agents_main.config")
+    @patch("cogniverse_agents.composing_agents_main.os.system")
+    @patch("cogniverse_agents.composing_agents_main.config")
     def test_start_web_interface_success(self, mock_config, mock_os_system):
         """Test successful web interface startup"""
         # Mock configuration validation
@@ -571,7 +607,7 @@ class TestWebInterfaceAndConfiguration:
             "composing_agent_port": 8000,
         }.get(key, default)
 
-        from src.app.agents.composing_agents_main import start_web_interface
+        from cogniverse_agents.composing_agents_main import start_web_interface
 
         start_web_interface()
 
@@ -581,7 +617,7 @@ class TestWebInterfaceAndConfiguration:
         # Verify ADK web command was executed
         mock_os_system.assert_called_once_with("adk web")
 
-    @patch("src.app.agents.composing_agents_main.config")
+    @patch("cogniverse_agents.composing_agents_main.config")
     def test_start_web_interface_config_errors(self, mock_config):
         """Test web interface startup with configuration errors"""
         # Mock configuration validation with missing config
@@ -590,10 +626,10 @@ class TestWebInterfaceAndConfiguration:
             "search_backend": "Search backend must be configured",
         }
 
-        from src.app.agents.composing_agents_main import start_web_interface
+        from cogniverse_agents.composing_agents_main import start_web_interface
 
         # Should return early without starting ADK
-        with patch("src.app.agents.composing_agents_main.os.system") as mock_os_system:
+        with patch("cogniverse_agents.composing_agents_main.os.system") as mock_os_system:
             start_web_interface()
             mock_os_system.assert_not_called()
 
@@ -605,9 +641,9 @@ class TestADKIntegration:
     """Test ADK framework integration"""
 
     @pytest.mark.asyncio
-    @patch("src.app.agents.composing_agents_main.InMemorySessionService")
-    @patch("src.app.agents.composing_agents_main.Runner")
-    @patch("src.common.config_utils.get_config")
+    @patch("cogniverse_agents.composing_agents_main.InMemorySessionService")
+    @patch("cogniverse_agents.composing_agents_main.Runner")
+    @patch("cogniverse_core.config.utils.get_config")
     async def test_run_query_programmatically(
         self, mock_get_config, mock_runner_class, mock_session_service
     ):
@@ -636,7 +672,7 @@ class TestADKIntegration:
         mock_runner.run = mock_event_generator
         mock_runner_class.return_value = mock_runner
 
-        from src.app.agents.composing_agents_main import run_query_programmatically
+        from cogniverse_agents.composing_agents_main import run_query_programmatically
 
         result = await run_query_programmatically("test query")
 
@@ -655,8 +691,8 @@ class TestPerformanceAndEdgeCases:
     """Test performance considerations and edge cases"""
 
     @pytest.mark.asyncio
-    @patch("src.app.agents.composing_agents_main.format_search_results")
-    @patch("src.common.config_utils.get_config")
+    @patch("cogniverse_agents.composing_agents_main.format_search_results")
+    @patch("cogniverse_core.config.utils.get_config")
     async def test_concurrent_tool_execution(self, mock_get_config, mock_format):
         """Test handling of concurrent tool executions"""
         mock_config = MagicMock()
@@ -665,7 +701,7 @@ class TestPerformanceAndEdgeCases:
 
         mock_format.return_value = "Formatted results"
 
-        from src.app.agents.composing_agents_main import EnhancedA2AClientTool
+        from cogniverse_agents.composing_agents_main import EnhancedA2AClientTool
 
         tool1 = EnhancedA2AClientTool("Agent1", "Test 1", "http://localhost:8001")
         tool2 = EnhancedA2AClientTool("Agent2", "Test 2", "http://localhost:8002")
@@ -690,15 +726,15 @@ class TestPerformanceAndEdgeCases:
         assert results[0]["agent_used"] == "Agent1"
         assert results[1]["agent_used"] == "Agent2"
 
-    @patch("src.tools.a2a_utils.A2AClient")
-    @patch("src.common.config_utils.get_config")
+    @patch("cogniverse_agents.tools.a2a_utils.A2AClient")
+    @patch("cogniverse_core.config.utils.get_config")
     def test_tool_memory_efficiency(self, mock_get_config, mock_a2a_client):
         """Test that tools don't retain unnecessary state"""
         mock_config = MagicMock()
         mock_config.get.return_value = 60.0
         mock_get_config.return_value = mock_config
 
-        from src.app.agents.composing_agents_main import EnhancedA2AClientTool
+        from cogniverse_agents.composing_agents_main import EnhancedA2AClientTool
 
         tool = EnhancedA2AClientTool("TestAgent", "Test", "http://localhost:8001")
 
@@ -710,14 +746,14 @@ class TestPerformanceAndEdgeCases:
         assert len(actual_attrs) < 20, f"Tool has too many attributes: {actual_attrs}"
         assert expected_attrs.issubset(actual_attrs)
 
-    @patch("src.common.config_utils.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     def test_temporal_info_edge_cases(self, mock_get_config):
         """Test temporal information extraction edge cases"""
         mock_config = MagicMock()
         mock_config.get.return_value = {"mode": "keyword"}
         mock_get_config.return_value = mock_config
 
-        from src.app.agents.composing_agents_main import QueryAnalysisTool
+        from cogniverse_agents.composing_agents_main import QueryAnalysisTool
 
         tool = QueryAnalysisTool()
 
@@ -734,3 +770,47 @@ class TestPerformanceAndEdgeCases:
         assert "start_date" in temporal_info
         assert "end_date" in temporal_info
         assert temporal_info["detected_pattern"] == r"this week"
+
+
+# Function-level fixture to manage mocks for each test
+# This ensures mocks are available during tests but cleaned up after
+@pytest.fixture(scope="function", autouse=True)
+def manage_test_mocks():
+    """Set up and tear down module mocks for each test to prevent isolation issues"""
+    # Before test: ensure mocks are in place
+    for module_name, mock_module in mock_modules.items():
+        if module_name not in sys.modules or not isinstance(
+            sys.modules.get(module_name), MagicMock
+        ):
+            sys.modules[module_name] = mock_module
+
+    # Re-apply base class mocks
+    sys.modules["google.adk.tools"].BaseTool = MockBaseTool
+    sys.modules["google.adk.agents"].LlmAgent = MagicMock
+    sys.modules["google.adk.runners"].Runner = MagicMock
+    sys.modules["google.adk.sessions"].InMemorySessionService = MagicMock
+    sys.modules["gliner"].GLiNER = MagicMock
+    sys.modules["google.genai.types"].Part = MagicMock
+
+    yield  # Run the test
+
+    # After test: clean up sys.modules to prevent pollution
+    _cleanup_sys_modules()
+
+
+# Module-level cleanup fixture to stop config patchers
+@pytest.fixture(scope="module", autouse=True)
+def cleanup_module_patchers():
+    """Stop config patchers after all tests in this module complete"""
+    yield  # Run all tests
+
+    # Stop config patchers
+    try:
+        config_patcher.stop()
+    except RuntimeError:
+        pass  # Already stopped
+
+    try:
+        composing_config_patcher.stop()
+    except RuntimeError:
+        pass  # Already stopped

@@ -7,9 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
-
-from src.app.routing.modality_span_collector import ModalitySpanCollector
-from src.app.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.routing.modality_span_collector import ModalitySpanCollector
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 
 class TestModalitySpanCollector:
@@ -18,7 +17,7 @@ class TestModalitySpanCollector:
     @pytest.fixture
     def collector(self):
         """Create collector instance with mocked Phoenix client"""
-        with patch("src.app.routing.modality_span_collector.px.Client"):
+        with patch("cogniverse_agents.routing.modality_span_collector.px.Client"):
             collector = ModalitySpanCollector(tenant_id="test-tenant")
             return collector
 

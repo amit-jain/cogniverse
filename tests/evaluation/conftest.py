@@ -80,7 +80,7 @@ def mock_phoenix_client():
 @pytest.fixture
 def mock_search_service():
     """Mock search service for testing."""
-    with patch("src.app.search.service.SearchService") as mock_service_class:
+    with patch("cogniverse_agents.search.service.SearchService") as mock_service_class:
         mock_service = MagicMock()
         mock_service_class.return_value = mock_service
 
@@ -219,7 +219,7 @@ def mock_config():
 @pytest.fixture
 def mock_get_config():
     """Mock get_config function."""
-    with patch("src.tools.config.get_config") as mock_config:
+    with patch("cogniverse_agents.tools.config.get_config") as mock_config:
         mock_config.return_value = {
             "vespa_url": "http://localhost",
             "vespa_port": 8080,

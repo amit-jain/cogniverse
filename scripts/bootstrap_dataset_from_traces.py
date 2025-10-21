@@ -8,19 +8,18 @@ This script helps create datasets by:
 3. Optionally filtering by metrics or patterns
 """
 
+import json
+import sys
+from pathlib import Path
+
 import click
 import pandas as pd
-import phoenix as px
-from datetime import datetime, timedelta
-import json
-from pathlib import Path
-import sys
 
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.evaluation.data.traces import TraceManager
 from src.evaluation.data.datasets import DatasetManager
+from src.evaluation.data.traces import TraceManager
 
 
 @click.command()

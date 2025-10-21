@@ -8,15 +8,14 @@ Unit tests for cache and metrics integration in RoutingAgent:
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-from src.app.agents.routing_agent import RoutingAgent, RoutingConfig
-from src.app.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingConfig
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 
 class TestRoutingAgentCacheMetrics:
     """Test cache and metrics integration in RoutingAgent"""
 
-    @pytest.fixture(scope="class")
+    @pytest.fixture(scope="function")
     def routing_agent(self):
         """Create routing agent with test configuration"""
         # Create minimal config for testing
@@ -35,10 +34,22 @@ class TestRoutingAgentCacheMetrics:
         # Mock all external dependencies to avoid network calls and delays
         # Use patch.object for dspy.settings.configure to avoid attribute cleanup issues
         with patch.object(RoutingAgent, "_configure_dspy", return_value=None), \
-             patch("src.app.agents.dspy_a2a_agent_base.FastAPI"), \
-             patch("src.app.agents.dspy_a2a_agent_base.A2AClient"):
+             patch("cogniverse_agents.dspy_a2a_agent_base.FastAPI"), \
+             patch("cogniverse_agents.dspy_a2a_agent_base.A2AClient"):
             agent = RoutingAgent(tenant_id="test_tenant", config=config, port=8001, enable_telemetry=False)
+
+            # Yield agent for test use
             yield agent
+
+            # Cleanup after each test to prevent state pollution
+            if hasattr(agent, 'cache_manager') and agent.cache_manager:
+                # Clear all caches
+                agent.cache_manager.invalidate_all()
+                agent.cache_manager.reset_stats()
+
+            if hasattr(agent, 'metrics_tracker') and agent.metrics_tracker:
+                # Reset all metrics
+                agent.metrics_tracker.reset_all_stats()
 
     def test_cache_metrics_components_initialized(self, routing_agent):
         """Test that cache and metrics components are initialized"""
@@ -61,7 +72,7 @@ class TestRoutingAgentCacheMetrics:
         # Create a RoutingDecision to cache
         from datetime import datetime
 
-        from src.app.agents.routing_agent import RoutingDecision
+        from cogniverse_agents.routing_agent import RoutingDecision
 
         cached_decision = RoutingDecision(
             query=query,

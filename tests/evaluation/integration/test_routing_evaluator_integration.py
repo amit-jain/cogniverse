@@ -12,8 +12,7 @@ from datetime import datetime, timedelta
 
 import phoenix as px
 import pytest
-
-from src.evaluation.evaluators.routing_evaluator import (
+from cogniverse_core.evaluation.evaluators.routing_evaluator import (
     RoutingEvaluator,
     RoutingMetrics,
     RoutingOutcome,
@@ -49,11 +48,11 @@ class TestRoutingEvaluatorIntegration:
         """Create routing agent and generate real spans"""
         import asyncio
 
-        from src.app.agents.routing_agent import RoutingAgent
+        from cogniverse_agents.routing_agent import RoutingAgent
 
         async def _generate_spans():
             # Initialize routing agent with telemetry enabled
-            agent = RoutingAgent(enable_telemetry=True)
+            agent = RoutingAgent(tenant_id="test-tenant", enable_telemetry=True)
 
             # Generate some real routing spans by processing test queries
             test_queries = [

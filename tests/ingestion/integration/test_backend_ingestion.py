@@ -21,10 +21,9 @@ from tests.utils.markers import (
 
 # Import components for integration testing
 try:
-    from src.processing.unified_video_pipeline import PipelineConfig
-
-    from src.app.ingestion.pipeline import VideoIngestionPipeline
-    from src.app.ingestion.pipeline_builder import PipelineBuilder
+    from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
+    from cogniverse_runtime.ingestion.pipeline_builder import PipelineBuilder
+    from cogniverse_runtime.processing.unified_video_pipeline import PipelineConfig
 except ImportError:
     # Handle missing imports gracefully
     VideoIngestionPipeline = None
@@ -68,7 +67,9 @@ class TestMockBackendIngestion:
         """Test keyframe extraction in isolation."""
         import logging
 
-        from src.app.ingestion.processors.keyframe_processor import KeyframeProcessor
+        from cogniverse_runtime.ingestion.processors.keyframe_processor import (
+            KeyframeProcessor,
+        )
 
         logger = logging.getLogger("test")
         processor = KeyframeProcessor(logger, max_frames=5)
@@ -85,7 +86,7 @@ class TestMockBackendIngestion:
             mock_cap_instance.read.return_value = (False, None)  # No frames
             mock_cap.return_value = mock_cap_instance
 
-            with patch("src.common.utils.output_manager.get_output_manager"):
+            with patch("cogniverse_core.common.utils.output_manager.get_output_manager"):
                 result = processor.extract_keyframes(video_file)
 
                 assert "video_id" in result
@@ -97,7 +98,9 @@ class TestMockBackendIngestion:
         """Test chunk extraction in isolation."""
         import logging
 
-        from src.app.ingestion.processors.chunk_processor import ChunkProcessor
+        from cogniverse_runtime.ingestion.processors.chunk_processor import (
+            ChunkProcessor,
+        )
 
         logger = logging.getLogger("test")
         processor = ChunkProcessor(logger, chunk_duration=30.0)
@@ -109,7 +112,7 @@ class TestMockBackendIngestion:
             # Mock ffprobe for duration
             mock_subprocess.return_value.stdout = "60.0\n"
 
-            with patch("src.common.utils.output_manager.get_output_manager"):
+            with patch("cogniverse_core.common.utils.output_manager.get_output_manager"):
                 result = processor.extract_chunks(video_file)
 
                 assert "video_id" in result
@@ -126,6 +129,14 @@ class TestVespaBackendIngestion:
     def vespa_backend(self):
         """Start Vespa Docker container, deploy schemas, yield, cleanup."""
         manager = VespaTestManager(app_name="test-ingestion", http_port=8082)
+
+        # Actually start Vespa and deploy schemas
+        if not manager.setup_application_directory():
+            pytest.skip("Failed to setup application directory")
+
+        if not manager.deploy_test_application():
+            pytest.skip("Failed to deploy Vespa test application")
+
         yield manager
 
         # Cleanup
@@ -145,7 +156,7 @@ class TestVespaBackendIngestion:
     async def test_lightweight_vespa_ingestion(self, vespa_backend, vespa_test_videos):
         """Test lightweight ingestion to Vespa (no heavy models)."""
         # Test with basic frame extraction only
-        from src.app.ingestion.pipeline import (
+        from cogniverse_runtime.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
         )
@@ -173,7 +184,7 @@ class TestVespaBackendIngestion:
     @pytest.mark.asyncio
     async def test_colpali_vespa_ingestion(self, vespa_backend, vespa_test_videos):
         """Test ColPali model ingestion to Vespa (local only)."""
-        from src.app.ingestion.pipeline import (
+        from cogniverse_runtime.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
         )
@@ -199,7 +210,7 @@ class TestVespaBackendIngestion:
     @pytest.mark.asyncio
     async def test_videoprism_vespa_ingestion(self, vespa_backend, vespa_test_videos):
         """Test VideoPrism model ingestion to Vespa (local only)."""
-        from src.app.ingestion.pipeline import (
+        from cogniverse_runtime.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
         )
@@ -224,7 +235,7 @@ class TestVespaBackendIngestion:
     @pytest.mark.asyncio
     async def test_colqwen_vespa_ingestion(self, vespa_backend, vespa_test_videos):
         """Test ColQwen model ingestion to Vespa (local only)."""
-        from src.app.ingestion.pipeline import (
+        from cogniverse_runtime.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
         )
@@ -270,7 +281,7 @@ class TestComprehensiveIngestion:
             "video_colqwen_omni_mv_chunk_30s",
         ]
 
-        from src.app.ingestion.pipeline import (
+        from cogniverse_runtime.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
         )
@@ -300,7 +311,7 @@ class TestComprehensiveIngestion:
     async def test_ingestion_performance(self, all_test_videos):
         """Benchmark ingestion performance."""
 
-        from src.app.ingestion.pipeline import (
+        from cogniverse_runtime.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
         )

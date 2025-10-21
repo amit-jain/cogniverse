@@ -13,12 +13,17 @@ from unittest.mock import Mock, patch
 
 import pandas as pd
 import pytest
-
-from src.app.routing.advanced_optimizer import AdvancedRoutingOptimizer
-from src.app.routing.annotation_agent import AnnotationAgent, AnnotationPriority
-from src.app.routing.annotation_feedback_loop import AnnotationFeedbackLoop
-from src.app.routing.annotation_storage import AnnotationStorage
-from src.app.routing.llm_auto_annotator import AnnotationLabel, LLMAutoAnnotator
+from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
+from cogniverse_agents.routing.annotation_agent import (
+    AnnotationAgent,
+    AnnotationPriority,
+)
+from cogniverse_agents.routing.annotation_feedback_loop import AnnotationFeedbackLoop
+from cogniverse_agents.routing.annotation_storage import AnnotationStorage
+from cogniverse_agents.routing.llm_auto_annotator import (
+    AnnotationLabel,
+    LLMAutoAnnotator,
+)
 
 
 @pytest.fixture
@@ -58,7 +63,9 @@ def mock_phoenix_client():
 @pytest.fixture
 def mock_routing_evaluator():
     """Mock RoutingEvaluator for testing"""
-    from src.evaluation.evaluators.routing_evaluator import RoutingOutcome
+    from cogniverse_dashboard.evaluation.evaluators.routing_evaluator import (
+        RoutingOutcome,
+    )
 
     evaluator = Mock()
     evaluator._classify_routing_outcome = Mock(
@@ -82,8 +89,8 @@ def mock_litellm_response():
 class TestAnnotationAgent:
     """Test AnnotationAgent span identification"""
 
-    @patch("src.app.routing.annotation_agent.px.Client")
-    @patch("src.app.routing.annotation_agent.RoutingEvaluator")
+    @patch("cogniverse_agents.routing.annotation_agent.px.Client")
+    @patch("cogniverse_agents.routing.annotation_agent.RoutingEvaluator")
     def test_identify_spans_needing_annotation(
         self,
         mock_evaluator_class,
@@ -117,8 +124,8 @@ class TestAnnotationAgent:
             AnnotationPriority.MEDIUM,
         ], "Low confidence should be high/medium priority"
 
-    @patch("src.app.routing.annotation_agent.px.Client")
-    @patch("src.app.routing.annotation_agent.RoutingEvaluator")
+    @patch("cogniverse_agents.routing.annotation_agent.px.Client")
+    @patch("cogniverse_agents.routing.annotation_agent.RoutingEvaluator")
     def test_prioritization(
         self,
         mock_evaluator_class,
@@ -127,7 +134,9 @@ class TestAnnotationAgent:
         mock_routing_evaluator,
     ):
         """Test that requests are properly prioritized"""
-        from src.evaluation.evaluators.routing_evaluator import RoutingOutcome
+        from cogniverse_dashboard.evaluation.evaluators.routing_evaluator import (
+            RoutingOutcome,
+        )
 
         # Setup mocks with different outcomes
         mock_client_class.return_value = mock_phoenix_client
@@ -167,11 +176,13 @@ class TestAnnotationAgent:
 class TestLLMAutoAnnotator:
     """Test LLM-based auto-annotation"""
 
-    @patch("src.app.routing.llm_auto_annotator.completion")
+    @patch("cogniverse_agents.routing.llm_auto_annotator.completion")
     def test_annotate(self, mock_completion, mock_litellm_response):
         """Test LLM annotation generation"""
-        from src.app.routing.annotation_agent import AnnotationRequest
-        from src.evaluation.evaluators.routing_evaluator import RoutingOutcome
+        from cogniverse_agents.routing.annotation_agent import AnnotationRequest
+        from cogniverse_dashboard.evaluation.evaluators.routing_evaluator import (
+            RoutingOutcome,
+        )
 
         # Setup mock
         mock_completion.return_value = mock_litellm_response
@@ -202,11 +213,13 @@ class TestLLMAutoAnnotator:
         assert len(annotation.reasoning) > 0
         assert annotation.suggested_correct_agent == "web_search"
 
-    @patch("src.app.routing.llm_auto_annotator.completion")
+    @patch("cogniverse_agents.routing.llm_auto_annotator.completion")
     def test_batch_annotate(self, mock_completion, mock_litellm_response):
         """Test batch annotation"""
-        from src.app.routing.annotation_agent import AnnotationRequest
-        from src.evaluation.evaluators.routing_evaluator import RoutingOutcome
+        from cogniverse_agents.routing.annotation_agent import AnnotationRequest
+        from cogniverse_dashboard.evaluation.evaluators.routing_evaluator import (
+            RoutingOutcome,
+        )
 
         # Setup mock
         mock_completion.return_value = mock_litellm_response
@@ -241,10 +254,10 @@ class TestLLMAutoAnnotator:
 class TestAnnotationStorage:
     """Test annotation storage in Phoenix"""
 
-    @patch("src.app.routing.annotation_storage.px.Client")
+    @patch("cogniverse_agents.routing.annotation_storage.px.Client")
     def test_store_llm_annotation(self, mock_client_class):
         """Test storing LLM annotation"""
-        from src.app.routing.llm_auto_annotator import AutoAnnotation
+        from cogniverse_agents.routing.llm_auto_annotator import AutoAnnotation
 
         # Setup mock
         mock_client = Mock()
@@ -269,7 +282,7 @@ class TestAnnotationStorage:
         # Assertions
         assert success is True
 
-    @patch("src.app.routing.annotation_storage.px.Client")
+    @patch("cogniverse_agents.routing.annotation_storage.px.Client")
     def test_store_human_annotation(self, mock_client_class):
         """Test storing human annotation"""
         # Setup mock
@@ -296,7 +309,7 @@ class TestAnnotationFeedbackLoop:
     """Test feedback loop to optimizer"""
 
     @pytest.mark.asyncio
-    @patch("src.app.routing.annotation_feedback_loop.AnnotationStorage")
+    @patch("cogniverse_agents.routing.annotation_feedback_loop.AnnotationStorage")
     async def test_process_new_annotations(self, mock_storage_class):
         """Test processing annotations and feeding to optimizer"""
         # Setup mock storage
@@ -318,7 +331,7 @@ class TestAnnotationFeedbackLoop:
         mock_storage_class.return_value = mock_storage
 
         # Initialize optimizer
-        optimizer = AdvancedRoutingOptimizer()
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant")
 
         # Initialize feedback loop
         feedback_loop = AnnotationFeedbackLoop(
@@ -336,7 +349,7 @@ class TestAnnotationFeedbackLoop:
         assert result["experiences_created"] == 1
 
     @pytest.mark.asyncio
-    @patch("src.app.routing.annotation_feedback_loop.AnnotationStorage")
+    @patch("cogniverse_agents.routing.annotation_feedback_loop.AnnotationStorage")
     async def test_annotation_to_experience_conversion(self, mock_storage_class):
         """Test that annotations are correctly converted to experiences"""
         # Setup mock storage
@@ -358,7 +371,7 @@ class TestAnnotationFeedbackLoop:
         mock_storage_class.return_value = mock_storage
 
         # Initialize optimizer
-        optimizer = AdvancedRoutingOptimizer()
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant")
 
         # Initialize feedback loop
         feedback_loop = AnnotationFeedbackLoop(optimizer=optimizer, tenant_id="test")
@@ -377,11 +390,11 @@ class TestEndToEndAnnotationWorkflow:
     """Integration test for complete annotation workflow"""
 
     @pytest.mark.asyncio
-    @patch("src.app.routing.annotation_agent.px.Client")
-    @patch("src.app.routing.annotation_agent.RoutingEvaluator")
-    @patch("src.app.routing.llm_auto_annotator.completion")
-    @patch("src.app.routing.annotation_storage.px.Client")
-    @patch("src.app.routing.annotation_feedback_loop.AnnotationStorage")
+    @patch("cogniverse_agents.routing.annotation_agent.px.Client")
+    @patch("cogniverse_agents.routing.annotation_agent.RoutingEvaluator")
+    @patch("cogniverse_agents.routing.llm_auto_annotator.completion")
+    @patch("cogniverse_agents.routing.annotation_storage.px.Client")
+    @patch("cogniverse_agents.routing.annotation_feedback_loop.AnnotationStorage")
     async def test_complete_workflow(
         self,
         mock_feedback_storage_class,
@@ -438,7 +451,7 @@ class TestEndToEndAnnotationWorkflow:
         ]
         mock_feedback_storage_class.return_value = mock_feedback_storage
 
-        optimizer = AdvancedRoutingOptimizer()
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant")
         feedback_loop = AnnotationFeedbackLoop(
             optimizer=optimizer, tenant_id="test", min_annotations_for_update=1
         )

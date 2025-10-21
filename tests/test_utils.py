@@ -6,7 +6,8 @@ import csv
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+
 from tabulate import tabulate
 
 
@@ -14,8 +15,8 @@ class TestResultsFormatter:
     """Format and export test results in various formats"""
     
     def __init__(self, test_name: str, output_dir: Optional[str] = None):
-        from src.common.utils.output_manager import get_output_manager
-        
+        from cogniverse_core.common.utils.output_manager import get_output_manager
+
         self.test_name = test_name
         self.output_manager = get_output_manager()
         
@@ -185,7 +186,7 @@ class TestResultsFormatter:
         print(f"Total Results: {len(results)}")
         
         if summary_stats:
-            print(f"\nSummary Statistics:")
+            print("\nSummary Statistics:")
             for key, value in summary_stats.items():
                 print(f"  {key}: {value}")
                 

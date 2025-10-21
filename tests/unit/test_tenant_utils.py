@@ -8,8 +8,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
-
-from src.common.tenant_utils import (
+from cogniverse_core.common.tenant_utils import (
     get_tenant_storage_path,
     parse_tenant_id,
     validate_tenant_id,

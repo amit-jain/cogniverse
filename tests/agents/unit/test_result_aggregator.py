@@ -5,15 +5,14 @@ Unit tests for ResultAggregator with relationship context integration
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-
-from src.app.agents.result_aggregator import (
+from cogniverse_agents.result_aggregator import (
     AgentResult,
     AggregatedResult,
     AggregationRequest,
     ResultAggregator,
 )
-from src.app.agents.routing_agent import RoutingDecision
-from src.app.agents.result_enhancement_engine import EnhancedResult
+from cogniverse_agents.result_enhancement_engine import EnhancedResult
+from cogniverse_agents.routing_agent import RoutingDecision
 
 
 @pytest.mark.unit
@@ -221,7 +220,7 @@ class TestResultAggregator:
         assert aggregator.enable_fallbacks is False
 
     @pytest.mark.ci_fast
-    @patch("src.app.agents.result_aggregator.ResultEnhancementEngine")
+    @patch("cogniverse_agents.result_aggregator.ResultEnhancementEngine")
     @pytest.mark.asyncio
     async def test_aggregate_and_enhance_basic(
         self, mock_enhancement_engine, sample_routing_decision, sample_search_results
@@ -266,7 +265,7 @@ class TestResultAggregator:
     ):
         """Test aggregation with no agents to invoke"""
         with patch(
-            "src.app.agents.result_aggregator.ResultEnhancementEngine"
+            "cogniverse_agents.result_aggregator.ResultEnhancementEngine"
         ) as mock_engine_class:
             mock_engine = Mock()
             mock_engine_class.return_value = mock_engine
@@ -348,7 +347,7 @@ class TestResultAggregatorEdgeCases:
     async def test_aggregate_empty_search_results(self, minimal_routing_decision):
         """Test aggregation with empty search results"""
         with patch(
-            "src.app.agents.result_aggregator.ResultEnhancementEngine"
+            "cogniverse_agents.result_aggregator.ResultEnhancementEngine"
         ) as mock_engine_class:
             mock_engine = Mock()
             mock_engine_class.return_value = mock_engine
@@ -370,7 +369,7 @@ class TestResultAggregatorEdgeCases:
     async def test_aggregate_with_agent_failures(self, minimal_routing_decision):
         """Test aggregation when agents fail"""
         with patch(
-            "src.app.agents.result_aggregator.ResultEnhancementEngine"
+            "cogniverse_agents.result_aggregator.ResultEnhancementEngine"
         ) as mock_engine_class:
             mock_engine = Mock()
             mock_engine_class.return_value = mock_engine
@@ -397,7 +396,7 @@ class TestResultAggregatorEdgeCases:
     async def test_max_results_processing_limit(self, minimal_routing_decision):
         """Test that max_results_to_process is respected during aggregation"""
         with patch(
-            "src.app.agents.result_aggregator.ResultEnhancementEngine"
+            "cogniverse_agents.result_aggregator.ResultEnhancementEngine"
         ) as mock_engine_class:
             mock_engine = Mock()
             mock_engine_class.return_value = mock_engine
@@ -424,7 +423,7 @@ class TestResultAggregatorEdgeCases:
     async def test_enhancement_statistics_in_result(self, minimal_routing_decision):
         """Test that enhancement statistics are included in aggregated results"""
         with patch(
-            "src.app.agents.result_aggregator.ResultEnhancementEngine"
+            "cogniverse_agents.result_aggregator.ResultEnhancementEngine"
         ) as mock_engine_class:
             mock_engine = Mock()
             mock_engine_class.return_value = mock_engine

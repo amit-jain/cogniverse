@@ -4,7 +4,6 @@ Generate Vespa schema from template based on configuration
 """
 
 import sys
-import json
 from pathlib import Path
 from string import Template
 

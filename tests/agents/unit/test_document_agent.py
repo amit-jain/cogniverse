@@ -8,8 +8,7 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 import numpy as np
 import pytest
-
-from src.app.agents.document_agent import DocumentAgent, DocumentResult
+from cogniverse_agents.document_agent import DocumentAgent, DocumentResult
 
 
 class TestDocumentAgent:
@@ -26,7 +25,7 @@ class TestDocumentAgent:
         assert self.agent._text_embedding_model is None  # Lazy loaded
         assert self.agent._vespa_endpoint == "http://localhost:8080"
 
-    @patch("src.app.agents.document_agent.get_or_load_model")
+    @patch("cogniverse_agents.document_agent.get_or_load_model")
     def test_colpali_model_lazy_loading(self, mock_get_model):
         """Test ColPali model is lazy loaded on first access"""
         mock_model = MagicMock()

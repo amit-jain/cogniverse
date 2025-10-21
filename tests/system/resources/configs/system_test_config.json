@@ -1,53 +1,62 @@
 {
-  "vespa_url": "http://localhost",
-  "vespa_port": 8081,
-  "schema_name": "video_colpali_smol500_mv_frame",
   "search_backend": "vespa",
   "embedding_backend": "vespa",
   "phoenix_url": "http://localhost:6006",
-  "video_processing_profiles": {
-    "video_colpali_smol500_mv_frame": {
-      "schema_name": "video_colpali_smol500_mv_frame",
-      "embedding_model": "vidore/colsmol-500m",
-      "pipeline_config": {
-        "extract_keyframes": true,
-        "transcribe_audio": false,
-        "generate_descriptions": false,
-        "generate_embeddings": true,
-        "keyframe_strategy": "fps",
-        "keyframe_fps": 1.0
-      },
-      "strategies": {
-        "segmentation": {
-          "class": "FrameSegmentationStrategy",
-          "params": {
-            "fps": 1.0,
-            "threshold": 0.999,
-            "max_frames": 1
+  "backend": {
+    "type": "vespa",
+    "url": "http://localhost",
+    "port": 8081,
+    "profiles": {
+      "video_colpali_smol500_mv_frame": {
+        "type": "video",
+        "description": "Frame-based ColPali for patch-level visual search with multi-vector embeddings. Extracts keyframes and generates 128-dim patch embeddings for fine-grained matching.",
+        "schema_name": "video_colpali_smol500_mv_frame",
+        "embedding_model": "vidore/colsmol-500m",
+        "pipeline_config": {
+          "extract_keyframes": true,
+          "transcribe_audio": false,
+          "generate_descriptions": false,
+          "generate_embeddings": true,
+          "keyframe_strategy": "fps",
+          "keyframe_fps": 1.0
+        },
+        "strategies": {
+          "segmentation": {
+            "class": "FrameSegmentationStrategy",
+            "params": {
+              "fps": 1.0,
+              "threshold": 0.999,
+              "max_frames": 1
+            }
+          },
+          "transcription": {
+            "class": "AudioTranscriptionStrategy",
+            "params": {}
+          },
+          "description": {
+            "class": "NoDescriptionStrategy",
+            "params": {}
+          },
+          "embedding": {
+            "class": "MultiVectorEmbeddingStrategy",
+            "params": {}
           }
         },
-        "transcription": {
-          "class": "AudioTranscriptionStrategy",
-          "params": {}
-        },
-        "description": {
-          "class": "NoDescriptionStrategy",
-          "params": {}
-        },
-        "embedding": {
-          "class": "MultiVectorEmbeddingStrategy",
-          "params": {}
+        "embedding_type": "frame_based",
+        "schema_config": {
+          "schema_name": "video_colpali_smol500_mv_frame",
+          "model_name": "ColPali",
+          "num_patches": 1024,
+          "embedding_dim": 128,
+          "binary_dim": 16
         }
-      },
-      "embedding_type": "frame_based",
-      "schema_config": {
-        "schema_name": "video_colpali_smol500_mv_frame",
-        "model_name": "ColPali",
-        "num_patches": 1024,
-        "embedding_dim": 128,
-        "binary_dim": 16
+      }
+    },
+    "default_profiles": {
+      "video": {
+        "profile": "video_colpali_smol500_mv_frame",
+        "strategy": "segmentation"
       }
     }
-  },
-  "active_video_profile": "video_colpali_smol500_mv_frame"
+  }
 }

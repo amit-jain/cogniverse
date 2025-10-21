@@ -6,15 +6,14 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pandas as pd
 import pytest
-from opentelemetry.sdk.trace.export import SpanExportResult
-
-from src.evaluation.data.storage import (
+from cogniverse_core.evaluation.data.storage import (
     ConnectionConfig,
     ConnectionState,
     ExportMetrics,
     MonitoredSpanExporter,
     PhoenixStorage,
 )
+from opentelemetry.sdk.trace.export import SpanExportResult
 
 
 class TestConnectionConfig:
@@ -238,9 +237,9 @@ class TestPhoenixStorage:
     def test_initialization_success(self, mock_phoenix_client, config):
         """Test successful initialization."""
         with patch(
-            "src.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
         ):
-            with patch("src.evaluation.data.storage.trace"):
+            with patch("cogniverse_core.evaluation.data.storage.trace"):
                 storage = PhoenixStorage(config)
 
                 assert storage.connection_state == ConnectionState.CONNECTED
@@ -257,8 +256,8 @@ class TestPhoenixStorage:
             pd.DataFrame(),
         ]
 
-        with patch("src.evaluation.data.storage.px.Client", return_value=mock_client):
-            with patch("src.evaluation.data.storage.trace"):
+        with patch("cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_client):
+            with patch("cogniverse_core.evaluation.data.storage.trace"):
                 storage = PhoenixStorage(config)
 
                 assert storage.connection_state == ConnectionState.CONNECTED
@@ -270,7 +269,7 @@ class TestPhoenixStorage:
         mock_client = Mock()
         mock_client.get_spans_dataframe.side_effect = Exception("Connection failed")
 
-        with patch("src.evaluation.data.storage.px.Client", return_value=mock_client):
+        with patch("cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_client):
             with pytest.raises(ConnectionError) as exc_info:
                 PhoenixStorage(config)
 
@@ -280,9 +279,9 @@ class TestPhoenixStorage:
     def test_log_experiment_results(self, mock_phoenix_client, config):
         """Test logging experiment results."""
         with patch(
-            "src.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
         ):
-            with patch("src.evaluation.data.storage.trace"):
+            with patch("cogniverse_core.evaluation.data.storage.trace"):
                 storage = PhoenixStorage(config)
 
                 # Mock tracer
@@ -335,9 +334,9 @@ class TestPhoenixStorage:
         mock_phoenix_client.get_spans_dataframe.return_value = test_df
 
         with patch(
-            "src.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
         ):
-            with patch("src.evaluation.data.storage.trace"):
+            with patch("cogniverse_core.evaluation.data.storage.trace"):
                 storage = PhoenixStorage(config)
 
                 # Test regular query
@@ -369,9 +368,9 @@ class TestPhoenixStorage:
         ]
 
         with patch(
-            "src.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
         ):
-            with patch("src.evaluation.data.storage.trace"):
+            with patch("cogniverse_core.evaluation.data.storage.trace"):
                 storage = PhoenixStorage(config)
 
                 df = storage.get_traces_for_evaluation(trace_ids=["trace1", "trace2"])
@@ -402,9 +401,9 @@ class TestPhoenixStorage:
         ]
 
         with patch(
-            "src.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
         ):
-            with patch("src.evaluation.data.storage.trace"):
+            with patch("cogniverse_core.evaluation.data.storage.trace"):
                 storage = PhoenixStorage(config)
 
                 result = storage.get_traces_for_evaluation()
@@ -415,9 +414,9 @@ class TestPhoenixStorage:
     def test_get_metrics(self, mock_phoenix_client, config):
         """Test getting storage metrics."""
         with patch(
-            "src.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
         ):
-            with patch("src.evaluation.data.storage.trace"):
+            with patch("cogniverse_core.evaluation.data.storage.trace"):
                 storage = PhoenixStorage(config)
 
                 # Add some metrics
@@ -436,9 +435,9 @@ class TestPhoenixStorage:
     def test_context_manager(self, mock_phoenix_client, config):
         """Test context manager functionality."""
         with patch(
-            "src.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
         ):
-            with patch("src.evaluation.data.storage.trace"):
+            with patch("cogniverse_core.evaluation.data.storage.trace"):
                 with PhoenixStorage(config) as storage:
                     assert storage.connection_state == ConnectionState.CONNECTED
 
@@ -455,9 +454,9 @@ class TestPhoenixStorage:
         ]
 
         with patch(
-            "src.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
         ):
-            with patch("src.evaluation.data.storage.trace"):
+            with patch("cogniverse_core.evaluation.data.storage.trace"):
                 storage = PhoenixStorage(config)
                 assert storage.connection_state == ConnectionState.CONNECTED
 
@@ -477,8 +476,8 @@ class TestPhoenixStorage:
         mock_client = Mock()
         mock_client.get_spans_dataframe = Mock(return_value=pd.DataFrame())
 
-        with patch("src.evaluation.data.storage.px.Client", return_value=mock_client):
-            with patch("src.evaluation.data.storage.trace"):
+        with patch("cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_client):
+            with patch("cogniverse_core.evaluation.data.storage.trace"):
                 storage = PhoenixStorage(config)
 
                 # Simulate disconnection
@@ -499,9 +498,9 @@ class TestPhoenixStorage:
     def test_shutdown(self, mock_phoenix_client, config):
         """Test graceful shutdown."""
         with patch(
-            "src.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
         ):
-            with patch("src.evaluation.data.storage.trace"):
+            with patch("cogniverse_core.evaluation.data.storage.trace"):
                 storage = PhoenixStorage(config)
 
                 storage.shutdown()
@@ -513,9 +512,9 @@ class TestPhoenixStorage:
     def test_span_creation_without_tracer(self, mock_phoenix_client, config):
         """Test _create_span when tracer is None."""
         with patch(
-            "src.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
         ):
-            with patch("src.evaluation.data.storage.trace"):
+            with patch("cogniverse_core.evaluation.data.storage.trace"):
                 storage = PhoenixStorage(config)
                 storage.tracer = None
 
@@ -526,9 +525,9 @@ class TestPhoenixStorage:
     def test_span_creation_with_exception(self, mock_phoenix_client, config):
         """Test _create_span exception handling."""
         with patch(
-            "src.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
         ):
-            with patch("src.evaluation.data.storage.trace"):
+            with patch("cogniverse_core.evaluation.data.storage.trace"):
                 storage = PhoenixStorage(config)
 
                 mock_span = MagicMock()

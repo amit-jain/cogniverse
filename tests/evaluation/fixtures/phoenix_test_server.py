@@ -6,10 +6,11 @@ import os
 import socket
 import subprocess
 import tempfile
-import time
 
 import phoenix as px
 import pytest
+
+from tests.utils.async_polling import wait_for_phoenix_processing
 
 
 def find_free_port():
@@ -62,7 +63,7 @@ class PhoenixTestServer:
                     raise RuntimeError(
                         f"Phoenix server failed to start on port {self.port}"
                     ) from None
-                time.sleep(1)
+                wait_for_phoenix_processing(delay=1, description="Phoenix processing")
 
         return self
 

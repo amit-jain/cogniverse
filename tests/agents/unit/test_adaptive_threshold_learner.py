@@ -8,8 +8,7 @@ performance monitoring, and automatic adaptation strategies.
 import tempfile
 
 import pytest
-
-from src.app.routing.adaptive_threshold_learner import (
+from cogniverse_agents.routing.adaptive_threshold_learner import (
     AdaptationStrategy,
     AdaptiveThresholdConfig,
     AdaptiveThresholdLearner,
@@ -293,7 +292,7 @@ class TestAdaptiveThresholdLearnerIntegration:
     def test_component_imports_successfully(self):
         """Test that adaptive threshold learner components can be imported."""
         try:
-            import src.app.routing.adaptive_threshold_learner as atl
+            import cogniverse_agents.routing.adaptive_threshold_learner as atl
 
             # Verify key components exist
             assert hasattr(atl, "AdaptationStrategy")

@@ -8,23 +8,22 @@ different schema types without hardcoded assumptions.
 from unittest.mock import Mock
 
 import pytest
-
-from src.evaluation.core.ground_truth import SchemaAwareGroundTruthStrategy
-from src.evaluation.core.schema_analyzer import (
+from cogniverse_core.evaluation.core.ground_truth import SchemaAwareGroundTruthStrategy
+from cogniverse_core.evaluation.core.schema_analyzer import (
     DefaultSchemaAnalyzer,
     get_schema_analyzer,
     register_analyzer,
 )
-from src.evaluation.core.scorers import (
+from cogniverse_core.evaluation.core.scorers import (
     diversity_scorer,
     precision_scorer,
     recall_scorer,
 )
-from src.evaluation.plugins.document_analyzer import (
+from cogniverse_core.evaluation.plugins.document_analyzer import (
     DocumentSchemaAnalyzer,
     ImageSchemaAnalyzer,
 )
-from src.evaluation.plugins.video_analyzer import VideoSchemaAnalyzer
+from cogniverse_core.evaluation.plugins.video_analyzer import VideoSchemaAnalyzer
 
 
 class TestSchemaAnalyzerIntegration:

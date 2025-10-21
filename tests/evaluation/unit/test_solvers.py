@@ -5,8 +5,7 @@ Unit tests for evaluation solvers.
 from unittest.mock import Mock, patch
 
 import pytest
-
-from src.evaluation.core.solvers import (
+from cogniverse_core.evaluation.core.solvers import (
     create_batch_solver,
     create_live_solver,
     create_retrieval_solver,
@@ -21,10 +20,10 @@ class TestRetrievalSolver:
     async def test_retrieval_solver_basic(self, mock_search_service):
         """Test basic retrieval solver functionality."""
         with patch(
-            "src.app.search.service.SearchService", return_value=mock_search_service
+            "cogniverse_agents.search.service.SearchService", return_value=mock_search_service
         ):
             with patch(
-                "src.common.config_utils.get_config",
+                "cogniverse_core.config.utils.get_config",
                 return_value={"vespa_url": "http://localhost"},
             ):
                 solver = create_retrieval_solver(
@@ -51,10 +50,10 @@ class TestRetrievalSolver:
     async def test_retrieval_solver_multiple_configs(self, mock_search_service):
         """Test retrieval solver with multiple profiles and strategies."""
         with patch(
-            "src.app.search.service.SearchService", return_value=mock_search_service
+            "cogniverse_agents.search.service.SearchService", return_value=mock_search_service
         ):
             with patch(
-                "src.common.config_utils.get_config",
+                "cogniverse_core.config.utils.get_config",
                 return_value={"vespa_url": "http://localhost"},
             ):
                 solver = create_retrieval_solver(
@@ -90,10 +89,10 @@ class TestRetrievalSolver:
     async def test_retrieval_solver_with_tracing_config(self, mock_search_service):
         """Test retrieval solver with tracing config (tracing not actually implemented)."""
         with patch(
-            "src.app.search.service.SearchService", return_value=mock_search_service
+            "cogniverse_agents.search.service.SearchService", return_value=mock_search_service
         ):
             with patch(
-                "src.common.config_utils.get_config",
+                "cogniverse_core.config.utils.get_config",
                 return_value={"vespa_url": "http://localhost"},
             ):
                 # Note: enable_tracing config is accepted but not used in current implementation
@@ -119,9 +118,9 @@ class TestRetrievalSolver:
     @pytest.mark.asyncio
     async def test_retrieval_solver_error_handling(self):
         """Test retrieval solver error handling."""
-        with patch("src.app.search.service.SearchService") as mock_service:
+        with patch("cogniverse_agents.search.service.SearchService") as mock_service:
             with patch(
-                "src.common.config_utils.get_config",
+                "cogniverse_core.config.utils.get_config",
                 return_value={"vespa_url": "http://localhost"},
             ):
                 # Simulate search failure

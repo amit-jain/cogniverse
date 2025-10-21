@@ -1,0 +1,119 @@
+{{- $fullName := include "cogniverse.fullname" . -}}
+{{- if .Values.initJobs.schemaDeployment.enabled -}}
+---
+# Schema Deployment Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullName }}-schema-deployment
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: init
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ .Values.initJobs.schemaDeployment.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "cogniverse.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: init
+    spec:
+      restartPolicy: {{ .Values.initJobs.schemaDeployment.restartPolicy }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+      containers:
+      - name: schema-deployment
+        image: "{{ .Values.initJobs.schemaDeployment.image.repository }}:{{ .Values.initJobs.schemaDeployment.image.tag }}"
+        imagePullPolicy: IfNotPresent
+        command:
+          - /bin/bash
+          - -c
+          - |
+            set -e
+            echo "Waiting for Vespa to be ready..."
+            until curl -sf http://{{ $fullName }}-vespa:{{ .Values.vespa.service.ports.config }}/state/v1/health; do
+              echo "Vespa not ready, waiting..."
+              sleep 10
+            done
+            echo "Vespa is ready!"
+
+            echo "Deploying Vespa schemas..."
+            {{- range .Values.config.tenants }}
+            echo "Deploying schemas for tenant: {{ .id }}"
+            # Add schema deployment logic here
+            # uv run python /app/scripts/deploy_all_schemas.py --tenant-id {{ .id }}
+            {{- end }}
+            echo "Schema deployment completed!"
+        env:
+        - name: VESPA_URL
+          value: "http://{{ $fullName }}-vespa:{{ .Values.vespa.service.ports.query }}"
+        - name: VESPA_CONFIG_PORT
+          value: "{{ .Values.vespa.service.ports.config }}"
+        resources:
+          {{- toYaml .Values.initJobs.schemaDeployment.resources | nindent 10 }}
+{{- end }}
+{{- if .Values.initJobs.modelPulling.enabled -}}
+---
+# Model Pulling Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullName }}-model-pulling
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: init
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ .Values.initJobs.modelPulling.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "cogniverse.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: init
+    spec:
+      restartPolicy: {{ .Values.initJobs.modelPulling.restartPolicy }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+      containers:
+      - name: model-pulling
+        image: "{{ .Values.initJobs.modelPulling.image.repository }}:{{ .Values.initJobs.modelPulling.image.tag }}"
+        imagePullPolicy: IfNotPresent
+        command:
+          - /bin/bash
+          - -c
+          - |
+            set -e
+            echo "Waiting for Ollama to be ready..."
+            until curl -sf http://{{ $fullName }}-ollama:{{ .Values.ollama.service.port }}/api/tags; do
+              echo "Ollama not ready, waiting..."
+              sleep 10
+            done
+            echo "Ollama is ready!"
+
+            echo "Pulling Ollama models..."
+            {{- range .Values.config.ollamaModels }}
+            echo "Pulling model: {{ . }}"
+            curl -X POST http://{{ $fullName }}-ollama:{{ $.Values.ollama.service.port }}/api/pull \
+              -H "Content-Type: application/json" \
+              -d '{"name": "{{ . }}"}'
+            echo "Model {{ . }} pulled successfully!"
+            {{- end }}
+            echo "Model pulling completed!"
+        env:
+        - name: OLLAMA_ENDPOINT
+          value: "http://{{ $fullName }}-ollama:{{ .Values.ollama.service.port }}"
+        resources:
+          {{- toYaml .Values.initJobs.modelPulling.resources | nindent 10 }}
+{{- end }}

@@ -4,21 +4,22 @@ Test script to verify embedding integrity in Vespa
 Checks for cross-video contamination and validates embedding uniqueness
 """
 
+import argparse
 import json
-import sys
 import subprocess
-import numpy as np
-from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+import sys
 from collections import defaultdict
 from datetime import datetime
-import random
-import argparse
-import time
+from pathlib import Path
+from typing import Dict, List, Optional
+
+import numpy as np
+
+from tests.utils.async_polling import wait_for_service_startup
 
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
-from src.common.utils.output_manager import get_output_manager
+from cogniverse_core.common.utils.output_manager import get_output_manager
 
 
 class EmbeddingIntegrityTester:
@@ -425,7 +426,7 @@ class EmbeddingIntegrityTester:
                 slice_files.append(slice_file)
                 
                 # Small delay to avoid overwhelming the system
-                time.sleep(0.5)
+                wait_for_service_startup(delay=0.5, description="model loading")
                 
             except subprocess.CalledProcessError as e:
                 print(f" ❌ Failed: {e.stderr}")

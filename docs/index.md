@@ -61,7 +61,7 @@ uv run python scripts/run_ingestion.py \
   --profile video_colpali_smol500_mv_frame
 
 # Start the multi-agent system
-uv run python src/app/agents/composing_agents_main.py
+uv run python scripts/run_orchestrator.py
 ```
 
 ## 🏗️ Architecture Overview

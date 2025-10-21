@@ -13,21 +13,22 @@ from unittest.mock import patch
 
 import pandas as pd
 import pytest
-
-from src.app.agents.workflow_intelligence import (
-    WorkflowExecution,
-    WorkflowIntelligence,
-)
-from src.app.routing.advanced_optimizer import AdvancedRoutingOptimizer
-from src.app.routing.orchestration_annotation_storage import (
+from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
+from cogniverse_agents.routing.orchestration_annotation_storage import (
     OrchestrationAnnotation,
     OrchestrationAnnotationStorage,
 )
-from src.app.routing.orchestration_feedback_loop import OrchestrationFeedbackLoop
-from src.app.routing.phoenix_orchestration_evaluator import (
+from cogniverse_agents.routing.orchestration_feedback_loop import (
+    OrchestrationFeedbackLoop,
+)
+from cogniverse_agents.routing.phoenix_orchestration_evaluator import (
     PhoenixOrchestrationEvaluator,
 )
-from src.app.routing.unified_optimizer import UnifiedOptimizer
+from cogniverse_agents.routing.unified_optimizer import UnifiedOptimizer
+from cogniverse_agents.workflow_intelligence import (
+    WorkflowExecution,
+    WorkflowIntelligence,
+)
 
 
 @pytest.mark.integration
@@ -45,7 +46,7 @@ class TestOrchestrationOptimizationIntegration:
     @pytest.fixture
     def routing_optimizer(self):
         """Create real AdvancedRoutingOptimizer instance"""
-        return AdvancedRoutingOptimizer(storage_dir="/tmp/test_routing_optimizer")
+        return AdvancedRoutingOptimizer(tenant_id="test-tenant", base_storage_dir="/tmp/test_routing_optimizer")
 
     @pytest.mark.asyncio
     async def test_phoenix_evaluator_extracts_workflows_from_spans(

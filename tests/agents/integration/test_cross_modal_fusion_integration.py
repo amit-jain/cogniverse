@@ -13,18 +13,19 @@ from datetime import datetime
 import numpy as np
 import pytest
 import requests
-from PIL import Image
-
-from src.app.agents.multi_agent_orchestrator import (
+from cogniverse_agents.multi_agent_orchestrator import (
     MultiAgentOrchestrator,
 )
-from src.app.agents.workflow_types import (
+from cogniverse_agents.workflow_types import (
     TaskStatus,
     WorkflowPlan,
     WorkflowStatus,
     WorkflowTask,
 )
-from src.backends.vespa.vespa_schema_manager import VespaSchemaManager
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+from PIL import Image
+
+from tests.utils.async_polling import wait_for_vespa_indexing
 
 
 @pytest.fixture(scope="module")
@@ -95,7 +96,7 @@ def test_vespa_fusion():
                 break
         except Exception:
             pass
-        time.sleep(1)
+        wait_for_vespa_indexing(delay=1)
         if i % 10 == 0 and i > 0:
             print(f"   Still waiting... ({i}s)")
     else:
@@ -178,7 +179,7 @@ class TestCrossModalFusionIntegration:
                     break
             except Exception:
                 pass
-            time.sleep(2)
+            wait_for_vespa_indexing(delay=2)
         else:
             pytest.fail("Application not ready after 120 seconds")
 
@@ -189,9 +190,8 @@ class TestCrossModalFusionIntegration:
         print("-" * 80)
 
         import torch
+        from cogniverse_core.common.models.model_loaders import get_or_load_model
         from sentence_transformers import SentenceTransformer
-
-        from src.common.models.model_loaders import get_or_load_model
 
         # Load models
         print("\n📦 Loading models...")
@@ -331,7 +331,7 @@ class TestCrossModalFusionIntegration:
 
         # Wait for indexing
         print("\n⏳ Waiting for indexing to complete...")
-        time.sleep(5)
+        wait_for_vespa_indexing(delay=5)
         print("✅ Indexing complete")
 
     def test_cross_modal_fusion_workflow(self, test_vespa_fusion):

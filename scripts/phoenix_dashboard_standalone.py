@@ -1720,7 +1720,7 @@ with main_tabs[5]:
                 with col1:
                     st.markdown(f"{status_emoji} **{modality.value.upper()}**: {status_text}")
                 with col2:
-                    if not has_model and st.button(f"Train", key=f"train_{modality.value}"):
+                    if not has_model and st.button("Train", key=f"train_{modality.value}"):
                         st.info(f"Training for {modality.value} modality would be triggered here.")
 
             st.markdown("---")

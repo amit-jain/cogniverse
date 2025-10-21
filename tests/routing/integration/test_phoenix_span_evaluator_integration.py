@@ -14,9 +14,8 @@ import os
 
 import phoenix as px
 import pytest
-
-from src.app.routing.advanced_optimizer import AdvancedRoutingOptimizer
-from src.app.routing.phoenix_span_evaluator import PhoenixSpanEvaluator
+from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
+from cogniverse_agents.routing.phoenix_span_evaluator import PhoenixSpanEvaluator
 
 # Set synchronous export for integration tests
 os.environ["TELEMETRY_SYNC_EXPORT"] = "true"
@@ -27,9 +26,9 @@ logger = logging.getLogger(__name__)
 @pytest.fixture
 async def routing_agent_with_spans():
     """Create routing agent and generate real routing spans"""
-    from src.app.agents.routing_agent import RoutingAgent
+    from cogniverse_agents.routing_agent import RoutingAgent
 
-    agent = RoutingAgent()
+    agent = RoutingAgent(tenant_id="test-tenant")
 
     # Generate real routing spans by processing test queries
     test_queries = [
@@ -66,7 +65,7 @@ async def routing_agent_with_spans():
 @pytest.fixture(scope="function")
 def optimizer():
     """Create AdvancedRoutingOptimizer for testing - fresh for each test"""
-    return AdvancedRoutingOptimizer()
+    return AdvancedRoutingOptimizer(tenant_id="test-tenant")
 
 
 @pytest.fixture(scope="function")
@@ -130,10 +129,10 @@ class TestPhoenixSpanEvaluatorIntegration:
         """Test feeding extracted experiences to AdvancedRoutingOptimizer"""
         import tempfile
 
-        from src.app.agents.routing_agent import RoutingAgent
+        from cogniverse_agents.routing_agent import RoutingAgent
 
         # Create fresh routing agent and generate unique spans
-        agent = RoutingAgent()
+        agent = RoutingAgent(tenant_id="test-tenant")
 
         # Use unique queries to avoid span ID collisions with other tests
         unique_queries = [
@@ -161,7 +160,7 @@ class TestPhoenixSpanEvaluatorIntegration:
 
         # Create optimizer with temporary storage to avoid loading existing data
         with tempfile.TemporaryDirectory() as temp_dir:
-            optimizer = AdvancedRoutingOptimizer(storage_dir=temp_dir)
+            optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant", base_storage_dir=temp_dir)
 
             # Verify optimizer starts empty (no loaded data)
             initial_count = len(optimizer.experience_replay)
@@ -269,10 +268,10 @@ class TestPhoenixSpanEvaluatorIntegration:
     @pytest.mark.asyncio
     async def test_end_to_end_evaluation_workflow(self, optimizer):
         """Test complete end-to-end workflow from span generation to experience creation"""
-        from src.app.agents.routing_agent import RoutingAgent
+        from cogniverse_agents.routing_agent import RoutingAgent
 
         # 1. Create fresh routing agent
-        agent = RoutingAgent()
+        agent = RoutingAgent(tenant_id="test-tenant")
 
         # 2. Process a single query
         query = "show me basketball dunks"

@@ -8,14 +8,15 @@ WITHOUT extensive mocking. This validates real functionality.
 import asyncio
 
 import pytest
-
-from src.app.agents.routing_agent import RoutingAgent
-from src.app.routing.adaptive_threshold_learner import (
+from cogniverse_agents.routing.adaptive_threshold_learner import (
     AdaptiveThresholdLearner,
 )
-from src.app.routing.advanced_optimizer import AdvancedRoutingOptimizer
-from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
-from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
+from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
+from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
+from cogniverse_agents.routing.relationship_extraction_tools import (
+    RelationshipExtractorTool,
+)
+from cogniverse_agents.routing_agent import RoutingAgent
 
 
 @pytest.mark.integration
@@ -96,7 +97,7 @@ class TestDSPySystemIntegration:
     @pytest.mark.ci_fast
     def test_advanced_optimizer_initialization(self):
         """Test advanced optimizer components are properly initialized"""
-        optimizer = AdvancedRoutingOptimizer()
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant")
 
         # Should have required components
         assert hasattr(optimizer, "config")
@@ -111,7 +112,7 @@ class TestDSPySystemIntegration:
 
     def test_adaptive_threshold_learner_functionality(self):
         """Test adaptive threshold learner with real data"""
-        learner = AdaptiveThresholdLearner()
+        learner = AdaptiveThresholdLearner(tenant_id="test_tenant")
 
         # Test recording performance samples
 
@@ -142,7 +143,7 @@ class TestDSPySystemIntegration:
         # Mock only external dependencies, not core logic
         from unittest.mock import patch
 
-        with patch("src.common.config_utils.get_config") as mock_config:
+        with patch("cogniverse_core.config.utils.get_config") as mock_config:
             # Provide real config structure
             mock_config.return_value = {
                 "video_agent_url": "http://localhost:8002",
@@ -182,8 +183,8 @@ class TestDSPySystemIntegration:
         try:
             components["extractor"] = RelationshipExtractorTool()
             components["pipeline"] = QueryEnhancementPipeline()
-            components["optimizer"] = AdvancedRoutingOptimizer()
-            components["learner"] = AdaptiveThresholdLearner()
+            components["optimizer"] = AdvancedRoutingOptimizer(tenant_id="test_tenant")
+            components["learner"] = AdaptiveThresholdLearner(tenant_id="test_tenant")
 
             # All components should initialize successfully
             for name, component in components.items():
@@ -207,16 +208,16 @@ class TestMultiAgentSystem:
         """Test that core agents can be initialized"""
         from unittest.mock import patch
 
-        from src.app.agents.detailed_report_agent import DetailedReportAgent
-        from src.app.agents.summarizer_agent import SummarizerAgent
+        from cogniverse_agents.detailed_report_agent import DetailedReportAgent
+        from cogniverse_agents.summarizer_agent import SummarizerAgent
 
         # Mock config to provide required LLM configuration
         with (
             patch(
-                "src.app.agents.summarizer_agent.get_config"
+                "cogniverse_agents.summarizer_agent.get_config"
             ) as mock_summarizer_config,
             patch(
-                "src.app.agents.detailed_report_agent.get_config"
+                "cogniverse_agents.detailed_report_agent.get_config"
             ) as mock_reporter_config,
         ):
             config = {
@@ -244,7 +245,7 @@ class TestMultiAgentSystem:
         """Test enhanced video search agent with real configuration"""
         import os
 
-        from src.app.agents.video_search_agent import VideoSearchAgent
+        from cogniverse_agents.video_search_agent import VideoSearchAgent
 
         # Set required environment for video search
         os.environ["VESPA_SCHEMA"] = "video_colpali_smol500_mv_frame"

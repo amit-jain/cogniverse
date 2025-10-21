@@ -3,9 +3,8 @@ Unit tests for plugin analyzers (document and video).
 """
 
 import pytest
-
-from src.evaluation.plugins.document_analyzer import DocumentSchemaAnalyzer
-from src.evaluation.plugins.video_analyzer import VideoSchemaAnalyzer
+from cogniverse_core.evaluation.plugins.document_analyzer import DocumentSchemaAnalyzer
+from cogniverse_core.evaluation.plugins.video_analyzer import VideoSchemaAnalyzer
 
 
 class TestDocumentSchemaAnalyzer:

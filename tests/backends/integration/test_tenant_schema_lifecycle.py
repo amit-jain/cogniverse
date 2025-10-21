@@ -5,12 +5,12 @@ Tests actual schema deployment, deletion, and tenant isolation.
 Requires Docker to be running.
 """
 
-import pytest
 import logging
 
-from src.backends.vespa.tenant_schema_manager import (
-    TenantSchemaManager,
+import pytest
+from cogniverse_vespa.tenant_schema_manager import (
     SchemaNotFoundException,
+    TenantSchemaManager,
     get_tenant_schema_manager,
 )
 
@@ -191,14 +191,11 @@ class TestSchemaValidation:
         # Deploy schema
         manager.deploy_tenant_schema("acme", "video_colpali_smol500_mv_frame")
 
-        # Validate - note: validation currently returns False since _schema_exists_in_vespa
-        # is not fully implemented. This test documents expected behavior.
-        # In production, implement actual Vespa HTTP API check.
+        # Validate - schema should exist after deployment
         result = manager.validate_tenant_schema("acme", "video_colpali_smol500_mv_frame")
 
-        # Currently returns False, but in production with proper Vespa API check, should return True
-        # TODO: Implement actual Vespa schema existence check
-        assert result is False  # Expected with current implementation
+        # Schema validation now properly checks Vespa
+        assert result is True  # Schema exists after deployment
 
 
 @pytest.mark.integration
@@ -326,7 +323,7 @@ class TestErrorHandling:
             vespa_url="http://localhost", vespa_port=vespa_instance["config_port"]
         )
 
-        with pytest.raises(ValueError, match="only alphanumeric and underscore allowed"):
+        with pytest.raises(ValueError, match="only alphanumeric, underscore, and colon allowed"):
             manager.deploy_tenant_schema("tenant-with-dash", "video_colpali_smol500_mv_frame")
 
     def test_empty_tenant_id_fails(self, vespa_instance):

@@ -7,18 +7,19 @@ This script validates all components and their interactions.
 
 import asyncio
 import json
+import random
+import subprocess
 import sys
 import time
-import subprocess
-import random
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # Add the project root to the path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.common.config_utils import get_config
-from src.tools.a2a_utils import A2AClient, discover_agents
+from cogniverse_agents.tools.a2a_utils import A2AClient, discover_agents
+from cogniverse_core.config.utils import get_config
+
 
 class SystemTester:
     """Comprehensive system tester for the multi-agent RAG system."""
@@ -31,7 +32,7 @@ class SystemTester:
         self.passed_tests = []
         
         # Use OutputManager for test results
-        from src.common.utils.output_manager import get_output_manager
+        from cogniverse_core.common.utils.output_manager import get_output_manager
         self.output_manager = get_output_manager()
         self.results_dir = self.output_manager.get_test_results_dir()
         
@@ -440,7 +441,10 @@ class SystemTester:
         """Test complete end-to-end multi-agent system with random queries."""
         try:
             # Import here to avoid loading issues
-            from src.app.agents.composing_agents_main import query_analyzer, video_search_tool
+            from cogniverse_agents.composing_agents_main import (
+                query_analyzer,
+                video_search_tool,
+            )
             
             # Test with multiple random queries
             print("\n" + "="*60)
@@ -457,7 +461,7 @@ class SystemTester:
                 # Test query analysis
                 analysis_result = await query_analyzer.execute(query)
                 if not analysis_result.get("needs_video_search"):
-                    print(f"  ⚠️  Query analysis didn't detect video search need")
+                    print("  ⚠️  Query analysis didn't detect video search need")
                     continue
                 
                 # Test A2A communication
@@ -485,14 +489,14 @@ class SystemTester:
                             mrr = 1.0 / (idx + 1)
                             break
                     
-                    print(f"  ✅ Search succeeded")
+                    print("  ✅ Search succeeded")
                     print(f"  📊 Metrics: Recall@5={recall_at_5:.3f}, Recall@10={recall_at_10:.3f}, MRR={mrr:.3f}")
                     
                     total_metrics["recall@5"].append(recall_at_5)
                     total_metrics["recall@10"].append(recall_at_10)
                     total_metrics["mrr"].append(mrr)
                 else:
-                    print(f"  ✅ Search succeeded (no ground truth for evaluation)")
+                    print("  ✅ Search succeeded (no ground truth for evaluation)")
                 
                 successful_tests += 1
             
@@ -669,7 +673,7 @@ async def main():
     with open("tests/test_results.json", "w") as f:
         json.dump(results, f, indent=2)
     
-    print(f"\n📋 Detailed results saved to: tests/test_results.json")
+    print("\n📋 Detailed results saved to: tests/test_results.json")
     
     # Exit with appropriate code
     if results["failed"] > 0:

@@ -17,10 +17,10 @@ import torch
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
 
+from cogniverse_agents.search.service import SearchService
+from cogniverse_core.config.utils import get_config
 from colpali_engine.models import ColIdefics3, ColIdefics3Processor
 
-from src.app.search.service import SearchService
-from src.common.config_utils import get_config
 from tests.test_utils import TestResultsFormatter
 
 
@@ -238,7 +238,7 @@ def test_float_float_search(output_format="table", save_results=False, monkeypat
     print(f"Embeddings dtype: {embeddings_np.dtype}")
     
     # Use the search client directly
-    from src.backends.vespa.vespa_search_client import VespaVideoSearchClient
+    from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
     
     # Initialize search client
     search_client = VespaVideoSearchClient(vespa_url=vespa_url, vespa_port=vespa_port)
@@ -353,7 +353,7 @@ def test_hybrid_float_bm25(output_format="table", save_results=False, monkeypatc
     print(f"Embeddings dtype: {embeddings_np.dtype}")
     
     # Use the search client directly to ensure proper formatting
-    from src.backends.vespa.vespa_search_client import VespaVideoSearchClient
+    from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
     
     # Initialize search client
     search_client = VespaVideoSearchClient(vespa_url=vespa_url, vespa_port=vespa_port)

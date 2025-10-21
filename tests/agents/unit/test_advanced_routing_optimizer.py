@@ -11,7 +11,7 @@ from unittest.mock import patch
 import pytest
 
 # Import components to test
-from src.app.routing.advanced_optimizer import (
+from cogniverse_agents.routing.advanced_optimizer import (
     AdvancedOptimizerConfig,
     AdvancedRoutingOptimizer,
     RoutingExperience,
@@ -195,7 +195,7 @@ class TestSIMBAIntegration:
 
     def test_simba_config_creation(self):
         """Test SIMBA configuration creation."""
-        from src.app.routing.simba_query_enhancer import SIMBAConfig
+        from cogniverse_agents.routing.simba_query_enhancer import SIMBAConfig
 
         config = SIMBAConfig()
         assert config.similarity_threshold >= 0
@@ -203,7 +203,10 @@ class TestSIMBAIntegration:
 
     def test_simba_enhancer_creation(self):
         """Test SIMBA enhancer can be created."""
-        from src.app.routing.simba_query_enhancer import SIMBAConfig, SIMBAQueryEnhancer
+        from cogniverse_agents.routing.simba_query_enhancer import (
+            SIMBAConfig,
+            SIMBAQueryEnhancer,
+        )
 
         config = SIMBAConfig()
 
@@ -218,7 +221,9 @@ class TestAdaptiveThresholdLearner:
 
     def test_threshold_learner_creation(self):
         """Test threshold learner can be created."""
-        from src.app.routing.adaptive_threshold_learner import AdaptiveThresholdLearner
+        from cogniverse_agents.routing.adaptive_threshold_learner import (
+            AdaptiveThresholdLearner,
+        )
 
         learner = AdaptiveThresholdLearner(tenant_id="test_tenant")
 
@@ -229,7 +234,9 @@ class TestAdaptiveThresholdLearner:
 
     def test_threshold_learner_status(self):
         """Test getting threshold learner status."""
-        from src.app.routing.adaptive_threshold_learner import AdaptiveThresholdLearner
+        from cogniverse_agents.routing.adaptive_threshold_learner import (
+            AdaptiveThresholdLearner,
+        )
 
         learner = AdaptiveThresholdLearner(tenant_id="test_tenant")
         status = learner.get_learning_status()
@@ -243,7 +250,7 @@ class TestMLflowIntegration:
 
     def test_mlflow_integration_creation(self):
         """Test MLflow integration can be created."""
-        from src.app.routing.mlflow_integration import (
+        from cogniverse_agents.routing.mlflow_integration import (
             ExperimentConfig,
             MLflowIntegration,
         )
@@ -284,104 +291,105 @@ class TestAdvancedRoutingOptimizerIntegration:
 
         import dspy
 
-        # Configure DSPy with a mock LM (required for GEPA)
+        # Configure DSPy with a mock LM (required for GEPA) - use context manager for async
         mock_lm = MagicMock()
         mock_lm.model = "test-model"
-        dspy.settings.configure(lm=mock_lm)
 
-        # Enable logging to capture optimizer selection
-        logger = logging.getLogger("src.app.routing.advanced_optimizer")
-        logger.setLevel(logging.INFO)
+        # Use context manager instead of settings.configure() in async
+        with dspy.context(lm=mock_lm):
+            # Enable logging to capture optimizer selection
+            logger = logging.getLogger("cogniverse_agents.routing.advanced_optimizer")
+            logger.setLevel(logging.INFO)
 
-        # Create config with GEPA threshold at 200
-        config = AdvancedOptimizerConfig(
-            min_experiences_for_training=50,  # Can init optimizer early
-            bootstrap_threshold=20,
-            simba_threshold=50,
-            mipro_threshold=100,
-            gepa_threshold=200,
-            optimizer_strategy="adaptive",  # Use adaptive selection
-            update_frequency=10,  # Trigger optimization every 10 experiences
-            enable_persistence=False,  # Disable persistence for test isolation
-        )
-
-        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant", config=config)
-
-        # Collect 210 experiences to exceed GEPA threshold
-        for i in range(210):
-            await optimizer.record_routing_experience(
-                query=f"Test query {i}",
-                entities=[{"type": "TEST", "text": f"entity_{i}"}],
-                relationships=[],
-                enhanced_query=f"Enhanced query {i}",
-                chosen_agent="video_search_agent" if i % 2 == 0 else "summarizer_agent",
-                routing_confidence=0.8 + (i % 20) * 0.01,  # Vary confidence
-                search_quality=0.7 + (i % 30) * 0.01,  # Vary quality
-                agent_success=i % 10 != 0,  # 90% success rate
+            # Create config with GEPA threshold at 200
+            config = AdvancedOptimizerConfig(
+                min_experiences_for_training=50,  # Can init optimizer early
+                bootstrap_threshold=20,
+                simba_threshold=50,
+                mipro_threshold=100,
+                gepa_threshold=200,
+                optimizer_strategy="adaptive",  # Use adaptive selection
+                update_frequency=10,  # Trigger optimization every 10 experiences
+                enable_persistence=False,  # Disable persistence for test isolation
             )
 
-        # Verify optimizer was initialized
-        assert optimizer.advanced_optimizer is not None, \
-            "Advanced optimizer should be initialized after min_experiences_for_training"
+            optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant", config=config)
 
-        # Verify we have enough experiences
-        assert len(optimizer.experiences) == 210, \
-            f"Should have 210 experiences, got {len(optimizer.experiences)}"
+            # Collect 210 experiences to exceed GEPA threshold
+            for i in range(210):
+                await optimizer.record_routing_experience(
+                    query=f"Test query {i}",
+                    entities=[{"type": "TEST", "text": f"entity_{i}"}],
+                    relationships=[],
+                    enhanced_query=f"Enhanced query {i}",
+                    chosen_agent="video_search_agent" if i % 2 == 0 else "summarizer_agent",
+                    routing_confidence=0.8 + (i % 20) * 0.01,  # Vary confidence
+                    search_quality=0.7 + (i % 30) * 0.01,  # Vary quality
+                    agent_success=i % 10 != 0,  # 90% success rate
+                )
 
-        # Test optimizer selection with 210 examples
-        dataset_size = 210
-        selected_optimizer, optimizer_name = optimizer.advanced_optimizer._select_optimizer(dataset_size)
+            # Verify optimizer was initialized
+            assert optimizer.advanced_optimizer is not None, \
+                "Advanced optimizer should be initialized after min_experiences_for_training"
 
-        assert optimizer_name == "gepa", \
-            f"With {dataset_size} examples, should select GEPA, got {optimizer_name}"
+            # Verify we have enough experiences
+            assert len(optimizer.experiences) == 210, \
+                f"Should have 210 experiences, got {len(optimizer.experiences)}"
 
-        # Get optimization info to verify logic
-        opt_info = optimizer.advanced_optimizer.get_optimization_info(dataset_size)
-        assert opt_info["primary_optimizer"] == "gepa", \
-            f"Primary optimizer should be GEPA, got {opt_info['primary_optimizer']}"
-        assert opt_info["dataset_size"] == 210
-        assert len(opt_info["applicable_optimizers"]) == 4, \
-            "All 4 optimizers (bootstrap, simba, mipro, gepa) should be applicable"
+            # Test optimizer selection with 210 examples
+            dataset_size = 210
+            selected_optimizer, optimizer_name = optimizer.advanced_optimizer._select_optimizer(dataset_size)
 
-        # Test that compile() is called with correct optimizer
-        # Mock the actual GEPA.compile to avoid LLM calls
-        with patch.object(optimizer.advanced_optimizer.gepa_optimizer, 'compile') as mock_gepa_compile:
-            mock_optimized_module = MagicMock()
-            mock_gepa_compile.return_value = mock_optimized_module
+            assert optimizer_name == "gepa", \
+                f"With {dataset_size} examples, should select GEPA, got {optimizer_name}"
 
-            # Create dummy training data
-            import dspy
-            trainset = [
-                dspy.Example(
-                    query="test",
-                    entities="[]",
-                    relationships="[]",
-                    enhanced_query="test",
-                    recommended_agent="video_search_agent",
-                    confidence="0.8",
-                    reasoning="test"
-                ).with_inputs("query", "entities", "relationships", "enhanced_query")
-                for _ in range(210)
-            ]
+            # Get optimization info to verify logic
+            opt_info = optimizer.advanced_optimizer.get_optimization_info(dataset_size)
+            assert opt_info["primary_optimizer"] == "gepa", \
+                f"Primary optimizer should be GEPA, got {opt_info['primary_optimizer']}"
+            assert opt_info["dataset_size"] == 210
+            assert len(opt_info["applicable_optimizers"]) == 4, \
+                "All 4 optimizers (bootstrap, simba, mipro, gepa) should be applicable"
 
-            # Run compile - should use GEPA
-            result = optimizer.advanced_optimizer.compile(
-                optimizer.routing_policy,
-                trainset=trainset,
-                max_bootstrapped_demos=4,
-                max_labeled_demos=8,
-            )
+            # Test that compile() is called with correct optimizer
+            # Mock the actual GEPA.compile to avoid LLM calls
+            with patch.object(optimizer.advanced_optimizer.gepa_optimizer, 'compile') as mock_gepa_compile:
+                mock_optimized_module = MagicMock()
+                mock_gepa_compile.return_value = mock_optimized_module
 
-            # Verify GEPA was called
-            mock_gepa_compile.assert_called_once()
-            assert result == mock_optimized_module, \
-                "Should return optimized module from GEPA"
+                # Create dummy training data
+                import dspy
+                trainset = [
+                    dspy.Example(
+                        query="test",
+                        entities="[]",
+                        relationships="[]",
+                        enhanced_query="test",
+                        recommended_agent="video_search_agent",
+                        confidence="0.8",
+                        reasoning="test"
+                    ).with_inputs("query", "entities", "relationships", "enhanced_query")
+                    for _ in range(210)
+                ]
 
-        # Verify status shows optimizer ready
-        status = optimizer.get_optimization_status()
-        assert status["optimizer_ready"] is True, \
-            "Optimizer should be ready with 210 experiences"
-        assert status["total_experiences"] == 210
+                # Run compile - should use GEPA
+                result = optimizer.advanced_optimizer.compile(
+                    optimizer.routing_policy,
+                    trainset=trainset,
+                    max_bootstrapped_demos=4,
+                    max_labeled_demos=8,
+                )
+
+                # Verify GEPA was called
+                mock_gepa_compile.assert_called_once()
+                assert result == mock_optimized_module, \
+                    "Should return optimized module from GEPA"
+
+            # Verify status shows optimizer ready
+            status = optimizer.get_optimization_status()
+            assert status["optimizer_ready"] is True, \
+                "Optimizer should be ready with 210 experiences"
+            assert status["total_experiences"] == 210
 
     @pytest.mark.asyncio
     async def test_optimizer_selection_thresholds(self):
@@ -488,10 +496,10 @@ class TestAdvancedRoutingOptimizerIntegration:
     def test_components_import_successfully(self):
         """Test that all Phase 6 components can be imported."""
         try:
-            import src.app.routing.adaptive_threshold_learner as atl
-            import src.app.routing.advanced_optimizer as ao
-            import src.app.routing.mlflow_integration as mli
-            import src.app.routing.simba_query_enhancer as sqe
+            import cogniverse_agents.routing.adaptive_threshold_learner as atl
+            import cogniverse_agents.routing.advanced_optimizer as ao
+            import cogniverse_agents.routing.mlflow_integration as mli
+            import cogniverse_agents.routing.simba_query_enhancer as sqe
 
             # Verify key components exist
             assert hasattr(atl, "AdaptiveThresholdLearner")

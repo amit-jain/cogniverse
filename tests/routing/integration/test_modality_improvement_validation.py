@@ -9,12 +9,18 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-from src.app.routing.base import GenerationType, RoutingDecision, SearchModality
-from src.app.routing.modality_optimizer import ModalityExample, ModalityOptimizer
-from src.app.routing.router import ComprehensiveRouter
-from src.app.routing.xgboost_meta_models import TrainingStrategy
-from src.app.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.routing.base import (
+    GenerationType,
+    RoutingDecision,
+    SearchModality,
+)
+from cogniverse_agents.routing.modality_optimizer import (
+    ModalityExample,
+    ModalityOptimizer,
+)
+from cogniverse_agents.routing.router import ComprehensiveRouter
+from cogniverse_agents.routing.xgboost_meta_models import TrainingStrategy
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 
 @pytest.mark.integration
@@ -317,7 +323,7 @@ class TestModalityImprovementValidation:
         context = {"modality_prediction": prediction}
 
         # Create router and test routing with modality prediction
-        with patch("src.app.routing.router.ComprehensiveRouter") as MockRouter:
+        with patch("cogniverse_agents.routing.router.ComprehensiveRouter") as MockRouter:
             mock_router_instance = MockRouter.return_value
             mock_router_instance.route = AsyncMock(
                 return_value=RoutingDecision(

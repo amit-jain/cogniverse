@@ -5,12 +5,11 @@ Unit tests for MemoryAwareMixin
 from unittest.mock import MagicMock, patch
 
 import pytest
+from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 
-from src.app.agents.memory_aware_mixin import MemoryAwareMixin
 
-
-class TestAgent(MemoryAwareMixin):
-    """Test agent class using memory mixin"""
+class MockAgentWithMemory(MemoryAwareMixin):
+    """Mock agent class using memory mixin for testing"""
 
     def __init__(self):
         super().__init__()
@@ -22,7 +21,7 @@ class TestMemoryAwareMixin:
     @pytest.fixture
     def agent(self):
         """Create test agent"""
-        return TestAgent()
+        return MockAgentWithMemory()
 
     @pytest.fixture
     def mock_memory_manager(self):
@@ -44,7 +43,7 @@ class TestMemoryAwareMixin:
         """Test memory is disabled by default"""
         assert agent.is_memory_enabled() is False
 
-    @patch("src.app.agents.memory_aware_mixin.Mem0MemoryManager")
+    @patch("cogniverse_core.agents.memory_aware_mixin.Mem0MemoryManager")
     def test_initialize_memory_success(self, mock_manager_class, agent):
         """Test successful memory initialization"""
         # Setup mock
@@ -60,7 +59,7 @@ class TestMemoryAwareMixin:
         assert agent.tenant_id == "test_tenant"
         assert agent._memory_initialized is True
 
-    @patch("src.app.agents.memory_aware_mixin.Mem0MemoryManager")
+    @patch("cogniverse_core.agents.memory_aware_mixin.Mem0MemoryManager")
     def test_initialize_memory_with_vespa_config(self, mock_manager_class, agent):
         """Test memory initialization with Vespa configuration"""
         # Setup mock
@@ -80,6 +79,7 @@ class TestMemoryAwareMixin:
         mock_manager.initialize.assert_called_once_with(
             vespa_host="vespa.local",
             vespa_port=9090,
+            vespa_config_port=None,
             base_schema_name="agent_memories",
             auto_create_schema=True,
         )
@@ -99,7 +99,7 @@ class TestMemoryAwareMixin:
         state = agent.get_memory_state()
         assert state is None
 
-    @patch("src.app.agents.memory_aware_mixin.Mem0MemoryManager")
+    @patch("cogniverse_core.agents.memory_aware_mixin.Mem0MemoryManager")
     def test_get_relevant_context(self, mock_manager_class, agent):
         """Test getting relevant context"""
         # Setup mock
@@ -120,7 +120,7 @@ class TestMemoryAwareMixin:
         assert "Context 2" in context
         mock_manager.search_memory.assert_called_once()
 
-    @patch("src.app.agents.memory_aware_mixin.Mem0MemoryManager")
+    @patch("cogniverse_core.agents.memory_aware_mixin.Mem0MemoryManager")
     def test_update_memory(self, mock_manager_class, agent):
         """Test updating memory"""
         # Setup mock
@@ -141,7 +141,7 @@ class TestMemoryAwareMixin:
             metadata=None,
         )
 
-    @patch("src.app.agents.memory_aware_mixin.Mem0MemoryManager")
+    @patch("cogniverse_core.agents.memory_aware_mixin.Mem0MemoryManager")
     def test_clear_memory(self, mock_manager_class, agent):
         """Test clearing memory"""
         # Setup mock
@@ -159,7 +159,7 @@ class TestMemoryAwareMixin:
         assert success is True
         mock_manager.clear_agent_memory.assert_called_once()
 
-    @patch("src.app.agents.memory_aware_mixin.Mem0MemoryManager")
+    @patch("cogniverse_core.agents.memory_aware_mixin.Mem0MemoryManager")
     def test_inject_context_into_prompt(self, mock_manager_class, agent):
         """Test injecting context into prompt"""
         # Setup mock
@@ -175,13 +175,15 @@ class TestMemoryAwareMixin:
 
         # Inject context
         original_prompt = "Answer the query"
-        enhanced_prompt = agent.inject_context_into_prompt(original_prompt, "test query")
+        enhanced_prompt = agent.inject_context_into_prompt(
+            original_prompt, "test query"
+        )
 
         assert original_prompt in enhanced_prompt
         assert "Context 1" in enhanced_prompt
         assert "Relevant Context from Memory" in enhanced_prompt
 
-    @patch("src.app.agents.memory_aware_mixin.Mem0MemoryManager")
+    @patch("cogniverse_core.agents.memory_aware_mixin.Mem0MemoryManager")
     def test_inject_context_no_results(self, mock_manager_class, agent):
         """Test injecting context when no results found"""
         # Setup mock
@@ -195,12 +197,14 @@ class TestMemoryAwareMixin:
 
         # Inject context
         original_prompt = "Answer the query"
-        enhanced_prompt = agent.inject_context_into_prompt(original_prompt, "test query")
+        enhanced_prompt = agent.inject_context_into_prompt(
+            original_prompt, "test query"
+        )
 
         # Should return original prompt unchanged
         assert enhanced_prompt == original_prompt
 
-    @patch("src.app.agents.memory_aware_mixin.Mem0MemoryManager")
+    @patch("cogniverse_core.agents.memory_aware_mixin.Mem0MemoryManager")
     def test_remember_success(self, mock_manager_class, agent):
         """Test remembering successful interaction"""
         # Setup mock
@@ -221,7 +225,7 @@ class TestMemoryAwareMixin:
         assert "SUCCESS" in call_args[1]["content"]
         assert "test query" in call_args[1]["content"]
 
-    @patch("src.app.agents.memory_aware_mixin.Mem0MemoryManager")
+    @patch("cogniverse_core.agents.memory_aware_mixin.Mem0MemoryManager")
     def test_remember_failure(self, mock_manager_class, agent):
         """Test remembering failed interaction"""
         # Setup mock
@@ -242,7 +246,7 @@ class TestMemoryAwareMixin:
         assert "FAILURE" in call_args[1]["content"]
         assert "test error" in call_args[1]["content"]
 
-    @patch("src.app.agents.memory_aware_mixin.Mem0MemoryManager")
+    @patch("cogniverse_core.agents.memory_aware_mixin.Mem0MemoryManager")
     def test_get_memory_summary(self, mock_manager_class, agent):
         """Test getting memory summary"""
         # Setup mock

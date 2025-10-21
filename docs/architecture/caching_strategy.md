@@ -191,7 +191,7 @@ class LocalFSBackend(CacheBackend):
 ## Tiered Cache Manager
 
 ```python
-from src.telemetry.multi_tenant_manager import MultiTenantTelemetryManager
+from cogniverse_core.telemetry.multi_tenant_manager import MultiTenantTelemetryManager
 
 class TieredCacheManager:
     """Manages multiple cache tiers with automatic promotion/demotion"""

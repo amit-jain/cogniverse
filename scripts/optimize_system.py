@@ -24,7 +24,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Any, Dict
 
 import httpx
 
@@ -32,8 +32,8 @@ import httpx
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.tools.a2a_utils import A2AClient
 from src.common.config_utils import get_config
+from src.tools.a2a_utils import A2AClient
 
 
 class SystemOptimizer:
@@ -97,7 +97,7 @@ class SystemOptimizer:
         except httpx.RequestError as e:
             error_msg = f"Connection failed: {e}"
             print(f"❌ {error_msg}")
-            print(f"💡 Make sure routing agent is running: uv run python src/app/agents/routing_agent.py")
+            print("💡 Make sure routing agent is running: uv run python src/app/agents/routing_agent.py")
             return {"status": "error", "message": error_msg}
 
     async def get_status(self) -> Dict[str, Any]:

@@ -5,8 +5,7 @@ Unit tests for Phoenix experiment plugin.
 from unittest.mock import Mock, patch
 
 import pytest
-
-from src.evaluation.plugins.phoenix_experiment import (
+from cogniverse_core.evaluation.plugins.phoenix_experiment import (
     PhoenixExperimentPlugin,
     get_phoenix_evaluators,
     register,
@@ -49,10 +48,10 @@ class TestPhoenixExperimentPlugin:
 
         with (
             patch(
-                "src.app.search.service.SearchService", return_value=mock_search_service
+                "cogniverse_agents.search.service.SearchService", return_value=mock_search_service
             ),
             patch(
-                "src.common.config_utils.get_config",
+                "cogniverse_core.config.utils.get_config",
                 return_value={"vespa_url": "http://localhost"},
             ),
         ):
@@ -84,10 +83,10 @@ class TestPhoenixExperimentPlugin:
 
         with (
             patch(
-                "src.app.search.service.SearchService", return_value=mock_search_service
+                "cogniverse_agents.search.service.SearchService", return_value=mock_search_service
             ),
             patch(
-                "src.common.config_utils.get_config",
+                "cogniverse_core.config.utils.get_config",
                 return_value={"vespa_url": "http://localhost"},
             ),
         ):
@@ -110,10 +109,10 @@ class TestPhoenixExperimentPlugin:
 
         with (
             patch(
-                "src.app.search.service.SearchService", return_value=mock_search_service
+                "cogniverse_agents.search.service.SearchService", return_value=mock_search_service
             ),
             patch(
-                "src.common.config_utils.get_config",
+                "cogniverse_core.config.utils.get_config",
                 return_value={"vespa_url": "http://localhost"},
             ),
         ):
@@ -136,11 +135,11 @@ class TestPhoenixExperimentPlugin:
         """Test task wrapping with search service failure."""
         with (
             patch(
-                "src.app.search.service.SearchService",
+                "cogniverse_agents.search.service.SearchService",
                 side_effect=Exception("Search failed"),
             ),
             patch(
-                "src.common.config_utils.get_config",
+                "cogniverse_core.config.utils.get_config",
                 return_value={"vespa_url": "http://localhost"},
             ),
         ):
@@ -176,9 +175,9 @@ class TestPhoenixExperimentPlugin:
         service.search.return_value = results
 
         with (
-            patch("src.app.search.service.SearchService", return_value=service),
+            patch("cogniverse_agents.search.service.SearchService", return_value=service),
             patch(
-                "src.common.config_utils.get_config",
+                "cogniverse_core.config.utils.get_config",
                 return_value={"vespa_url": "http://localhost"},
             ),
         ):
@@ -207,9 +206,9 @@ class TestPhoenixExperimentPlugin:
         service.search.return_value = [result_without_score]
 
         with (
-            patch("src.app.search.service.SearchService", return_value=service),
+            patch("cogniverse_agents.search.service.SearchService", return_value=service),
             patch(
-                "src.common.config_utils.get_config",
+                "cogniverse_core.config.utils.get_config",
                 return_value={"vespa_url": "http://localhost"},
             ),
         ):
@@ -240,10 +239,10 @@ class TestPhoenixExperimentPlugin:
         with (
             patch("phoenix.Client", return_value=mock_client),
             patch(
-                "src.evaluation.plugins.phoenix_experiment.run_experiment",
+                "cogniverse_core.evaluation.plugins.phoenix_experiment.run_experiment",
                 return_value=mock_result,
             ) as mock_run_exp,
-            patch("src.evaluation.core.solvers.create_retrieval_solver") as mock_solver,
+            patch("cogniverse_core.evaluation.core.solvers.create_retrieval_solver") as mock_solver,
         ):
 
             result = PhoenixExperimentPlugin.run_inspect_with_phoenix_tracking(
@@ -304,10 +303,10 @@ class TestPhoenixExperimentPlugin:
         with (
             patch("phoenix.Client", return_value=mock_client),
             patch(
-                "src.evaluation.plugins.phoenix_experiment.run_experiment",
+                "cogniverse_core.evaluation.plugins.phoenix_experiment.run_experiment",
                 return_value=mock_result,
             ),
-            patch("src.evaluation.core.solvers.create_retrieval_solver"),
+            patch("cogniverse_core.evaluation.core.solvers.create_retrieval_solver"),
         ):
 
             result = PhoenixExperimentPlugin.run_inspect_with_phoenix_tracking(
@@ -356,7 +355,7 @@ class TestPhoenixExperimentPluginUtilities:
         }
 
         with patch(
-            "src.evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge"
+            "cogniverse_core.evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge"
         ) as mock_judge:
             mock_instance = Mock()
             mock_judge.return_value = mock_instance
@@ -380,7 +379,7 @@ class TestPhoenixExperimentPluginUtilities:
         mock_quality_evaluators = [Mock(), Mock()]
 
         with patch(
-            "src.evaluation.evaluators.sync_reference_free.create_sync_evaluators",
+            "cogniverse_core.evaluation.evaluators.sync_reference_free.create_sync_evaluators",
             return_value=mock_quality_evaluators,
         ):
 
@@ -403,11 +402,11 @@ class TestPhoenixExperimentPluginUtilities:
 
         with (
             patch(
-                "src.evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge",
+                "cogniverse_core.evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge",
                 return_value=mock_visual_judge,
             ),
             patch(
-                "src.evaluation.evaluators.sync_reference_free.create_sync_evaluators",
+                "cogniverse_core.evaluation.evaluators.sync_reference_free.create_sync_evaluators",
                 return_value=mock_quality_evaluators,
             ),
         ):
@@ -428,7 +427,7 @@ class TestPhoenixExperimentPluginUtilities:
         }
 
         with patch(
-            "src.evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge"
+            "cogniverse_core.evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge"
         ) as mock_judge:
             mock_judge.return_value = Mock()
 
@@ -451,7 +450,7 @@ class TestPhoenixExperimentPluginUtilities:
         }
 
         with patch(
-            "src.evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge"
+            "cogniverse_core.evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge"
         ) as mock_judge:
             mock_judge.return_value = Mock()
 

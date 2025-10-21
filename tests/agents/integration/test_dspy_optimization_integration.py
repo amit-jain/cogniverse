@@ -6,15 +6,14 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock, mock_open, patch
 
 import pytest
-
-from src.app.agents.detailed_report_agent import DetailedReportAgent
-from src.app.agents.dspy_agent_optimizer import (
+from cogniverse_agents.detailed_report_agent import DetailedReportAgent
+from cogniverse_agents.dspy_agent_optimizer import (
     DSPyAgentOptimizerPipeline,
     DSPyAgentPromptOptimizer,
 )
-from src.app.agents.query_analysis_tool_v3 import QueryAnalysisToolV3
-from src.app.agents.routing_agent import RoutingAgent
-from src.app.agents.summarizer_agent import SummarizerAgent
+from cogniverse_agents.query_analysis_tool_v3 import QueryAnalysisToolV3
+from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.summarizer_agent import SummarizerAgent
 
 
 @pytest.fixture
@@ -374,8 +373,8 @@ class TestDSPyAgentIntegration:
             "metadata": {"optimization_timestamp": 1234567890, "dspy_version": "3.0.2"},
         }
 
-        with patch("src.app.agents.summarizer_agent.VLMInterface"):
-            with patch("src.app.agents.summarizer_agent.get_config") as mock_config:
+        with patch("cogniverse_agents.summarizer_agent.VLMInterface"):
+            with patch("cogniverse_agents.summarizer_agent.get_config") as mock_config:
                 with patch.object(Path, "exists") as mock_exists:
 
                     # Mock config
@@ -423,9 +422,9 @@ class TestDSPyAgentIntegration:
             "metadata": {"optimization_timestamp": 1234567890, "dspy_version": "3.0.2"},
         }
 
-        with patch("src.app.agents.detailed_report_agent.VLMInterface"):
+        with patch("cogniverse_agents.detailed_report_agent.VLMInterface"):
             with patch(
-                "src.app.agents.detailed_report_agent.get_config"
+                "cogniverse_agents.detailed_report_agent.get_config"
             ) as mock_config:
                 with patch.object(Path, "exists") as mock_exists:
 
@@ -474,7 +473,7 @@ class TestDSPyAgentIntegration:
             "metadata": {"optimization_timestamp": 1234567890, "dspy_version": "3.0.2"},
         }
 
-        with patch("src.app.agents.query_analysis_tool_v3.RoutingAgent"):
+        with patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent"):
             with patch.object(Path, "exists") as mock_exists:
 
                 # Mock path exists to find optimized prompts
@@ -607,7 +606,7 @@ class TestDSPyEndToEndOptimization:
                         ):
                             if agent_class == QueryAnalysisToolV3:
                                 with patch(
-                                    "src.app.agents.query_analysis_tool_v3.RoutingAgent"
+                                    "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
                                 ):
                                     agent = agent_factory()
                             else:
@@ -628,7 +627,7 @@ class TestDSPyEndToEndOptimization:
         """Test performance comparison between optimized and default prompts."""
 
         # Create agents with and without optimization
-        with patch("src.app.agents.query_analysis_tool_v3.RoutingAgent"):
+        with patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent"):
             # Agent without optimization
             agent_default = QueryAnalysisToolV3(enable_agent_integration=False)
 

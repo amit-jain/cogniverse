@@ -5,17 +5,14 @@ Setup script for the Multi-Agent RAG System.
 This script initializes the video database and prepares the system for use.
 """
 
-import os
 import sys
-import shutil
-import urllib.request
 from pathlib import Path
-from typing import List
 
 # Add the project root to the path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.common.config_utils import get_config, setup_environment
+
 
 def create_directories():
     """Create necessary data directories."""
@@ -140,6 +137,7 @@ def setup_byaldi_index():
         
         # Import the main function from the existing ingestion script
         import argparse
+
         from scripts.run_ingestion import main as run_ingestion_main
         
         # Simulate command line arguments for the ingestion script

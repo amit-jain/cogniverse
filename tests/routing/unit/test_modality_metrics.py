@@ -2,12 +2,11 @@
 Unit tests for ModalityMetricsTracker
 """
 
-import time
-
 import pytest
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_core.telemetry.modality_metrics import ModalityMetricsTracker
 
-from src.app.search.multi_modal_reranker import QueryModality
-from src.app.telemetry.modality_metrics import ModalityMetricsTracker
+from tests.utils.async_polling import simulate_processing_delay
 
 
 class TestModalityMetricsTracker:
@@ -129,7 +128,7 @@ class TestModalityMetricsTracker:
         """Test throughput (QPS) calculation"""
         # Record executions over time
         tracker.record_modality_execution(QueryModality.VIDEO, 100, True)
-        time.sleep(0.1)  # 100ms delay
+        simulate_processing_delay(delay=0.1, description="processing")  # 100ms delay
         tracker.record_modality_execution(QueryModality.VIDEO, 100, True)
 
         stats = tracker.get_modality_stats(QueryModality.VIDEO)
@@ -243,7 +242,7 @@ class TestModalityMetricsTracker:
         assert tracker.first_request_time[QueryModality.VIDEO] is not None
         assert tracker.last_request_time[QueryModality.VIDEO] is not None
 
-        time.sleep(0.05)
+        simulate_processing_delay(delay=0.05, description="processing")
         tracker.record_modality_execution(QueryModality.VIDEO, 100, True)
 
         # Last request time should be updated

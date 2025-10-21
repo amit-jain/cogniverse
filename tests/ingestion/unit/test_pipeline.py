@@ -9,8 +9,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-
-from src.app.ingestion.pipeline import (
+from cogniverse_runtime.ingestion.pipeline import (
     PipelineConfig,
     PipelineStep,
     VideoIngestionPipeline,
@@ -60,8 +59,8 @@ class TestPipelineConfig:
         assert config.video_dir == Path("/custom/path")
         assert config.search_backend == "vespa"
 
-    @patch("src.common.utils.output_manager.get_output_manager")
-    @patch("src.app.ingestion.pipeline.get_config")
+    @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
+    @patch("cogniverse_runtime.ingestion.pipeline.get_config")
     def test_from_config_method(self, mock_get_config, mock_get_output_manager):
         """Test PipelineConfig.from_config method."""
         # Mock config data
@@ -96,8 +95,8 @@ class TestPipelineConfig:
         assert config.search_backend == "vespa"
         assert config.output_dir == Path("/test/output")
 
-    @patch("src.common.utils.output_manager.get_output_manager")
-    @patch("src.app.ingestion.pipeline.get_config")
+    @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
+    @patch("cogniverse_runtime.ingestion.pipeline.get_config")
     def test_from_profile_method(self, mock_get_config, mock_get_output_manager):
         """Test PipelineConfig.from_profile method."""
         # Mock config data with profiles
@@ -136,7 +135,7 @@ class TestPipelineConfig:
         assert config.search_backend == "byaldi"
         assert config.output_dir == Path("/profile/output")
 
-    @patch("src.app.ingestion.pipeline.get_config")
+    @patch("cogniverse_runtime.ingestion.pipeline.get_config")
     def test_from_profile_method_profile_not_found(self, mock_get_config):
         """Test PipelineConfig.from_profile with non-existent profile."""
         config_data = {"video_processing_profiles": {}, "search_backend": "byaldi"}

@@ -5,8 +5,10 @@ Tests validation logic for organization IDs and tenant names without requiring V
 """
 
 import pytest
-
-from src.admin.tenant_manager import validate_org_id, validate_tenant_name
+from cogniverse_runtime.admin.tenant_manager import (
+    validate_org_id,
+    validate_tenant_name,
+)
 
 
 class TestValidateOrgId:

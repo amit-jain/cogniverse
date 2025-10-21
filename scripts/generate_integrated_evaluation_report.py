@@ -3,12 +3,13 @@
 Generate integrated HTML report combining quantitative test results and evaluation experiments
 """
 
-import json
-import pandas as pd
-from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Any, Optional
 import argparse
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional
+
+import pandas as pd
 
 
 def load_latest_files(results_dir: Path, experiments_dir: Path) -> tuple:

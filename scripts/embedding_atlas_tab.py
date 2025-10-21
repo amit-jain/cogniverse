@@ -4,19 +4,19 @@ Embedding Atlas visualization tab for Dashboard
 
 # Fix protobuf issue - must be before other imports
 import os
+
 os.environ['PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION'] = 'python'
 
-import streamlit as st
-import pandas as pd
-import numpy as np
-from pathlib import Path
 import subprocess
-import json
+import sys
 import time
 from datetime import datetime
-import sys
-from typing import Dict, Optional
-from sklearn.metrics.pairwise import cosine_similarity
+from pathlib import Path
+from typing import Dict
+
+import numpy as np
+import pandas as pd
+import streamlit as st
 
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -124,7 +124,7 @@ def get_available_strategies() -> Dict[str, list]:
         
         return strategies
     
-    except Exception as e:
+    except Exception:
         return {}
 
 
@@ -923,7 +923,7 @@ def compare_query_with_embeddings(query_text: str, schema: str):
     """Add single query embedding to the visualization (backward compatibility)"""
     compare_multiple_queries_with_embeddings([query_text], schema)
     
-    with st.spinner(f"Adding query to visualization..."):
+    with st.spinner("Adding query to visualization..."):
         try:
             # Get the embedding data
             df = st.session_state.embedding_data["df"].copy()
@@ -1119,8 +1119,8 @@ def compare_query_with_embeddings(query_text: str, schema: str):
                 st.info(f"Projecting {len(all_tokens)} total tokens ({query_start_idx} visual patches + {len(query_tokens)} query tokens)")
                 
                 # Apply UMAP to ALL tokens together (visual patches + query tokens)
-                from umap import UMAP
                 from sklearn.metrics.pairwise import cosine_similarity
+                from umap import UMAP
                 
                 # Use cosine metric since ColPali uses cosine similarity
                 reducer = UMAP(

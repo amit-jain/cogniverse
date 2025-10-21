@@ -1,15 +1,18 @@
 # Cogniverse - Multi-Agent System for Multi-Modal Content
 
-Production-ready multi-agent system for multi-modal content analysis and search with automated optimization and evaluation, supporting video, audio, images, and text processing.
+**Version:** 2.0.0 | **Last Updated:** 2025-10-15 | **Status:** Production Ready
+
+Production-ready multi-agent system built with **UV workspace architecture** (5 SDK packages) for multi-modal content analysis and search with automated optimization, evaluation, and complete multi-tenant isolation.
 
 ## 🎯 Key Features
 
-- **Multi-Agent Architecture**: A2A protocol-based orchestration of specialized agents for different content types
+- **UV Workspace Architecture**: 5 independent SDK packages (`cogniverse_core`, `cogniverse_agents`, `cogniverse_vespa`, `cogniverse_runtime`, `cogniverse_dashboard`)
+- **Multi-Agent Orchestration**: A2A protocol-based coordination of specialized agents
 - **Advanced Embeddings**: ColPali frame-level, VideoPrism global, and ColQwen multi-modal embeddings
 - **DSPy Optimization**: GEPA experience-guided optimization with Bootstrap, SIMBA, and MIPRO fallbacks
-- **Multi-Tenant Support**: Complete tenant isolation with schema-per-tenant Vespa deployment
-- **Phoenix Telemetry**: Comprehensive observability with traces, experiments, and dashboards
-- **Memory System**: Mem0 + Vespa backend for context-aware personalization
+- **Complete Multi-Tenant Isolation**: Schema-per-tenant Vespa, per-tenant Phoenix projects, tenant-scoped memory
+- **Phoenix Telemetry**: Comprehensive observability with traces, experiments, and tenant-isolated dashboards
+- **Mem0 Memory System**: Context-aware personalization with tenant isolation
 
 ## 🚀 Quick Start
 
@@ -84,38 +87,56 @@ uv run streamlit run scripts/phoenix_dashboard_standalone.py
 # Open http://localhost:8501
 ```
 
-## 📁 Project Structure
+## 📁 UV Workspace Structure
 
 ```
 cogniverse/
-├── src/
-│   ├── app/
-│   │   ├── agents/          # Multi-agent orchestration
-│   │   │   ├── composing_agent.py     # ADK-based orchestrator
-│   │   │   └── video_search_agent.py  # Vespa search specialist
-│   │   ├── ingestion/       # Video processing pipeline
-│   │   │   ├── pipeline.py            # Configurable pipeline
-│   │   │   └── processors/            # Frame, audio, embedding
-│   │   └── routing/         # DSPy routing optimization
-│   │       ├── router.py              # Multi-tier router
-│   │       └── gepa_optimizer.py      # Experience-guided optimization
-│   ├── backends/
-│   │   └── vespa/           # Vector database backend
-│   │       ├── schema_manager.py      # Multi-tenant schemas
-│   │       └── query_builder.py       # 9 ranking strategies
-│   ├── evaluation/          # Evaluation framework
-│   │   ├── plugins/phoenix_experiment.py
-│   │   └── evaluators/     # Quality scorers, visual judges
-│   ├── memory/              # Memory system
-│   │   └── mem0_manager.py            # Mem0 integration
-│   ├── telemetry/           # Phoenix integration
-│   │   └── multi_tenant_manager.py    # Per-tenant projects
-│   └── common/              # Shared utilities
-│       └── config_manager.py          # Centralized config
+├── libs/                    # SDK Packages (UV workspace)
+│   ├── core/                # cogniverse_core
+│   │   └── cogniverse_core/
+│   │       ├── config/      # Configuration management
+│   │       ├── telemetry/   # Phoenix telemetry (tenant-aware)
+│   │       ├── evaluation/  # Experiment tracking
+│   │       └── common/      # Cache, memory, utilities
+│   ├── agents/              # cogniverse_agents
+│   │   └── cogniverse_agents/
+│   │       ├── agents/      # Agent implementations
+│   │       ├── routing/     # DSPy routing & optimization
+│   │       ├── ingestion/   # Video processing pipeline
+│   │       ├── search/      # Multi-modal search & reranking
+│   │       └── tools/       # A2A tools
+│   ├── vespa/               # cogniverse_vespa
+│   │   └── cogniverse_vespa/
+│   │       └── backends/    # Vespa backend (tenant schemas)
+│   ├── runtime/             # cogniverse_runtime
+│   │   └── cogniverse_runtime/
+│   │       └── server/      # FastAPI server
+│   └── dashboard/           # cogniverse_dashboard
+│       └── cogniverse_dashboard/
+│           └── ui/          # Streamlit dashboard
 ├── docs/                    # Comprehensive documentation
+│   ├── architecture/        # System architecture
+│   ├── modules/             # Module documentation
+│   ├── operations/          # Deployment & configuration
+│   ├── development/         # Development guides
+│   ├── diagrams/            # Architecture diagrams
+│   └── testing/             # Testing guides
 ├── scripts/                 # Operational scripts
-├── tests/                   # Test suite
-└── configs/                 # Configuration files
+├── tests/                   # Test suite (by package)
+├── configs/                 # Configuration & schemas
+├── pyproject.toml           # Workspace root
+└── uv.lock                  # Unified lockfile
+```
+
+**Package Dependencies:**
+```
+cogniverse_core (foundation)
+    ↑
+    ├── cogniverse_agents (depends on core)
+    ├── cogniverse_vespa (depends on core)
+    ↑
+    ├── cogniverse_runtime (depends on core, agents, vespa)
+    └── cogniverse_dashboard (depends on core, agents)
 ```
 
 ## 🏗️ Architecture
@@ -159,29 +180,44 @@ cogniverse/
 
 ### Multi-Tenant Setup
 ```python
-from src.common.config_manager import get_config_manager
+from cogniverse_core.config import SystemConfig
+from cogniverse_agents.agents import VideoSearchAgent
 
-manager = get_config_manager()
-
-# Configure tenant
-manager.set_system_config(SystemConfig(
-    tenant_id="customer_a",
+# Configure tenant with complete isolation
+config = SystemConfig(
+    tenant_id="acme_corp",
     llm_model="gpt-4",
-    vespa_url="http://vespa:8080",
-    phoenix_project_name="customer_a_project"
-))
+    vespa_url="http://localhost:8080",
+    vespa_config_port=19071,
+    phoenix_project_name="acme_corp_project",  # Isolated Phoenix project
+    phoenix_enabled=True
+)
+
+# Create tenant-specific agent
+agent = VideoSearchAgent(
+    config,
+    profile="video_colpali_smol500_mv_frame"
+)
+
+# Agent automatically targets schema: video_colpali_smol500_mv_frame_acme_corp
 ```
 
 ### DSPy Optimization
 ```python
-# Configure GEPA optimizer
-manager.set_routing_config(RoutingConfig(
-    tenant_id="default",
+from cogniverse_agents.routing.config import RoutingConfig
+from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
+
+# Configure GEPA optimizer for tenant
+routing_config = RoutingConfig(
+    tenant_id="acme_corp",
     optimizer_type="GEPA",
     experience_buffer_size=10000,
     learning_rate=0.001,
     update_interval=300  # 5 minutes
-))
+)
+
+orchestrator = OptimizationOrchestrator(config=routing_config)
+results = orchestrator.run_optimization()
 ```
 
 ## 📊 Monitoring & Evaluation
@@ -218,24 +254,36 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ -v
 
 ## 📚 Documentation
 
-### Core Documentation
-- [Architecture Overview](docs/architecture.md) - System design and components
-- [Multi-Tenant System](docs/multi-tenant-system.md) - Tenant isolation and management
-- [Optimization System](docs/optimization-system.md) - DSPy and GEPA optimization
-- [Agent Orchestration](docs/agent-orchestration.md) - A2A protocol and patterns
-- [Phoenix Integration](docs/phoenix-integration.md) - Telemetry and observability
-- [Memory System](docs/memory-system.md) - Mem0 context management
-- [Evaluation Guide](docs/evaluation.md) - Testing and metrics
+### Architecture
+- [Architecture Overview](docs/architecture/overview.md) - System design and multi-tenant architecture
+- [SDK Architecture](docs/architecture/sdk-architecture.md) - UV workspace and 5 SDK packages
+- [Multi-Tenant Architecture](docs/architecture/multi-tenant.md) - Complete tenant isolation patterns
+- [System Flows](docs/architecture/system-flows.md) - 20+ architectural diagrams
 
-### Configuration & Setup
-- [Configuration System](docs/CONFIGURATION_SYSTEM.md) - Config management
-- [Deployment Guide](docs/deployment.md) - Production deployment
-- [Performance Targets](docs/PERFORMANCE_TARGETS.md) - Benchmarks
+### Operations & Deployment
+- [Setup & Installation](docs/operations/setup-installation.md) - UV workspace installation
+- [Configuration Guide](docs/operations/configuration.md) - Multi-tenant configuration
+- [Deployment Guide](docs/operations/deployment.md) - Docker, Modal, Kubernetes
+- [Multi-Tenant Operations](docs/operations/multi-tenant-ops.md) - Tenant lifecycle management
 
-### Component Documentation
-- [Processing Pipeline](docs/processing/) - Video ingestion
-- [Testing Guide](docs/testing/) - Test strategies
-- [Modal Deployment](docs/modal/) - Serverless deployment
+### Development
+- [Package Development](docs/development/package-dev.md) - SDK package workflows
+- [Scripts & Operations](docs/development/scripts-operations.md) - Operational scripts
+- [Testing Guide](docs/testing/pytest-best-practices.md) - SDK and multi-tenant testing
+
+### Module Documentation
+- [Agents](docs/modules/agents.md) - Agent implementations
+- [Routing](docs/modules/routing.md) - Query routing and optimization
+- [Ingestion](docs/modules/ingestion.md) - Video processing pipeline
+- [Search & Reranking](docs/modules/search-reranking.md) - Multi-modal search
+- [Telemetry](docs/modules/telemetry.md) - Phoenix integration
+- [Evaluation](docs/modules/evaluation.md) - Experiment tracking
+- [Backends](docs/modules/backends.md) - Vespa integration
+- [Common](docs/modules/common.md) - Utilities and cache
+
+### Diagrams
+- [SDK Architecture Diagrams](docs/diagrams/sdk-architecture-diagrams.md)
+- [Multi-Tenant Diagrams](docs/diagrams/multi-tenant-diagrams.md)
 
 ## 🚀 Production Deployment
 
@@ -308,5 +356,6 @@ curl https://your-app.modal.run/search \
 ---
 
 **Version**: 2.0.0
-**Last Updated**: 2025-10-04
-**Status**: Production Ready
+**Architecture**: UV Workspace (5 SDK Packages)
+**Last Updated**: 2025-10-15
+**Status**: Production Ready with Complete Multi-Tenant Isolation

@@ -5,8 +5,7 @@ Unit tests for SummarizerAgent with proper DSPy integration
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-
-from src.app.agents.summarizer_agent import (
+from cogniverse_agents.summarizer_agent import (
     SummarizerAgent,
     SummaryGenerationSignature,
     SummaryRequest,
@@ -14,7 +13,7 @@ from src.app.agents.summarizer_agent import (
     ThinkingPhase,
     VLMInterface,
 )
-from src.tools.a2a_utils import A2AMessage, DataPart, Task
+from cogniverse_agents.tools.a2a_utils import A2AMessage, DataPart, Task
 
 
 @pytest.mark.unit
@@ -52,8 +51,8 @@ class TestVisualAnalysisSignature:
 class TestVLMInterface:
     """Test VLM interface with DSPy integration"""
 
-    @patch("src.common.vlm_interface.get_config")
-    @patch("src.common.vlm_interface.dspy.settings")
+    @patch("cogniverse_core.common.vlm_interface.get_config")
+    @patch("cogniverse_core.common.vlm_interface.dspy.settings")
     @pytest.mark.ci_fast
     def test_vlm_interface_initialization_success(
         self, mock_dspy_settings, mock_get_config
@@ -72,7 +71,7 @@ class TestVLMInterface:
         assert vlm.config is not None
         mock_dspy_settings.configure.assert_called_once()
 
-    @patch("src.common.vlm_interface.get_config")
+    @patch("cogniverse_core.common.vlm_interface.get_config")
     def test_vlm_interface_initialization_missing_config(self, mock_get_config):
         """Test VLM interface initialization fails with missing config"""
         mock_get_config.return_value = {
@@ -82,9 +81,9 @@ class TestVLMInterface:
         with pytest.raises(ValueError, match="LLM configuration missing"):
             VLMInterface()
 
-    @patch("src.common.vlm_interface.get_config")
-    @patch("src.common.vlm_interface.dspy.settings")
-    @patch("src.common.vlm_interface.dspy.Predict")
+    @patch("cogniverse_core.common.vlm_interface.get_config")
+    @patch("cogniverse_core.common.vlm_interface.dspy.settings")
+    @patch("cogniverse_core.common.vlm_interface.dspy.Predict")
     @pytest.mark.asyncio
     async def test_analyze_visual_content(
         self, mock_predict, mock_dspy_settings, mock_get_config
@@ -121,8 +120,8 @@ class TestVLMInterface:
 class TestSummarizerAgent:
     """Test cases for SummarizerAgent class"""
 
-    @patch("src.app.agents.summarizer_agent.get_config")
-    @patch("src.app.agents.summarizer_agent.VLMInterface")
+    @patch("cogniverse_agents.summarizer_agent.get_config")
+    @patch("cogniverse_agents.summarizer_agent.VLMInterface")
     @pytest.mark.ci_fast
     def test_summarizer_agent_initialization(self, mock_vlm_class, mock_get_config):
         """Test SummarizerAgent initialization with DSPy"""
@@ -173,32 +172,31 @@ class TestSummarizerAgent:
         assert request.summary_type == "comprehensive"
         assert request.include_visual_analysis is True
 
-    @patch("src.app.agents.summarizer_agent.get_config")
-    @patch("src.app.agents.summarizer_agent.VLMInterface")
-    @patch("dspy.ChainOfThought")
+    @patch("cogniverse_agents.summarizer_agent.get_config")
+    @patch("cogniverse_agents.summarizer_agent.VLMInterface")
+    @patch.object(SummarizerAgent, "_initialize_vlm_client")  # Prevent DSPy LM initialization
     @pytest.mark.asyncio
     async def test_process_a2a_task_success(
-        self, mock_cot, mock_vlm_class, mock_get_config
+        self, mock_init_vlm, mock_vlm_class, mock_get_config
     ):
         """Test processing A2A task successfully"""
         mock_get_config.return_value = {
             "llm": {
-                "model_name": "ollama/llama3.2",  # Use proper provider format
+                "model_name": "ollama/smollm3:500m",
                 "base_url": "http://localhost:11434",
             }
         }
         mock_vlm_class.return_value = Mock()
 
-        # Mock DSPy ChainOfThought
+        # Mock DSPy prediction result
         mock_prediction = Mock()
         mock_prediction.summary = "Test summary of the results"
         mock_prediction.key_insights = "insight1, insight2"
 
-        mock_cot_instance = Mock()
-        mock_cot_instance.forward = Mock(return_value=mock_prediction)
-        mock_cot.return_value = mock_cot_instance
-
         agent = SummarizerAgent(tenant_id="test_tenant")
+
+        # Mock the dspy_summarizer directly to return our prediction
+        agent.dspy_summarizer = Mock(return_value=mock_prediction)
 
         # Create A2A task
         request_data = {
@@ -224,8 +222,8 @@ class TestSummarizerAgentCoreFunctionality:
     def agent_with_mocks(self):
         """Create agent with properly mocked dependencies"""
         with (
-            patch("src.app.agents.summarizer_agent.get_config") as mock_config,
-            patch("src.app.agents.summarizer_agent.VLMInterface") as mock_vlm_class,
+            patch("cogniverse_agents.summarizer_agent.get_config") as mock_config,
+            patch("cogniverse_agents.summarizer_agent.VLMInterface") as mock_vlm_class,
             patch.object(SummarizerAgent, "_initialize_vlm_client"),
         ):
 
@@ -485,7 +483,7 @@ class TestSummarizerAgentCoreFunctionality:
         """Test summarization with routing decision context"""
         agent = agent_with_mocks
 
-        from src.app.agents.routing_agent import RoutingDecision
+        from cogniverse_agents.routing_agent import RoutingDecision
 
         routing_decision = RoutingDecision(
             query="AI overview",

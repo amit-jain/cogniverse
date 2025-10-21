@@ -5,8 +5,7 @@ Unit tests for visual evaluator plugin.
 from unittest.mock import Mock, patch
 
 import pytest
-
-from src.evaluation.plugins.visual_evaluator import (
+from cogniverse_core.evaluation.plugins.visual_evaluator import (
     VisualEvaluatorPlugin,
     get_visual_scorers,
 )
@@ -62,7 +61,7 @@ class TestVisualEvaluatorPlugin:
         state.input = {"query": "test query"}
         state.outputs = {}
 
-        with patch("src.common.config_utils.get_config") as mock_config:
+        with patch("cogniverse_core.config.utils.get_config") as mock_config:
             mock_config.return_value = {"evaluators": {}}
 
             score = await scorer(state, None)
@@ -89,9 +88,9 @@ class TestVisualEvaluatorPlugin:
         }
 
         with (
-            patch("src.common.config_utils.get_config") as mock_config,
+            patch("cogniverse_core.config.utils.get_config") as mock_config,
             patch(
-                "src.evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge"
+                "cogniverse_core.evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge"
             ) as mock_judge_class,
         ):
 
@@ -125,7 +124,7 @@ class TestVisualEvaluatorPlugin:
         }
 
         with patch(
-            "src.evaluation.evaluators.sync_reference_free.create_sync_evaluators"
+            "cogniverse_core.evaluation.evaluators.sync_reference_free.create_sync_evaluators"
         ) as mock_create:
             mock_evaluator = Mock()
             mock_eval_result = Mock()

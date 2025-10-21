@@ -8,12 +8,13 @@ routing -> relationship extraction -> query enhancement -> search execution
 import asyncio
 
 import pytest
-
-from src.app.agents.detailed_report_agent import DetailedReportAgent
-from src.app.agents.routing_agent import RoutingAgent
-from src.app.agents.summarizer_agent import SummarizerAgent
-from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
-from src.app.routing.relationship_extraction_tools import RelationshipExtractorTool
+from cogniverse_agents.detailed_report_agent import DetailedReportAgent
+from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
+from cogniverse_agents.routing.relationship_extraction_tools import (
+    RelationshipExtractorTool,
+)
+from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.summarizer_agent import SummarizerAgent
 
 
 @pytest.mark.integration
@@ -23,88 +24,48 @@ class TestQueryProcessingPipeline:
     @pytest.mark.ci_fast
     def test_simple_video_query_processing(self):
         """Test processing a simple video search query"""
-        from unittest.mock import AsyncMock, patch
-
         query = "Find videos of robots playing soccer"
 
-        # Mock the services to avoid real connections
-        with (
-            patch(
-                "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
-            ) as mock_extractor_class,
-            patch(
-                "src.app.routing.query_enhancement_engine.QueryEnhancementPipeline"
-            ) as mock_pipeline_class,
-        ):
-            # Create mock instances
-            mock_extractor = AsyncMock()
-            mock_pipeline = AsyncMock()
-            mock_extractor_class.return_value = mock_extractor
-            mock_pipeline_class.return_value = mock_pipeline
+        # Step 1: Relationship Extraction - use real components
+        extractor = RelationshipExtractorTool()
+        result = asyncio.run(extractor.extract_comprehensive_relationships(query))
+        entities = result.get("entities", [])
+        relationships = result.get("relationships", [])
 
-            # Step 1: Relationship Extraction
-            mock_extractor.extract_comprehensive_relationships.return_value = {
-                "entities": [
-                    {"text": "robots", "label": "ENTITY"},
-                    {"text": "videos", "label": "ENTITY"},
-                ],
-                "relationships": [
-                    {
-                        "subject": "robots",
-                        "relation": "action",
-                        "object": "playing soccer",
-                    }
-                ],
-            }
+        # Should extract some entities even with basic fallback
+        assert isinstance(entities, list)
+        assert isinstance(relationships, list)
+        assert len(entities) > 0
+        assert len(relationships) > 0
 
-            extractor = RelationshipExtractorTool()
-            result = asyncio.run(extractor.extract_comprehensive_relationships(query))
-            entities = result.get("entities", [])
-            relationships = result.get("relationships", [])
+        print(f"Extracted entities: {entities}")
+        print(f"Extracted relationships: {relationships}")
 
-            # Should extract some entities even with basic fallback
-            assert isinstance(entities, list)
-            assert isinstance(relationships, list)
-            assert len(entities) > 0
-            assert len(relationships) > 0
-
-            print(f"Extracted entities: {entities}")
-            print(f"Extracted relationships: {relationships}")
-
-            # Step 2: Query Enhancement
-            mock_pipeline.enhance_query_with_relationships.return_value = {
-                "enhanced_query": "Find videos of robots playing soccer with improved context and enhanced search terms",
-                "metadata": {
-                    "method": "relationship_enhancement",
-                    "entities_count": len(entities),
-                    "relationships_count": len(relationships),
-                },
-            }
-
-            pipeline = QueryEnhancementPipeline()
-            enhancement_result = asyncio.run(
-                pipeline.enhance_query_with_relationships(
-                    query, entities=entities, relationships=relationships
-                )
+        # Step 2: Query Enhancement - use real components
+        pipeline = QueryEnhancementPipeline()
+        enhancement_result = asyncio.run(
+            pipeline.enhance_query_with_relationships(
+                query, entities=entities, relationships=relationships
             )
+        )
 
-            enhanced_query = enhancement_result.get("enhanced_query", query)
-            enhancement_metadata = enhancement_result.get("metadata", {})
+        enhanced_query = enhancement_result.get("enhanced_query", query)
+        enhancement_metadata = enhancement_result.get("metadata", {})
 
-            # Should return enhanced query and metadata
-            assert isinstance(enhanced_query, str)
-            assert isinstance(enhancement_metadata, dict)
-            assert len(enhanced_query) > 0
+        # Should return enhanced query and metadata
+        assert isinstance(enhanced_query, str)
+        assert isinstance(enhancement_metadata, dict)
+        assert len(enhanced_query) > 0
 
-            print(f"Enhanced query: {enhanced_query}")
-            print(f"Enhancement metadata: {enhancement_metadata}")
+        print(f"Enhanced query: {enhanced_query}")
+        print(f"Enhancement metadata: {enhancement_metadata}")
 
-            # Step 3: Verify pipeline results
-            assert enhanced_query is not None
-            assert len(enhanced_query) >= len(
-                query
-            )  # Enhanced should be same or longer
-            assert isinstance(enhancement_metadata, dict)
+        # Step 3: Verify pipeline results
+        assert enhanced_query is not None
+        assert len(enhanced_query) >= len(
+            query
+        )  # Enhanced should be same or longer
+        assert isinstance(enhancement_metadata, dict)
 
     def test_complex_research_query_processing(self):
         """Test processing a complex research query"""
@@ -172,10 +133,10 @@ class TestQueryProcessingPipeline:
         import logging
         from unittest.mock import patch
 
-        from src.app.agents.routing_agent import RoutingConfig
+        from cogniverse_agents.routing_agent import RoutingConfig
 
         # Mock only external service URLs, not core logic
-        with patch("src.common.config_utils.get_config") as mock_config:
+        with patch("cogniverse_core.config.utils.get_config") as mock_config:
             mock_config.return_value = {
                 "video_agent_url": "http://localhost:8002",
                 "summarizer_agent_url": "http://localhost:8003",
@@ -185,22 +146,22 @@ class TestQueryProcessingPipeline:
             # Mock RoutingAgent initialization to avoid hangs
             with (
                 patch(
-                    "src.app.agents.routing_agent.RoutingAgent._configure_dspy"
+                    "cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"
                 ),
                 patch(
-                    "src.app.agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
+                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
                 ),
                 patch(
-                    "src.app.agents.routing_agent.RoutingAgent._initialize_routing_module"
+                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_routing_module"
                 ),
                 patch(
-                    "src.app.agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
+                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
                 ),
                 patch(
-                    "src.app.agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
+                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
                 ),
                 patch(
-                    "src.app.agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
+                    "cogniverse_agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
                     return_value=None,
                 ),
             ):
@@ -259,7 +220,7 @@ class TestQueryProcessingPipeline:
         from unittest.mock import AsyncMock, patch
 
         with patch(
-            "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
+            "cogniverse_agents.routing.relationship_extraction_tools.RelationshipExtractorTool"
         ) as mock_extractor_class:
             # Create mock instance
             mock_extractor = AsyncMock()
@@ -349,10 +310,10 @@ class TestQueryProcessingPipeline:
         # Mock the tools to avoid real service connections
         with (
             patch(
-                "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
+                "cogniverse_agents.routing.relationship_extraction_tools.RelationshipExtractorTool"
             ) as mock_extractor_class,
             patch(
-                "src.app.routing.query_enhancement_engine.QueryEnhancementPipeline"
+                "cogniverse_agents.routing.query_enhancement_engine.QueryEnhancementPipeline"
             ) as mock_pipeline_class,
         ):
             # Create mock instances
@@ -419,7 +380,7 @@ class TestAgentWorkflowIntegration:
         """Test summarizer agent with real data structures"""
         from unittest.mock import patch
 
-        with patch("src.app.agents.summarizer_agent.get_config") as mock_config:
+        with patch("cogniverse_agents.summarizer_agent.get_config") as mock_config:
             mock_config.return_value = {
                 "llm": {
                     "model_name": "smollm3:3b",
@@ -440,7 +401,7 @@ class TestAgentWorkflowIntegration:
         """Test detailed report agent with real data structures"""
         from unittest.mock import patch
 
-        with patch("src.app.agents.detailed_report_agent.get_config") as mock_config:
+        with patch("cogniverse_agents.detailed_report_agent.get_config") as mock_config:
             mock_config.return_value = {
                 "llm": {
                     "model_name": "smollm3:3b",
@@ -470,7 +431,7 @@ class TestAgentWorkflowIntegration:
                 "VideoSearchAgent integration test skipped (would require Vespa connection)"
             )
             # Just verify the import works
-            from src.app.agents.video_search_agent import (
+            from cogniverse_agents.video_search_agent import (
                 VideoSearchAgent,
             )
 
@@ -492,10 +453,10 @@ class TestAgentWorkflowIntegration:
         # Test that we can create multiple agents without conflicts
         with (
             patch(
-                "src.app.agents.summarizer_agent.get_config"
+                "cogniverse_agents.summarizer_agent.get_config"
             ) as mock_summarizer_config,
             patch(
-                "src.app.agents.detailed_report_agent.get_config"
+                "cogniverse_agents.detailed_report_agent.get_config"
             ) as mock_reporter_config,
         ):
             config = {
@@ -541,10 +502,10 @@ class TestSystemIntegrationReadiness:
             # Agents with proper mocking
             with (
                 patch(
-                    "src.app.agents.summarizer_agent.get_config"
+                    "cogniverse_agents.summarizer_agent.get_config"
                 ) as mock_summarizer_config,
                 patch(
-                    "src.app.agents.detailed_report_agent.get_config"
+                    "cogniverse_agents.detailed_report_agent.get_config"
                 ) as mock_reporter_config,
             ):
                 config = {
@@ -574,15 +535,20 @@ class TestSystemIntegrationReadiness:
 
     def test_system_configuration_readiness(self):
         """Test system can handle different configuration states"""
-        from src.common.config_utils import get_config
+        from cogniverse_core.config.utils import get_config
 
         config = get_config()
 
         # Should return a configuration
         assert config is not None
-        assert isinstance(config, dict)
+        # Config can be dict or ConfigUtils object - just verify it's a valid config
+        assert hasattr(config, 'get') or isinstance(config, dict)
 
-        print(f"System configuration available: {len(config)} keys")
+        # Print config info - handle both dict and ConfigUtils
+        if isinstance(config, dict):
+            print(f"System configuration available: {len(config)} keys")
+        else:
+            print("System configuration available (ConfigUtils object)")
 
     def test_external_dependency_handling(self):
         """Test system handles missing external dependencies gracefully"""

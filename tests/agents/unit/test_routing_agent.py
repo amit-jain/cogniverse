@@ -8,8 +8,7 @@ Tests for the old interface (analyze_and_route, agent_registry, etc.) are skippe
 
 
 import pytest
-
-from src.app.agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent
 
 
 @pytest.mark.unit

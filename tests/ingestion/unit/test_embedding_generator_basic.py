@@ -9,8 +9,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
-
-from src.app.ingestion.processors.embedding_generator.embedding_generator import (
+from cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator import (
     BaseEmbeddingGenerator,
     EmbeddingGenerator,
     EmbeddingResult,
@@ -122,10 +121,10 @@ class TestEmbeddingGenerator:
         return {"process_type": "frame_based", "embedding_model": "test_model"}
 
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
     )
     def test_initialization_no_model_load(
         self,
@@ -160,13 +159,13 @@ class TestEmbeddingGenerator:
         mock_processor_class.assert_called_once_with(mock_logger)
 
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.get_or_load_model"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.get_or_load_model"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
     )
     def test_initialization_with_model_load(
         self,
@@ -205,13 +204,13 @@ class TestEmbeddingGenerator:
         )
 
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.get_or_load_model"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.get_or_load_model"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
     )
     def test_initialization_videoprism_model(
         self,
@@ -243,13 +242,13 @@ class TestEmbeddingGenerator:
         assert generator.model is None  # VideoLLAMA uses loader, not model
 
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.get_or_load_model"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.get_or_load_model"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
     )
     def test_should_load_model_conditions(
         self,
@@ -301,13 +300,13 @@ class TestEmbeddingGenerator:
             assert generator.model is None and generator.videoprism_loader is None
 
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.get_or_load_model"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.get_or_load_model"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
     )
     def test_load_model_error_handling(
         self,
@@ -335,10 +334,10 @@ class TestEmbeddingGenerator:
         )
 
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
     )
     def test_generate_embeddings_unknown_processing_type(
         self,
@@ -365,10 +364,10 @@ class TestEmbeddingGenerator:
         assert "Unknown processing type: unknown_type" in result.errors[0]
 
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
     )
     def test_generate_embeddings_processing_method_dispatch(
         self,
@@ -441,10 +440,10 @@ class TestEmbeddingGenerator:
             assert mock_direct.call_count == 3
 
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
     )
     def test_generate_embeddings_uses_fallback_processing_type(
         self,
@@ -474,10 +473,10 @@ class TestEmbeddingGenerator:
             mock_frame.assert_called_once_with(video_data, Path("/tmp"))
 
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
     )
     def test_generate_embeddings_error_handling(
         self,
@@ -512,10 +511,10 @@ class TestEmbeddingGenerator:
             assert result.processing_time > 0
 
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
     )
     def test_generate_embeddings_logs_info(
         self,
@@ -561,10 +560,10 @@ class TestEmbeddingGenerator:
             assert len(completion_calls) >= 1
 
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
     )
     def test_get_video_path_from_video_data(
         self,
@@ -590,10 +589,10 @@ class TestEmbeddingGenerator:
             assert video_path == Path("/path/to/video.mp4")
 
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
     )
     def test_get_video_path_search_video_dir(
         self,
@@ -630,10 +629,10 @@ class TestEmbeddingGenerator:
             assert video_path == Path("/videos/test_video.mp4")
 
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
     )
     def test_get_video_path_not_found(
         self,
@@ -667,10 +666,10 @@ class TestEmbeddingGenerator:
 
     @patch("cv2.VideoCapture")
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
     )
     def test_get_video_info(
         self,
@@ -702,10 +701,10 @@ class TestEmbeddingGenerator:
         mock_cap.release.assert_called_once()
 
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
     )
     def test_process_video_segment_videoprism(
         self,
@@ -745,10 +744,10 @@ class TestEmbeddingGenerator:
         generator.document_builder.build_document.assert_called_once()
 
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
     )
     def test_process_video_segment_colqwen(
         self,
@@ -789,10 +788,10 @@ class TestEmbeddingGenerator:
         generator.document_builder.build_document.assert_called_once()
 
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
     )
     def test_process_video_segment_no_embeddings(
         self,
@@ -825,10 +824,10 @@ class TestEmbeddingGenerator:
         assert result is None
 
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
     )
     def test_direct_video_embeddings_no_video_path(
         self,
@@ -858,10 +857,10 @@ class TestEmbeddingGenerator:
             assert "Video file not found" in result.errors
 
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
     )
     def test_direct_video_embeddings_success(
         self,
@@ -908,10 +907,10 @@ class TestEmbeddingGenerator:
             assert len(result.errors) == 0
 
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
     )
     def test_direct_video_embeddings_segment_error(
         self,
@@ -954,10 +953,10 @@ class TestEmbeddingGenerator:
             assert "Segment 0: Segment error" in result.errors
 
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
     )
     def test_backend_client_close_on_finally(
         self,
@@ -989,10 +988,10 @@ class TestEmbeddingGenerator:
             assert "Test error" in result.errors[0]
 
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.EmbeddingProcessor"
     )
     @patch(
-        "src.app.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
+        "cogniverse_runtime.ingestion.processors.embedding_generator.embedding_generator.DocumentBuilderFactory"
     )
     def test_feed_single_document(
         self,

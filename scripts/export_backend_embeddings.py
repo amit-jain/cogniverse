@@ -8,7 +8,8 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, Optional
+
 import numpy as np
 import pandas as pd
 import pyarrow as pa
@@ -18,7 +19,7 @@ import pyarrow.parquet as pq
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.app.search.base import SearchBackend
+from cogniverse_core.interfaces.backend import SearchBackend
 from src.backends.vespa.search_backend import VespaSearchBackend
 
 # Configure logging
@@ -430,10 +431,10 @@ def main():
     
     if output_path:
         print(f"\n✅ Export complete: {output_path}")
-        print(f"\n📊 Visualize with embedding-atlas:")
-        print(f"   uv run streamlit run scripts/atlas_viewer.py")
-        print(f"\n🎨 Or with custom 3D visualization:")
-        print(f"   uv run streamlit run scripts/simple_atlas.py")
+        print("\n📊 Visualize with embedding-atlas:")
+        print("   uv run streamlit run scripts/atlas_viewer.py")
+        print("\n🎨 Or with custom 3D visualization:")
+        print("   uv run streamlit run scripts/simple_atlas.py")
     else:
         print("\n❌ Export failed")
         sys.exit(1)

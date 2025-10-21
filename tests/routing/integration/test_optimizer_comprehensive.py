@@ -16,14 +16,21 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.app.routing.base import GenerationType, RoutingDecision, SearchModality
-from src.app.routing.optimizer import (
+from cogniverse_agents.routing.base import (
+    GenerationType,
+    RoutingDecision,
+    SearchModality,
+)
+from cogniverse_agents.routing.optimizer import (
     AutoTuningOptimizer,
     OptimizationConfig,
     OptimizationMetrics,
     RoutingOptimizer,
 )
-from src.app.routing.strategies import GLiNERRoutingStrategy, LLMRoutingStrategy
+from cogniverse_agents.routing.strategies import (
+    GLiNERRoutingStrategy,
+    LLMRoutingStrategy,
+)
 
 
 class TestOptimizationMetrics:
@@ -662,7 +669,7 @@ class TestRealModelIntegration:
     @pytest.mark.asyncio
     async def test_full_optimization_cycle_with_models(self):
         """Test complete optimization cycle with real models."""
-        from src.app.routing import TieredRouter
+        from cogniverse_agents.routing import TieredRouter
 
         config_path = Path("configs/config.json")
         with open(config_path) as f:

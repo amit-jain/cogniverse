@@ -9,13 +9,12 @@ Tests the integration between routing system and multi-agent orchestration:
 """
 
 import pytest
-
-from src.app.routing.base import (
+from cogniverse_agents.routing.base import (
     GenerationType,
     RoutingDecision,
     SearchModality,
 )
-from src.app.routing.router import ComprehensiveRouter, RouterConfig
+from cogniverse_agents.routing.router import ComprehensiveRouter, RouterConfig
 
 
 class TestOrchestrationDecisionLogic:

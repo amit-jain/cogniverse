@@ -6,14 +6,13 @@ Uses mocks to test logic in isolation.
 """
 
 import json
-import pytest
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, patch, mock_open
+from unittest.mock import Mock, mock_open, patch
 
-from src.backends.vespa.tenant_schema_manager import (
-    TenantSchemaManager,
+import pytest
+from cogniverse_vespa.tenant_schema_manager import (
     SchemaNotFoundException,
-    SchemaDeploymentException,
+    TenantSchemaManager,
     get_tenant_schema_manager,
 )
 
@@ -303,19 +302,21 @@ class TestSchemaDeployment:
 
         with patch.object(manager, "_load_base_schema_json", return_value=base_schema):
             with patch.object(manager, "_parse_schema_from_json", return_value=Mock()):
-                # Mock the actual deployment call
-                with patch.object(manager.schema_manager, "_deploy_package") as mock_deploy:
-                    manager.deploy_tenant_schema("acme", "video_colpali")
+                # Mock schema registry to return False (schema not registered yet)
+                with patch.object(manager.schema_registry, "schema_exists", return_value=False):
+                    # Mock the actual deployment call
+                    with patch.object(manager.schema_manager, "_deploy_package") as mock_deploy:
+                        manager.deploy_tenant_schema("acme", "video_colpali")
 
-                    # Verify deployment was called
-                    mock_deploy.assert_called_once()
+                        # Verify deployment was called
+                        mock_deploy.assert_called_once()
 
         # Verify cache updated
         assert "acme" in manager._deployed_schemas
         assert "video_colpali" in manager._deployed_schemas["acme"]
 
     def test_ensure_tenant_schema_exists_deploys_if_needed(self):
-        """Test ensure_tenant_schema_exists deploys schema if not cached"""
+        """Test ensure_tenant_schema_exists deploys schema if not cached and not in registry"""
         manager = TenantSchemaManager()
         manager.clear_cache()
 
@@ -324,9 +325,11 @@ class TestSchemaDeployment:
         with patch.object(manager, "_load_base_schema_json", return_value=base_schema):
             with patch.object(manager, "_parse_schema_from_json", return_value=Mock()):
                 with patch.object(manager, "_schema_exists_in_vespa", return_value=False):
-                    with patch.object(manager.schema_manager, "_deploy_package") as mock_deploy:
-                        result = manager.ensure_tenant_schema_exists("acme", "video_colpali")
-                        mock_deploy.assert_called_once()
+                    # Mock schema registry to return False (schema not registered)
+                    with patch.object(manager.schema_registry, "schema_exists", return_value=False):
+                        with patch.object(manager.schema_manager, "_deploy_package") as mock_deploy:
+                            result = manager.ensure_tenant_schema_exists("acme", "video_colpali")
+                            mock_deploy.assert_called_once()
 
         assert result is True
 

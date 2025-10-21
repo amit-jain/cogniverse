@@ -24,19 +24,19 @@ class TestCompleteDSPySystem:
         """Test complete query processing pipeline"""
 
         # Test that the core components can be imported and work together
-        from src.app.agents.routing_agent import RoutingAgent
-        from src.app.routing.base import GenerationType, SearchModality
+        from cogniverse_agents.routing.base import GenerationType, SearchModality
+        from cogniverse_agents.routing_agent import RoutingAgent
 
         # Mock the dependencies for testing
         with patch(
-            "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
+            "cogniverse_agents.routing.relationship_extraction_tools.RelationshipExtractorTool"
         ):
-            with patch("src.common.config_utils.get_config") as mock_config:
+            with patch("cogniverse_core.config.utils.get_config") as mock_config:
                 with patch(
-                    "src.app.agents.video_search_agent.VespaVideoSearchClient"
+                    "cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient"
                 ):
                     with patch(
-                        "src.app.agents.video_search_agent.QueryEncoderFactory"
+                        "cogniverse_agents.video_search_agent.QueryEncoderFactory"
                     ):
 
                         # Mock configuration
@@ -108,14 +108,14 @@ class TestCompleteDSPySystem:
     async def test_enhanced_video_search_with_relationships(self):
         """Test enhanced video search with relationship context"""
 
-        from src.app.agents.video_search_agent import VideoSearchAgent
+        from cogniverse_agents.video_search_agent import VideoSearchAgent
 
-        with patch("src.app.agents.video_search_agent.VespaVideoSearchClient"):
+        with patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient"):
             with patch(
-                "src.app.agents.video_search_agent.get_config"
+                "cogniverse_agents.video_search_agent.get_config"
             ) as mock_config:
                 with patch(
-                    "src.app.agents.video_search_agent.QueryEncoderFactory"
+                    "cogniverse_agents.video_search_agent.QueryEncoderFactory"
                 ) as mock_encoder:
 
                     # Mock configuration as a dict (not object)
@@ -147,17 +147,21 @@ class TestCompleteDSPySystem:
 
         # Test DSPy routing signatures
         # Test advanced optimization
-        from src.app.routing.advanced_optimizer import AdvancedRoutingOptimizer
-        from src.app.routing.dspy_routing_signatures import (
+        from cogniverse_agents.routing.advanced_optimizer import (
+            AdvancedRoutingOptimizer,
+        )
+        from cogniverse_agents.routing.dspy_routing_signatures import (
             AdvancedRoutingSignature,
             BasicQueryAnalysisSignature,
         )
 
         # Test query enhancement
-        from src.app.routing.query_enhancement_engine import QueryEnhancementPipeline
+        from cogniverse_agents.routing.query_enhancement_engine import (
+            QueryEnhancementPipeline,
+        )
 
         # Test relationship extraction
-        from src.app.routing.relationship_extraction_tools import (
+        from cogniverse_agents.routing.relationship_extraction_tools import (
             RelationshipExtractorTool,
         )
 
@@ -171,11 +175,13 @@ class TestCompleteDSPySystem:
     def test_phase_6_advanced_components_integration(self):
         """Test Phase 6 advanced optimization components integration"""
 
-        from src.app.routing.adaptive_threshold_learner import AdaptiveThresholdLearner
-        from src.app.routing.mlflow_integration import (
+        from cogniverse_agents.routing.adaptive_threshold_learner import (
+            AdaptiveThresholdLearner,
+        )
+        from cogniverse_agents.routing.mlflow_integration import (
             ExperimentConfig,
         )
-        from src.app.routing.simba_query_enhancer import SIMBAConfig
+        from cogniverse_agents.routing.simba_query_enhancer import SIMBAConfig
 
         # Test SIMBA
         simba_config = SIMBAConfig()
@@ -183,7 +189,7 @@ class TestCompleteDSPySystem:
 
         # Test adaptive learning (with mocked storage)
         with patch("pathlib.Path"):
-            learner = AdaptiveThresholdLearner()
+            learner = AdaptiveThresholdLearner(tenant_id="test_tenant")
             assert learner is not None
 
         # Test MLflow integration basic structure
@@ -194,11 +200,11 @@ class TestCompleteDSPySystem:
     async def test_multi_agent_orchestration_simulation(self):
         """Test multi-agent orchestration with mocked agents"""
 
-        from src.app.agents.routing_agent import RoutingAgent
+        from cogniverse_agents.routing_agent import RoutingAgent
 
-        with patch("src.common.config_utils.get_config") as mock_config:
+        with patch("cogniverse_core.config.utils.get_config") as mock_config:
             with patch(
-                "src.app.routing.relationship_extraction_tools.RelationshipExtractorTool"
+                "cogniverse_agents.routing.relationship_extraction_tools.RelationshipExtractorTool"
             ):
 
                 mock_config.return_value = {
@@ -225,7 +231,7 @@ class TestRealWorldScenarios:
         # This tests the system's ability to handle real queries
 
         # Test that the system can at least parse these without crashing
-        from src.app.routing.relationship_extraction_tools import (
+        from cogniverse_agents.routing.relationship_extraction_tools import (
             RelationshipExtractorTool,
         )
 

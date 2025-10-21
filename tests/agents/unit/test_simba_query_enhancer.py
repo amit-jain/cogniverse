@@ -8,8 +8,7 @@ functionality including pattern learning and query improvement.
 from unittest.mock import patch
 
 import pytest
-
-from src.app.routing.simba_query_enhancer import (
+from cogniverse_agents.routing.simba_query_enhancer import (
     QueryEnhancementPattern,
     SIMBAConfig,
     SIMBAQueryEnhancer,
@@ -220,7 +219,7 @@ class TestSIMBAIntegration:
     def test_component_imports_successfully(self):
         """Test that SIMBA components can be imported."""
         try:
-            import src.app.routing.simba_query_enhancer as sqe
+            import cogniverse_agents.routing.simba_query_enhancer as sqe
 
             # Verify key components exist
             assert hasattr(sqe, "QueryEnhancementPattern")

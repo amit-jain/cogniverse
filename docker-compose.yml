@@ -1,0 +1,182 @@
+# Cogniverse Multi-Agent RAG System
+# Docker Compose configuration for complete deployment
+
+version: '3.8'
+
+services:
+  # Vespa Search Backend
+  vespa:
+    image: vespaengine/vespa:latest
+    container_name: cogniverse-vespa
+    ports:
+      - "8080:8080"  # Query/Document API
+      - "19071:19071"  # Config API
+      - "19092:19092"  # Metrics
+    volumes:
+      - vespa-data:/opt/vespa/var
+    environment:
+      - VESPA_CONFIGSERVERS=vespa
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:19071/state/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - cogniverse
+
+  # Cogniverse Runtime (Unified FastAPI)
+  runtime:
+    build:
+      context: .
+      dockerfile: libs/runtime/Dockerfile
+    container_name: cogniverse-runtime
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config.yml:/app/config.yml:ro
+      - ./data:/data
+      - ./outputs/logs:/logs
+    environment:
+      - RUNTIME_HOST=0.0.0.0
+      - RUNTIME_PORT=8000
+      - VESPA_URL=http://vespa
+      - VESPA_PORT=8080
+      - PYTHONUNBUFFERED=1
+      - OTLP_ENDPOINT=http://otel-collector:4317
+    depends_on:
+      vespa:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - cogniverse
+    restart: unless-stopped
+
+  # Cogniverse Dashboard (Streamlit)
+  dashboard:
+    build:
+      context: .
+      dockerfile: libs/dashboard/Dockerfile
+    container_name: cogniverse-dashboard
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./config.yml:/app/config.yml:ro
+      - ./data:/data:ro
+      - ./outputs:/app/outputs:ro
+    environment:
+      - STREAMLIT_SERVER_PORT=8501
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+      - RUNTIME_URL=http://runtime:8000
+      - PHOENIX_ENDPOINT=http://phoenix:6006
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - runtime
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - cogniverse
+    restart: unless-stopped
+
+  # Phoenix (Arize - for evaluation and observability)
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: cogniverse-phoenix
+    ports:
+      - "6006:6006"
+    volumes:
+      - phoenix-data:/phoenix-data
+    environment:
+      - PHOENIX_WORKING_DIR=/phoenix-data
+    networks:
+      - cogniverse
+    restart: unless-stopped
+
+  # OpenTelemetry Collector (optional - for telemetry)
+  otel-collector:
+    image: otel/opentelemetry-collector:latest
+    container_name: cogniverse-otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    ports:
+      - "4317:4317"  # OTLP gRPC
+      - "4318:4318"  # OTLP HTTP
+      - "8888:8888"  # Prometheus metrics
+    volumes:
+      - ./config/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    networks:
+      - cogniverse
+    restart: unless-stopped
+
+  # Ollama (Local LLM inference)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: cogniverse-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - cogniverse
+    restart: unless-stopped
+
+networks:
+  cogniverse:
+    driver: bridge
+    name: cogniverse-network
+
+volumes:
+  vespa-data:
+    driver: local
+  phoenix-data:
+    driver: local
+  ollama-data:
+    driver: local
+
+# Usage:
+# 1. Start all services:
+#    docker-compose up -d
+#
+# 2. View logs:
+#    docker-compose logs -f runtime
+#    docker-compose logs -f dashboard
+#
+# 3. Access services:
+#    - Runtime API: http://localhost:8000
+#    - API Docs: http://localhost:8000/docs
+#    - Dashboard: http://localhost:8501
+#    - Phoenix: http://localhost:6006
+#    - Vespa: http://localhost:8080
+#    - Ollama: http://localhost:11434
+#
+# 4. Health checks:
+#    docker-compose ps
+#
+# 5. Stop all services:
+#    docker-compose down
+#
+# 6. Stop and remove volumes:
+#    docker-compose down -v

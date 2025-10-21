@@ -19,10 +19,10 @@ from typing import Any
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.common.config_utils import get_config
-# from src.tools.query_analyzer import QueryAnalyzer  # Module removed
-
+# from cogniverse_agents.tools.query_analyzer import QueryAnalyzer  # Module removed
 import pytest
+from cogniverse_core.config.utils import get_config
+
 pytestmark = pytest.mark.skip(reason="QueryAnalyzer module removed - test needs rewrite")
 
 

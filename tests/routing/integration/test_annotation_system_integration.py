@@ -20,18 +20,28 @@ from datetime import datetime, timedelta
 
 import phoenix as px
 import pytest
-
-from src.app.routing.advanced_optimizer import AdvancedRoutingOptimizer
-from src.app.routing.annotation_agent import AnnotationAgent, AnnotationPriority
-from src.app.routing.annotation_feedback_loop import AnnotationFeedbackLoop
-from src.app.routing.annotation_storage import AnnotationStorage
-from src.app.routing.llm_auto_annotator import AnnotationLabel, LLMAutoAnnotator
-from src.app.telemetry.config import (
+from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
+from cogniverse_agents.routing.annotation_agent import (
+    AnnotationAgent,
+    AnnotationPriority,
+)
+from cogniverse_agents.routing.annotation_feedback_loop import AnnotationFeedbackLoop
+from cogniverse_agents.routing.annotation_storage import AnnotationStorage
+from cogniverse_agents.routing.llm_auto_annotator import (
+    AnnotationLabel,
+    LLMAutoAnnotator,
+)
+from cogniverse_core.telemetry.config import (
     SERVICE_NAME_ORCHESTRATION,
     SPAN_NAME_ROUTING,
     TelemetryConfig,
 )
-from src.app.telemetry.manager import TelemetryManager
+from cogniverse_core.telemetry.manager import TelemetryManager
+
+from tests.utils.async_polling import (
+    simulate_processing_delay,
+    wait_for_phoenix_processing,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -116,11 +126,11 @@ class TestAnnotationSystemIntegration:
                 if span_id and hasattr(span_id, "span_id"):
                     span_ids.append(str(span_id.span_id))
                 # Simulate processing
-                time.sleep(0.1)
+                simulate_processing_delay(delay=0.1)
 
         # Force flush to Phoenix
         telemetry_manager.force_flush(timeout_millis=5000)
-        time.sleep(2)  # Wait for Phoenix to process
+        wait_for_phoenix_processing(delay=2)
 
         logger.info(f"Created {len(span_ids)} routing spans")
 
@@ -221,7 +231,7 @@ class TestAnnotationSystemIntegration:
         else:
             logger.info("Skipping LLM annotation (no API key available)")
             # Create mock annotation for testing storage
-            from src.app.routing.llm_auto_annotator import AutoAnnotation
+            from cogniverse_agents.routing.llm_auto_annotator import AutoAnnotation
 
             auto_annotation = AutoAnnotation(
                 span_id=annotation_requests[0].span_id,
@@ -244,7 +254,7 @@ class TestAnnotationSystemIntegration:
         assert success, "Failed to store annotation in Phoenix"
 
         # Force flush
-        time.sleep(2)  # Wait for Phoenix to process
+        wait_for_phoenix_processing(delay=2)
 
         logger.info("Annotation stored successfully")
 
@@ -260,7 +270,7 @@ class TestAnnotationSystemIntegration:
 
             # Query the project for evaluations
             # Note: Phoenix may take time to index evaluations
-            time.sleep(3)
+            wait_for_phoenix_processing(delay=3, description="Phoenix evaluation indexing")
 
             # Try to query annotated spans
             annotated_spans = annotation_storage.query_annotated_spans(
@@ -279,7 +289,7 @@ class TestAnnotationSystemIntegration:
         # STEP 7: Test feedback loop with optimizer
         logger.info("\n=== STEP 7: Testing feedback loop ===")
 
-        optimizer = AdvancedRoutingOptimizer()
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant")
         feedback_loop = AnnotationFeedbackLoop(
             optimizer=optimizer, tenant_id=test_tenant_id, min_annotations_for_update=1
         )
@@ -335,12 +345,12 @@ class TestAnnotationSystemIntegration:
                 test_span_id = "test_span_" + str(int(time.time()))
 
         telemetry_manager.force_flush(timeout_millis=5000)
-        time.sleep(2)
+        wait_for_phoenix_processing(delay=2)
 
         # Store annotation
         annotation_storage = AnnotationStorage(tenant_id=test_tenant_id)
 
-        from src.app.routing.llm_auto_annotator import AutoAnnotation
+        from cogniverse_agents.routing.llm_auto_annotator import AutoAnnotation
 
         test_annotation = AutoAnnotation(
             span_id=test_span_id,
@@ -357,7 +367,7 @@ class TestAnnotationSystemIntegration:
 
         assert success, "Failed to store annotation"
 
-        time.sleep(3)  # Wait for indexing
+        wait_for_phoenix_processing(delay=3, description="Phoenix annotation indexing")
 
         # Try to retrieve
         config = TelemetryConfig.from_env()
@@ -413,7 +423,7 @@ class TestAnnotationSystemIntegration:
                         span.record_exception(e)
 
         telemetry_manager.force_flush(timeout_millis=5000)
-        time.sleep(2)
+        wait_for_phoenix_processing(delay=2)
 
         # Run annotation agent
         annotation_agent = AnnotationAgent(
@@ -468,7 +478,7 @@ class TestAnnotationSystemIntegration:
             pass
 
         telemetry_manager.force_flush(timeout_millis=5000)
-        time.sleep(2)
+        wait_for_phoenix_processing(delay=2)
 
         # Identify and annotate
         annotation_agent = AnnotationAgent(
@@ -491,10 +501,10 @@ class TestAnnotationSystemIntegration:
 
         assert success, "Failed to store human annotation"
 
-        time.sleep(3)  # Wait for indexing
+        wait_for_phoenix_processing(delay=3, description="Phoenix annotation indexing")
 
         # Run feedback loop
-        optimizer = AdvancedRoutingOptimizer()
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant")
         initial_experience_count = len(optimizer.experiences)
 
         feedback_loop = AnnotationFeedbackLoop(

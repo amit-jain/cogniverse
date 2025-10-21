@@ -10,12 +10,13 @@ from datetime import datetime, timedelta
 import pandas as pd
 import phoenix as px
 import pytest
-
-from src.evaluation.data.storage import (
+from cogniverse_core.evaluation.data.storage import (
     ConnectionConfig,
     ConnectionState,
     PhoenixStorage,
 )
+
+from tests.utils.async_polling import wait_for_phoenix_processing
 
 
 @pytest.mark.integration
@@ -80,7 +81,7 @@ class TestPhoenixProductionIntegration:
         assert "integration_test" in experiment_id
 
         # Give Phoenix time to process
-        time.sleep(1)
+        wait_for_phoenix_processing(delay=1, description="Phoenix processing")
 
         # Verify metrics were updated
         metrics = storage.get_metrics()
@@ -103,9 +104,14 @@ class TestPhoenixProductionIntegration:
         # If we have traces, verify structure
         if not df.empty:
             # Phoenix spans should have certain columns
-            expected_cols = ["trace_id", "name"]
-            for col in expected_cols:
-                assert col in df.columns or f"attributes.{col}" in df.columns
+            # Check for name (always present)
+            assert "name" in df.columns or "attributes.name" in df.columns
+            # Check for trace_id in any of its possible locations
+            assert (
+                "trace_id" in df.columns
+                or "attributes.trace_id" in df.columns
+                or "context.trace_id" in df.columns
+            )
 
     @pytest.mark.integration
     def test_concurrent_operations(self, storage):
@@ -162,13 +168,13 @@ class TestPhoenixProductionIntegration:
             storage.connection_state = ConnectionState.DISCONNECTED
 
             # Wait for health check to detect and recover
-            time.sleep(1.0)
+            wait_for_phoenix_processing(delay=1.0, description="Phoenix processing")
 
             # Restore client for health check
             storage.client = original_client
 
             # Wait for recovery
-            time.sleep(1.0)
+            wait_for_phoenix_processing(delay=1.0, description="Phoenix processing")
 
             # Should have attempted reconnection
             # Note: Actual reconnection depends on Phoenix availability
@@ -241,7 +247,7 @@ class TestPhoenixProductionIntegration:
             )
 
         # Give time for export
-        time.sleep(2)
+        wait_for_phoenix_processing(delay=2, description="Phoenix processing")
 
         # Check metrics
         metrics = storage.get_metrics()

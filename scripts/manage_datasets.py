@@ -3,13 +3,14 @@
 Dataset management utility
 """
 
+import argparse
 import sys
 from pathlib import Path
-import argparse
 
 sys.path.append(str(Path(__file__).parent.parent))
 
 from src.evaluation.dataset_manager import DatasetManager
+
 
 def main():
     parser = argparse.ArgumentParser(description="Manage evaluation datasets")

@@ -4,8 +4,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-
-from src.app.agents.query_analysis_tool_v3 import (
+from cogniverse_agents.query_analysis_tool_v3 import (
     QueryAnalysisResult,
     QueryAnalysisToolV3,
     QueryComplexity,
@@ -50,7 +49,7 @@ def sample_routing_analysis():
 class TestQueryAnalysisToolV3:
     """Test QueryAnalysisToolV3 functionality"""
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     def test_analyzer_initialization_default(self, mock_get_config, mock_config):
         """Test analyzer initialization with default settings"""
         mock_get_config.return_value = mock_config
@@ -64,7 +63,7 @@ class TestQueryAnalysisToolV3:
         assert analyzer.total_analyses == 0
         assert isinstance(analyzer.start_time, datetime)
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     def test_analyzer_initialization_custom(self, mock_get_config, mock_config):
         """Test analyzer initialization with custom settings"""
         mock_get_config.return_value = mock_config
@@ -81,8 +80,8 @@ class TestQueryAnalysisToolV3:
         assert analyzer.enable_agent_integration is False
         assert analyzer.max_expanded_queries == 5
 
-    @patch("src.app.agents.query_analysis_tool_v3.RoutingAgent")
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     def test_analyzer_with_routing_agent(
         self, mock_get_config, mock_routing_agent, mock_config
     ):
@@ -96,8 +95,8 @@ class TestQueryAnalysisToolV3:
         assert analyzer.routing_agent == mock_routing_instance
         mock_routing_agent.assert_called_once()
 
-    @patch("src.app.agents.query_analysis_tool_v3.RoutingAgent")
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     def test_analyzer_routing_agent_failure(
         self, mock_get_config, mock_routing_agent, mock_config
     ):
@@ -109,7 +108,7 @@ class TestQueryAnalysisToolV3:
 
         assert analyzer.routing_agent is None
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     def test_clean_query(self, mock_get_config, mock_config):
         """Test query cleaning functionality"""
         mock_get_config.return_value = mock_config
@@ -122,7 +121,7 @@ class TestQueryAnalysisToolV3:
         )
         assert analyzer._clean_query("Mixed\t\nWhitespace") == "mixed whitespace"
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     def test_detect_intents_simple(self, mock_get_config, mock_config):
         """Test intent detection for simple queries"""
         mock_get_config.return_value = mock_config
@@ -142,7 +141,7 @@ class TestQueryAnalysisToolV3:
         )
         assert primary == QueryIntent.SUMMARIZE
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     def test_detect_intents_complex(self, mock_get_config, mock_config):
         """Test intent detection for complex queries"""
         mock_get_config.return_value = mock_config
@@ -166,7 +165,7 @@ class TestQueryAnalysisToolV3:
         # Should contain temporal since query mentions "recent"
         assert QueryIntent.TEMPORAL in secondary
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     def test_assess_complexity_simple(self, mock_get_config, mock_config):
         """Test complexity assessment for simple queries"""
         mock_get_config.return_value = mock_config
@@ -175,7 +174,7 @@ class TestQueryAnalysisToolV3:
         complexity = analyzer._assess_complexity("find cats", QueryIntent.SEARCH, [])
         assert complexity == QueryComplexity.SIMPLE
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     def test_assess_complexity_moderate(self, mock_get_config, mock_config):
         """Test complexity assessment for moderate queries"""
         mock_get_config.return_value = mock_config
@@ -186,7 +185,7 @@ class TestQueryAnalysisToolV3:
         )
         assert complexity in [QueryComplexity.MODERATE, QueryComplexity.COMPLEX]
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     def test_assess_complexity_complex(self, mock_get_config, mock_config):
         """Test complexity assessment for complex queries"""
         mock_get_config.return_value = mock_config
@@ -199,7 +198,7 @@ class TestQueryAnalysisToolV3:
         )
         assert complexity == QueryComplexity.COMPLEX
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     def test_detect_modality_requirements_default(self, mock_get_config, mock_config):
         """Test modality detection with default requirements"""
         mock_get_config.return_value = mock_config
@@ -214,7 +213,7 @@ class TestQueryAnalysisToolV3:
         assert requirements["text"] is True
         assert requirements["visual_analysis"] is False
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     def test_detect_modality_requirements_video_only(
         self, mock_get_config, mock_config
     ):
@@ -230,7 +229,7 @@ class TestQueryAnalysisToolV3:
         assert requirements["video"] is True
         assert requirements["text"] is False
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     def test_detect_modality_requirements_visual_analysis(
         self, mock_get_config, mock_config
     ):
@@ -245,7 +244,7 @@ class TestQueryAnalysisToolV3:
 
         assert requirements["visual_analysis"] is True
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     def test_extract_temporal_filters(self, mock_get_config, mock_config):
         """Test temporal filter extraction"""
         mock_get_config.return_value = mock_config
@@ -265,7 +264,7 @@ class TestQueryAnalysisToolV3:
         filters = analyzer._extract_temporal_filters("show me videos about cats")
         assert len(filters) == 0
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     def test_extract_entities_and_keywords(self, mock_get_config, mock_config):
         """Test entity and keyword extraction"""
         mock_get_config.return_value = mock_config
@@ -298,7 +297,7 @@ class TestQueryAnalysisToolV3:
             >= 3
         )
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     @pytest.mark.asyncio
     async def test_expand_query_basic(self, mock_get_config, mock_config):
         """Test basic query expansion"""
@@ -314,7 +313,7 @@ class TestQueryAnalysisToolV3:
         expansion_words = set(" ".join(expansions).lower().split())
         assert len(expansion_words - original_words) > 0  # At least some new words
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     @pytest.mark.asyncio
     async def test_expand_query_with_context(
         self, mock_get_config, mock_config, sample_context
@@ -342,7 +341,7 @@ class TestQueryAnalysisToolV3:
             ]
         )
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     def test_calculate_confidence_high(self, mock_get_config, mock_config):
         """Test confidence calculation for high-confidence scenarios"""
         mock_get_config.return_value = mock_config
@@ -358,7 +357,7 @@ class TestQueryAnalysisToolV3:
 
         assert confidence > 0.8
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     def test_calculate_confidence_low(self, mock_get_config, mock_config):
         """Test confidence calculation for low-confidence scenarios"""
         mock_get_config.return_value = mock_config
@@ -374,7 +373,7 @@ class TestQueryAnalysisToolV3:
 
         assert confidence < 0.7
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     @pytest.mark.asyncio
     async def test_determine_workflow_without_routing_agent(
         self, mock_get_config, mock_config
@@ -396,7 +395,7 @@ class TestQueryAnalysisToolV3:
         assert "detailed_report" in workflow["agents"]
         assert len(workflow["steps"]) == 2
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     @pytest.mark.asyncio
     async def test_determine_workflow_with_routing_agent(
         self, mock_get_config, mock_config, sample_routing_analysis
@@ -430,7 +429,7 @@ class TestQueryAnalysisToolV3:
         assert workflow["agents"] == ["video_search", "detailed_report"]
         mock_routing_agent.route_query.assert_called_once()
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     @pytest.mark.asyncio
     async def test_thinking_phase_simple_query(self, mock_get_config, mock_config):
         """Test thinking phase for simple query"""
@@ -443,7 +442,7 @@ class TestQueryAnalysisToolV3:
         assert thinking["has_context"] is False
         assert "Simple search query detected" in thinking["reasoning"]
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     @pytest.mark.asyncio
     async def test_thinking_phase_complex_query(
         self, mock_get_config, mock_config, sample_context
@@ -465,7 +464,7 @@ class TestQueryAnalysisToolV3:
         assert thinking["query_type_indicators"]["report"] is True
         assert "complexity signals" in thinking["reasoning"].lower()
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     @pytest.mark.asyncio
     async def test_analyze_simple_query(self, mock_get_config, mock_config):
         """Test full analysis of a simple query"""
@@ -490,7 +489,7 @@ class TestQueryAnalysisToolV3:
         assert result.analysis_time_ms > 0
         assert analyzer.total_analyses == 1
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     @pytest.mark.asyncio
     async def test_analyze_complex_query(self, mock_get_config, mock_config):
         """Test full analysis of a complex query"""
@@ -513,7 +512,7 @@ class TestQueryAnalysisToolV3:
         assert len(result.temporal_filters) > 0
         assert result.thinking_phase["reasoning"]
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     @pytest.mark.asyncio
     async def test_analyze_with_expansion(self, mock_get_config, mock_config):
         """Test analysis with query expansion enabled"""
@@ -529,7 +528,7 @@ class TestQueryAnalysisToolV3:
             "search" in query for query in result.expanded_queries
         )  # Synonym expansion
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     @pytest.mark.asyncio
     async def test_analyze_with_context(
         self, mock_get_config, mock_config, sample_context
@@ -544,7 +543,7 @@ class TestQueryAnalysisToolV3:
         # Should have context-based expansions
         assert len(result.expanded_queries) >= 0
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     @pytest.mark.asyncio
     async def test_analyze_error_handling(self, mock_get_config, mock_config):
         """Test analysis error handling"""
@@ -560,7 +559,7 @@ class TestQueryAnalysisToolV3:
 
             assert "Test error" in str(exc_info.value)
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     def test_get_statistics(self, mock_get_config, mock_config):
         """Test statistics collection"""
         mock_get_config.return_value = mock_config
@@ -577,7 +576,7 @@ class TestQueryAnalysisToolV3:
         assert stats["configuration"]["query_expansion_enabled"] is True
         assert stats["configuration"]["agent_integration_enabled"] is True
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     def test_query_analysis_result_to_dict(self, mock_get_config, mock_config):
         """Test QueryAnalysisResult to_dict conversion"""
         result = QueryAnalysisResult(
@@ -616,7 +615,7 @@ class TestQueryAnalysisToolV3:
 class TestQueryAnalysisToolV3EdgeCases:
     """Test edge cases for QueryAnalysisToolV3"""
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     @pytest.mark.asyncio
     async def test_analyze_empty_query(self, mock_get_config, mock_config):
         """Test analysis of empty query"""
@@ -632,7 +631,7 @@ class TestQueryAnalysisToolV3EdgeCases:
         assert len(result.entities) == 0
         assert len(result.keywords) == 0
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     @pytest.mark.asyncio
     async def test_analyze_very_long_query(self, mock_get_config, mock_config):
         """Test analysis of very long query"""
@@ -659,7 +658,7 @@ class TestQueryAnalysisToolV3EdgeCases:
 class TestFactoryFunction:
     """Test factory function"""
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     def test_create_enhanced_query_analyzer_default(self, mock_get_config, mock_config):
         """Test factory function with default parameters"""
         mock_get_config.return_value = mock_config
@@ -671,7 +670,7 @@ class TestFactoryFunction:
         assert analyzer.enable_query_expansion is True
         assert analyzer.enable_agent_integration is True
 
-    @patch("src.app.agents.query_analysis_tool_v3.get_config")
+    @patch("cogniverse_agents.query_analysis_tool_v3.get_config")
     def test_create_enhanced_query_analyzer_custom(self, mock_get_config, mock_config):
         """Test factory function with custom parameters"""
         mock_get_config.return_value = mock_config

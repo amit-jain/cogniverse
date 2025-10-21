@@ -12,9 +12,14 @@ These tests validate:
 import time
 
 import pytest
+from cogniverse_core.telemetry.config import (
+    BatchExportConfig,
+    TelemetryConfig,
+    TelemetryLevel,
+)
+from cogniverse_core.telemetry.manager import NoOpSpan, TelemetryManager
 
-from src.app.telemetry.config import BatchExportConfig, TelemetryConfig, TelemetryLevel
-from src.app.telemetry.manager import NoOpSpan, TelemetryManager
+from tests.utils.async_polling import wait_for_phoenix_processing
 
 
 @pytest.mark.integration
@@ -96,7 +101,7 @@ class TestMultiTenantTelemetryIntegration:
                 # Verify span is not NoOp
                 assert not isinstance(span, NoOpSpan)
                 tenant_a_spans.append(span)
-                time.sleep(0.01)  # Small delay
+                wait_for_phoenix_processing(delay=0.01, description="Phoenix processing")  # Small delay
 
         # Create spans for tenant-b
         tenant_b_spans = []
@@ -108,7 +113,7 @@ class TestMultiTenantTelemetryIntegration:
             ) as span:
                 assert not isinstance(span, NoOpSpan)
                 tenant_b_spans.append(span)
-                time.sleep(0.01)
+                wait_for_phoenix_processing(delay=0.01, description="Phoenix processing")
 
         # Verify different tracers for different tenants
         tracer_a = manager.get_tracer("tenant-a")
@@ -153,7 +158,7 @@ class TestMultiTenantTelemetryIntegration:
                 ) as span:
                     assert not isinstance(span, NoOpSpan)
                     # In batch mode, spans are buffered
-                    time.sleep(0.01)
+                    wait_for_phoenix_processing(delay=0.01, description="Phoenix processing")
 
         # Verify tracers created for all tenants
         assert len(manager._tenant_providers) >= 3
@@ -447,7 +452,7 @@ class TestPhoenixIntegrationWithRealServer:
         assert success
 
         # Wait for Phoenix to process
-        time.sleep(2)
+        wait_for_phoenix_processing(delay=2, description="Phoenix processing")
 
         # TODO: Query Phoenix API to verify:
         # - Project "tenant-alpha-routing" has 5 spans

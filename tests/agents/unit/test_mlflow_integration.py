@@ -10,8 +10,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
-
-from src.app.routing.mlflow_integration import (
+from cogniverse_agents.routing.mlflow_integration import (
     ABTestConfig,
     ExperimentConfig,
     MLflowIntegration,
@@ -126,7 +125,7 @@ class TestMLflowIntegration:
         """Test MLflow integration when MLflow is not available."""
         config = ExperimentConfig(experiment_name="test_experiment")
 
-        with patch("src.app.routing.mlflow_integration.MLFLOW_AVAILABLE", False):
+        with patch("cogniverse_agents.routing.mlflow_integration.MLFLOW_AVAILABLE", False):
             with pytest.raises(ImportError, match="MLflow not available"):
                 MLflowIntegration(config)
 
@@ -386,7 +385,7 @@ class TestMLflowIntegrationIntegration:
     def test_component_imports_successfully(self):
         """Test that MLflow integration components can be imported."""
         try:
-            import src.app.routing.mlflow_integration as mli
+            import cogniverse_agents.routing.mlflow_integration as mli
 
             # Verify key components exist
             assert hasattr(mli, "ABTestConfig")

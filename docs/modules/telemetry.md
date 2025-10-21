@@ -1,8 +1,23 @@
 # Telemetry Module Study Guide
 
 **Last Updated:** 2025-10-07
-**Module Location:** `src/app/telemetry/`
+**Package:** `cogniverse_core`
+**Module Location:** `libs/core/cogniverse_core/telemetry/`
 **Purpose:** Multi-tenant observability with Phoenix integration for distributed tracing, performance tracking, and modality-specific metrics
+
+---
+
+## Package Structure
+
+```
+libs/core/cogniverse_core/telemetry/
+├── __init__.py              # Package initialization
+├── manager.py               # TelemetryManager singleton
+├── config.py                # TelemetryConfig and BatchExportConfig
+├── modality_metrics.py      # ModalityMetricsTracker
+├── context.py               # Span context helpers
+└── phoenix_client.py        # Phoenix client utilities
+```
 
 ---
 
@@ -203,7 +218,7 @@ def get_project_name(tenant_id: str, service: str) -> str:
 
 ### 1. TelemetryManager
 
-**File:** `src/app/telemetry/manager.py`
+**File:** `libs/core/cogniverse_core/telemetry/manager.py`
 
 **Purpose:** Singleton manager for multi-tenant tracer providers with lazy initialization and LRU caching.
 
@@ -371,7 +386,7 @@ print(f"Cache hit rate: {stats['cache_hits'] / (stats['cache_hits'] + stats['cac
 
 ### 2. TelemetryConfig
 
-**File:** `src/app/telemetry/config.py`
+**File:** `libs/core/cogniverse_core/telemetry/config.py`
 
 **Purpose:** Configuration for telemetry system with environment variable support.
 
@@ -503,7 +518,7 @@ config.should_instrument_level("pipeline")        # False (VERBOSE only)
 
 ### 3. ModalityMetricsTracker
 
-**File:** `src/app/telemetry/modality_metrics.py`
+**File:** `libs/core/cogniverse_core/telemetry/modality_metrics.py`
 
 **Purpose:** Track performance metrics per modality (text, video, image, audio) with rolling window statistics.
 
@@ -679,7 +694,7 @@ for entry in error_prone:
 
 ### 4. Telemetry Context Helpers
 
-**File:** `src/app/telemetry/context.py`
+**File:** `libs/core/cogniverse_core/telemetry/context.py`
 
 **Purpose:** Pre-built span creators matching old instrumentation format with OpenInference semantic conventions.
 
@@ -697,7 +712,7 @@ Create search service span.
 
 **Example:**
 ```python
-from src.app.telemetry.context import search_span
+from cogniverse_core.telemetry.context import search_span
 
 with search_span(
     tenant_id="acme-corp",
@@ -723,7 +738,7 @@ Create encoder span.
 
 **Example:**
 ```python
-from src.app.telemetry.context import encode_span
+from cogniverse_core.telemetry.context import encode_span
 
 with encode_span(
     tenant_id="acme-corp",
@@ -748,7 +763,7 @@ Create backend search span.
 
 **Example:**
 ```python
-from src.app.telemetry.context import backend_search_span
+from cogniverse_core.telemetry.context import backend_search_span
 
 with backend_search_span(
     tenant_id="acme-corp",
@@ -775,7 +790,7 @@ Add search results details to span.
 
 **Example:**
 ```python
-from src.app.telemetry.context import search_span, add_search_results_to_span
+from cogniverse_core.telemetry.context import search_span, add_search_results_to_span
 
 with search_span(tenant_id="acme", query="test") as span:
     results = search(query)
@@ -794,7 +809,7 @@ Decorator for automatic telemetry instrumentation.
 
 **Example:**
 ```python
-from src.app.telemetry.context import with_telemetry
+from cogniverse_core.telemetry.context import with_telemetry
 
 @with_telemetry(
     span_name="video_search.search",
@@ -821,7 +836,7 @@ results = search_videos(tenant_id="acme", query_text="test", max_results=5)
 """
 Initialize telemetry manager and use it across application.
 """
-from src.app.telemetry import TelemetryManager, TelemetryConfig
+from cogniverse_core.telemetry import TelemetryManager, TelemetryConfig
 
 # Initialize once at application startup
 config = TelemetryConfig(
@@ -861,7 +876,7 @@ results_tech = handle_search_request("techstart", "test query")   # → cogniver
 """
 Create nested span hierarchy for complex operations.
 """
-from src.app.telemetry import TelemetryManager
+from cogniverse_core.telemetry import TelemetryManager
 
 telemetry = TelemetryManager()
 
@@ -924,7 +939,7 @@ video_search.process (parent)
 """
 Use pre-built context helpers for common operations.
 """
-from src.app.telemetry.context import search_span, encode_span, backend_search_span
+from cogniverse_core.telemetry.context import search_span, encode_span, backend_search_span
 
 def search_videos_with_telemetry(tenant_id: str, query: str):
     """Search with standardized telemetry spans."""
@@ -958,7 +973,7 @@ def search_videos_with_telemetry(tenant_id: str, query: str):
             results = vespa_client.search(query, embeddings)
 
         # Add results to parent span
-        from src.app.telemetry.context import add_search_results_to_span
+        from cogniverse_core.telemetry.context import add_search_results_to_span
         add_search_results_to_span(span, results)
 
         return results
@@ -977,8 +992,8 @@ def search_videos_with_telemetry(tenant_id: str, query: str):
 """
 Track performance metrics per query modality.
 """
-from src.app.telemetry.modality_metrics import ModalityMetricsTracker
-from src.app.search.multi_modal_reranker import QueryModality
+from cogniverse_core.telemetry.modality_metrics import ModalityMetricsTracker
+from cogniverse_agents.search.multi_modal_reranker import QueryModality
 import time
 
 # Initialize tracker
@@ -1042,7 +1057,7 @@ for entry in error_prone:
 """
 Production telemetry setup with optimized batch export.
 """
-from src.app.telemetry import TelemetryManager, TelemetryConfig, BatchExportConfig
+from cogniverse_core.telemetry import TelemetryManager, TelemetryConfig, BatchExportConfig
 
 # Production batch export configuration
 batch_config = BatchExportConfig(
@@ -1109,7 +1124,7 @@ print(f"Cached tenants: {stats['cached_tenants']}")
 Testing configuration with immediate span export.
 """
 import os
-from src.app.telemetry import TelemetryManager, TelemetryConfig, BatchExportConfig
+from cogniverse_core.telemetry import TelemetryManager, TelemetryConfig, BatchExportConfig
 
 # Set environment variable for sync export
 os.environ["TELEMETRY_SYNC_EXPORT"] = "true"
@@ -1380,7 +1395,7 @@ def test_search_with_telemetry():
     mock_span = Mock()
     mock_manager.span.return_value.__enter__.return_value = mock_span
 
-    with patch('src.app.telemetry.get_telemetry_manager', return_value=mock_manager):
+    with patch('cogniverse_core.telemetry.get_telemetry_manager', return_value=mock_manager):
         results = search_with_telemetry("test query")
 
     # Verify span created
@@ -1559,11 +1574,11 @@ The Telemetry Module provides **production-ready, multi-tenant observability** w
 
 **For detailed examples and production configurations, see:**
 - Architecture Overview: `docs/study_guides/00_ARCHITECTURE_OVERVIEW.md`
-- Agents Module: `docs/study_guides/01_AGENTS_MODULE.md`
-- Common Module (Config): `docs/study_guides/03_COMMON_MODULE.md`
+- Agents Module: `docs/modules/agents.md`
+- Common Module (Config): `docs/modules/common.md`
 
 **Source Files:**
-- Manager: `src/app/telemetry/manager.py:24-376`
-- Config: `src/app/telemetry/config.py:46-113`
-- Metrics: `src/app/telemetry/modality_metrics.py:20-355`
-- Context: `src/app/telemetry/context.py:22-178`
+- Manager: `libs/core/cogniverse_core/telemetry/manager.py`
+- Config: `libs/core/cogniverse_core/telemetry/config.py`
+- Metrics: `libs/core/cogniverse_core/telemetry/modality_metrics.py`
+- Context: `libs/core/cogniverse_core/telemetry/context.py`

@@ -4,10 +4,9 @@ from unittest.mock import AsyncMock, patch
 
 import dspy
 import pytest
-
-from src.app.agents.detailed_report_agent import DetailedReportAgent
-from src.app.agents.summarizer_agent import SummarizerAgent
-from src.tools.a2a_utils import A2AMessage, DataPart, Task
+from cogniverse_agents.detailed_report_agent import DetailedReportAgent
+from cogniverse_agents.summarizer_agent import SummarizerAgent
+from cogniverse_agents.tools.a2a_utils import A2AMessage, DataPart, Task
 
 
 @pytest.fixture
@@ -106,7 +105,7 @@ class TestSummarizerAgentDSPyIntegration:
         self, dspy_config, sample_search_results, real_dspy_lm, mock_ollama_server
     ):
         """Test SummarizerAgent with small model via real DSPy.LM"""
-        with patch("src.app.agents.summarizer_agent.get_config") as mock_config:
+        with patch("cogniverse_agents.summarizer_agent.get_config") as mock_config:
             mock_config.return_value = dspy_config
 
             # Use dspy.context() for async tasks instead of configure()
@@ -116,7 +115,7 @@ class TestSummarizerAgentDSPyIntegration:
                 agent.llm = real_dspy_lm
 
                 # Create summary request
-                from src.app.agents.summarizer_agent import SummaryRequest
+                from cogniverse_agents.summarizer_agent import SummaryRequest
 
                 request = SummaryRequest(
                     query="machine learning fundamentals",
@@ -141,7 +140,7 @@ class TestSummarizerAgentDSPyIntegration:
         self, dspy_config, sample_search_results, real_dspy_lm, mock_ollama_server
     ):
         """Test SummarizerAgent A2A processing with real DSPy.LM"""
-        with patch("src.app.agents.summarizer_agent.get_config") as mock_config:
+        with patch("cogniverse_agents.summarizer_agent.get_config") as mock_config:
             mock_config.return_value = dspy_config
 
             # Use dspy.context() for async tasks instead of configure()
@@ -182,7 +181,7 @@ class TestDetailedReportAgentDSPyIntegration:
         self, dspy_config, sample_search_results, real_dspy_lm, mock_ollama_server
     ):
         """Test DetailedReportAgent with real DSPy.LM"""
-        with patch("src.app.agents.detailed_report_agent.get_config") as mock_config:
+        with patch("cogniverse_agents.detailed_report_agent.get_config") as mock_config:
             mock_config.return_value = dspy_config
 
             # Use dspy.context() for async tasks instead of configure()
@@ -190,7 +189,7 @@ class TestDetailedReportAgentDSPyIntegration:
                 agent = DetailedReportAgent(tenant_id="test_tenant")
                 agent.llm = real_dspy_lm
 
-                from src.app.agents.detailed_report_agent import ReportRequest
+                from cogniverse_agents.detailed_report_agent import ReportRequest
 
                 request = ReportRequest(
                     query="comprehensive analysis of AI trends",
@@ -233,7 +232,7 @@ class TestDetailedReportAgentDSPyIntegration:
         self, dspy_config, sample_search_results, real_dspy_lm, mock_ollama_server
     ):
         """Test DetailedReportAgent A2A processing with real DSPy.LM"""
-        with patch("src.app.agents.detailed_report_agent.get_config") as mock_config:
+        with patch("cogniverse_agents.detailed_report_agent.get_config") as mock_config:
             mock_config.return_value = dspy_config
 
             # Use dspy.context() for async tasks instead of configure()
@@ -289,8 +288,8 @@ class TestCrossAgentDSPyIntegration:
     ):
         """Test workflow from summarizer to detailed report using real DSPy.LM"""
         with (
-            patch("src.app.agents.summarizer_agent.get_config") as mock_config1,
-            patch("src.app.agents.detailed_report_agent.get_config") as mock_config2,
+            patch("cogniverse_agents.summarizer_agent.get_config") as mock_config1,
+            patch("cogniverse_agents.detailed_report_agent.get_config") as mock_config2,
         ):
 
             mock_config1.return_value = dspy_config
@@ -304,7 +303,7 @@ class TestCrossAgentDSPyIntegration:
                 report_agent.llm = real_dspy_lm
 
                 # Step 1: Generate summary with real DSPy.LM
-                from src.app.agents.summarizer_agent import SummaryRequest
+                from cogniverse_agents.summarizer_agent import SummaryRequest
 
                 summary_request = SummaryRequest(
                     query="AI research overview",
@@ -326,7 +325,7 @@ class TestCrossAgentDSPyIntegration:
                     }
                 )
 
-                from src.app.agents.detailed_report_agent import ReportRequest
+                from cogniverse_agents.detailed_report_agent import ReportRequest
 
                 report_request = ReportRequest(
                     query="comprehensive AI research report based on summary",
@@ -376,7 +375,7 @@ class TestDSPyLMConfigurationIntegration:
         self, dspy_config, sample_search_results, real_dspy_lm, mock_ollama_server
     ):
         """Test switching between different models via real DSPy.LM"""
-        with patch("src.app.agents.summarizer_agent.get_config") as mock_config:
+        with patch("cogniverse_agents.summarizer_agent.get_config") as mock_config:
             mock_config.return_value = dspy_config
 
             # Use dspy.context() for async tasks instead of configure()
@@ -387,7 +386,7 @@ class TestDSPyLMConfigurationIntegration:
                 agent_medium = SummarizerAgent(tenant_id="test_tenant")
                 agent_medium.llm = real_dspy_lm
 
-                from src.app.agents.summarizer_agent import SummaryRequest
+                from cogniverse_agents.summarizer_agent import SummaryRequest
 
                 request = SummaryRequest(
                     query="model comparison test",
@@ -420,7 +419,7 @@ class TestDSPyLMConfigurationIntegration:
             }
         }
 
-        with patch("src.app.agents.summarizer_agent.get_config") as mock_config:
+        with patch("cogniverse_agents.summarizer_agent.get_config") as mock_config:
             mock_config.return_value = bad_config
 
             # Agent initialization should either:
@@ -430,7 +429,7 @@ class TestDSPyLMConfigurationIntegration:
                 agent = SummarizerAgent(tenant_id="test_tenant")
 
                 # If agent initializes, LLM calls should fail gracefully
-                from src.app.agents.summarizer_agent import SummaryRequest
+                from cogniverse_agents.summarizer_agent import SummaryRequest
 
                 request = SummaryRequest(
                     query="test error handling",

@@ -3,15 +3,14 @@
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-
-from src.app.agents.detailed_report_agent import (
+from cogniverse_agents.detailed_report_agent import (
     DetailedReportAgent,
     ReportRequest,
     ReportResult,
     ThinkingPhase,
     VLMInterface,
 )
-from src.tools.a2a_utils import A2AMessage, DataPart, Task
+from cogniverse_agents.tools.a2a_utils import A2AMessage, DataPart, Task
 
 
 @pytest.fixture
@@ -90,8 +89,8 @@ class TestDetailedVisualAnalysisSignature:
 class TestVLMInterface:
     """Test VLM interface with DSPy integration"""
 
-    @patch("src.common.vlm_interface.get_config")
-    @patch("src.common.vlm_interface.dspy.settings")
+    @patch("cogniverse_core.common.vlm_interface.get_config")
+    @patch("cogniverse_core.common.vlm_interface.dspy.settings")
     @pytest.mark.ci_fast
     def test_vlm_interface_initialization_success(
         self, mock_dspy_settings, mock_get_config
@@ -110,7 +109,7 @@ class TestVLMInterface:
         assert vlm.config is not None
         mock_dspy_settings.configure.assert_called_once()
 
-    @patch("src.common.vlm_interface.get_config")
+    @patch("cogniverse_core.common.vlm_interface.get_config")
     def test_vlm_interface_initialization_missing_config(self, mock_get_config):
         """Test VLM interface initialization fails with missing config"""
         mock_get_config.return_value = {
@@ -120,9 +119,9 @@ class TestVLMInterface:
         with pytest.raises(ValueError, match="LLM configuration missing"):
             VLMInterface()
 
-    @patch("src.common.vlm_interface.get_config")
-    @patch("src.common.vlm_interface.dspy.settings")
-    @patch("src.common.vlm_interface.dspy.Predict")
+    @patch("cogniverse_core.common.vlm_interface.get_config")
+    @patch("cogniverse_core.common.vlm_interface.dspy.settings")
+    @patch("cogniverse_core.common.vlm_interface.dspy.Predict")
     @pytest.mark.asyncio
     async def test_analyze_visual_content_detailed(
         self, mock_predict, mock_dspy_settings, mock_get_config
@@ -167,8 +166,8 @@ class TestVLMInterface:
 class TestDetailedReportAgent:
     """Test cases for DetailedReportAgent class"""
 
-    @patch("src.app.agents.detailed_report_agent.get_config")
-    @patch("src.app.agents.detailed_report_agent.VLMInterface")
+    @patch("cogniverse_agents.detailed_report_agent.get_config")
+    @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     @pytest.mark.ci_fast
     def test_detailed_report_agent_initialization(
         self, mock_vlm_class, mock_get_config
@@ -192,8 +191,8 @@ class TestDetailedReportAgent:
         assert agent.visual_analysis_enabled is True
         assert agent.technical_analysis_enabled is True
 
-    @patch("src.app.agents.detailed_report_agent.get_config")
-    @patch("src.app.agents.detailed_report_agent.VLMInterface")
+    @patch("cogniverse_agents.detailed_report_agent.get_config")
+    @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     def test_detailed_report_agent_custom_config(self, mock_vlm_class, mock_get_config):
         """Test DetailedReportAgent with custom configuration"""
         mock_get_config.return_value = {
@@ -273,8 +272,8 @@ class TestDetailedReportAgent:
         assert len(result.recommendations) == 2
         assert result.confidence_assessment["overall"] == 0.8
 
-    @patch("src.app.agents.detailed_report_agent.get_config")
-    @patch("src.app.agents.detailed_report_agent.VLMInterface")
+    @patch("cogniverse_agents.detailed_report_agent.get_config")
+    @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
     async def test_process_a2a_task_success(self, mock_vlm_class, mock_get_config):
@@ -330,8 +329,8 @@ class TestDetailedReportAgent:
         assert "executive_summary" in result["result"]
         assert "detailed_findings" in result["result"]
 
-    @patch("src.app.agents.detailed_report_agent.get_config")
-    @patch("src.app.agents.detailed_report_agent.VLMInterface")
+    @patch("cogniverse_agents.detailed_report_agent.get_config")
+    @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     @pytest.mark.asyncio
     async def test_process_a2a_task_no_messages(self, mock_vlm_class, mock_get_config):
         """Test A2A task processing with no messages"""
@@ -359,8 +358,8 @@ class TestDetailedReportAgent:
 class TestDetailedReportAgentEdgeCases:
     """Test edge cases and error conditions"""
 
-    @patch("src.app.agents.detailed_report_agent.get_config")
-    @patch("src.app.agents.detailed_report_agent.VLMInterface")
+    @patch("cogniverse_agents.detailed_report_agent.get_config")
+    @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     def test_generate_report_empty_results(self, mock_vlm_class, mock_get_config):
         """Test report generation with empty search results"""
         mock_get_config.return_value = {
@@ -391,9 +390,9 @@ class TestDetailedReportAgentCoreFunctionality:
     def agent_with_mocks(self):
         """Create agent with properly mocked dependencies"""
         with (
-            patch("src.app.agents.detailed_report_agent.get_config") as mock_config,
+            patch("cogniverse_agents.detailed_report_agent.get_config") as mock_config,
             patch(
-                "src.app.agents.detailed_report_agent.VLMInterface"
+                "cogniverse_agents.detailed_report_agent.VLMInterface"
             ) as mock_vlm_class,
             patch.object(DetailedReportAgent, "_initialize_vlm_client"),
         ):
@@ -648,7 +647,7 @@ class TestDetailedReportAgentCoreFunctionality:
         """Test enhanced report generation with routing decision"""
         agent = agent_with_mocks
 
-        from src.app.agents.routing_agent import RoutingDecision
+        from cogniverse_agents.routing_agent import RoutingDecision
 
         routing_decision = RoutingDecision(
             query="test query",
@@ -672,7 +671,7 @@ class TestDetailedReportAgentCoreFunctionality:
             mock_cot_instance.forward = Mock(return_value=mock_prediction)
             mock_cot.return_value = mock_cot_instance
 
-            from src.app.agents.detailed_report_agent import EnhancedReportRequest
+            from cogniverse_agents.detailed_report_agent import EnhancedReportRequest
 
             enhanced_request = EnhancedReportRequest(
                 original_query="test query",

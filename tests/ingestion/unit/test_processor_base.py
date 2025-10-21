@@ -9,8 +9,7 @@ import logging
 from typing import Any
 
 import pytest
-
-from src.app.ingestion.processor_base import BaseProcessor, BaseStrategy
+from cogniverse_runtime.ingestion.processor_base import BaseProcessor, BaseStrategy
 
 
 class MockTestProcessor(BaseProcessor):

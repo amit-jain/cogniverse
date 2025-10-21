@@ -3,10 +3,10 @@
 View integrated results from both quantitative tests and evaluation experiments
 """
 
-import sys
-from pathlib import Path
-import webbrowser
 import argparse
+import sys
+import webbrowser
+from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent))
 
@@ -29,7 +29,7 @@ def main():
     )
     
     if args.open and output_file:
-        print(f"\n🌐 Opening report in browser...")
+        print("\n🌐 Opening report in browser...")
         webbrowser.open(f"file://{output_file.absolute()}")
     
     print("\n✅ Done!")

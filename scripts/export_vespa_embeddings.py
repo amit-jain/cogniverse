@@ -4,29 +4,28 @@ Export Vespa embeddings to Parquet format for embedding-atlas visualization
 """
 
 import argparse
-import json
 import logging
-import sys
-from pathlib import Path
-from typing import Dict, List, Optional, Any
 
 # Fix protobuf issue - must be before other imports
 import os
+import sys
+from pathlib import Path
+from typing import Dict, Optional
+
 os.environ['PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION'] = 'python'
+
 
 import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-from datetime import datetime
 import umap
-from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
 
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.backends.vespa.search_backend import VespaSearchBackend
 from src.common.config_utils import get_config
 
 logging.basicConfig(level=logging.INFO)
@@ -425,13 +424,13 @@ def main():
     
     if output_path:
         print(f"\n✅ Export complete: {output_path}")
-        print(f"\n📊 Visualize with embedding-atlas:")
+        print("\n📊 Visualize with embedding-atlas:")
         print(f"   embedding-atlas {output_path}")
-        print(f"\n🐍 Or in Python:")
-        print(f"   from embedding_atlas import EmbeddingAtlasWidget")
-        print(f"   import pandas as pd")
+        print("\n🐍 Or in Python:")
+        print("   from embedding_atlas import EmbeddingAtlasWidget")
+        print("   import pandas as pd")
         print(f"   df = pd.read_parquet('{output_path}')")
-        print(f"   EmbeddingAtlasWidget(df)")
+        print("   EmbeddingAtlasWidget(df)")
     else:
         print("\n❌ Export failed")
         sys.exit(1)
