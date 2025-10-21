@@ -171,6 +171,7 @@ Cogniverse supports multiple deployment methods depending on your needs:
 **See detailed guides:**
 - [Docker Deployment Guide](docker-deployment.md) - Complete Docker Compose setup
 - [Kubernetes Deployment Guide](kubernetes-deployment.md) - K8s/K3s/Helm deployment
+- [Istio Service Mesh Guide](istio-service-mesh.md) - Service mesh with mTLS, Phoenix tracing, DNS-based multi-cluster
 - [Argo Workflows Guide](argo-workflows.md) - Batch processing workflows
 
 ---
@@ -602,6 +603,7 @@ done
 - [Setup & Installation](setup-installation.md) - Complete installation guide for UV workspace
 - [Configuration](configuration.md) - Multi-tenant configuration management
 - [Multi-Tenant Operations](multi-tenant-ops.md) - Multi-tenant deployment patterns
+- [Istio Service Mesh](istio-service-mesh.md) - Production service mesh with mTLS and Phoenix tracing
 - [SDK Architecture](../architecture/sdk-architecture.md) - SDK package structure
 - [Performance & Monitoring](performance-monitoring.md) - Performance targets and monitoring
 - [Modal Deployment](../modal/deployment_guide.md) - Serverless GPU deployment
