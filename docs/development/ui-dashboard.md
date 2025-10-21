@@ -460,7 +460,7 @@ def render_routing_evaluation_tab():
 **Location**: `scripts/enhanced_optimization_tab.py`
 
 **Features**:
-The Optimization tab provides 8 sub-tabs covering the complete optimization lifecycle:
+The Optimization tab provides 9 sub-tabs covering the complete optimization lifecycle:
 
 #### 5.1 Overview Tab
 
@@ -559,7 +559,83 @@ def build_golden_dataset_from_phoenix(tenant_id, min_rating, lookback_days):
 
 **Export**: JSON format compatible with `GoldenDatasetEvaluator`
 
-#### 5.4 Routing Optimization Tab
+#### 5.4 Synthetic Data Generation Tab (NEW)
+
+Generate training data for all optimizers by sampling from Vespa backend:
+
+**Supported Optimizers**:
+1. **Modality Optimizer**: Per-modality routing (VIDEO, DOCUMENT, IMAGE, AUDIO)
+2. **Cross-Modal Optimizer**: Multi-modal fusion decisions
+3. **Routing Optimizer**: Entity-based advanced routing
+4. **Workflow Optimizer**: Multi-agent workflow orchestration
+5. **Unified Optimizer**: Combined routing and workflow planning
+
+**Configuration**:
+- **Optimizer Type**: Which optimizer to generate data for
+- **Examples to Generate**: Number of training examples (10-10,000)
+- **Vespa Sample Size**: Documents to sample from backend (10-10,000)
+- **Sampling Strategies**: diverse, temporal_recent, entity_rich, multi_modal_sequences, by_modality, cross_modal_pairs
+- **Max Profiles**: Maximum number of backend profiles to use (1-10)
+- **Tenant ID**: Tenant-specific data isolation
+
+**Generation Process**:
+```python
+# 1. Call synthetic data API
+api_base = "http://localhost:8000"
+request_payload = {
+    "optimizer": "cross_modal",
+    "count": 100,
+    "vespa_sample_size": 200,
+    "strategies": ["diverse"],
+    "max_profiles": 3,
+    "tenant_id": "default"
+}
+
+response = requests.post(
+    f"{api_base}/synthetic/generate",
+    json=request_payload,
+    timeout=300
+)
+
+# 2. Receive generated data
+result = response.json()
+# {
+#   "optimizer": "cross_modal",
+#   "schema_name": "FusionHistorySchema",
+#   "count": 100,
+#   "selected_profiles": ["video_colpali_smol500_mv_frame", ...],
+#   "profile_selection_reasoning": "Selected frame-based and chunk-based...",
+#   "data": [...generated examples...],
+#   "metadata": {"generation_time_ms": 1250}
+# }
+
+# 3. Export for offline use
+json.dump(result, open("synthetic_data.json", "w"))
+
+# 4. Use in optimization tabs
+# Navigate to corresponding optimizer tab and load the data
+```
+
+**Profile Selection**:
+- **LLM-based**: Uses reasoning to match profile characteristics to optimizer needs
+- **Rule-based**: Heuristic scoring with diversity selection (fallback)
+
+**Output Schemas**:
+- `ModalityExampleSchema`: Query, modality, agent mapping
+- `FusionHistorySchema`: Fusion context, improvement metrics
+- `RoutingExperienceSchema`: Query, entities, relationships, agent
+- `WorkflowExecutionSchema`: Multi-step workflow patterns
+
+**Integration with Optimizers**:
+- `modality` → Routing Optimization Tab
+- `cross_modal` → Reranking Optimization Tab
+- `routing` → Routing Optimization Tab
+- `workflow` → DSPy Optimization Tab
+- `unified` → Multiple tabs (Routing + DSPy)
+
+**Export**: JSON format compatible with all optimizer training interfaces
+
+#### 5.5 Routing Optimization Tab
 
 Optimize routing decisions using GRPO/GEPA:
 
@@ -575,7 +651,7 @@ Optimize routing decisions using GRPO/GEPA:
 - **MIPRO**: 500-1000 examples
 - **GEPA**: > 1000 examples
 
-#### 5.5 DSPy Module Optimization Tab
+#### 5.6 DSPy Module Optimization Tab
 
 Teacher-student distillation for local model optimization:
 
@@ -620,7 +696,7 @@ st.metric("Latency Reduction", "-40%")
 - Faster inference (40-60% latency reduction)
 - Maintain 85-95% of teacher accuracy
 
-#### 5.6 Reranking Optimization Tab
+#### 5.7 Reranking Optimization Tab
 
 Learn optimal ranking from user feedback:
 
@@ -656,7 +732,7 @@ st.metric("MRR", "0.65 → 0.78", delta="+0.13")
 
 **Metrics**: NDCG@10, MRR, P@K, Recall@K
 
-#### 5.7 Profile Selection Optimization Tab
+#### 5.8 Profile Selection Optimization Tab
 
 Learn which processing profile works best for query types:
 
@@ -693,7 +769,7 @@ for new_query in queries:
 - Scene descriptors (outdoor, kitchen, office)
 - Abstract concepts (emotion, atmosphere, style)
 
-#### 5.8 Metrics Dashboard Tab
+#### 5.9 Metrics Dashboard Tab
 
 Unified view of optimization improvements:
 

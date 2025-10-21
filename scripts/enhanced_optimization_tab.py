@@ -5,6 +5,7 @@ Enhanced Optimization Tab for Phoenix Dashboard
 Comprehensive optimization framework including:
 - Search result annotation (thumbs up/down, star ratings)
 - Golden dataset builder from Phoenix annotations
+- Synthetic data generation for all optimizers
 - Routing optimization (GRPO/GEPA)
 - DSPy module optimization (teacher-student distillation)
 - Reranking optimization from user feedback
@@ -38,6 +39,7 @@ def render_enhanced_optimization_tab():
         "📊 Overview",
         "⭐ Search Annotations",
         "📚 Golden Dataset",
+        "🔬 Synthetic Data",
         "🎯 Routing Optimization",
         "🧠 DSPy Optimization",
         "🔄 Reranking Optimization",
@@ -55,18 +57,21 @@ def render_enhanced_optimization_tab():
         _render_golden_dataset_tab()
 
     with opt_tabs[3]:
-        _render_routing_optimization_tab()
+        _render_synthetic_data_tab()
 
     with opt_tabs[4]:
-        _render_dspy_optimization_tab()
+        _render_routing_optimization_tab()
 
     with opt_tabs[5]:
-        _render_reranking_optimization_tab()
+        _render_dspy_optimization_tab()
 
     with opt_tabs[6]:
-        _render_profile_selection_tab()
+        _render_reranking_optimization_tab()
 
     with opt_tabs[7]:
+        _render_profile_selection_tab()
+
+    with opt_tabs[8]:
         _render_metrics_dashboard_tab()
 
 
@@ -496,6 +501,187 @@ def _build_golden_dataset_from_phoenix(
         }
 
     return golden_dataset
+
+
+def _render_synthetic_data_tab():
+    """Render synthetic data generation interface"""
+    st.subheader("🔬 Synthetic Data Generation")
+    st.markdown("Generate training data for optimizers by sampling from Vespa backend")
+
+    # Configuration
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        optimizer = st.selectbox(
+            "Optimizer Type",
+            ["modality", "cross_modal", "routing", "workflow", "unified"],
+            help="Which optimizer to generate data for"
+        )
+    with col2:
+        count = st.number_input("Examples to Generate", 10, 10000, 100, 10)
+    with col3:
+        vespa_sample_size = st.number_input("Vespa Sample Size", 10, 10000, 200, 10)
+
+    # Advanced options
+    with st.expander("⚙️ Advanced Options"):
+        col1, col2 = st.columns(2)
+        with col1:
+            strategies = st.multiselect(
+                "Sampling Strategies",
+                ["diverse", "temporal_recent", "entity_rich", "multi_modal_sequences", "by_modality", "cross_modal_pairs"],
+                default=["diverse"],
+                help="How to sample content from Vespa"
+            )
+        with col2:
+            max_profiles = st.slider("Max Profiles", 1, 10, 3)
+            tenant_id = st.text_input("Tenant ID", value="default")
+
+    # Generate synthetic data
+    if st.button("🚀 Generate Synthetic Data", type="primary"):
+        with st.spinner(f"Generating {count} examples for {optimizer} optimizer..."):
+            try:
+                # Call synthetic data API
+                import requests
+
+                api_base = st.session_state.get("api_base_url", "http://localhost:8000")
+                request_payload = {
+                    "optimizer": optimizer,
+                    "count": count,
+                    "vespa_sample_size": vespa_sample_size,
+                    "strategies": strategies,
+                    "max_profiles": max_profiles,
+                    "tenant_id": tenant_id
+                }
+
+                response = requests.post(
+                    f"{api_base}/synthetic/generate",
+                    json=request_payload,
+                    timeout=300  # 5 minutes
+                )
+
+                if response.status_code == 200:
+                    result = response.json()
+
+                    st.session_state["synthetic_data_result"] = result
+                    st.success(f"✅ Generated {result['count']} examples using {len(result['selected_profiles'])} profiles")
+
+                    # Show profile selection reasoning
+                    st.info(f"**Profile Selection**: {result['profile_selection_reasoning']}")
+
+                    # Display metadata
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Schema", result['schema_name'])
+                    with col2:
+                        st.metric("Generation Time", f"{result['metadata'].get('generation_time_ms', 0)}ms")
+                    with col3:
+                        st.metric("Profiles Used", len(result['selected_profiles']))
+
+                    # Show selected profiles
+                    st.subheader("📋 Selected Profiles")
+                    for profile in result['selected_profiles']:
+                        st.code(profile, language=None)
+
+                    # Display sample data
+                    if result['data']:
+                        st.subheader("📊 Sample Generated Examples")
+                        sample_df = pd.DataFrame(result['data'][:10])
+                        st.dataframe(sample_df, use_container_width=True)
+
+                else:
+                    st.error(f"❌ Generation failed: {response.status_code} - {response.text}")
+
+            except requests.exceptions.ConnectionError:
+                st.error("❌ Cannot connect to API. Make sure the runtime service is running.")
+            except requests.exceptions.Timeout:
+                st.error("❌ Request timed out. Try reducing the sample size or count.")
+            except Exception as e:
+                st.error(f"❌ Error: {e}")
+                logger.exception("Synthetic data generation failed")
+
+    # Export synthetic data
+    if "synthetic_data_result" in st.session_state and st.session_state["synthetic_data_result"]:
+        st.markdown("---")
+        st.subheader("💾 Export Synthetic Data")
+
+        result = st.session_state["synthetic_data_result"]
+
+        col1, col2 = st.columns(2)
+        with col1:
+            filename = st.text_input(
+                "Filename",
+                value=f"synthetic_{result['optimizer']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            )
+        with col2:
+            if st.button("📥 Download JSON"):
+                json_str = json.dumps(result, indent=2)
+                st.download_button(
+                    label="Download",
+                    data=json_str,
+                    file_name=filename,
+                    mime="application/json"
+                )
+
+        # Use in optimization
+        st.markdown("---")
+        st.subheader("🎯 Use in Optimization")
+        st.markdown(f"""
+        The generated data is ready for use with **{result['optimizer'].replace('_', ' ').title()} Optimizer**.
+
+        **Next Steps:**
+        1. Review the generated examples above
+        2. Download the data if needed for offline use
+        3. Navigate to the corresponding optimization tab
+        4. Load the synthetic data for training
+
+        **Optimizer Tabs:**
+        - `modality` → Routing Optimization Tab
+        - `cross_modal` → Reranking Optimization Tab
+        - `routing` → Routing Optimization Tab
+        - `workflow` → DSPy Optimization Tab
+        - `unified` → Multiple tabs (Routing + DSPy)
+        """)
+
+    # Show optimizer info
+    st.markdown("---")
+    st.subheader("ℹ️ Optimizer Information")
+
+    optimizer_info = {
+        "modality": {
+            "description": "Per-modality routing (VIDEO, DOCUMENT, IMAGE, AUDIO)",
+            "schema": "ModalityExampleSchema",
+            "features": "Generates queries targeting specific modalities"
+        },
+        "cross_modal": {
+            "description": "Multi-modal fusion decisions",
+            "schema": "FusionHistorySchema",
+            "features": "Creates fusion scenarios with improvement metrics"
+        },
+        "routing": {
+            "description": "Entity-based advanced routing",
+            "schema": "RoutingExperienceSchema",
+            "features": "Generates queries with entities and relationships"
+        },
+        "workflow": {
+            "description": "Multi-agent workflow orchestration",
+            "schema": "WorkflowExecutionSchema",
+            "features": "Creates multi-step workflow patterns"
+        },
+        "unified": {
+            "description": "Combined routing and workflow planning",
+            "schema": "Mixed schemas",
+            "features": "Generates diverse examples for multiple optimizers"
+        }
+    }
+
+    if optimizer in optimizer_info:
+        info = optimizer_info[optimizer]
+        st.info(f"""
+        **{optimizer.replace('_', ' ').title()} Optimizer**
+
+        **Description**: {info['description']}
+        **Schema**: `{info['schema']}`
+        **Features**: {info['features']}
+        """)
 
 
 def _render_routing_optimization_tab():
