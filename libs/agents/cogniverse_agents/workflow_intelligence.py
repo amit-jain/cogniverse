@@ -1183,6 +1183,67 @@ class WorkflowIntelligence:
         except Exception as e:
             self.logger.error(f"Failed to record ground truth execution: {e}")
 
+    async def generate_synthetic_training_data(
+        self,
+        count: int = 100,
+        vespa_client: Optional[Any] = None,
+        backend_config: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        """
+        Generate synthetic training data using libs/synthetic system
+
+        Args:
+            count: Number of synthetic examples to generate
+            vespa_client: Optional Vespa client for content sampling
+            backend_config: Backend configuration with profiles
+
+        Returns:
+            Number of examples added to workflow history
+        """
+        from cogniverse_synthetic import (
+            SyntheticDataRequest,
+            SyntheticDataService,
+            WorkflowExecutionSchema,
+        )
+
+        self.logger.info(f"🔄 Generating {count} synthetic workflow examples...")
+
+        # Generate synthetic data directly
+        service = SyntheticDataService(
+            vespa_client=vespa_client,
+            backend_config=backend_config
+        )
+        request = SyntheticDataRequest(optimizer="workflow", count=count)
+        response = await service.generate(request)
+
+        # Convert to WorkflowExecution objects
+        initial_count = len(self.workflow_history)
+        for example_data in response.data:
+            execution = WorkflowExecution(
+                workflow_id=example_data["workflow_id"],
+                query=example_data["query"],
+                query_type=example_data["query_type"],
+                execution_time=example_data["execution_time"],
+                success=example_data["success"],
+                agent_sequence=example_data["agent_sequence"],
+                task_count=example_data["task_count"],
+                parallel_efficiency=example_data["parallel_efficiency"],
+                confidence_score=example_data["confidence_score"],
+                user_satisfaction=example_data.get("user_satisfaction"),
+                error_details=example_data.get("error_details"),
+                metadata=example_data.get("metadata", {})
+            )
+            self.workflow_history.append(execution)
+
+        added_count = len(self.workflow_history) - initial_count
+
+        self.logger.info(
+            f"✅ Added {added_count} synthetic examples to workflow history "
+            f"(total: {len(self.workflow_history)})"
+        )
+
+        return added_count
+
     async def optimize_from_ground_truth(self) -> Dict[str, Any]:
         """
         Trigger DSPy optimization using ground truth workflows

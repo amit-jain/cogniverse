@@ -357,6 +357,52 @@ class CrossModalOptimizer:
 
         return result
 
+    async def generate_synthetic_training_data(
+        self,
+        count: int = 100,
+        vespa_client: Optional[Any] = None,
+        backend_config: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        """
+        Generate synthetic training data using libs/synthetic system
+
+        Args:
+            count: Number of synthetic examples to generate
+            vespa_client: Optional Vespa client for content sampling
+            backend_config: Backend configuration with profiles
+
+        Returns:
+            Number of examples added to fusion_history
+        """
+        from cogniverse_synthetic import (
+            FusionHistorySchema,
+            SyntheticDataRequest,
+            SyntheticDataService,
+        )
+
+        logger.info(f"🔄 Generating {count} synthetic cross-modal examples...")
+
+        # Generate synthetic data directly
+        service = SyntheticDataService(
+            vespa_client=vespa_client,
+            backend_config=backend_config
+        )
+        request = SyntheticDataRequest(optimizer="cross_modal", count=count)
+        response = await service.generate(request)
+
+        # Add to fusion history
+        initial_count = len(self.fusion_history)
+        self.fusion_history.extend(response.data)
+
+        added_count = len(self.fusion_history) - initial_count
+
+        logger.info(
+            f"✅ Added {added_count} synthetic examples to fusion history "
+            f"(total: {len(self.fusion_history)})"
+        )
+
+        return added_count
+
     def get_fusion_recommendations(
         self,
         query_text: str,

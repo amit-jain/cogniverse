@@ -85,6 +85,14 @@ cogniverse/
 │   │       ├── ingestion_client.py       # Ingestion (VespaPyClient)
 │   │       └── json_schema_parser.py     # Schema parsing
 │   │
+│   ├── synthetic/                # Synthetic data generation
+│   │   ├── pyproject.toml
+│   │   └── cogniverse_synthetic/
+│   │       ├── service.py        # Main SyntheticDataService
+│   │       ├── generators/       # Optimizer-specific generators
+│   │       ├── profile_selector.py  # LLM-based profile selection
+│   │       └── backend_querier.py   # Vespa content sampling
+│   │
 │   ├── runtime/                  # Production runtime
 │   │   ├── pyproject.toml
 │   │   ├── Dockerfile
