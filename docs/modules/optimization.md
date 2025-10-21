@@ -1223,7 +1223,151 @@ def get_health() -> Dict[str, Any]:
 
 ---
 
-### 6. **Error Handling and Recovery**
+### 6. **Production Deployment Infrastructure**
+
+The optimization module includes production-ready deployment infrastructure with CLI tools and Argo Workflows for batch and scheduled optimization.
+
+#### CLI Script: `run_module_optimization.py`
+
+**Command-line interface for module optimization:**
+
+```bash
+# Optimize specific module
+JAX_PLATFORM_NAME=cpu uv run python scripts/run_module_optimization.py \
+  --module modality \
+  --tenant-id default \
+  --use-synthetic-data \
+  --output results.json
+
+# Optimize all modules
+JAX_PLATFORM_NAME=cpu uv run python scripts/run_module_optimization.py \
+  --module all \
+  --tenant-id default \
+  --lookback-hours 48 \
+  --min-confidence 0.8 \
+  --output results.json
+```
+
+**Available Options:**
+- `--module`: Which module to optimize (modality/cross_modal/routing/workflow/unified/all)
+- `--tenant-id`: Tenant identifier (default: "default")
+- `--use-synthetic-data`: Generate synthetic training data if insufficient Phoenix traces
+- `--lookback-hours`: Hours to look back for Phoenix spans (default: 24)
+- `--min-confidence`: Minimum confidence threshold for span collection (default: 0.7)
+- `--force-training`: Force training regardless of XGBoost decision
+- `--max-iterations`: Maximum DSPy training iterations (default: 100)
+- `--output`: Output JSON file path (default: /tmp/optimization_results.json)
+
+**Automatic DSPy Optimizer Selection:**
+The CLI automatically selects the best DSPy optimizer based on training data size:
+- < 100 examples → Bootstrap
+- 100-500 examples → SIMBA
+- 500-1000 examples → MIPRO
+- \> 1000 examples → GEPA
+
+#### Argo Workflows Integration
+
+**Batch Optimization Workflow:**
+
+Submit module optimization as Kubernetes workflow:
+
+```bash
+# Submit batch optimization
+argo submit workflows/batch-optimization.yaml \
+  -n cogniverse \
+  --parameter tenant-id="acme_corp" \
+  --parameter optimizer-category="routing" \
+  --parameter optimizer-type="modality" \
+  --parameter max-iterations="100" \
+  --parameter use-synthetic-data="true"
+```
+
+**Scheduled Optimization CronWorkflows:**
+
+Automatic optimization on schedule:
+
+**Weekly Optimization** (Sunday 3 AM UTC):
+```bash
+# View schedule
+kubectl get cronworkflow weekly-optimization -n cogniverse
+
+# Check last run
+argo list -n cogniverse --selector workflows.argoproj.io/cron-workflow=weekly-optimization --limit 1
+
+# Trigger manually
+argo submit --from cronwf/weekly-optimization -n cogniverse
+```
+
+**Daily Optimization Check** (4 AM UTC):
+```bash
+# View schedule
+kubectl get cronworkflow daily-optimization-check -n cogniverse
+
+# Suspend/resume
+argo cron suspend daily-optimization-check -n cogniverse
+argo cron resume daily-optimization-check -n cogniverse
+```
+
+**What Gets Optimized:**
+- Weekly: All modules (modality, cross_modal, routing, workflow) + DSPy optimizer
+- Daily: Quick routing optimization only
+
+**Automatic Execution:**
+- Checks Phoenix for annotation count
+- Runs optimization if annotation threshold met (weekly: 50, daily: 20)
+- Generates synthetic data from Vespa backend
+- Auto-selects DSPy optimizer based on data size
+- Deploys if improvement > 5%
+
+#### Module Optimization vs DSPy Optimization
+
+**Module Optimization** (`optimizer-category: routing`):
+- **What**: modality, cross_modal, routing, workflow, unified modules
+- **How**: Auto-selected DSPy optimizer (Bootstrap/SIMBA/MIPRO/GEPA)
+- **Data**: Phoenix traces + synthetic data generation
+- **Use case**: Optimize routing decisions and workflow planning
+
+**DSPy Optimization** (`optimizer-category: dspy`):
+- **What**: DSPy modules (prompt templates, reasoning chains)
+- **How**: Explicit DSPy optimizer (GEPA/Bootstrap/SIMBA/MIPRO)
+- **Data**: Golden evaluation datasets
+- **Use case**: Teacher-student distillation for local models
+
+#### Monitoring Workflows
+
+```bash
+# List optimization workflows
+argo list -n cogniverse --selector workflow-type=optimization
+
+# Get workflow results
+argo get <workflow-name> -n cogniverse -o json | \
+  jq '.status.nodes | .[] | select(.displayName=="run-optimization") | .outputs.parameters'
+
+# View improvement metrics
+argo get <workflow-name> -n cogniverse -o json | \
+  jq -r '.status.outputs.parameters[] | select(.name=="improvement") | .value'
+```
+
+#### UI Dashboard Integration
+
+The optimization infrastructure integrates with the Streamlit dashboard:
+
+**Module Optimization Tab:**
+- Submit Argo workflows on-demand
+- Configure optimization parameters
+- Generate synthetic training data
+- Monitor workflow progress
+- View optimization results
+
+**Execution Modes:**
+1. **Automatic (Scheduled)**: CronWorkflows check Phoenix and optimize when criteria met
+2. **Manual (UI-triggered)**: Submit workflows from dashboard on demand
+
+See `docs/development/ui-dashboard.md` for full UI documentation.
+
+---
+
+### 7. **Error Handling and Recovery**
 
 **Fallback Strategies:**
 ```python

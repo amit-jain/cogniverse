@@ -625,6 +625,232 @@ python scripts/run_optimization.py \
 
 ---
 
+### 5a. run_module_optimization.py
+
+**Purpose:** Optimize routing/workflow modules with automatic DSPy optimizer selection and synthetic data generation
+
+**Location:** `scripts/run_module_optimization.py` (424 lines)
+
+**What Gets Optimized (Modules):**
+- `modality` - Per-modality routing (VIDEO, DOCUMENT, IMAGE, AUDIO)
+- `cross_modal` - Multi-modal fusion decisions
+- `routing` - Entity-based advanced routing
+- `workflow` - Multi-agent workflow orchestration
+- `unified` - Combined routing + workflow planning
+- `all` - All modules sequentially
+
+**How They Get Optimized:**
+- System automatically selects DSPy optimizer (GEPA/Bootstrap/SIMBA/MIPRO) based on training data size
+- < 100 examples → Bootstrap
+- 100-500 examples → SIMBA
+- 500-1000 examples → MIPRO
+- \> 1000 examples → GEPA
+
+**Module Optimization Functions:**
+
+**optimize_modality():**
+```python
+async def optimize_modality(
+    tenant_id: str,
+    use_synthetic: bool = False,
+    lookback_hours: int = 24,
+    min_confidence: float = 0.7,
+    force_training: bool = False,
+) -> Dict[str, Any]:
+    """
+    Optimize per-modality routing
+
+    Returns:
+        {
+            "module": "modality",
+            "results_by_modality": {
+                "VIDEO": {"trained": true, "accuracy": 0.89, ...},
+                "DOCUMENT": {...},
+                ...
+            },
+            "summary": {
+                "total_modalities": 4,
+                "trained_count": 3,
+                "skipped_count": 1
+            }
+        }
+    """
+    optimizer = ModalityOptimizer(tenant_id=tenant_id)
+    results = await optimizer.optimize_all_modalities(
+        lookback_hours=lookback_hours,
+        min_confidence=min_confidence
+    )
+    return results
+```
+
+**optimize_cross_modal():**
+```python
+async def optimize_cross_modal(
+    tenant_id: str,
+    use_synthetic: bool = False,
+    lookback_hours: int = 24,
+) -> Dict[str, Any]:
+    """
+    Optimize cross-modal fusion decisions
+
+    Uses CrossModalOptimizer to learn when to:
+    - Fuse results from multiple modalities
+    - Use single modality only
+    - Weight different modalities
+    """
+    optimizer = CrossModalOptimizer(tenant_id=tenant_id)
+    results = await optimizer.optimize()
+    return results
+```
+
+**optimize_routing():**
+```python
+async def optimize_routing(
+    tenant_id: str,
+    use_synthetic: bool = False,
+    lookback_hours: int = 24,
+) -> Dict[str, Any]:
+    """
+    Optimize advanced entity-based routing
+
+    Uses AdvancedRoutingOptimizer to improve routing based on:
+    - Named entities in query
+    - Entity relationships
+    - Query complexity
+    """
+    optimizer = AdvancedRoutingOptimizer(tenant_id=tenant_id)
+    results = await optimizer.optimize()
+    return results
+```
+
+**optimize_all_modules():**
+```python
+async def optimize_all_modules(
+    tenant_id: str,
+    use_synthetic: bool = False,
+    lookback_hours: int = 24,
+    min_confidence: float = 0.7,
+) -> Dict[str, Any]:
+    """
+    Optimize all modules sequentially
+
+    Returns:
+        {
+            "module": "all",
+            "summary": {
+                "total_modules": 5,
+                "successful": 4,
+                "failed": 0,
+                "not_implemented": 1
+            },
+            "results": {
+                "modality": {...},
+                "cross_modal": {...},
+                "routing": {...},
+                "workflow": {"status": "not_implemented"},
+                "unified": {"status": "not_implemented"}
+            }
+        }
+    """
+    # Runs each optimizer with error handling
+```
+
+**Command Line Usage:**
+
+**Optimize specific module:**
+```bash
+# Optimize modality routing
+JAX_PLATFORM_NAME=cpu uv run python scripts/run_module_optimization.py \
+  --module modality \
+  --tenant-id default \
+  --output results.json
+
+# Optimize cross-modal fusion
+JAX_PLATFORM_NAME=cpu uv run python scripts/run_module_optimization.py \
+  --module cross_modal \
+  --tenant-id acme_corp \
+  --use-synthetic-data \
+  --lookback-hours 48 \
+  --output results.json
+```
+
+**Optimize all modules:**
+```bash
+JAX_PLATFORM_NAME=cpu uv run python scripts/run_module_optimization.py \
+  --module all \
+  --tenant-id default \
+  --use-synthetic-data \
+  --min-confidence 0.8 \
+  --max-iterations 200 \
+  --output results.json
+```
+
+**Command Line Options:**
+```bash
+--module CHOICE              # modality|cross_modal|routing|workflow|unified|all (required)
+--tenant-id ID               # Tenant identifier (default: default)
+--use-synthetic-data         # Generate synthetic training data if insufficient Phoenix traces
+--lookback-hours HOURS       # Hours to look back for Phoenix spans (default: 24)
+--min-confidence FLOAT       # Minimum confidence threshold (default: 0.7)
+--force-training             # Force training regardless of XGBoost decision
+--max-iterations NUM         # Maximum DSPy training iterations (default: 100)
+--output PATH                # Output JSON file path (default: /tmp/optimization_results.json)
+```
+
+**Output Format:**
+```json
+{
+  "module": "modality",
+  "tenant_id": "default",
+  "timestamp": "2025-10-22T10:30:00",
+  "duration_seconds": 245.3,
+  "success": true,
+  "results": {
+    "results_by_modality": {
+      "VIDEO": {
+        "trained": true,
+        "baseline_accuracy": 0.77,
+        "optimized_accuracy": 0.89,
+        "improvement": 0.12,
+        "training_examples": 156
+      }
+    },
+    "summary": {
+      "total_modalities": 4,
+      "trained_count": 3,
+      "skipped_count": 1
+    }
+  }
+}
+```
+
+**Integration with Argo Workflows:**
+
+This script is used by Argo Workflows for batch optimization:
+
+```yaml
+# workflows/batch-optimization.yaml
+- name: run-optimization
+  container:
+    image: cogniverse/runtime:2.0.0
+    command: ["/bin/bash", "-c"]
+    args:
+      - |
+        JAX_PLATFORM_NAME=cpu uv run python scripts/run_module_optimization.py \
+          --module {{inputs.parameters.optimizer-type}} \
+          --tenant-id {{workflow.parameters.tenant-id}} \
+          --use-synthetic-data \
+          --output /tmp/optimization_results.json
+```
+
+**Scheduled Execution:**
+
+See `workflows/scheduled-optimization.yaml` for automatic scheduled optimization:
+- **Weekly**: Sunday 3 AM UTC (all modules)
+- **Daily**: 4 AM UTC (routing module only)
+
+---
+
 ### 6. run_experiments_with_visualization.py
 
 **Purpose:** Run Phoenix experiments with comprehensive visualization and quality evaluators

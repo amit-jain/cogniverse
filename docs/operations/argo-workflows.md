@@ -280,6 +280,131 @@ argo submit --from cronwf/monthly-reports -n cogniverse
 
 ---
 
+## Scheduled Module Optimization Workflows
+
+Cogniverse includes automated optimization workflows that run on a schedule to continuously improve system performance.
+
+### Weekly Optimization (Sunday 3 AM UTC)
+
+Comprehensive optimization of all routing/workflow modules when sufficient annotations are collected.
+
+**What it does:**
+- Checks Phoenix for annotation count (threshold: 50)
+- Runs optimization for all modules if threshold met:
+  - Modality optimizer (per-modality routing)
+  - Cross-modal optimizer (fusion decisions)
+  - Routing optimizer (entity-based routing)
+  - Workflow optimizer (orchestration)
+  - DSPy optimizer (GEPA by default)
+- Generates synthetic training data from Vespa backend
+- Auto-selects DSPy optimizer based on data size
+
+```bash
+# View schedule
+kubectl get cronworkflow weekly-optimization -n cogniverse
+
+# Check last run
+argo list -n cogniverse --selector workflows.argoproj.io/cron-workflow=weekly-optimization --limit 1
+
+# Trigger manually
+argo submit --from cronwf/weekly-optimization -n cogniverse
+
+# Modify parameters
+kubectl edit cronworkflow weekly-optimization -n cogniverse
+```
+
+**Configuration:**
+- `annotation-threshold`: Minimum annotations needed (default: 50)
+- `improvement-threshold`: Minimum improvement % to deploy (default: 5%)
+- `tenant-id`: Target tenant (default: "default")
+
+### Daily Optimization Check (4 AM UTC)
+
+Lightweight routing optimization triggered by new annotations.
+
+**What it does:**
+- Checks Phoenix for annotations in last 24 hours (threshold: 20)
+- Runs quick routing optimization if threshold met
+- Uses synthetic data generation for training
+- Faster than weekly optimization (single module)
+
+```bash
+# View schedule
+kubectl get cronworkflow daily-optimization-check -n cogniverse
+
+# Check last run
+argo list -n cogniverse --selector workflows.argoproj.io/cron-workflow=daily-optimization-check --limit 1
+
+# Suspend/resume
+argo cron suspend daily-optimization-check -n cogniverse
+argo cron resume daily-optimization-check -n cogniverse
+```
+
+**Configuration:**
+- `annotation-threshold`: Minimum new annotations (default: 20)
+- `tenant-id`: Target tenant (default: "default")
+
+### Module Optimization vs DSPy Optimization
+
+The workflows support two optimizer categories:
+
+**Module Optimization** (`optimizer-category: routing`):
+- **What gets optimized**: modality, cross_modal, routing, workflow, unified modules
+- **How they get optimized**: Auto-selected DSPy optimizer (Bootstrap/SIMBA/MIPRO/GEPA)
+- **Data source**: Phoenix traces + synthetic data generation
+- **Use case**: Optimize routing decisions and workflow planning
+
+**DSPy Optimization** (`optimizer-category: dspy`):
+- **What gets optimized**: DSPy modules (prompt templates, reasoning chains)
+- **How they get optimized**: Explicit DSPy optimizer (GEPA/Bootstrap/SIMBA/MIPRO)
+- **Data source**: Golden evaluation datasets
+- **Use case**: Teacher-student distillation for local models
+
+### Manual Workflow Submission
+
+Submit optimization workflows on-demand:
+
+```bash
+# Submit module optimization
+argo submit workflows/batch-optimization.yaml \
+  -n cogniverse \
+  --parameter tenant-id="acme_corp" \
+  --parameter optimizer-category="routing" \
+  --parameter optimizer-type="modality" \
+  --parameter max-iterations="100" \
+  --parameter use-synthetic-data="true"
+
+# Submit DSPy optimization
+argo submit workflows/batch-optimization.yaml \
+  -n cogniverse \
+  --parameter tenant-id="acme_corp" \
+  --parameter optimizer-category="dspy" \
+  --parameter optimizer-type="GEPA" \
+  --parameter dataset-name="golden_eval_v1" \
+  --parameter max-iterations="100"
+```
+
+### Monitoring Optimization Workflows
+
+```bash
+# List optimization workflows
+argo list -n cogniverse --selector workflow-type=optimization
+
+# Get workflow results
+argo get <workflow-name> -n cogniverse -o json | \
+  jq '.status.nodes | .[] | select(.displayName=="run-optimization") | .outputs.parameters'
+
+# View improvement metrics
+argo get <workflow-name> -n cogniverse -o json | \
+  jq -r '.status.outputs.parameters[] | select(.name=="improvement") | .value'
+
+# Check annotation count
+argo get <workflow-name> -n cogniverse -o json | \
+  jq -r '.status.outputs.parameters[] | select(.name=="annotation-count") | .value'
+```
+
+---
+
 ## Operations
 
 ### List All Workflows
