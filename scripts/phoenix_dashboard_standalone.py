@@ -111,6 +111,13 @@ except ImportError as e:
     orchestration_annotation_tab_available = False
     orchestration_annotation_tab_error = str(e)
 
+try:
+    from enhanced_optimization_tab import render_enhanced_optimization_tab
+    enhanced_optimization_tab_available = True
+except ImportError as e:
+    enhanced_optimization_tab_available = False
+    enhanced_optimization_tab_error = str(e)
+
 # Page configuration
 st.set_page_config(
     page_title="Analytics Dashboard",
@@ -201,7 +208,169 @@ if 'auto_refresh' not in st.session_state:
 with st.sidebar:
     st.title("🔥 Analytics Dashboard")
     st.markdown("---")
-    
+
+    # Quick Setup Section
+    with st.expander("⚡ Quick Setup", expanded=False):
+        st.markdown("### Create Org/Tenant")
+
+        # Tenant creation form
+        with st.form("quick_tenant_create"):
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                tenant_input = st.text_input(
+                    "Tenant ID",
+                    placeholder="org_name:tenant_name",
+                    help="Format: org_name:tenant_name (e.g., acme:production)"
+                )
+            with col2:
+                create_tenant_btn = st.form_submit_button("Create", use_container_width=True)
+
+            if create_tenant_btn and tenant_input:
+                try:
+                    # Parse tenant ID
+                    if ":" not in tenant_input:
+                        st.error("❌ Invalid format. Use: org_name:tenant_name")
+                    else:
+                        org_id, tenant_name = tenant_input.split(":", 1)
+
+                        # Call tenant management API
+                        import httpx
+                        tenant_api_url = get_config().get("tenant_manager_url", "http://localhost:8001")
+
+                        with st.spinner(f"Creating {tenant_input}..."):
+                            # Create organization first (will skip if exists)
+                            try:
+                                with httpx.Client() as client:
+                                    org_resp = client.post(
+                                        f"{tenant_api_url}/admin/organizations",
+                                        json={
+                                            "org_id": org_id,
+                                            "org_name": org_id.replace("_", " ").title(),
+                                            "created_by": "dashboard_user"
+                                        },
+                                        timeout=10.0
+                                    )
+                                    if org_resp.status_code == 409:
+                                        # Organization exists, continue
+                                        pass
+                                    elif org_resp.status_code != 200:
+                                        st.error(f"Failed to create org: {org_resp.text}")
+                            except Exception as e:
+                                # Org might exist, continue
+                                pass
+
+                            # Create tenant
+                            try:
+                                with httpx.Client() as client:
+                                    tenant_resp = client.post(
+                                        f"{tenant_api_url}/admin/tenants",
+                                        json={
+                                            "tenant_id": tenant_input,
+                                            "created_by": "dashboard_user"
+                                        },
+                                        timeout=10.0
+                                    )
+
+                                    if tenant_resp.status_code == 200:
+                                        st.success(f"✅ Created tenant: {tenant_input}")
+                                        st.session_state["current_tenant"] = tenant_input
+                                    elif tenant_resp.status_code == 409:
+                                        st.warning(f"⚠️ Tenant {tenant_input} already exists")
+                                        st.session_state["current_tenant"] = tenant_input
+                                    else:
+                                        st.error(f"❌ Failed: {tenant_resp.text}")
+                            except httpx.RequestError as e:
+                                st.error(f"❌ Connection error: {e}")
+                                st.info("💡 Make sure tenant manager is running at {tenant_api_url}")
+                except Exception as e:
+                    st.error(f"❌ Error: {e}")
+
+        # Display current tenant
+        current_tenant = st.session_state.get("current_tenant", "default")
+        st.info(f"📌 Current tenant: **{current_tenant}**")
+
+        st.markdown("---")
+        st.markdown("### Quick Ingestion")
+
+        # Fast ingestion interface
+        with st.form("quick_ingestion"):
+            video_url = st.text_input(
+                "Video URL",
+                placeholder="https://example.com/video.mp4",
+                help="URL to video file for ingestion"
+            )
+
+            col1, col2 = st.columns(2)
+            with col1:
+                profile_select = st.selectbox(
+                    "Profile",
+                    [
+                        "video_colpali_smol500_mv_frame",
+                        "video_colqwen_omni_mv_chunk_30s",
+                        "video_videoprism_base_mv_chunk_30s",
+                        "video_videoprism_large_mv_chunk_30s",
+                        "video_videoprism_lvt_base_sv_chunk_6s",
+                        "video_videoprism_lvt_large_sv_chunk_6s"
+                    ],
+                    index=0,
+                    help="Processing profile to use"
+                )
+            with col2:
+                ingest_btn = st.form_submit_button("Ingest", use_container_width=True)
+
+            if ingest_btn and video_url:
+                try:
+                    import httpx
+                    ingestion_api_url = get_config().get("ingestion_api_url", "http://localhost:8000")
+
+                    with st.spinner(f"Starting ingestion for {video_url[:50]}..."):
+                        with httpx.Client() as client:
+                            resp = client.post(
+                                f"{ingestion_api_url}/ingestion/start",
+                                json={
+                                    "video_url": video_url,
+                                    "profile": profile_select,
+                                    "tenant_id": current_tenant
+                                },
+                                timeout=30.0
+                            )
+
+                            if resp.status_code == 200:
+                                result = resp.json()
+                                job_id = result.get("job_id")
+                                st.success(f"✅ Ingestion started! Job ID: {job_id}")
+                                st.session_state["last_ingestion_job"] = job_id
+                            else:
+                                st.error(f"❌ Failed: {resp.text}")
+                except httpx.RequestError as e:
+                    st.error(f"❌ Connection error: {e}")
+                    st.info(f"💡 Make sure ingestion API is running at {ingestion_api_url}")
+                except Exception as e:
+                    st.error(f"❌ Error: {e}")
+
+        # Show last job status
+        if "last_ingestion_job" in st.session_state:
+            job_id = st.session_state["last_ingestion_job"]
+            if st.button("Check Status", key="check_ingestion_status"):
+                try:
+                    import httpx
+                    ingestion_api_url = get_config().get("ingestion_api_url", "http://localhost:8000")
+
+                    with httpx.Client() as client:
+                        resp = client.get(
+                            f"{ingestion_api_url}/ingestion/status/{job_id}",
+                            timeout=10.0
+                        )
+                        if resp.status_code == 200:
+                            status = resp.json()
+                            st.json(status)
+                        else:
+                            st.error(f"Failed to get status: {resp.text}")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+    st.markdown("---")
+
     # Time range selection
     st.subheader("Time Range")
     time_range = st.selectbox(
@@ -1746,16 +1915,35 @@ with main_tabs[5]:
 
 # Optimization Tab
 with main_tabs[6]:
-    st.header("🔧 System Optimization")
-    st.markdown("Trigger and monitor optimization of routing, ingestion, and agent systems using your existing DSPy infrastructure.")
-    
-    # Upload Examples Section
-    st.subheader("📁 Upload Training Examples")
-    
+    if enhanced_optimization_tab_available:
+        try:
+            render_enhanced_optimization_tab()
+        except Exception as e:
+            st.error(f"Error rendering enhanced optimization tab: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+
+            # Fallback to basic optimization
+            st.header("🔧 System Optimization")
+            st.markdown("Trigger and monitor optimization of routing, ingestion, and agent systems using your existing DSPy infrastructure.")
+    else:
+        st.error(f"Enhanced optimization tab not available: {enhanced_optimization_tab_error}")
+        st.header("🔧 System Optimization")
+        st.markdown("Trigger and monitor optimization of routing, ingestion, and agent systems using your existing DSPy infrastructure.")
+        st.info("Install enhanced_optimization_tab.py module for full optimization framework.")
+
+# Ingestion Testing Tab
+with main_tabs[7]:
+    st.header("📥 Ingestion Pipeline Testing")
+    st.markdown("Interactive testing and configuration of video ingestion pipelines with different processing profiles.")
+
+    # Video Upload Section
+    st.subheader("🎬 Video Upload & Processing")
+
     col1, col2 = st.columns([2, 1])
     with col1:
-        uploaded_files = st.file_uploader(
-            "Upload optimization examples (JSON files)",
+        uploaded_video = st.file_uploader(
+            "Upload test video for ingestion",
             type=['json'],
             accept_multiple_files=True,
             help="Upload routing_examples.json, search_relevance_examples.json, or agent_response_examples.json"
