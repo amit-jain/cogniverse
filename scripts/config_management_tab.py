@@ -10,16 +10,16 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
-from src.common.agent_config import (
+from cogniverse_core.config.agent_config import (
     AgentConfig,
     DSPyModuleType,
     ModuleConfig,
     OptimizerConfig,
     OptimizerType,
 )
-from src.common.config_manager import get_config_manager
-from src.common.config_store_interface import ConfigScope
-from src.common.unified_config import (
+from cogniverse_core.config.config_manager import get_config_manager
+from cogniverse_core.config.store_interface import ConfigScope
+from cogniverse_core.config.unified_config import (
     RoutingConfigUnified,
     SystemConfig,
     TelemetryConfigUnified,
@@ -424,20 +424,24 @@ def render_routing_config_ui(manager, tenant_id: str):
                 value=routing_config.enable_fast_path,
             )
 
-        st.markdown("### Optimization")
+        st.markdown("### Auto-Optimization")
+        st.info("Background optimization that runs automatically at regular intervals using Phoenix traces")
+
         col1, col2, col3 = st.columns(3)
 
         with col1:
             enable_optimization = st.checkbox(
-                "Enable Optimization",
-                value=routing_config.enable_optimization,
+                "Enable Auto-Optimization",
+                value=routing_config.enable_auto_optimization,
+                help="Automatically optimize routing based on Phoenix trace data"
             )
 
         with col2:
             optimization_interval = st.number_input(
                 "Optimization Interval (minutes)",
-                value=routing_config.optimization_interval_minutes,
+                value=routing_config.optimization_interval_seconds // 60,
                 min_value=1,
+                help="How often to run auto-optimization"
             )
 
         with col3:
@@ -445,6 +449,7 @@ def render_routing_config_ui(manager, tenant_id: str):
                 "Min Samples for Optimization",
                 value=routing_config.min_samples_for_optimization,
                 min_value=1,
+                help="Minimum Phoenix traces required before optimization runs"
             )
 
         # Submit
@@ -455,8 +460,8 @@ def render_routing_config_ui(manager, tenant_id: str):
                 tenant_id=tenant_id,
                 routing_mode=routing_mode,
                 enable_fast_path=enable_fast_path,
-                enable_optimization=enable_optimization,
-                optimization_interval_minutes=optimization_interval,
+                enable_auto_optimization=enable_optimization,
+                optimization_interval_seconds=optimization_interval * 60,
                 min_samples_for_optimization=min_samples,
             )
 
@@ -483,29 +488,30 @@ def render_telemetry_config_ui(manager, tenant_id: str):
         col1, col2 = st.columns(2)
 
         with col1:
-            enable_phoenix = st.checkbox(
+            phoenix_enabled = st.checkbox(
                 "Enable Phoenix",
-                value=telemetry_config.enable_phoenix,
+                value=telemetry_config.phoenix_enabled,
             )
 
         with col2:
-            phoenix_project = st.text_input(
-                "Phoenix Project Name",
-                value=telemetry_config.phoenix_project_name,
+            phoenix_endpoint = st.text_input(
+                "Phoenix Endpoint",
+                value=telemetry_config.phoenix_endpoint,
             )
 
         col1, col2 = st.columns(2)
 
         with col1:
-            enable_tracing = st.checkbox(
-                "Enable Tracing",
-                value=telemetry_config.enable_tracing,
+            telemetry_enabled = st.checkbox(
+                "Enable Telemetry",
+                value=telemetry_config.enabled,
             )
 
         with col2:
-            enable_metrics = st.checkbox(
-                "Enable Metrics",
-                value=telemetry_config.enable_metrics,
+            telemetry_level = st.selectbox(
+                "Telemetry Level",
+                options=["disabled", "basic", "detailed", "verbose"],
+                index=["disabled", "basic", "detailed", "verbose"].index(telemetry_config.level),
             )
 
         # Submit
@@ -514,10 +520,10 @@ def render_telemetry_config_ui(manager, tenant_id: str):
         if submitted:
             updated_config = TelemetryConfigUnified(
                 tenant_id=tenant_id,
-                enable_phoenix=enable_phoenix,
-                phoenix_project_name=phoenix_project,
-                enable_tracing=enable_tracing,
-                enable_metrics=enable_metrics,
+                enabled=telemetry_enabled,
+                level=telemetry_level,
+                phoenix_enabled=phoenix_enabled,
+                phoenix_endpoint=phoenix_endpoint,
             )
 
             try:

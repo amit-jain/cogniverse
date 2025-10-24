@@ -767,6 +767,7 @@ version = "0.1.0"
 source = { editable = "libs/agents" }
 dependencies = [
     { name = "cogniverse-core" },
+    { name = "cogniverse-synthetic" },
     { name = "colpali-engine" },
     { name = "gliner" },
     { name = "langextract" },
@@ -783,6 +784,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "cogniverse-core", editable = "libs/core" },
+    { name = "cogniverse-synthetic", editable = "libs/synthetic" },
     { name = "colpali-engine", specifier = ">=0.3.12" },
     { name = "gliner", specifier = ">=0.2.21" },
     { name = "langextract", specifier = ">=1.0.6" },

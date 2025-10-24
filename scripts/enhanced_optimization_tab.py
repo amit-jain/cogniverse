@@ -16,11 +16,9 @@ Comprehensive optimization framework including:
 import json
 import logging
 from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict
 
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -41,7 +39,6 @@ def render_enhanced_optimization_tab():
         "📚 Golden Dataset",
         "🔬 Synthetic Data",
         "🎯 Module Optimization",
-        "🧠 DSPy Optimization",
         "🔄 Reranking Optimization",
         "📈 Profile Selection",
         "📉 Metrics Dashboard"
@@ -63,15 +60,12 @@ def render_enhanced_optimization_tab():
         _render_routing_optimization_tab()
 
     with opt_tabs[5]:
-        _render_dspy_optimization_tab()
-
-    with opt_tabs[6]:
         _render_reranking_optimization_tab()
 
-    with opt_tabs[7]:
+    with opt_tabs[6]:
         _render_profile_selection_tab()
 
-    with opt_tabs[8]:
+    with opt_tabs[7]:
         _render_metrics_dashboard_tab()
 
 
@@ -533,7 +527,7 @@ def _render_synthetic_data_tab():
             )
         with col2:
             max_profiles = st.slider("Max Profiles", 1, 10, 3)
-            tenant_id = st.text_input("Tenant ID", value="default")
+            tenant_id = st.text_input("Tenant ID", value="default", key="synthetic_data_tenant_id")
 
     # Generate synthetic data
     if st.button("🚀 Generate Synthetic Data", type="primary"):
@@ -725,41 +719,198 @@ def _render_routing_optimization_tab():
             help="Generate synthetic training data from Vespa backend"
         )
 
-    with st.expander("⚙️ Advanced Configuration"):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            synthetic_count = st.number_input(
-                "Synthetic Examples",
-                min_value=10,
-                max_value=1000,
-                value=200,
-                help="Number of synthetic examples to generate"
-            )
-        with col2:
-            vespa_sample_size = st.number_input(
-                "Vespa Sample Size",
-                min_value=10,
-                max_value=1000,
-                value=500,
-                help="Documents to sample from Vespa"
-            )
-        with col3:
-            max_profiles = st.number_input(
-                "Max Profiles",
-                min_value=1,
-                max_value=10,
-                value=3,
-                help="Maximum backend profiles to use"
+    # Golden dataset selection when synthetic data is disabled
+    if not use_synthetic:
+        st.markdown("### 📚 Golden Dataset Selection")
+        st.info("Using golden evaluation dataset from Phoenix (harvested from traces)")
+
+        # Query Phoenix for available datasets
+        try:
+            import requests
+
+            # GraphQL query to get datasets
+            query = """
+            query {
+                datasets {
+                    edges {
+                        node {
+                            id
+                            name
+                            exampleCount
+                            createdAt
+                            description
+                        }
+                    }
+                }
+            }
+            """
+
+            response = requests.post(
+                "http://localhost:6006/graphql",
+                json={"query": query},
+                headers={"Content-Type": "application/json"},
+                timeout=5
             )
 
+            datasets = []
+            if response.status_code == 200:
+                result = response.json()
+                if result and 'data' in result and result['data']:
+                    for edge in result.get('data', {}).get('datasets', {}).get('edges', []):
+                        if edge and 'node' in edge:
+                            node = edge['node']
+                            datasets.append({
+                                'id': node['id'],
+                                'name': node['name'],
+                                'example_count': node['exampleCount'],
+                                'created_at': node.get('createdAt', ''),
+                                'description': node.get('description', '')
+                            })
+
+            if datasets:
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    # Create dataset options with descriptions
+                    dataset_options = [d['name'] for d in datasets]
+                    selected_dataset_name = st.selectbox(
+                        "Select Phoenix Dataset",
+                        options=dataset_options,
+                        help="Datasets stored in Phoenix"
+                    )
+                    dataset_name = selected_dataset_name
+
+                with col2:
+                    # Show info for selected dataset
+                    selected_dataset = next((d for d in datasets if d['name'] == selected_dataset_name), None)
+                    if selected_dataset:
+                        st.metric("Dataset Size", selected_dataset['example_count'])
+                        if selected_dataset['description']:
+                            st.caption(f"_{selected_dataset['description']}_")
+                        st.caption(f"Created: {selected_dataset['created_at'][:10] if selected_dataset['created_at'] else 'N/A'}")
+            else:
+                st.warning("No datasets found in Phoenix. Upload a CSV to create a dataset or use the Golden Dataset tab.")
+
+                # Option to upload CSV and create Phoenix dataset
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    uploaded_file = st.file_uploader(
+                        "Upload CSV Dataset",
+                        type=['csv'],
+                        help="CSV with columns: query, expected_result, etc."
+                    )
+                with col2:
+                    if uploaded_file:
+                        dataset_name = st.text_input(
+                            "Dataset Name",
+                            value="",
+                            placeholder="e.g., my_eval_dataset",
+                            help="Name for the Phoenix dataset"
+                        )
+
+                if uploaded_file and dataset_name:
+                    if st.button("📤 Upload to Phoenix"):
+                        with st.spinner("Creating Phoenix dataset..."):
+                            try:
+                                import tempfile
+
+                                from cogniverse_core.evaluation.data import (
+                                    DatasetManager,
+                                )
+
+                                # Save uploaded file to temp location
+                                with tempfile.NamedTemporaryFile(mode='wb', suffix='.csv', delete=False) as tmp:
+                                    tmp.write(uploaded_file.getvalue())
+                                    tmp_path = tmp.name
+
+                                st.info("Processing CSV file...")
+
+                                # Use existing DatasetManager to create dataset
+                                dataset_manager = DatasetManager()
+                                dataset_id = dataset_manager.create_from_csv(
+                                    csv_path=tmp_path,
+                                    dataset_name=dataset_name,
+                                    description="Uploaded via optimization dashboard"
+                                )
+
+                                # Clean up temp file
+                                import os
+                                os.unlink(tmp_path)
+
+                                st.success(f"✅ Created Phoenix dataset '{dataset_name}' with ID: {dataset_id}")
+                                st.info("Refresh the page to see the new dataset in the dropdown")
+
+                            except Exception as e:
+                                st.error(f"Failed to create Phoenix dataset: {e}")
+                                import traceback
+                                st.code(traceback.format_exc())
+                else:
+                    dataset_name = ""
+
+        except Exception as e:
+            # Show clean error message for connection issues
+            if "Connection refused" in str(e) or "ConnectionError" in str(type(e).__name__):
+                st.warning("⚠️ Phoenix is not running")
+            else:
+                st.warning(f"⚠️ Could not fetch Phoenix datasets: {type(e).__name__}")
+            st.info("Start Phoenix with `px.launch_app()` or upload CSV manually")
+
+            # Fallback: manual dataset name entry
+            dataset_name = st.text_input(
+                "Dataset Name (manual)",
+                value="",
+                placeholder="Enter Phoenix dataset name",
+                help="Enter dataset name manually if you know it exists"
+            )
+
+    # Advanced synthetic data configuration (only shown when using synthetic data)
+    if use_synthetic:
+        with st.expander("⚙️ Advanced Synthetic Data Configuration"):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                _synthetic_count = st.number_input(
+                    "Synthetic Examples",
+                    min_value=10,
+                    max_value=1000,
+                    value=200,
+                    help="Number of synthetic examples to generate"
+                )
+            with col2:
+                _vespa_sample_size = st.number_input(
+                    "Vespa Sample Size",
+                    min_value=10,
+                    max_value=1000,
+                    value=500,
+                    help="Documents to sample from Vespa"
+                )
+            with col3:
+                _max_profiles = st.number_input(
+                    "Max Profiles",
+                    min_value=1,
+                    max_value=10,
+                    value=3,
+                    help="Maximum backend profiles to use"
+                )
     # Submit workflow button
-    if st.button("🚀 Submit Routing Optimization Workflow", type="primary"):
+    if st.button("🚀 Submit Module Optimization Workflow", type="primary"):
         with st.spinner("Submitting Argo Workflow..."):
             try:
                 import subprocess
                 import tempfile
+
                 import yaml
-                from datetime import datetime
+
+                # Build workflow parameters
+                workflow_params = [
+                    {"name": "tenant-id", "value": tenant_id},
+                    {"name": "optimizer-category", "value": "routing"},
+                    {"name": "optimizer-type", "value": optimizer_type},
+                    {"name": "max-iterations", "value": str(max_iterations)},
+                    {"name": "use-synthetic-data", "value": "true" if use_synthetic else "false"}
+                ]
+
+                # Add dataset name if using golden dataset
+                if not use_synthetic:
+                    workflow_params.append({"name": "dataset-name", "value": dataset_name})
 
                 # Create workflow specification
                 workflow_spec = {
@@ -774,13 +925,7 @@ def _render_routing_optimization_tab():
                             "name": "batch-optimization"
                         },
                         "arguments": {
-                            "parameters": [
-                                {"name": "tenant-id", "value": tenant_id},
-                                {"name": "optimizer-category", "value": "routing"},
-                                {"name": "optimizer-type", "value": optimizer_type},
-                                {"name": "max-iterations", "value": str(max_iterations)},
-                                {"name": "use-synthetic-data", "value": "true" if use_synthetic else "false"}
-                            ]
+                            "parameters": workflow_params
                         }
                     }
                 }
@@ -817,7 +962,7 @@ def _render_routing_optimization_tab():
                     )
 
                 if result.returncode == 0:
-                    st.success(f"✅ Workflow submitted successfully!")
+                    st.success("✅ Workflow submitted successfully!")
                     st.code(result.stdout, language="text")
                     st.info("""
                     **Monitor workflow progress:**
@@ -838,163 +983,6 @@ def _render_routing_optimization_tab():
             except Exception as e:
                 st.error(f"❌ Error submitting workflow: {str(e)}")
                 st.info("**Prerequisites:**\n- Kubernetes cluster running\n- kubectl or argo CLI configured\n- cogniverse namespace exists\n- batch-optimization WorkflowTemplate deployed")
-
-
-def _render_dspy_optimization_tab():
-    """Render DSPy module optimization with teacher-student"""
-    st.subheader("🧠 DSPy Module Optimization")
-    st.markdown("Teacher-student distillation for local model optimization")
-
-    # Argo Workflow Integration
-    st.markdown("### 🚀 Batch DSPy Optimization with Argo Workflows")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        tenant_id = st.text_input(
-            "Tenant ID",
-            value="default",
-            key="dspy_tenant",
-            help="Tenant identifier for optimization"
-        )
-        optimizer_type = st.selectbox(
-            "DSPy Optimizer",
-            ["GEPA", "Bootstrap", "SIMBA", "MIPRO"],
-            help="Which DSPy optimizer to run"
-        )
-        dataset_name = st.text_input(
-            "Dataset Name",
-            value="golden_eval_v1",
-            help="Name of evaluation dataset in data/testset/evaluation/"
-        )
-
-    with col2:
-        profiles = st.text_input(
-            "Backend Profiles",
-            value="video_colpali_smol500_mv_frame",
-            help="Comma-separated list of profiles to use"
-        )
-        max_iterations = st.number_input(
-            "Max Iterations",
-            min_value=10,
-            max_value=500,
-            value=100,
-            key="dspy_iterations",
-            help="Maximum optimization iterations"
-        )
-        learning_rate = st.number_input(
-            "Learning Rate",
-            min_value=0.0001,
-            max_value=0.1,
-            value=0.001,
-            format="%.4f",
-            help="Learning rate for optimization"
-        )
-
-    with st.expander("⚙️ Advanced Configuration"):
-        use_synthetic = st.checkbox(
-            "Use Synthetic Data (Future)",
-            value=False,
-            disabled=True,
-            help="Synthetic data generation for DSPy optimizers - Coming soon!"
-        )
-        st.info("**Note**: Synthetic data generation for DSPy module optimizers is planned but not yet implemented. Currently uses golden evaluation datasets.")
-
-    # Submit workflow button
-    if st.button("🚀 Submit DSPy Optimization Workflow", type="primary"):
-        with st.spinner("Submitting Argo Workflow..."):
-            try:
-                import subprocess
-                import tempfile
-                import yaml
-                from datetime import datetime
-
-                # Create workflow specification
-                workflow_spec = {
-                    "apiVersion": "argoproj.io/v1alpha1",
-                    "kind": "Workflow",
-                    "metadata": {
-                        "generateName": f"dspy-opt-{optimizer_type.lower()}-",
-                        "namespace": "cogniverse"
-                    },
-                    "spec": {
-                        "workflowTemplateRef": {
-                            "name": "batch-optimization"
-                        },
-                        "arguments": {
-                            "parameters": [
-                                {"name": "tenant-id", "value": tenant_id},
-                                {"name": "optimizer-category", "value": "dspy"},
-                                {"name": "optimizer-type", "value": optimizer_type},
-                                {"name": "dataset-name", "value": dataset_name},
-                                {"name": "profiles", "value": profiles},
-                                {"name": "max-iterations", "value": str(max_iterations)},
-                                {"name": "learning-rate", "value": str(learning_rate)},
-                                {"name": "use-synthetic-data", "value": "false"}
-                            ]
-                        }
-                    }
-                }
-
-                # Write to temporary file
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-                    yaml.dump(workflow_spec, f)
-                    workflow_file = f.name
-
-                # Submit workflow using kubectl or argo CLI
-                try:
-                    # Try argo CLI first
-                    result = subprocess.run(
-                        ["argo", "submit", workflow_file, "-n", "cogniverse"],
-                        capture_output=True,
-                        text=True,
-                        timeout=30
-                    )
-                    if result.returncode != 0:
-                        # Fallback to kubectl
-                        result = subprocess.run(
-                            ["kubectl", "apply", "-f", workflow_file],
-                            capture_output=True,
-                            text=True,
-                            timeout=30
-                        )
-                except FileNotFoundError:
-                    # If argo CLI not found, use kubectl
-                    result = subprocess.run(
-                        ["kubectl", "apply", "-f", workflow_file],
-                        capture_output=True,
-                        text=True,
-                        timeout=30
-                    )
-
-                if result.returncode == 0:
-                    st.success(f"✅ Workflow submitted successfully!")
-                    st.code(result.stdout, language="text")
-                    st.info("""
-                    **Monitor workflow progress:**
-                    ```bash
-                    argo list -n cogniverse
-                    argo get <workflow-name> -n cogniverse
-                    argo logs <workflow-name> -n cogniverse --follow
-                    ```
-
-                    **What happens next:**
-                    1. Validates configuration and dataset
-                    2. Prepares evaluation dataset
-                    3. Runs DSPy optimization with selected algorithm
-                    4. Evaluates results and deploys if improvement > 5%
-                    5. Sends completion notification
-                    """)
-                else:
-                    st.error(f"❌ Workflow submission failed:\n{result.stderr}")
-                    st.warning("Make sure you have kubectl or argo CLI configured and Kubernetes cluster is accessible")
-
-                # Clean up temp file
-                import os
-                os.unlink(workflow_file)
-
-            except Exception as e:
-                st.error(f"❌ Error submitting workflow: {str(e)}")
-                st.info("**Prerequisites:**\n- Kubernetes cluster running\n- kubectl or argo CLI configured\n- cogniverse namespace exists\n- batch-optimization WorkflowTemplate deployed\n- Dataset exists at data/testset/evaluation/{dataset_name}.csv")
 
 
 def _render_reranking_optimization_tab():
@@ -1050,160 +1038,421 @@ def _render_reranking_optimization_tab():
 
 
 def _render_profile_selection_tab():
-    """Render profile selection optimization"""
+    """Render profile selection optimization with real Phoenix data"""
     st.subheader("📈 Profile Selection Optimization")
-    st.markdown("Learn which processing profile works best for different query types")
+    st.markdown("Learn which processing profile works best for different query types from Phoenix data")
 
-    st.markdown("""
-    ### Profile Selection Strategy:
+    # Check Phoenix availability first
+    try:
+        import httpx
+        phoenix_response = httpx.get("http://localhost:6006", timeout=2)
+        phoenix_available = phoenix_response.status_code in [200, 404]
+    except Exception:
+        phoenix_available = False
 
-    Cogniverse has 6 video processing profiles. This optimizer learns which profile to use based on:
-    - Query type (temporal, object-based, activity, etc.)
-    - Video characteristics (length, content type)
-    - Historical performance data
-    """)
+    if not phoenix_available:
+        st.warning("⚠️ Phoenix is not running on http://localhost:6006")
+        st.info("Start Phoenix with: `import phoenix as px; px.launch_app()`")
+        return
 
-    # Display profile performance matrix
-    st.subheader("🎯 Profile Performance Matrix")
+    # Query Phoenix for profile performance data
+    try:
+        from datetime import timedelta
 
-    # Fake data for demonstration
-    profiles = [
-        "video_colpali_smol500_mv_frame",
-        "video_colqwen_omni_mv_chunk_30s",
-        "video_videoprism_base_mv_chunk_30s",
-        "video_videoprism_large_mv_chunk_30s",
-        "video_videoprism_lvt_base_sv_chunk_6s",
-        "video_videoprism_lvt_large_sv_chunk_6s"
-    ]
+        import phoenix as px
 
-    query_types = ["Temporal", "Object", "Activity", "Scene", "Abstract"]
+        phoenix_client = px.Client(endpoint="http://localhost:6006")
 
-    # Create heatmap data
-    import numpy as np
-    heatmap_data = np.random.rand(len(profiles), len(query_types))
+        # Time range
+        lookback_days = st.slider("Lookback (days)", 1, 90, 30)
+        end_time = datetime.now()
+        start_time = end_time - timedelta(days=lookback_days)
 
-    fig = go.Figure(data=go.Heatmap(
-        z=heatmap_data,
-        x=query_types,
-        y=[p.split("_")[1] + "_" + p.split("_")[2] for p in profiles],
-        colorscale="RdYlGn",
-        text=np.round(heatmap_data, 2),
-        texttemplate="%{text}",
-        textfont={"size": 10},
-        colorbar=dict(title="NDCG@10")
-    ))
+        # Get search spans from Phoenix
+        spans_df = phoenix_client.get_spans_dataframe(
+            start_time=start_time,
+            end_time=end_time
+        )
 
-    fig.update_layout(
-        title="Profile Performance by Query Type",
-        xaxis_title="Query Type",
-        yaxis_title="Profile",
-        height=400
-    )
+        if spans_df is None or spans_df.empty:
+            st.warning(f"No spans found in the last {lookback_days} days. Run searches first.")
+            return
 
-    st.plotly_chart(fig, use_container_width=True)
+        # Filter for search spans that have profile information
+        search_spans = spans_df[spans_df['name'].str.contains('search', case=False, na=False)] if 'name' in spans_df.columns else pd.DataFrame()
 
-    # Train profile selector
-    if st.button("🔧 Train Profile Selector"):
-        with st.spinner("Training profile selection model..."):
-            st.info("Learning optimal profile routing based on query characteristics...")
+        if search_spans.empty:
+            st.info("No search spans found. Run video searches with different profiles to see performance data.")
+            return
 
-            # In real implementation:
-            # 1. Query all search spans with profiles and results
-            # 2. Extract (query_features, profile, ndcg) tuples
-            # 3. Train classifier (Random Forest / XGBoost)
-            # 4. Store model for inference
+        st.success(f"Found {len(search_spans)} search spans")
 
-            st.success("✅ Profile selector trained!")
-            st.info("Model will now recommend optimal profile for each query type")
+        # Try to extract profile information from span attributes
+        # Profile info might be in attributes or metadata
+        st.subheader("🎯 Profile Usage Statistics")
+
+        # Display available columns to help debug what data we have
+        with st.expander("Available Span Data"):
+            st.write("Columns:", search_spans.columns.tolist())
+
+        # Count profiles used (if profile attribute exists)
+        profile_cols = [col for col in search_spans.columns if 'profile' in col.lower()]
+
+        if profile_cols:
+            st.markdown("#### Profile Usage")
+            for col in profile_cols:
+                profile_counts = search_spans[col].value_counts()
+                st.write(f"**{col}:**")
+                st.bar_chart(profile_counts)
+        else:
+            st.info("No profile information found in span attributes. Profile data needs to be logged to Phoenix.")
+
+        st.markdown("---")
+
+        # Performance analysis
+        st.subheader("⚡ Performance Analysis")
+
+        # Check if we have NDCG or quality scores
+        quality_cols = [col for col in search_spans.columns if any(metric in col.lower() for metric in ['ndcg', 'score', 'quality', 'accuracy'])]
+
+        if quality_cols:
+            st.markdown("#### Quality Metrics Found")
+            for col in quality_cols:
+                st.write(f"**{col}:** {search_spans[col].describe().to_dict()}")
+
+            # If we have both profile and quality data, show correlation
+            if profile_cols and quality_cols:
+                st.markdown("#### Profile Performance Comparison")
+                for profile_col in profile_cols:
+                    for quality_col in quality_cols:
+                        # Group by profile and calculate average quality
+                        profile_quality = search_spans.groupby(profile_col)[quality_col].agg(['mean', 'count'])
+                        st.write(f"**{profile_col} vs {quality_col}:**")
+                        st.dataframe(profile_quality)
+        else:
+            st.info("No quality metrics (NDCG, accuracy) found in spans. Run evaluations to collect quality data.")
+
+        st.markdown("---")
+
+        # Training section
+        st.subheader("🔧 Train Profile Selector")
+
+        st.markdown("""
+        **Training Requirements:**
+        1. Phoenix search spans with profile attributes
+        2. Quality metrics (NDCG, accuracy) in span data
+        3. Query features (text, modality, length, etc.)
+
+        The trainer will:
+        - Extract semantic features from queries (temporal/spatial/object keywords)
+        - Extract (query_features, profile, quality_score) tuples from Phoenix
+        - Train XGBoost classifier to predict best profile for each query type
+        - Save model for runtime profile recommendation
+        """)
+
+        # Check if model exists
+        from pathlib import Path
+        model_dir = Path("outputs/models/profile_performance")
+        model_exists = (model_dir / "xgboost_model.pkl").exists()
+
+        if model_exists:
+            st.info("✅ Trained model found at outputs/models/profile_performance/")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            train_button = st.button("🚀 Train Profile Selector Model")
+        with col2:
+            if model_exists:
+                load_button = st.button("📂 Load Existing Model")
+            else:
+                load_button = False
+
+        if train_button:
+            if not profile_cols or not quality_cols:
+                st.error("Cannot train: Need both profile information and quality metrics in Phoenix spans")
+                st.info("Make sure search operations log profile names and evaluation results to Phoenix")
+            else:
+                with st.spinner("Training profile selection model..."):
+                    try:
+                        from cogniverse_agents.routing.profile_performance_optimizer import (
+                            ProfilePerformanceOptimizer,
+                        )
+
+                        st.info(f"Extracting training data from {len(search_spans)} search spans...")
+
+                        # Initialize optimizer
+                        optimizer = ProfilePerformanceOptimizer()
+
+                        # Extract training data from Phoenix
+                        X, y, profile_names = optimizer.extract_training_data_from_phoenix(
+                            phoenix_client=phoenix_client,
+                            start_time=start_time,
+                            end_time=end_time,
+                            min_samples=10
+                        )
+
+                        st.info(f"Extracted {len(X)} training samples with {X.shape[1]} features")
+                        st.info(f"Found {len(profile_names)} profiles: {', '.join(profile_names)}")
+
+                        # Train model
+                        st.info("Training XGBoost classifier with optimized parameters...")
+                        metrics = optimizer.train(X, y, test_size=0.2)
+
+                        # Show metrics
+                        st.success("✅ Model trained successfully!")
+
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Training Accuracy", f"{metrics['train_accuracy']:.2%}")
+                        with col2:
+                            st.metric("Test Accuracy", f"{metrics['test_accuracy']:.2%}")
+                        with col3:
+                            st.metric("Samples", metrics['n_samples'])
+
+                        # Show feature importance if available
+                        if optimizer.model is not None:
+                            st.markdown("#### Feature Importance")
+                            feature_names = [
+                                "query_length",
+                                "word_count",
+                                "has_temporal_keywords",
+                                "has_spatial_keywords",
+                                "has_object_keywords",
+                                "avg_word_length"
+                            ]
+                            importance = optimizer.model.feature_importances_
+                            importance_df = pd.DataFrame({
+                                'Feature': feature_names,
+                                'Importance': importance
+                            }).sort_values('Importance', ascending=False)
+                            st.dataframe(importance_df, use_container_width=True)
+
+                        # Save model
+                        st.info("Saving model...")
+                        optimizer.save()
+                        st.success(f"✅ Model saved to {optimizer.model_dir}")
+                        st.info("Model can now be used for runtime profile recommendations")
+
+                    except ValueError as e:
+                        st.error(f"Training failed: {e}")
+                        st.info("Make sure Phoenix spans contain query text, profile names, and quality metrics")
+                    except ImportError as e:
+                        st.error(f"Missing required library: {e}")
+                        st.info("Install with: uv pip install xgboost scikit-learn")
+                    except Exception as e:
+                        st.error(f"Training failed: {e}")
+                        import traceback
+                        st.code(traceback.format_exc())
+
+        if load_button:
+            with st.spinner("Loading existing model..."):
+                try:
+                    from cogniverse_agents.routing.profile_performance_optimizer import (
+                        ProfilePerformanceOptimizer,
+                    )
+
+                    optimizer = ProfilePerformanceOptimizer()
+                    if optimizer.load():
+                        st.success("✅ Model loaded successfully!")
+
+                        # Test prediction with example query
+                        st.markdown("#### Test Prediction")
+                        test_query = st.text_input("Test query:", "Show me videos from last week")
+
+                        if test_query:
+                            profile, confidence = optimizer.predict_best_profile(test_query)
+                            st.info(f"Recommended profile: **{profile}** (confidence: {confidence:.2%})")
+
+                            # Show extracted features
+                            features = optimizer.extract_query_features(test_query)
+                            st.markdown("**Extracted features:**")
+                            st.json({
+                                "query_length": features.query_length,
+                                "word_count": features.word_count,
+                                "has_temporal_keywords": features.has_temporal_keywords,
+                                "has_spatial_keywords": features.has_spatial_keywords,
+                                "has_object_keywords": features.has_object_keywords,
+                                "avg_word_length": round(features.avg_word_length, 2)
+                            })
+                    else:
+                        st.error("Failed to load model")
+
+                except Exception as e:
+                    st.error(f"Error loading model: {e}")
+                    import traceback
+                    st.code(traceback.format_exc())
+
+    except Exception as e:
+        st.error(f"Error fetching profile data: {e}")
+        st.info("Make sure Phoenix is running at http://localhost:6006")
+        st.info("Start Phoenix with: `import phoenix as px; px.launch_app()`")
 
 
 def _render_metrics_dashboard_tab():
-    """Render unified optimization metrics dashboard"""
+    """Render unified optimization metrics dashboard with actual optimization metrics"""
     st.subheader("📉 Optimization Metrics Dashboard")
-    st.markdown("Track improvements across all optimization dimensions")
+    st.markdown("Track routing accuracy, search quality, and optimization improvements from Phoenix")
+
+    # Check Phoenix availability first
+    try:
+        import httpx
+        phoenix_response = httpx.get("http://localhost:6006", timeout=2)
+        phoenix_available = phoenix_response.status_code in [200, 404]
+    except Exception:
+        phoenix_available = False
+
+    if not phoenix_available:
+        st.warning("⚠️ Phoenix is not running on http://localhost:6006")
+        st.info("Start Phoenix with: `import phoenix as px; px.launch_app()`")
+        return
 
     # Time range selector
     col1, col2 = st.columns([3, 1])
     with col1:
-        metric_timeframe = st.selectbox(
+        lookback_days = st.selectbox(
             "Timeframe",
-            ["Last 7 days", "Last 30 days", "Last 90 days", "All time"]
+            [7, 30, 90],
+            format_func=lambda x: f"Last {x} days"
         )
     with col2:
         if st.button("🔄 Refresh Metrics"):
             st.rerun()
 
-    # Overall improvement metrics
-    st.subheader("📊 Overall Improvements")
+    # Query Phoenix for optimization metrics
+    try:
+        from datetime import timedelta
 
-    col1, col2, col3, col4 = st.columns(4)
+        import phoenix as px
+        from cogniverse_core.evaluation.evaluators.routing_evaluator import (
+            RoutingEvaluator,
+        )
 
-    with col1:
-        st.metric("Routing Accuracy", "89%", delta="+12%")
-    with col2:
-        st.metric("Search NDCG@10", "0.84", delta="+0.15")
-    with col3:
-        st.metric("Avg Latency", "245ms", delta="-78ms")
-    with col4:
-        st.metric("User Satisfaction", "4.2/5", delta="+0.6")
+        phoenix_client = px.Client(endpoint="http://localhost:6006")
 
-    st.markdown("---")
+        # Calculate time range
+        end_time = datetime.now()
+        start_time = end_time - timedelta(days=lookback_days)
 
-    # Per-optimization-type metrics
-    st.subheader("🎯 Metrics by Optimization Type")
+        # Get spans from Phoenix
+        spans_df = phoenix_client.get_spans_dataframe(
+            start_time=start_time,
+            end_time=end_time
+        )
 
-    metrics_data = {
-        "Optimization Type": ["Routing", "Reranking", "DSPy Modules", "Profile Selection"],
-        "Runs": [12, 8, 5, 3],
-        "Avg Improvement": [0.12, 0.15, 0.17, 0.10],
-        "Last Run": ["2h ago", "1d ago", "3d ago", "5d ago"]
-    }
+        if spans_df is None or spans_df.empty:
+            st.warning(f"No spans found in the last {lookback_days} days. Run some queries first.")
+            return
 
-    metrics_df = pd.DataFrame(metrics_data)
+        # Calculate routing metrics
+        st.subheader("📊 Routing Optimization Metrics")
 
-    st.dataframe(
-        metrics_df.style.background_gradient(subset=["Avg Improvement"], cmap="RdYlGn"),
-        use_container_width=True,
-        hide_index=True
-    )
+        routing_evaluator = RoutingEvaluator(phoenix_client=phoenix_client)
+        routing_spans = routing_evaluator.query_routing_spans(
+            start_time=start_time,
+            end_time=end_time,
+            limit=1000
+        )
 
-    st.markdown("---")
+        if routing_spans:
+            routing_metrics = routing_evaluator.calculate_metrics(routing_spans)
 
-    # Improvement over time chart
-    st.subheader("📈 Improvement Over Time")
+            col1, col2, col3, col4 = st.columns(4)
 
-    # Generate fake time series data
-    dates = pd.date_range(end=datetime.now(), periods=30, freq="D")
-    routing_acc = 0.77 + np.cumsum(np.random.randn(30) * 0.01)
-    search_ndcg = 0.69 + np.cumsum(np.random.randn(30) * 0.01)
+            with col1:
+                st.metric("Routing Accuracy", f"{routing_metrics.routing_accuracy:.1%}")
 
-    fig = go.Figure()
+            with col2:
+                st.metric("Total Decisions", routing_metrics.total_decisions)
 
-    fig.add_trace(go.Scatter(
-        x=dates,
-        y=routing_acc,
-        mode="lines+markers",
-        name="Routing Accuracy",
-        line=dict(color="#2ecc71", width=2)
-    ))
+            with col3:
+                st.metric("Avg Routing Latency", f"{routing_metrics.avg_routing_latency:.0f}ms")
 
-    fig.add_trace(go.Scatter(
-        x=dates,
-        y=search_ndcg,
-        mode="lines+markers",
-        name="Search NDCG@10",
-        line=dict(color="#3498db", width=2)
-    ))
+            with col4:
+                st.metric("Confidence Calibration", f"{routing_metrics.confidence_calibration:.3f}")
 
-    fig.update_layout(
-        title="Optimization Metrics Over Time",
-        xaxis_title="Date",
-        yaxis_title="Score",
-        height=400,
-        hovermode="x unified"
-    )
+            # Per-agent metrics
+            st.markdown("#### Per-Agent Performance")
 
-    st.plotly_chart(fig, use_container_width=True)
+            if routing_metrics.per_agent_precision:
+                agent_metrics_data = []
+                for agent in routing_metrics.per_agent_precision.keys():
+                    agent_metrics_data.append({
+                        "Agent": agent,
+                        "Precision": routing_metrics.per_agent_precision.get(agent, 0),
+                        "Recall": routing_metrics.per_agent_recall.get(agent, 0),
+                        "F1 Score": routing_metrics.per_agent_f1.get(agent, 0)
+                    })
+
+                agent_df = pd.DataFrame(agent_metrics_data)
+                st.dataframe(
+                    agent_df.style.background_gradient(subset=["Precision", "Recall", "F1 Score"], cmap="RdYlGn"),
+                    use_container_width=True,
+                    hide_index=True
+                )
+        else:
+            st.info("No routing spans found. Routing metrics require cogniverse.routing spans in Phoenix.")
+
+        st.markdown("---")
+
+        # Search quality metrics from evaluations
+        st.subheader("🔍 Search Quality Metrics")
+
+        # Query for evaluation spans that contain NDCG scores
+        eval_spans = spans_df[spans_df['name'].str.contains('eval|ndcg', case=False, na=False)] if 'name' in spans_df.columns else pd.DataFrame()
+
+        if not eval_spans.empty:
+            # Try to extract NDCG scores from span attributes
+            st.info(f"Found {len(eval_spans)} evaluation spans")
+
+            # This would extract NDCG scores from attributes if they exist
+            # For now, show that evaluation data exists
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Evaluation Runs", len(eval_spans))
+            with col2:
+                st.metric("Search Queries Evaluated", "N/A")
+        else:
+            st.info("No search evaluation data found. Run search evaluations to see NDCG metrics.")
+
+        st.markdown("---")
+
+        # Training run history from MLflow or Phoenix
+        st.subheader("🏋️ Optimization Training Runs")
+
+        # Look for optimization/training related spans
+        training_spans = spans_df[spans_df['name'].str.contains('train|optim', case=False, na=False)] if 'name' in spans_df.columns else pd.DataFrame()
+
+        if not training_spans.empty:
+            st.info(f"Found {len(training_spans)} training/optimization spans")
+
+            if 'start_time' in training_spans.columns:
+                # Group by day to show training activity
+                training_spans['date'] = pd.to_datetime(training_spans['start_time']).dt.date
+                daily_training = training_spans.groupby('date').size().reset_index(name='runs')
+
+                fig = go.Figure()
+
+                fig.add_trace(go.Bar(
+                    x=daily_training['date'],
+                    y=daily_training['runs'],
+                    name='Training Runs'
+                ))
+
+                fig.update_layout(
+                    title="Training Activity Over Time",
+                    xaxis_title="Date",
+                    yaxis_title="Number of Training Runs",
+                    height=300
+                )
+
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No training runs found. Run module optimizations to see training history.")
+
+    except Exception as e:
+        st.error(f"Error fetching optimization metrics: {e}")
+        st.info("Make sure Phoenix is running at http://localhost:6006")
+        st.info("Start Phoenix with: `import phoenix as px; px.launch_app()`")
 
 
 if __name__ == "__main__":

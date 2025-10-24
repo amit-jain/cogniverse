@@ -17,7 +17,7 @@ import streamlit as st
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.app.routing.orchestration_annotation_storage import (
+from cogniverse_agents.routing.orchestration_annotation_storage import (
     OrchestrationAnnotation,
     OrchestrationAnnotationStorage,
 )
@@ -51,7 +51,7 @@ def render_orchestration_annotation_tab():
     )
 
     # Initialize annotation storage
-    tenant_id = st.text_input("Tenant ID", value="default")
+    tenant_id = st.text_input("Tenant ID", value="default", key="orchestration_tenant_id")
     storage = OrchestrationAnnotationStorage(tenant_id=tenant_id)
 
     # Fetch orchestration spans

@@ -1,0 +1,185 @@
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: auto-optimization
+  namespace: cogniverse
+  annotations:
+    description: "Auto-optimization for routing modules based on Phoenix traces"
+spec:
+  # Run every hour (configurable via routing config)
+  schedule: "0 * * * *"  # Every hour at minute 0
+  timezone: "UTC"
+
+  # Keep last 10 runs
+  successfulJobsHistoryLimit: 10
+  failedJobsHistoryLimit: 5
+
+  # Workflow template
+  workflowSpec:
+    entrypoint: auto-optimization-main
+
+    # Service account with necessary permissions
+    serviceAccountName: cogniverse-optimization
+
+    templates:
+    - name: auto-optimization-main
+      steps:
+      # Check and trigger optimization for each module in parallel
+      - - name: modality-optimization
+          template: trigger-optimization
+          arguments:
+            parameters:
+            - name: module
+              value: "modality"
+            - name: tenant-id
+              value: "default"
+
+        - name: cross-modal-optimization
+          template: trigger-optimization
+          arguments:
+            parameters:
+            - name: module
+              value: "cross_modal"
+            - name: tenant-id
+              value: "default"
+
+        - name: routing-optimization
+          template: trigger-optimization
+          arguments:
+            parameters:
+            - name: module
+              value: "routing"
+            - name: tenant-id
+              value: "default"
+
+    # Trigger template - checks conditions and runs optimization if needed
+    - name: trigger-optimization
+      inputs:
+        parameters:
+        - name: module
+        - name: tenant-id
+
+      container:
+        image: cogniverse/optimization:latest  # Your image with dependencies
+        imagePullPolicy: Always
+
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -e
+          echo "🤖 Auto-Optimization Trigger"
+          echo "Module: {{inputs.parameters.module}}"
+          echo "Tenant: {{inputs.parameters.tenant-id}}"
+          echo "=========================="
+
+          # Run trigger script
+          cd /workspace
+          uv run python scripts/auto_optimization_trigger.py \
+            --module {{inputs.parameters.module}} \
+            --tenant-id {{inputs.parameters.tenant-id}} \
+            --phoenix-endpoint http://phoenix.cogniverse.svc.cluster.local:6006
+
+          exit_code=$?
+
+          if [ $exit_code -eq 0 ]; then
+            echo "✅ Optimization triggered and completed"
+          elif [ $exit_code -eq 1 ]; then
+            echo "⏭️  Optimization skipped (conditions not met)"
+          else
+            echo "❌ Optimization failed"
+            exit 1
+          fi
+
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1"
+          limits:
+            memory: "8Gi"
+            cpu: "4"
+
+        env:
+        # Phoenix endpoint
+        - name: PHOENIX_ENDPOINT
+          value: "http://phoenix.cogniverse.svc.cluster.local:6006"
+
+        # Configuration store (assuming Redis or similar)
+        - name: CONFIG_STORE_URL
+          valueFrom:
+            secretKeyRef:
+              name: cogniverse-config
+              key: store-url
+
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: cache
+          mountPath: /tmp
+
+      # Continue on skip (exit code 1)
+      continueOn:
+        failed: false
+        error: false
+
+    # Volumes
+    volumes:
+    - name: workspace
+      persistentVolumeClaim:
+        claimName: cogniverse-workspace
+    - name: cache
+      emptyDir: {}
+
+    # Optional: Send notifications on failure
+    onExit: cleanup
+
+    templates:
+    - name: cleanup
+      container:
+        image: cogniverse/optimization:latest
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          echo "Cleanup complete"
+          # Add any cleanup logic here (e.g., notifications)
+
+---
+# ServiceAccount for auto-optimization
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cogniverse-optimization
+  namespace: cogniverse
+
+---
+# Role with necessary permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cogniverse-optimization
+  namespace: cogniverse
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["secrets", "configmaps"]
+  verbs: ["get", "list"]
+- apiGroups: ["argoproj.io"]
+  resources: ["workflows", "workflowtemplates"]
+  verbs: ["get", "list", "create"]
+
+---
+# RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cogniverse-optimization
+  namespace: cogniverse
+subjects:
+- kind: ServiceAccount
+  name: cogniverse-optimization
+  namespace: cogniverse
+roleRef:
+  kind: Role
+  name: cogniverse-optimization
+  apiGroup: rbac.authorization.k8s.io

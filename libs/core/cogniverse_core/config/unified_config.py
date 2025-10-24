@@ -38,6 +38,9 @@ class SystemConfig:
     summarizer_agent_url: str = "http://localhost:8004"
     text_analysis_agent_url: str = "http://localhost:8005"
 
+    # API service URLs
+    ingestion_api_url: str = "http://localhost:8000"
+
     # Search backend configuration
     search_backend: str = "vespa"
     vespa_url: str = "http://localhost"
@@ -69,6 +72,7 @@ class SystemConfig:
             "text_agent_url": self.text_agent_url,
             "summarizer_agent_url": self.summarizer_agent_url,
             "text_analysis_agent_url": self.text_analysis_agent_url,
+            "ingestion_api_url": self.ingestion_api_url,
             "search_backend": self.search_backend,
             "vespa_url": self.vespa_url,
             "vespa_port": self.vespa_port,
@@ -97,6 +101,7 @@ class SystemConfig:
             text_analysis_agent_url=data.get(
                 "text_analysis_agent_url", "http://localhost:8005"
             ),
+            ingestion_api_url=data.get("ingestion_api_url", "http://localhost:8000"),
             search_backend=data.get("search_backend", "vespa"),
             vespa_url=data.get("vespa_url", "http://localhost"),
             vespa_port=data.get("vespa_port", 8080),

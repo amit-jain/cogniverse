@@ -1,0 +1,259 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: tenant-auto-optimization
+  namespace: cogniverse
+  annotations:
+    description: "Per-tenant auto-optimization workflow template"
+spec:
+  entrypoint: optimize-tenant
+  serviceAccountName: cogniverse-optimization
+
+  arguments:
+    parameters:
+    - name: tenant-id
+      value: "default"
+
+  templates:
+  - name: optimize-tenant
+    inputs:
+      parameters:
+      - name: tenant-id
+
+    steps:
+    # Optimize all modules in parallel for this tenant
+    - - name: modality-opt
+        template: trigger-module
+        arguments:
+          parameters:
+          - name: tenant-id
+            value: "{{inputs.parameters.tenant-id}}"
+          - name: module
+            value: "modality"
+
+      - name: cross-modal-opt
+        template: trigger-module
+        arguments:
+          parameters:
+          - name: tenant-id
+            value: "{{inputs.parameters.tenant-id}}"
+          - name: module
+            value: "cross_modal"
+
+      - name: routing-opt
+        template: trigger-module
+        arguments:
+          parameters:
+          - name: tenant-id
+            value: "{{inputs.parameters.tenant-id}}"
+          - name: module
+            value: "routing"
+
+  # Module optimization trigger template
+  - name: trigger-module
+    inputs:
+      parameters:
+      - name: tenant-id
+      - name: module
+
+    container:
+      image: cogniverse/optimization:latest
+      imagePullPolicy: Always
+
+      command: ["/bin/bash", "-c"]
+      args:
+      - |
+        set -e
+        echo "🤖 Auto-Optimization: {{inputs.parameters.tenant-id}} / {{inputs.parameters.module}}"
+        echo "================================================"
+
+        cd /workspace
+        uv run python scripts/auto_optimization_trigger.py \
+          --tenant-id {{inputs.parameters.tenant-id}} \
+          --module {{inputs.parameters.module}} \
+          --phoenix-endpoint http://phoenix.cogniverse.svc.cluster.local:6006
+
+        exit_code=$?
+
+        if [ $exit_code -eq 0 ]; then
+          echo "✅ Optimization completed"
+        elif [ $exit_code -eq 1 ]; then
+          echo "⏭️  Skipped (conditions not met)"
+        else
+          echo "❌ Failed"
+          exit 1
+        fi
+
+      resources:
+        requests:
+          memory: "2Gi"
+          cpu: "1"
+        limits:
+          memory: "8Gi"
+          cpu: "4"
+
+      env:
+      - name: PHOENIX_ENDPOINT
+        value: "http://phoenix.cogniverse.svc.cluster.local:6006"
+      - name: CONFIG_STORE_URL
+        valueFrom:
+          secretKeyRef:
+            name: cogniverse-config
+            key: store-url
+
+      volumeMounts:
+      - name: workspace
+        mountPath: /workspace
+      - name: cache
+        mountPath: /tmp
+
+  volumes:
+  - name: workspace
+    persistentVolumeClaim:
+      claimName: cogniverse-workspace
+  - name: cache
+    emptyDir: {}
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: auto-optimization-multi-tenant
+  namespace: cogniverse
+  annotations:
+    description: "Multi-tenant auto-optimization scheduler"
+spec:
+  schedule: "0 * * * *"  # Every hour
+  timezone: "UTC"
+  successfulJobsHistoryLimit: 10
+  failedJobsHistoryLimit: 5
+
+  workflowSpec:
+    entrypoint: discover-and-spawn
+    serviceAccountName: cogniverse-optimization
+
+    templates:
+    # Main entry point: discover tenants and spawn workflows
+    - name: discover-and-spawn
+      steps:
+      # Step 1: Discover all tenants
+      - - name: discover-tenants
+          template: discover
+
+      # Step 2: Spawn separate workflow for each tenant
+      - - name: spawn-tenant-workflows
+          template: spawn-workflow
+          arguments:
+            parameters:
+            - name: tenant-id
+              value: "{{item}}"
+          withParam: "{{steps.discover-tenants.outputs.result}}"
+
+    # Tenant discovery template
+    - name: discover
+      container:
+        image: cogniverse/optimization:latest
+        imagePullPolicy: Always
+
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -e
+          echo "🔍 Discovering tenants..."
+
+          cd /workspace
+          uv run python scripts/discover_tenants.py
+
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "0.5"
+          limits:
+            memory: "1Gi"
+            cpu: "1"
+
+        env:
+        - name: CONFIG_STORE_URL
+          valueFrom:
+            secretKeyRef:
+              name: cogniverse-config
+              key: store-url
+
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+
+    # Workflow spawning template
+    - name: spawn-workflow
+      inputs:
+        parameters:
+        - name: tenant-id
+
+      resource:
+        action: create
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: Workflow
+          metadata:
+            generateName: auto-opt-{{inputs.parameters.tenant-id}}-
+            namespace: cogniverse
+            labels:
+              workflows.argoproj.io/workflow-template: tenant-auto-optimization
+              tenant-id: "{{inputs.parameters.tenant-id}}"
+              optimization-type: "auto"
+          spec:
+            workflowTemplateRef:
+              name: tenant-auto-optimization
+            arguments:
+              parameters:
+              - name: tenant-id
+                value: "{{inputs.parameters.tenant-id}}"
+            # Inherit service account
+            serviceAccountName: cogniverse-optimization
+
+    volumes:
+    - name: workspace
+      persistentVolumeClaim:
+        claimName: cogniverse-workspace
+
+---
+# ServiceAccount (same as before)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cogniverse-optimization
+  namespace: cogniverse
+
+---
+# Role with workflow creation permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cogniverse-optimization
+  namespace: cogniverse
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["secrets", "configmaps"]
+  verbs: ["get", "list"]
+- apiGroups: ["argoproj.io"]
+  resources: ["workflows", "workflowtemplates", "cronworkflows"]
+  verbs: ["get", "list", "create", "watch"]
+
+---
+# RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cogniverse-optimization
+  namespace: cogniverse
+subjects:
+- kind: ServiceAccount
+  name: cogniverse-optimization
+  namespace: cogniverse
+roleRef:
+  kind: Role
+  name: cogniverse-optimization
+  apiGroup: rbac.authorization.k8s.io

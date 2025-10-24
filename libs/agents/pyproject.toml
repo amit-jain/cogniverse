@@ -11,6 +11,7 @@ authors = [
 
 dependencies = [
     "cogniverse-core",
+    "cogniverse-synthetic",
 
     # Machine Learning for embeddings and models
     "torch>=2.5.0",
@@ -34,6 +35,7 @@ dependencies = [
 
 [tool.uv.sources]
 cogniverse-core = { workspace = true }
+cogniverse-synthetic = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

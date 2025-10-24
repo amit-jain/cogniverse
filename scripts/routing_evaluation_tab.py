@@ -23,11 +23,11 @@ import streamlit as st
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.app.routing.annotation_agent import AnnotationAgent, AnnotationPriority
-from src.app.routing.annotation_storage import AnnotationStorage
-from src.app.routing.llm_auto_annotator import AnnotationLabel, LLMAutoAnnotator
-from src.app.telemetry.config import SERVICE_NAME_ORCHESTRATION
-from src.evaluation.evaluators.routing_evaluator import RoutingEvaluator
+from cogniverse_agents.routing.annotation_agent import AnnotationAgent, AnnotationPriority
+from cogniverse_agents.routing.annotation_storage import AnnotationStorage
+from cogniverse_agents.routing.llm_auto_annotator import AnnotationLabel, LLMAutoAnnotator
+from cogniverse_core.telemetry.config import SERVICE_NAME_ORCHESTRATION
+from cogniverse_core.evaluation.evaluators.routing_evaluator import RoutingEvaluator
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,20 @@ def render_routing_evaluation_tab():
         st.error(f"❌ Failed to initialize RoutingEvaluator: {e}")
         return
 
+    # Check if Phoenix is available
+    try:
+        import httpx
+        phoenix_response = httpx.get("http://localhost:6006", timeout=2)
+        phoenix_available = phoenix_response.status_code in [200, 404]  # 404 is OK, means Phoenix is up
+    except Exception:
+        phoenix_available = False
+
+    if not phoenix_available:
+        st.warning("⚠️ Phoenix is not running on http://localhost:6006")
+        st.info("💡 Start Phoenix with: `import phoenix as px; px.launch_app()`")
+        st.info("Or use: `uv run python -c \"import phoenix as px; px.launch_app()\"`")
+        return
+
     # Time range for query
     end_time = datetime.now()
     start_time = end_time - timedelta(hours=lookback_hours)
@@ -64,9 +78,20 @@ def render_routing_evaluation_tab():
     # Fetch and evaluate routing spans
     with st.spinner("Fetching routing spans from Phoenix..."):
         try:
-            metrics = evaluator.evaluate_all_routing_decisions(
-                start_time=start_time, end_time=end_time
+            # Query routing spans from Phoenix
+            routing_spans = evaluator.query_routing_spans(
+                start_time=start_time, end_time=end_time, limit=1000
             )
+
+            # Calculate metrics from spans
+            if not routing_spans:
+                st.warning(
+                    f"📭 No routing decisions found in the last {lookback_hours} hours. "
+                    "Make sure the routing agent has been processing requests and Phoenix is capturing traces."
+                )
+                return
+
+            metrics = evaluator.calculate_metrics(routing_spans)
         except Exception as e:
             st.error(f"❌ Failed to evaluate routing decisions: {e}")
             st.exception(e)
@@ -199,7 +224,7 @@ def _render_confidence_analysis(evaluator, start_time, end_time):
             return
 
         # Filter for routing spans
-        from src.app.telemetry.config import SPAN_NAME_ROUTING
+        from cogniverse_core.telemetry.config import SPAN_NAME_ROUTING
         routing_spans = spans_df[spans_df["name"] == SPAN_NAME_ROUTING]
 
         if routing_spans.empty:
@@ -309,7 +334,7 @@ def _render_temporal_analysis(evaluator, start_time, end_time):
             return
 
         # Filter for routing spans
-        from src.app.telemetry.config import SPAN_NAME_ROUTING
+        from cogniverse_core.telemetry.config import SPAN_NAME_ROUTING
         routing_spans = spans_df[spans_df["name"] == SPAN_NAME_ROUTING]
 
         if routing_spans.empty:

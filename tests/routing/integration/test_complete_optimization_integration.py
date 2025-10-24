@@ -35,9 +35,42 @@ from tests.utils.async_polling import simulate_processing_delay, wait_for_vespa_
 logger = logging.getLogger(__name__)
 
 
+@pytest.fixture(scope="module")
+def phoenix_session():
+    """Start Phoenix server for tests"""
+    logger.info("🔥 Starting Phoenix server...")
+    session = px.launch_app()
+
+    # Wait for Phoenix to be ready
+    import time
+    max_retries = 30
+    for i in range(max_retries):
+        try:
+            client = px.Client()
+            # Try a simple query to verify Phoenix is ready
+            client.get_spans_dataframe(
+                start_time=datetime.now() - timedelta(seconds=1),
+                end_time=datetime.now()
+            )
+            logger.info("✅ Phoenix server ready")
+            break
+        except Exception as e:
+            if i == max_retries - 1:
+                raise RuntimeError(f"Phoenix failed to start after {max_retries} attempts: {e}")
+            time.sleep(1)
+
+    yield session
+
+    logger.info("🔥 Closing Phoenix server...")
+    try:
+        session.close()
+    except Exception as e:
+        logger.warning(f"Error closing Phoenix session: {e}")
+
+
 @pytest.fixture
-def phoenix_client():
-    """Phoenix client for querying spans"""
+def phoenix_client(phoenix_session):
+    """Phoenix client for querying spans (depends on phoenix_session)"""
     return px.Client()
 
 

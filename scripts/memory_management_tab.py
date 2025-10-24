@@ -9,27 +9,14 @@ import json
 
 import pandas as pd
 import streamlit as st
-from src.common.mem0_memory_manager import Mem0MemoryManager
+from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
 
 
 def render_memory_management_tab():
     """Render memory management UI"""
     st.subheader("🧠 Agent Memory Management")
 
-    # Initialize memory manager
-    try:
-        manager = Mem0MemoryManager()
-
-        # Check if initialized
-        if manager.memory is None:
-            st.info("⚙️ Initializing Mem0 memory manager...")
-            manager.initialize()
-            st.success("✅ Memory manager initialized")
-    except Exception as e:
-        st.error(f"❌ Failed to initialize memory manager: {e}")
-        return
-
-    # Tenant and Agent Selection
+    # Tenant and Agent Selection (get inputs first)
     col1, col2 = st.columns(2)
     with col1:
         tenant_id = st.text_input(
@@ -44,6 +31,33 @@ def render_memory_management_tab():
             value="routing_agent",
             help="Enter agent name (e.g., routing_agent, video_agent)"
         )
+
+    # Check if Vespa is available first
+    try:
+        import httpx
+        vespa_response = httpx.get("http://localhost:8080/ApplicationStatus", timeout=2)
+        vespa_available = vespa_response.status_code == 200
+    except:
+        vespa_available = False
+
+    if not vespa_available:
+        st.warning("⚠️ Vespa backend is not running")
+        st.info("💡 Memory management requires Vespa. Start Vespa with: `docker run --detach --name vespa --hostname vespa-container -p 8080:8080 vespaengine/vespa`")
+        st.info("Or if Vespa is running elsewhere, update the connection settings in the code.")
+        return
+
+    # Initialize memory manager with tenant_id
+    try:
+        manager = Mem0MemoryManager(tenant_id=tenant_id)
+
+        # Check if initialized
+        if manager.memory is None:
+            st.info("⚙️ Initializing Mem0 memory manager...")
+            manager.initialize()
+            st.success("✅ Memory manager initialized")
+    except Exception as e:
+        st.error(f"❌ Failed to initialize memory manager: {e}")
+        return
 
     # Memory Statistics
     st.markdown("### 📊 Memory Statistics")

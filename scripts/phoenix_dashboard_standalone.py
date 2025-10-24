@@ -31,6 +31,8 @@ import streamlit as st
 
 # Import config and memory management tabs
 from config_management_tab import render_config_management_tab
+from ingestion_testing_tab import render_ingestion_testing_tab
+from interactive_search_tab import render_interactive_search_tab
 from memory_management_tab import render_memory_management_tab
 
 # Add project root to path
@@ -45,21 +47,27 @@ def import_module_directly(module_path):
     spec.loader.exec_module(module)
     return module
 
-# Import only what we need
-analytics_module = import_module_directly(project_root / "src/evaluation/phoenix/analytics.py")
-rca_module = import_module_directly(project_root / "src/evaluation/phoenix/root_cause_analysis.py")
+# Import only what we need - wrap in try/except to handle missing dependencies
+try:
+    analytics_module = import_module_directly(project_root / "libs/core/cogniverse_core/evaluation/phoenix/analytics.py")
+    Analytics = analytics_module.PhoenixAnalytics
+except Exception as e:
+    Analytics = None
+    print(f"Warning: Could not load Phoenix Analytics: {e}")
 
-Analytics = analytics_module.PhoenixAnalytics
-RootCauseAnalyzer = rca_module.RootCauseAnalyzer
+try:
+    rca_module = import_module_directly(project_root / "libs/core/cogniverse_core/evaluation/phoenix/root_cause_analysis.py")
+    RootCauseAnalyzer = rca_module.RootCauseAnalyzer
+except Exception as e:
+    RootCauseAnalyzer = None
+    print(f"Warning: Could not load RootCauseAnalyzer: {e}")
 
 # Import A2A client for agent communication
 import asyncio
 
 import httpx
-
-sys.path.append(str(project_root / "src"))
-from src.common.config_utils import get_config
-from tools.a2a_utils import A2AClient
+from cogniverse_agents.tools.a2a_utils import A2AClient
+from cogniverse_core.config.config_manager import get_config_manager
 
 
 def run_async_in_streamlit(coro):
@@ -117,6 +125,13 @@ try:
 except ImportError as e:
     enhanced_optimization_tab_available = False
     enhanced_optimization_tab_error = str(e)
+
+try:
+    from multi_modal_chat_tab import render_multi_modal_chat_tab
+    multi_modal_chat_tab_available = True
+except ImportError as e:
+    multi_modal_chat_tab_available = False
+    multi_modal_chat_tab_error = str(e)
 
 # Page configuration
 st.set_page_config(
@@ -196,13 +211,43 @@ st.markdown("""
 
 # Initialize session state
 if 'analytics' not in st.session_state:
-    st.session_state.analytics = Analytics()
+    if Analytics is not None:
+        st.session_state.analytics = Analytics()
+    else:
+        st.session_state.analytics = None
 
 if 'last_refresh' not in st.session_state:
     st.session_state.last_refresh = datetime.now()
 
 if 'auto_refresh' not in st.session_state:
     st.session_state.auto_refresh = False
+
+# Initialize agent configuration
+@st.cache_resource
+def get_a2a_client():
+    """Initialize A2A client for agent communication"""
+    return A2AClient(timeout=30.0)
+
+@st.cache_data
+def get_agent_config():
+    """Get agent endpoints from ConfigManager - no defaults, only what's in config"""
+    config_manager = get_config_manager()
+    system_config = config_manager.get_system_config()
+
+    # Return dict with agent URLs from SystemConfig only
+    return {
+        "routing_agent_url": system_config.routing_agent_url,
+        "video_search_agent_url": system_config.video_agent_url,
+        "video_processing_agent_url": system_config.video_agent_url,
+        "summarizer_agent_url": system_config.summarizer_agent_url,
+        "detailed_report_agent_url": system_config.text_analysis_agent_url,
+        "tenant_manager_url": system_config.routing_agent_url,
+        "ingestion_api_url": system_config.ingestion_api_url,
+        "phoenix_base_url": system_config.phoenix_url,
+    }
+
+a2a_client = get_a2a_client()
+agent_config = get_agent_config()
 
 # Sidebar configuration
 with st.sidebar:
@@ -235,7 +280,7 @@ with st.sidebar:
 
                         # Call tenant management API
                         import httpx
-                        tenant_api_url = get_config().get("tenant_manager_url", "http://localhost:8001")
+                        tenant_api_url = agent_config["tenant_manager_url"]
 
                         with st.spinner(f"Creating {tenant_input}..."):
                             # Create organization first (will skip if exists)
@@ -255,7 +300,7 @@ with st.sidebar:
                                         pass
                                     elif org_resp.status_code != 200:
                                         st.error(f"Failed to create org: {org_resp.text}")
-                            except Exception as e:
+                            except Exception:
                                 # Org might exist, continue
                                 pass
 
@@ -321,7 +366,7 @@ with st.sidebar:
             if ingest_btn and video_url:
                 try:
                     import httpx
-                    ingestion_api_url = get_config().get("ingestion_api_url", "http://localhost:8000")
+                    ingestion_api_url = agent_config["ingestion_api_url"]
 
                     with st.spinner(f"Starting ingestion for {video_url[:50]}..."):
                         with httpx.Client() as client:
@@ -354,7 +399,7 @@ with st.sidebar:
             if st.button("Check Status", key="check_ingestion_status"):
                 try:
                     import httpx
-                    ingestion_api_url = get_config().get("ingestion_api_url", "http://localhost:8000")
+                    ingestion_api_url = agent_config["ingestion_api_url"]
 
                     with httpx.Client() as client:
                         resp = client.get(
@@ -466,37 +511,7 @@ st.title("Analytics Dashboard")
 # Last refresh time
 st.caption(f"Last refreshed: {st.session_state.last_refresh.strftime('%Y-%m-%d %H:%M:%S')}")
 
-# Initialize A2A client and configuration for agent communication
-@st.cache_resource
-def get_a2a_client():
-    """Initialize A2A client for agent communication"""
-    return A2AClient(timeout=30.0)
-
-@st.cache_data
-def get_agent_config():
-    """Get agent endpoints from configuration - fail fast if missing required URLs"""
-    config = get_config()
-
-    # Required agent URLs - fail fast if not configured
-    required_agents = {
-        "routing_agent_url": config.get("routing_agent_url"),
-        "video_search_agent_url": config.get("video_agent_url"),  # Use video_agent_url from config
-        "video_processing_agent_url": config.get("video_processing_agent_url"),
-    }
-
-    # Check for missing required configuration
-    missing = [name for name, url in required_agents.items() if not url]
-    if missing:
-        raise ValueError(f"Missing required agent URLs in configuration: {missing}")
-
-    return {
-        **required_agents,
-        "summarizer_agent_url": config.get("summarizer_agent_url"),
-        "detailed_report_agent_url": config.get("detailed_report_agent_url")
-    }
-
-a2a_client = get_a2a_client()
-agent_config = get_agent_config()
+# Agent functions moved above to be available before sidebar
 
 # Agent connectivity validation
 @st.cache_data(ttl=30)  # Cache for 30 seconds
@@ -654,14 +669,81 @@ async def call_agent_async(agent_url: str, task_data: dict) -> dict:
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-# Create main tabs
-main_tabs = st.tabs(["📊 Analytics", "🧪 Evaluation", "🗺️ Embedding Atlas", "🎯 Routing Evaluation", "🔄 Orchestration Annotation", "📊 Multi-Modal Performance", "🔧 Optimization", "📥 Ingestion Testing", "🔍 Interactive Search", "⚙️ Configuration", "🧠 Memory"])
+# Create two-level tab structure for user/admin separation
+# Top-level tabs: User | Admin | Monitoring
+top_level_tabs = st.tabs(["🧑‍💼 User", "⚙️ Admin", "📊 Monitoring"])
 
 # Show agent connectivity status in sidebar
 agent_status = show_agent_status()
 
+# =============================================================================
+# USER SECTION - Tenant/User-Facing Features
+# =============================================================================
+with top_level_tabs[0]:
+    st.markdown("### User Interface")
+    st.markdown("Features for everyday users to interact with the system")
+
+    user_tabs = st.tabs(["💬 Chat", "🔍 Interactive Search", "🧠 Memory"])
+
+    # Chat Tab
+    with user_tabs[0]:
+        if multi_modal_chat_tab_available:
+            render_multi_modal_chat_tab(agent_config)
+        else:
+            st.error(f"❌ Multi-Modal Chat tab not available: {multi_modal_chat_tab_error}")
+            st.info("💡 Make sure multi_modal_chat_tab.py is in the scripts directory")
+
+    # Interactive Search Tab
+    with user_tabs[1]:
+        render_interactive_search_tab(agent_status)
+
+    # Memory Tab
+    with user_tabs[2]:
+        st.header("🧠 Memory Management")
+        render_memory_management_tab()
+
+# =============================================================================
+# ADMIN SECTION - Administrative Features
+# =============================================================================
+with top_level_tabs[1]:
+    st.markdown("### Admin Interface")
+    st.markdown("Administrative tools for system configuration and management")
+
+    admin_tabs = st.tabs(["⚙️ Configuration", "📥 Ingestion Testing", "🔧 Optimization"])
+
+    # Configuration Tab
+    with admin_tabs[0]:
+        render_config_management_tab()
+
+    # Ingestion Testing Tab
+    with admin_tabs[1]:
+        render_ingestion_testing_tab(agent_status)
+
+    # Optimization Tab
+    with admin_tabs[2]:
+        if enhanced_optimization_tab_available:
+            render_enhanced_optimization_tab()
+        else:
+            st.error(f"❌ Optimization tab not available: {enhanced_optimization_tab_error}")
+
+# =============================================================================
+# MONITORING SECTION - Observability & Analytics
+# =============================================================================
+with top_level_tabs[2]:
+    st.markdown("### Monitoring & Analytics")
+    st.markdown("System observability, performance metrics, and evaluation tools")
+
+    monitoring_tabs = st.tabs([
+        "📊 Analytics",
+        "🧪 Evaluation",
+        "🗺️ Embedding Atlas",
+        "🎯 Routing Evaluation",
+        "🔄 Orchestration",
+        "📊 Multi-Modal Performance"
+    ])
+
 # Analytics Tab
-with main_tabs[0]:
+with monitoring_tabs[0]:
     # Fetch traces
     with st.spinner("Fetching traces..."):
         traces = st.session_state.analytics.get_traces(
@@ -1206,8 +1288,8 @@ with tabs[5]:
 
 # Helper function to create Phoenix trace link
 def create_phoenix_link(trace_id, text="View in Phoenix"):
-    config = get_config()
-    phoenix_base_url = config.get("phoenix_base_url", "http://localhost:6006")
+    # Config is now available via agent_config dict
+    phoenix_base_url = agent_config["phoenix_base_url"]
     # Phoenix uses project-based routing with base64 encoded project IDs
     # Default project is "Project:1" which encodes to "UHJvamVjdDox"
     import base64
@@ -1248,18 +1330,21 @@ if enable_rca and len(tabs) > 6:
             st.caption("💡 You can combine queries with 'and' / 'or' operators")
         
         # Initialize RCA
-        rca = RootCauseAnalyzer()
-        
-        # RCA configuration
-        col1, col2 = st.columns(2)
-        with col1:
-            include_performance = st.checkbox(
-                "Include performance degradations",
-                value=True,
-                help="Analyze slow requests in addition to failures"
-            )
-        with col2:
-            performance_threshold = st.slider(
+        if RootCauseAnalyzer is None:
+            st.error("❌ Root Cause Analyzer not available. Phoenix dependencies may be missing.")
+        else:
+            rca = RootCauseAnalyzer()
+
+            # RCA configuration
+            col1, col2 = st.columns(2)
+            with col1:
+                include_performance = st.checkbox(
+                    "Include performance degradations",
+                    value=True,
+                    help="Analyze slow requests in addition to failures"
+                )
+            with col2:
+                performance_threshold = st.slider(
                 "Performance threshold (percentile)",
                 min_value=90,
                 max_value=99,
@@ -1387,7 +1472,7 @@ if enable_rca and len(tabs) > 6:
                                     trace_ids_query = " or ".join([f'trace_id == "{tid}"' for tid in hypothesis.affected_traces[:5]])
                                     st.code(trace_ids_query, language="python")
                                     
-                                    phoenix_base_url = get_config().get("phoenix_base_url", "http://localhost:6006")
+                                    phoenix_base_url = agent_config["phoenix_base_url"]
                                     import base64
                                     project_encoded = base64.b64encode(b"Project:1").decode('utf-8')
                                     phoenix_link = f"{phoenix_base_url}/projects/{project_encoded}/traces"
@@ -1475,7 +1560,7 @@ if enable_rca and len(tabs) > 6:
                 
                 # Add link to view all failed traces
                 if summary.get('failed_traces', 0) > 0:
-                    phoenix_base_url = get_config().get("phoenix_base_url", "http://localhost:6006")
+                    phoenix_base_url = agent_config["phoenix_base_url"]
                     import base64
                     project_encoded = base64.b64encode(b"Project:1").decode('utf-8')
                     st.markdown(f"[📊 View all {summary.get('failed_traces', 0)} failed traces in Phoenix]({phoenix_base_url}/projects/{project_encoded}/traces)")
@@ -1543,7 +1628,7 @@ if enable_rca and len(tabs) > 6:
                     
                     # Create DataFrame for temporal patterns
                     burst_data = []
-                    phoenix_base_url = get_config().get("phoenix_base_url", "http://localhost:6006")
+                    phoenix_base_url = agent_config["phoenix_base_url"]
                     import base64
                     project_encoded = base64.b64encode(b"Project:1").decode('utf-8')
                     
@@ -1582,7 +1667,7 @@ if enable_rca and len(tabs) > 6:
                                     end_iso = pattern.get('end_time', pattern['start_time'])
                                     phoenix_time_query = f'timestamp >= "{start_iso}" and timestamp <= "{end_iso}"'
                                     st.code(phoenix_time_query, language="python")
-                            phoenix_base_url = get_config().get("phoenix_base_url", "http://localhost:6006")
+                            phoenix_base_url = agent_config["phoenix_base_url"]
                             import base64
                             project_encoded = base64.b64encode(b"Project:1").decode('utf-8')
                             st.caption(f"☝️ Copy these queries and paste them in the [Phoenix]({phoenix_base_url}/projects/{project_encoded}/traces) search bar")
@@ -1594,7 +1679,7 @@ if enable_rca and len(tabs) > 6:
                 
                 # Add link to view slow traces
                 if summary.get('performance_degraded', 0) > 0 and 'threshold' in perf:
-                    phoenix_base_url = get_config().get("phoenix_base_url", "http://localhost:6006")
+                    phoenix_base_url = agent_config["phoenix_base_url"]
                     import base64
                     project_encoded = base64.b64encode(b"Project:1").decode('utf-8')
                     st.markdown(f"[📊 View {summary.get('performance_degraded', 0)} slow traces in Phoenix]({phoenix_base_url}/projects/{project_encoded}/traces)")
@@ -1680,14 +1765,14 @@ if show_raw_data:
     st.dataframe(traces_df)
 
 # Evaluation Tab
-with main_tabs[1]:
+with monitoring_tabs[1]:
     if evaluation_tab_available:
         render_evaluation_tab()
     else:
         st.error("Evaluation tab module not found")
 
 # Embedding Atlas Tab
-with main_tabs[2]:
+with monitoring_tabs[2]:
     if embedding_atlas_available:
         try:
             render_embedding_atlas_tab()
@@ -1700,7 +1785,7 @@ with main_tabs[2]:
         st.info("Please ensure all dependencies are installed: uv pip install umap-learn pyarrow scikit-learn")
 
 # Routing Evaluation Tab
-with main_tabs[3]:
+with monitoring_tabs[3]:
     if routing_evaluation_tab_available:
         try:
             render_routing_evaluation_tab()
@@ -1713,7 +1798,7 @@ with main_tabs[3]:
         st.info("The routing evaluation tab displays metrics from the RoutingEvaluator.")
 
 # Orchestration Annotation Tab
-with main_tabs[4]:
+with monitoring_tabs[4]:
     if orchestration_annotation_tab_available:
         try:
             render_orchestration_annotation_tab()
@@ -1726,15 +1811,15 @@ with main_tabs[4]:
         st.info("The orchestration annotation tab provides UI for human annotation of orchestration workflows.")
 
 # Multi-Modal Performance Tab
-with main_tabs[5]:
+with monitoring_tabs[5]:
     st.header("📊 Multi-Modal Performance Dashboard")
     st.markdown("Real-time performance metrics, cache analytics, and optimization status for each modality.")
 
     # Import required modules
     try:
-        from src.app.routing.modality_cache import ModalityCacheManager
-        from src.app.search.multi_modal_reranker import QueryModality
-        from src.app.telemetry.modality_metrics import ModalityMetricsTracker
+        from cogniverse_agents.routing.modality_cache import ModalityCacheManager
+        from cogniverse_agents.search.multi_modal_reranker import QueryModality
+        from cogniverse_core.telemetry.modality_metrics import ModalityMetricsTracker
 
         # Initialize components
         if 'metrics_tracker' not in st.session_state:
@@ -1872,7 +1957,7 @@ with main_tabs[5]:
         st.subheader("🎯 Per-Modality Optimization Status")
 
         try:
-            from src.app.routing.modality_optimizer import ModalityOptimizer
+            from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
 
             if 'modality_optimizer' not in st.session_state:
                 st.session_state.modality_optimizer = ModalityOptimizer()
@@ -1912,28 +1997,6 @@ with main_tabs[5]:
     except ImportError as e:
         st.error(f"Failed to import required modules: {e}")
         st.info("Make sure Phase 12 components are properly installed.")
-
-# Optimization Tab
-with main_tabs[6]:
-    if enhanced_optimization_tab_available:
-        try:
-            render_enhanced_optimization_tab()
-        except Exception as e:
-            st.error(f"Error rendering enhanced optimization tab: {e}")
-            import traceback
-            st.code(traceback.format_exc())
-
-            # Fallback to basic optimization
-            st.header("🔧 System Optimization")
-            st.markdown("Trigger and monitor optimization of routing, ingestion, and agent systems using your existing DSPy infrastructure.")
-    else:
-        st.error(f"Enhanced optimization tab not available: {enhanced_optimization_tab_error}")
-        st.header("🔧 System Optimization")
-        st.markdown("Trigger and monitor optimization of routing, ingestion, and agent systems using your existing DSPy infrastructure.")
-        st.info("Install enhanced_optimization_tab.py module for full optimization framework.")
-
-# Ingestion Testing Tab
-with main_tabs[7]:
     st.header("📥 Ingestion Pipeline Testing")
     st.markdown("Interactive testing and configuration of video ingestion pipelines with different processing profiles.")
 
@@ -1942,7 +2005,7 @@ with main_tabs[7]:
 
     col1, col2 = st.columns([2, 1])
     with col1:
-        uploaded_video = st.file_uploader(
+        uploaded_files = st.file_uploader(
             "Upload test video for ingestion",
             type=['json'],
             accept_multiple_files=True,
@@ -2032,7 +2095,7 @@ with main_tabs[7]:
                             }
 
                             # Make real async call to routing agent
-                            routing_agent_url = agent_config.get("routing_agent_url", "http://localhost:8001")
+                            routing_agent_url = agent_config["routing_agent_url"]
                             result = run_async_in_streamlit(call_agent_async(routing_agent_url, optimization_task))
 
                             if result.get("status") == "optimization_triggered":
@@ -2080,7 +2143,7 @@ with main_tabs[7]:
             with st.spinner("📊 Getting optimization status..."):
                 try:
                     # Get real optimization status from routing agent
-                    routing_agent_url = agent_config.get("routing_agent_url", "http://localhost:8001")
+                    routing_agent_url = agent_config["routing_agent_url"]
                     status_task = {"action": "get_optimization_status"}
                     status_result = run_async_in_streamlit(call_agent_async(routing_agent_url, status_task))
 
@@ -2121,7 +2184,7 @@ with main_tabs[7]:
             with st.spinner("📊 Generating optimization report from routing agent..."):
                 try:
                     # Get real optimization report from routing agent
-                    routing_agent_url = agent_config.get("routing_agent_url", "http://localhost:8001")
+                    routing_agent_url = agent_config["routing_agent_url"]
                     report_task = {"action": "generate_report"}
                     report_result = run_async_in_streamlit(call_agent_async(routing_agent_url, report_task))
 
@@ -2143,404 +2206,6 @@ with main_tabs[7]:
     # Real System Status (no hardcoded claims)
     st.subheader("📊 System Status")
     st.info("System status is displayed in the sidebar based on real agent connectivity checks. No services are assumed to be running.")
-
-# Ingestion Testing Tab
-with main_tabs[7]:
-    st.header("📥 Ingestion Pipeline Testing")
-    st.markdown("Interactive testing and configuration of video ingestion pipelines with different processing profiles.")
-    
-    # Video Upload Section
-    st.subheader("🎬 Video Upload & Processing")
-    
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        uploaded_video = st.file_uploader(
-            "Upload test video for ingestion",
-            type=['mp4', 'mov', 'avi'],
-            help="Upload a video file to test different ingestion configurations"
-        )
-    
-    with col2:
-        st.markdown("**Processing Profiles:**")
-        selected_profiles = st.multiselect(
-            "Select profiles to test",
-            ["video_colpali_smol500_mv_frame", "video_colqwen_omni_mv_chunk_30s", 
-             "video_videoprism_base_mv_chunk_30s", "video_videoprism_large_mv_chunk_30s",
-             "video_videoprism_lvt_base_sv_chunk_6s", "video_videoprism_lvt_large_sv_chunk_6s"],
-            default=["video_colpali_smol500_mv_frame"]
-        )
-    
-    # Pipeline Configuration
-    if uploaded_video:
-        st.subheader("⚙️ Pipeline Configuration")
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            max_frames = st.slider("Max Frames per Video", 1, 50, 10)
-            chunk_duration = st.slider("Chunk Duration (s)", 5, 60, 30)
-        
-        with col2:
-            enable_transcription = st.checkbox("Enable Audio Transcription", True)
-            enable_descriptions = st.checkbox("Enable Frame Descriptions", True)
-        
-        with col3:
-            keyframe_method = st.selectbox("Keyframe Extraction", ["fps", "scene_detection", "uniform"])
-            embedding_precision = st.selectbox("Embedding Precision", ["float32", "binary"])
-        
-        # Process Video Button
-        # Check if video processing agent is available
-        video_processing_agent_available = (
-            "error" not in agent_status and
-            agent_status.get("Video Processing Agent", {}).get("status") == "online"
-        )
-        process_button_disabled = not selected_profiles or not video_processing_agent_available
-
-        if not video_processing_agent_available:
-            st.warning("🔧 Video Processing Agent is offline. Please start the agent to enable video processing.")
-
-        if st.button("🔄 Process Video", type="primary", disabled=process_button_disabled):
-            with st.spinner("🚀 Processing video with selected profiles..."):
-                try:
-                    # Save uploaded video to temporary file
-                    import tempfile
-                    video_bytes = uploaded_video.read()
-                    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_file:
-                        temp_file.write(video_bytes)
-                        temp_video_path = temp_file.name
-                    
-                    processing_results = []
-                    
-                    # Process each profile
-                    for i, profile in enumerate(selected_profiles):
-                        progress_bar = st.progress(0, text=f"Processing {profile}...")
-                        
-                        # Prepare processing task for video agent
-                        processing_task = {
-                            "action": "process_video",
-                            "video_path": temp_video_path,
-                            "profile": profile,
-                            "config": {
-                                "max_frames": max_frames,
-                                "chunk_duration": chunk_duration,
-                                "enable_transcription": enable_transcription,
-                                "enable_descriptions": enable_descriptions,
-                                "keyframe_method": keyframe_method,
-                                "embedding_precision": embedding_precision
-                            }
-                        }
-                        
-                        # Call video processing agent
-                        try:
-                            # Show indeterminate progress while calling agent
-                            progress_bar.progress(0, text=f"Calling video processing agent for {profile}...")
-
-                            # Make real async call to video processing agent
-                            result = run_async_in_streamlit(call_agent_async(
-                                agent_config.get("video_processing_agent_url"),
-                                processing_task
-                            ))
-
-                            if result.get("status") == "success":
-                                processing_results.append({
-                                    "profile": profile,
-                                    "status": "success",
-                                    "embeddings_created": result.get("embeddings_created", 0),
-                                    "processing_time": result.get("processing_time", 0),
-                                    "quality_score": result.get("quality_score", 0.0),
-                                    "processing_id": result.get("processing_id", "")
-                                })
-                                st.success(f"✅ {profile} processing complete!")
-                            else:
-                                # Agent call failed - show error but continue with other profiles
-                                st.error(f"❌ {profile} processing failed: {result.get('message', 'Unknown error')}")
-                                if "Connection refused" in result.get("message", ""):
-                                    st.info(f"💡 Video processing agent not available at {result.get('agent_url', 'unknown URL')}")
-
-                                # Add failed result to show what happened
-                                processing_results.append({
-                                    "profile": profile,
-                                    "status": "failed",
-                                    "error": result.get("message", "Unknown error"),
-                                    "embeddings_created": 0,
-                                    "processing_time": 0,
-                                    "quality_score": 0.0
-                                })
-
-                        except Exception as e:
-                            st.error(f"❌ Error calling video processing agent for {profile}: {str(e)}")
-                            processing_results.append({
-                                "profile": profile,
-                                "status": "error",
-                                "error": str(e),
-                                "embeddings_created": 0,
-                                "processing_time": 0,
-                                "quality_score": 0.0
-                            })
-
-                        progress_bar.empty()
-                    
-                    # Store results in session state
-                    st.session_state.processing_results = processing_results
-                    
-                    # Clean up temp file
-                    import os
-                    if os.path.exists(temp_video_path):
-                        os.remove(temp_video_path)
-                    
-                    st.success("🎉 All profiles processed successfully!")
-                    
-                except Exception as e:
-                    st.error(f"❌ Error processing video: {str(e)}")
-                    st.info("💡 This would normally call the video processing agent via A2A")
-    
-    else:
-        st.info("👆 Upload a video file to start testing ingestion pipelines")
-    
-    # Results Analysis
-    st.subheader("📊 Results Analysis")
-    if hasattr(st.session_state, 'processing_results') and st.session_state.processing_results:
-        st.markdown("**Embedding Quality Comparison:**")
-        
-        # Display results from actual processing
-        for result in st.session_state.processing_results:
-            profile = result["profile"]
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric(f"{profile[:20]}...", "Quality Score", result["quality_score"])
-            with col2:
-                # Determine dimensions based on profile
-                if "colpali" in profile:
-                    dims = "128"
-                elif "videoprism" in profile and "large" in profile:
-                    dims = "1024"
-                else:
-                    dims = "768"
-                st.metric("Dimensions", dims)
-            with col3:
-                st.metric("Processing Time", f"{result['processing_time']}s")
-            with col4:
-                st.metric("Embeddings Created", str(result["embeddings_created"]))
-        
-        # Comparison chart
-        if len(st.session_state.processing_results) > 1:
-            st.markdown("**Quality Comparison Chart:**")
-            profiles = [r["profile"][:20] + "..." for r in st.session_state.processing_results]
-            quality_scores = [r["quality_score"] for r in st.session_state.processing_results]
-            processing_times = [r["processing_time"] for r in st.session_state.processing_results]
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                chart_data = pd.DataFrame({
-                    'Profile': profiles,
-                    'Quality Score': quality_scores
-                })
-                st.bar_chart(chart_data.set_index('Profile'))
-            
-            with col2:
-                chart_data = pd.DataFrame({
-                    'Profile': profiles,
-                    'Processing Time (s)': processing_times
-                })
-                st.bar_chart(chart_data.set_index('Profile'))
-    
-    elif uploaded_video and selected_profiles:
-        st.info("👆 Click 'Process Video' to see analysis results")
-    else:
-        st.info("📊 Upload a video and process it to see detailed analysis")
-
-# Interactive Search Tab
-with main_tabs[8]:
-    st.header("🔍 Interactive Search Interface")
-    st.markdown("Live search testing and evaluation with multiple ranking strategies and real-time results.")
-    
-    # Search Interface
-    st.subheader("🔎 Search Interface")
-    
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        search_query = st.text_input(
-            "Enter your search query",
-            placeholder="e.g. basketball dunk, person throwing discus, game highlights",
-            help="Enter natural language queries to search through ingested videos"
-        )
-    
-    with col2:
-        # Check if video search agent is available
-        video_search_agent_available = (
-            "error" not in agent_status and
-            agent_status.get("Video Search Agent", {}).get("status") == "online"
-        )
-        search_button_disabled = not search_query or not video_search_agent_available
-
-        if not video_search_agent_available:
-            st.warning("🔧 Video Search Agent is offline")
-
-        search_button = st.button("🔍 Search", type="primary", disabled=search_button_disabled)
-    
-    # Search Configuration
-    st.subheader("⚙️ Search Configuration")
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        selected_profile = st.selectbox(
-            "Processing Profile",
-            ["video_colpali_smol500_mv_frame", "video_colqwen_omni_mv_chunk_30s", 
-             "video_videoprism_base_mv_chunk_30s", "video_videoprism_lvt_base_sv_chunk_6s"],
-            help="Select the video processing profile for search"
-        )
-    
-    with col2:
-        ranking_strategies = st.multiselect(
-            "Ranking Strategies",
-            ["binary_binary", "float_float", "binary_float", "float_binary"],
-            default=["binary_binary", "float_float"],
-            help="Compare different ranking strategies"
-        )
-    
-    with col3:
-        top_k = st.slider("Number of Results", 1, 20, 5)
-        confidence_threshold = st.slider("Confidence Threshold", 0.0, 1.0, 0.5)
-    
-    # Search Results
-    if search_button and search_query:
-        st.subheader("🎯 Search Results")
-        
-        with st.spinner(f"🔍 Searching for: '{search_query}' using {selected_profile}..."):
-            try:
-                # Prepare search task for video search agent
-                search_task = {
-                    "action": "search_videos",
-                    "query": search_query,
-                    "profile": selected_profile,
-                    "strategies": ranking_strategies,
-                    "top_k": top_k,
-                    "confidence_threshold": confidence_threshold
-                }
-                
-                # Call video search agent for real results
-                search_result = run_async_in_streamlit(call_agent_async(
-                    agent_config.get("video_search_agent_url"),
-                    search_task
-                ))
-
-                if search_result.get("status") == "success":
-                    # Use real search results from agent
-                    search_results = search_result.get("results", {})
-                    if not search_results:
-                        st.error("❌ Agent returned success but no search results")
-                    else:
-                        # Store search results in session state
-                        st.session_state.current_search_results = {
-                            "query": search_query,
-                            "profile": selected_profile,
-                            "results": search_results,
-                            "timestamp": datetime.now()
-                        }
-
-                        st.success(f"✅ Found results for '{search_query}' across {len(ranking_strategies)} strategies")
-                else:
-                    # Agent call failed - show error
-                    st.error(f"❌ Video search failed: {search_result.get('message', 'Unknown error')}")
-                    if "Connection refused" in search_result.get("message", ""):
-                        st.error(f"🔧 Video search agent not available at {search_result.get('agent_url', 'unknown URL')}")
-
-            except Exception as e:
-                st.error(f"❌ Search failed: {str(e)}")
-                st.error("🔧 Check video search agent configuration and ensure it's running")
-        
-        # Display results from session state
-        if hasattr(st.session_state, 'current_search_results') and st.session_state.current_search_results:
-            results = st.session_state.current_search_results["results"]
-            
-            for strategy in ranking_strategies:
-                if strategy in results:
-                    st.markdown(f"### 📊 Results: {strategy}")
-                    
-                    for i, result in enumerate(results[strategy]):
-                        score = result["confidence"]
-                        if score >= confidence_threshold:
-                            with st.expander(f"Result {i+1}: {result['video_id']} (Score: {score:.3f})"):
-                                col1, col2 = st.columns([2, 1])
-                                with col1:
-                                    st.write(f"**Video ID:** {result['video_id']}")
-                                    st.write(f"**Frame ID:** {result['frame_id']}")
-                                    st.write(f"**Timestamp:** {result['timestamp']}")
-                                    st.write(f"**Description:** {result['description']}")
-                                    st.write(f"**Confidence:** {score:.3f}")
-                                
-                                with col2:
-                                    # Relevance annotation
-                                    relevance = st.selectbox(
-                                        f"Relevance (Result {i+1})",
-                                        ["Not Rated", "Highly Relevant", "Somewhat Relevant", "Not Relevant"],
-                                        key=f"relevance_{strategy}_{i}"
-                                    )
-                                    
-                                    if relevance != "Not Rated":
-                                        st.success(f"✅ Rated: {relevance}")
-                                        
-                                        # Store annotation in session state
-                                        if "search_annotations" not in st.session_state:
-                                            st.session_state.search_annotations = []
-                                        
-                                        annotation = {
-                                            "query": search_query,
-                                            "strategy": strategy,
-                                            "result_id": i,
-                                            "video_id": result["video_id"],
-                                            "relevance": relevance,
-                                            "timestamp": datetime.now().isoformat()
-                                        }
-                                        # Update or add annotation
-                                        existing = next((a for a in st.session_state.search_annotations 
-                                                       if a["query"] == search_query and a["strategy"] == strategy and a["result_id"] == i), None)
-                                        if existing:
-                                            existing.update(annotation)
-                                        else:
-                                            st.session_state.search_annotations.append(annotation)
-        
-        # Export annotations
-        if st.button("📥 Export Annotations") and hasattr(st.session_state, 'search_annotations'):
-            annotations = {
-                "search_session": {
-                    "query": search_query,
-                    "profile": selected_profile,
-                    "strategies": ranking_strategies,
-                    "timestamp": datetime.now().isoformat()
-                },
-                "annotations": st.session_state.search_annotations
-            }
-            st.download_button(
-                label="Download Annotations",
-                data=json.dumps(annotations, indent=2),
-                file_name=f"search_annotations_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                mime="application/json"
-            )
-    
-    else:
-        st.info("👆 Enter a search query and click Search to see results")
-    
-    # Search Analytics
-    st.subheader("📈 Search Analytics")
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Total Searches", "142", "23 today")
-    with col2:
-        st.metric("Avg Response Time", "1.2s", "-0.3s")
-    with col3:
-        st.metric("User Satisfaction", "87%", "5%")
-    with col4:
-        st.metric("Coverage Rate", "76%", "2%")
-
-# Configuration Tab
-with main_tabs[9]:
-    st.header("⚙️ Configuration Management")
-    render_config_management_tab()
-
-# Memory Management Tab
-with main_tabs[10]:
-    st.header("🧠 Memory Management")
-    render_memory_management_tab()
 
 # Auto-refresh logic
 if st.session_state.auto_refresh:
