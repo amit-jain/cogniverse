@@ -2,7 +2,13 @@
 Integration tests for all synthetic data generators
 """
 
+
 import pytest
+from cogniverse_core.config.unified_config import (
+    AgentMappingRule,
+    DSPyModuleConfig,
+    OptimizerGenerationConfig,
+)
 from cogniverse_synthetic.generators import (
     CrossModalGenerator,
     ModalityGenerator,
@@ -18,6 +24,37 @@ from cogniverse_synthetic.schemas import (
 from cogniverse_synthetic.utils import AgentInferrer, PatternExtractor
 
 
+# Test configuration fixtures
+def create_modality_config():
+    """Create test configuration for modality generator with mock DSPy"""
+    return OptimizerGenerationConfig(
+        optimizer_type="modality",
+        dspy_modules={
+            "query_generator": DSPyModuleConfig(
+                signature_class="cogniverse_synthetic.dspy_signatures.GenerateModalityQuery",
+                module_type="Predict",
+            )
+        },
+        agent_mappings=[
+            AgentMappingRule(modality="VIDEO", agent_name="video_search_agent"),
+            AgentMappingRule(modality="DOCUMENT", agent_name="document_search_agent"),
+        ],
+    )
+
+
+def create_routing_config():
+    """Create test configuration for routing generator with mock DSPy"""
+    return OptimizerGenerationConfig(
+        optimizer_type="routing",
+        dspy_modules={
+            "query_generator": DSPyModuleConfig(
+                signature_class="cogniverse_synthetic.dspy_signatures.GenerateEntityQuery",
+                module_type="Predict",
+            )
+        },
+    )
+
+
 class TestModalityGeneratorIntegration:
     """Integration tests for ModalityGenerator"""
 
@@ -29,7 +66,8 @@ class TestModalityGeneratorIntegration:
 
         generator = ModalityGenerator(
             pattern_extractor=pattern_extractor,
-            agent_inferrer=agent_inferrer
+            agent_inferrer=agent_inferrer,
+            optimizer_config=create_modality_config()
         )
 
         # Mock content
@@ -57,7 +95,7 @@ class TestModalityGeneratorIntegration:
     @pytest.mark.asyncio
     async def test_modality_generator_without_content(self):
         """Test ModalityGenerator works without sampled content"""
-        generator = ModalityGenerator()
+        generator = ModalityGenerator(optimizer_config=create_modality_config())
 
         examples = await generator.generate(
             sampled_content=[],
@@ -105,7 +143,8 @@ class TestRoutingGeneratorIntegration:
 
         generator = RoutingGenerator(
             pattern_extractor=pattern_extractor,
-            agent_inferrer=agent_inferrer
+            agent_inferrer=agent_inferrer,
+            optimizer_config=create_routing_config()
         )
 
         mock_content = [
@@ -190,9 +229,9 @@ class TestAllGeneratorsTogether:
 
         # Test each generator
         generators = [
-            (ModalityGenerator(pattern_extractor, agent_inferrer), {"modality": "VIDEO"}),
+            (ModalityGenerator(pattern_extractor, agent_inferrer, create_modality_config()), {"modality": "VIDEO"}),
             (CrossModalGenerator(), {}),
-            (RoutingGenerator(pattern_extractor, agent_inferrer), {}),
+            (RoutingGenerator(pattern_extractor, agent_inferrer, create_routing_config()), {}),
             (WorkflowGenerator(), {}),
         ]
 

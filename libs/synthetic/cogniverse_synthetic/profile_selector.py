@@ -3,25 +3,29 @@ Profile Selector - Agent-based profile selection using LLM
 
 Selects appropriate backend profiles based on optimizer task and profile characteristics.
 Uses LLM reasoning to choose profiles that provide diverse, relevant training data.
+Configuration-driven profile descriptions and scoring rules.
 """
 
 import json
 import logging
 from typing import Any, Dict, List, Optional
 
+from cogniverse_core.config.unified_config import SyntheticGeneratorConfig
+
 logger = logging.getLogger(__name__)
 
 
 class ProfileSelector:
     """
-    Agent-based profile selection using LLM reasoning
+    Agent-based profile selection using LLM reasoning or rule-based scoring
 
     Analyzes optimizer requirements and available backend profiles to select
     the most appropriate profiles for synthetic data generation.
+    Uses configuration for profile descriptions and scoring rules.
     """
 
-    # Profile descriptions (will be moved to config in future)
-    PROFILE_DESCRIPTIONS = {
+    # Default fallback profile descriptions (used when config not provided)
+    DEFAULT_PROFILE_DESCRIPTIONS = {
         "video_colpali_smol500_mv_frame": (
             "Frame-based ColPali for patch-level visual search with multi-vector embeddings. "
             "Extracts keyframes at 1 FPS and generates 128-dim patch embeddings for fine-grained matching. "
@@ -54,16 +58,23 @@ class ProfileSelector:
         ),
     }
 
-    def __init__(self, llm_client: Optional[Any] = None):
+    def __init__(
+        self,
+        llm_client: Optional[Any] = None,
+        generator_config: Optional[SyntheticGeneratorConfig] = None,
+    ):
         """
-        Initialize profile selector
+        Initialize profile selector with configuration
 
         Args:
             llm_client: Optional LLM client for reasoning (if None, uses rule-based fallback)
+            generator_config: Synthetic generator configuration with scoring rules
         """
         self.llm_client = llm_client
+        self.generator_config = generator_config
         logger.info(
-            f"Initialized ProfileSelector (llm_enabled: {llm_client is not None})"
+            f"Initialized ProfileSelector (llm_enabled: {llm_client is not None}, "
+            f"config: {'configured' if generator_config else 'default'})"
         )
 
     async def select_profiles(
@@ -204,7 +215,7 @@ class ProfileSelector:
         profile_config: Dict[str, Any],
     ) -> tuple[float, List[str]]:
         """
-        Score a profile for a given optimizer
+        Score a profile for a given optimizer using configured scoring rules
 
         Args:
             optimizer_name: Name of optimizer
@@ -214,15 +225,121 @@ class ProfileSelector:
         Returns:
             Tuple of (score, reasons)
         """
-        score = 0.0
+
+        # Try using configured scoring rules first
+        if self.generator_config:
+            optimizer_config = self.generator_config.get_optimizer_config(optimizer_name)
+            if optimizer_config and optimizer_config.profile_scoring_rules:
+                logger.debug(f"Using configured scoring rules for {optimizer_name}")
+                return self._score_with_configured_rules(
+                    optimizer_config.profile_scoring_rules,
+                    profile_name,
+                    profile_config,
+                )
+
+        # Fallback to default hardcoded rules
+        logger.debug(f"Using default scoring rules for {optimizer_name}")
+        return self._score_with_default_rules(
+            optimizer_name, profile_name, profile_config
+        )
+
+    def _score_with_configured_rules(
+        self,
+        scoring_rules: List[Any],
+        profile_name: str,
+        profile_config: Dict[str, Any],
+    ) -> tuple[float, List[str]]:
+        """
+        Score profile using configured scoring rules
+
+        Args:
+            scoring_rules: List of ProfileScoringRule objects
+            profile_name: Profile name
+            profile_config: Profile configuration
+
+        Returns:
+            Tuple of (score, reasons)
+        """
+        score = 1.0  # Base score
         reasons = []
 
-        # Base score for all profiles
-        score += 1.0
+        for rule in scoring_rules:
+            if self._check_condition(rule.condition, profile_name, profile_config):
+                score += rule.score_adjustment
+                reasons.append(rule.reason)
+
+        return score, reasons
+
+    def _check_condition(
+        self,
+        condition: Dict[str, Any],
+        profile_name: str,
+        profile_config: Dict[str, Any],
+    ) -> bool:
+        """
+        Check if a scoring rule condition is met
+
+        Condition format examples:
+        - {"field": "embedding_type", "contains": "multi_vector"}
+        - {"field": "pipeline_config.transcribe_audio", "equals": True}
+        - {"profile_name_contains": "colpali"}
+
+        Args:
+            condition: Condition dictionary
+            profile_name: Profile name
+            profile_config: Profile configuration
+
+        Returns:
+            True if condition is met
+        """
+        # Check profile name conditions
+        if "profile_name_contains" in condition:
+            return condition["profile_name_contains"].lower() in profile_name.lower()
+
+        # Check field-based conditions
+        if "field" in condition:
+            field_path = condition["field"].split(".")
+            value = profile_config
+
+            # Navigate nested fields
+            for field_name in field_path:
+                if isinstance(value, dict):
+                    value = value.get(field_name)
+                else:
+                    return False
+
+            # Check condition type
+            if "contains" in condition:
+                return condition["contains"] in str(value)
+            elif "equals" in condition:
+                return value == condition["equals"]
+            elif "in" in condition:
+                return value in condition["in"]
+
+        return False
+
+    def _score_with_default_rules(
+        self,
+        optimizer_name: str,
+        profile_name: str,
+        profile_config: Dict[str, Any],
+    ) -> tuple[float, List[str]]:
+        """
+        Score profile using default hardcoded rules (fallback)
+
+        Args:
+            optimizer_name: Name of optimizer
+            profile_name: Name of profile
+            profile_config: Profile configuration
+
+        Returns:
+            Tuple of (score, reasons)
+        """
+        score = 1.0
+        reasons = []
 
         # Optimizer-specific scoring
         if optimizer_name == "modality":
-            # Prefer diverse embedding types
             if "frame_based" in profile_config.get("embedding_type", ""):
                 score += 2.0
                 reasons.append("frame-based embeddings")
@@ -231,17 +348,14 @@ class ProfileSelector:
                 reasons.append("single-vector efficiency")
 
         elif optimizer_name == "cross_modal":
-            # Prefer multi-vector for fusion
             if "multi_vector" in profile_config.get("embedding_type", "") or "mv" in profile_name:
                 score += 2.0
                 reasons.append("multi-vector fusion capability")
-            # Prefer transcription for cross-modal
             if profile_config.get("pipeline_config", {}).get("transcribe_audio"):
                 score += 1.5
                 reasons.append("audio transcription")
 
         elif optimizer_name == "routing":
-            # Prefer entity-rich content (descriptions + transcripts)
             if profile_config.get("pipeline_config", {}).get("generate_descriptions"):
                 score += 2.0
                 reasons.append("rich descriptions")
@@ -250,7 +364,6 @@ class ProfileSelector:
                 reasons.append("text content")
 
         elif optimizer_name in ["workflow", "unified"]:
-            # Prefer diverse temporal granularity
             if "chunk" in profile_name:
                 score += 1.5
                 reasons.append("temporal chunking")

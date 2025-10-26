@@ -655,7 +655,7 @@ Optimize routing/workflow modules with automatic DSPy optimizer selection:
 
 **Features**:
 - ✅ **Batch Optimization**: Submit Argo Workflows for long-running optimizations
-- ✅ **Synthetic Data**: Auto-generate training data from Vespa backend
+- ✅ **Synthetic Data**: Auto-generate training data from backend storage using DSPy modules
 - ✅ **Automatic Execution**: CronWorkflows check Phoenix traces and optimize when criteria met
 - ✅ **Manual Execution**: Submit workflows on-demand from UI
 
@@ -663,8 +663,8 @@ Optimize routing/workflow modules with automatic DSPy optimizer selection:
 - **Tenant ID**: Target tenant for optimization
 - **Module to Optimize**: Which module to optimize (modality/cross_modal/routing/workflow/unified)
 - **Max Iterations**: Maximum DSPy training iterations (10-500)
-- **Use Synthetic Data**: Generate training data from Vespa backend when insufficient Phoenix traces
-- **Advanced**: Synthetic examples count, Vespa sample size, max profiles
+- **Use Synthetic Data**: Generate training data from backend storage when insufficient Phoenix traces
+- **Advanced**: Synthetic examples count, backend sample size, max profiles
 
 **Workflow Submission**:
 ```bash

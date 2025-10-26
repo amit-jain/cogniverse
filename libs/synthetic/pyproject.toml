@@ -18,6 +18,9 @@ dependencies = [
 
     # FastAPI for REST API
     "fastapi>=0.100.0",
+
+    # DSPy for LLM-driven query generation
+    "dspy-ai>=2.4.0",
 ]
 
 [build-system]

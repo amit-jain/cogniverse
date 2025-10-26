@@ -2,18 +2,22 @@
 
 **Package**: `cogniverse-synthetic`
 
-Generates high-quality training data for all Cogniverse optimizers by sampling real content from Vespa and generating realistic queries and metadata.
+Generates high-quality training data for all Cogniverse optimizers by sampling real content from backend storage and generating realistic queries using DSPy-driven LLM modules with validation.
 
 ## Quick Start
 
 ```python
 from cogniverse_synthetic import SyntheticDataService
 from cogniverse_synthetic.schemas import SyntheticDataRequest
+from cogniverse_vespa import VespaBackend
+
+# Initialize backend (Vespa, Pinecone, etc.)
+backend = VespaBackend(config=backend_config)
 
 # Initialize service
-service = SyntheticDataService()
+service = SyntheticDataService(backend=backend)
 
-# Generate training data
+# Generate training data with DSPy-driven query generation
 request = SyntheticDataRequest(
     optimizer="modality",
     count=100
@@ -21,6 +25,7 @@ request = SyntheticDataRequest(
 
 response = await service.generate(request)
 print(f"Generated {response.count} examples")
+print(f"Used DSPy modules: {response.metadata.get('dspy_modules_used')}")
 ```
 
 ## REST API
@@ -47,9 +52,20 @@ app.include_router(router)
 - `service.py` - Main orchestrator service
 - `api.py` - FastAPI router
 - `profile_selector.py` - LLM/rule-based profile selection
-- `backend_querier.py` - Vespa content sampling
+- `backend_querier.py` - Backend-agnostic content sampling (Vespa, Pinecone, etc.)
+- `dspy_signatures.py` - **DSPy signatures for LLM-driven query generation**
+- `dspy_modules.py` - **Validated DSPy modules with retry logic**
 - `generators/` - Concrete generator implementations (Modality, CrossModal, Routing, Workflow)
 - `utils/` - Pattern extraction and agent inference utilities
+
+## Key Features
+
+- **DSPy-Driven Generation**: Uses DSPy signatures and modules for LLM-driven query generation instead of static templates
+- **Validated Output**: Built-in validation with retry logic (3 attempts) to ensure quality
+- **ChainOfThought Reasoning**: LLM reasons about query generation for better quality
+- **Backend Agnostic**: Works with any vector database through Backend interface (Vespa, Pinecone, Weaviate, etc.)
+- **No Arbitrary Fallbacks**: Raises exceptions when validation fails - no arbitrary defaults
+- **Configuration-Driven**: All behavior externalized to Pydantic configuration classes
 
 ## Documentation
 
@@ -57,6 +73,8 @@ app.include_router(router)
 
 Includes:
 - Architecture diagrams
+- DSPy signatures and modules guide
+- Backend abstraction details
 - API reference
 - Integration guides
 - Development guide

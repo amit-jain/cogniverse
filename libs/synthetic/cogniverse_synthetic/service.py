@@ -3,11 +3,17 @@ Synthetic Data Service
 
 Main orchestrator for synthetic data generation across all optimizer types.
 Coordinates ProfileSelector, BackendQuerier, and Generators.
+Configuration-driven architecture for backend-agnostic operation.
 """
 
 import logging
 from typing import Any, Dict, List, Optional
 
+from cogniverse_core.config.unified_config import (
+    BackendConfig,
+    SyntheticGeneratorConfig,
+)
+from cogniverse_core.interfaces.backend import Backend
 from pydantic import BaseModel
 
 from cogniverse_synthetic.backend_querier import BackendQuerier
@@ -35,12 +41,22 @@ class SyntheticDataService:
 
     Orchestrates the entire synthetic data generation pipeline:
     1. Profile Selection: Choose appropriate backend profiles
-    2. Backend Querying: Sample relevant content from Vespa
-    3. Data Generation: Generate synthetic examples using generators
+    2. Backend Querying: Sample relevant content using Backend interface
+    3. Data Generation: Generate synthetic examples using configured generators
     4. Validation: Ensure quality and schema compliance
 
+    Configuration-driven architecture allows backend-agnostic operation with
+    custom field mappings, query templates, and profile scoring rules.
+
     Example:
-        >>> service = SyntheticDataService(vespa_client=client)
+        >>> from cogniverse_core.config.unified_config import BackendConfig, SyntheticGeneratorConfig
+        >>> backend_config = BackendConfig(...)
+        >>> generator_config = SyntheticGeneratorConfig(...)
+        >>> service = SyntheticDataService(
+        ...     backend=backend,
+        ...     backend_config=backend_config,
+        ...     generator_config=generator_config
+        ... )
         >>> request = SyntheticDataRequest(
         ...     optimizer_name="modality",
         ...     target_count=100,
@@ -52,52 +68,79 @@ class SyntheticDataService:
 
     def __init__(
         self,
-        vespa_client: Optional[Any] = None,
-        backend_config: Optional[Dict[str, Any]] = None,
+        backend: Optional[Backend] = None,
+        backend_config: Optional[BackendConfig] = None,
+        generator_config: Optional[SyntheticGeneratorConfig] = None,
         llm_client: Optional[Any] = None,
-        vespa_url: str = "http://localhost",
-        vespa_port: int = 8080,
     ):
         """
-        Initialize SyntheticDataService
+        Initialize SyntheticDataService with configuration
 
         Args:
-            vespa_client: Optional Vespa client for backend querying
-            backend_config: Optional backend configuration dictionary
+            backend: Backend interface instance (None for mock mode)
+            backend_config: Backend configuration with profiles
+            generator_config: Synthetic generator configuration
             llm_client: Optional LLM client for profile selection (if None, uses rule-based)
-            vespa_url: Vespa URL for backend querying
-            vespa_port: Vespa port for backend querying
         """
-        self.vespa_client = vespa_client
-        self.backend_config = backend_config or {}
+        self.backend = backend
+        self.backend_config = backend_config or BackendConfig()
+        self.generator_config = generator_config or SyntheticGeneratorConfig()
 
-        # Initialize components
-        self.profile_selector = ProfileSelector(llm_client=llm_client)
-        self.backend_querier = BackendQuerier(vespa_url=vespa_url, vespa_port=vespa_port)
+        # Get field mappings from generator config
+        field_mappings = self.generator_config.field_mappings
 
-        # Set vespa client if provided
-        if vespa_client:
-            self.backend_querier.set_vespa_client(vespa_client)
+        # Initialize components with configuration
+        self.profile_selector = ProfileSelector(
+            llm_client=llm_client,
+            generator_config=self.generator_config
+        )
 
-        self.pattern_extractor = PatternExtractor()
+        self.backend_querier = BackendQuerier(
+            backend=self.backend,
+            backend_config=self.backend_config,
+            field_mappings=field_mappings
+        )
+
+        self.pattern_extractor = PatternExtractor(field_mappings=field_mappings)
         self.agent_inferrer = AgentInferrer()
 
-        # Initialize generator instances
-        self.generators = {
-            "ModalityGenerator": ModalityGenerator(
-                pattern_extractor=self.pattern_extractor,
-                agent_inferrer=self.agent_inferrer
-            ),
-            "CrossModalGenerator": CrossModalGenerator(),
-            "RoutingGenerator": RoutingGenerator(
-                pattern_extractor=self.pattern_extractor,
-                agent_inferrer=self.agent_inferrer
-            ),
-            "WorkflowGenerator": WorkflowGenerator(),
-        }
+        # Initialize generator instances with optimizer-specific configs
+        self.generators = {}
+
+        # ModalityGenerator - requires configuration
+        modality_config = self.generator_config.get_optimizer_config("modality")
+        if not modality_config:
+            raise ValueError(
+                "ModalityGenerator requires optimizer configuration. "
+                "SyntheticGeneratorConfig must include optimizer_configs['modality'] with query_templates and agent_mappings."
+            )
+        self.generators["ModalityGenerator"] = ModalityGenerator(
+            pattern_extractor=self.pattern_extractor,
+            agent_inferrer=self.agent_inferrer,
+            optimizer_config=modality_config
+        )
+
+        # RoutingGenerator - requires configuration
+        routing_config = self.generator_config.get_optimizer_config("routing")
+        if not routing_config:
+            raise ValueError(
+                "RoutingGenerator requires optimizer configuration. "
+                "SyntheticGeneratorConfig must include optimizer_configs['routing'] with query_templates."
+            )
+        self.generators["RoutingGenerator"] = RoutingGenerator(
+            pattern_extractor=self.pattern_extractor,
+            agent_inferrer=self.agent_inferrer,
+            optimizer_config=routing_config
+        )
+
+        # CrossModalGenerator and WorkflowGenerator (no config yet)
+        self.generators["CrossModalGenerator"] = CrossModalGenerator()
+        self.generators["WorkflowGenerator"] = WorkflowGenerator()
 
         logger.info(
-            f"Initialized SyntheticDataService with {len(self.generators)} generators"
+            f"Initialized SyntheticDataService with {len(self.generators)} generators "
+            f"(backend: {self.backend_config.backend_type}, "
+            f"config: {'configured' if generator_config else 'default'})"
         )
 
     async def generate(
@@ -166,14 +209,15 @@ class SyntheticDataService:
         config: Any
     ) -> tuple[List[str], str]:
         """Select appropriate backend profiles for the optimizer"""
-        # Use explicitly provided profiles if available (from request - but this field doesn't exist in current schema)
-        # If we need this, we'll add it later
-
-        # Use ProfileSelector
-        if self.backend_config.get("video_processing_profiles"):
-            available_profiles = self.backend_config["video_processing_profiles"]
+        # Use ProfileSelector with backend config profiles
+        if self.backend_config.profiles:
+            # Convert BackendProfileConfig to dict format expected by ProfileSelector
+            available_profiles = {
+                name: profile.to_dict() if hasattr(profile, 'to_dict') else {}
+                for name, profile in self.backend_config.profiles.items()
+            }
         else:
-            # Fallback to common profiles with empty config
+            # Use default profiles with empty config
             available_profiles = {
                 "video_colpali_smol500_mv_frame": {},
                 "video_videoprism_base_mv_chunk_30s": {},
@@ -203,8 +247,9 @@ class SyntheticDataService:
         # Otherwise, use simple profile configs with just the name
         profile_configs = []
         for profile_name in profiles:
-            if self.backend_config.get("video_processing_profiles", {}).get(profile_name):
-                profile_config = self.backend_config["video_processing_profiles"][profile_name].copy()
+            if profile_name in self.backend_config.profiles:
+                profile = self.backend_config.profiles[profile_name]
+                profile_config = profile.to_dict() if hasattr(profile, 'to_dict') else {}
                 profile_config["profile_name"] = profile_name
             else:
                 profile_config = {"profile_name": profile_name}

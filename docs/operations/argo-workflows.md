@@ -296,7 +296,7 @@ Comprehensive optimization of all routing/workflow modules when sufficient annot
   - Routing optimizer (entity-based routing)
   - Workflow optimizer (orchestration)
   - DSPy optimizer (GEPA by default)
-- Generates synthetic training data from Vespa backend
+- Generates synthetic training data from backend storage using DSPy modules
 - Auto-selects DSPy optimizer based on data size
 
 ```bash

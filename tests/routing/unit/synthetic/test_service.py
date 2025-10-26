@@ -5,8 +5,44 @@ Tests the main service orchestrator end-to-end.
 """
 
 import pytest
+from cogniverse_core.config.unified_config import (
+    AgentMappingRule,
+    DSPyModuleConfig,
+    OptimizerGenerationConfig,
+    SyntheticGeneratorConfig,
+)
 from cogniverse_synthetic.schemas import SyntheticDataRequest
 from cogniverse_synthetic.service import SyntheticDataService
+
+
+def create_test_generator_config():
+    """Create test generator configuration with all required optimizer configs"""
+    return SyntheticGeneratorConfig(
+        optimizer_configs={
+            "modality": OptimizerGenerationConfig(
+                optimizer_type="modality",
+                dspy_modules={
+                    "query_generator": DSPyModuleConfig(
+                        signature_class="cogniverse_synthetic.dspy_signatures.GenerateModalityQuery",
+                        module_type="Predict",
+                    )
+                },
+                agent_mappings=[
+                    AgentMappingRule(modality="VIDEO", agent_name="video_search_agent"),
+                    AgentMappingRule(modality="DOCUMENT", agent_name="document_search_agent"),
+                ],
+            ),
+            "routing": OptimizerGenerationConfig(
+                optimizer_type="routing",
+                dspy_modules={
+                    "query_generator": DSPyModuleConfig(
+                        signature_class="cogniverse_synthetic.dspy_signatures.GenerateEntityQuery",
+                        module_type="Predict",
+                    )
+                },
+            ),
+        }
+    )
 
 
 class TestSyntheticDataService:
@@ -15,7 +51,7 @@ class TestSyntheticDataService:
     @pytest.mark.asyncio
     async def test_service_initialization(self):
         """Test service can be initialized"""
-        service = SyntheticDataService()
+        service = SyntheticDataService(generator_config=create_test_generator_config())
         assert service.profile_selector is not None
         assert service.backend_querier is not None
         assert service.pattern_extractor is not None
@@ -23,28 +59,30 @@ class TestSyntheticDataService:
         assert len(service.generators) == 4
 
     @pytest.mark.asyncio
-    async def test_service_with_vespa_client(self):
-        """Test service can be initialized with Vespa client"""
-        mock_client = {"type": "mock_vespa"}
-        service = SyntheticDataService(vespa_client=mock_client)
-        assert service.vespa_client == mock_client
+    async def test_service_with_backend(self):
+        """Test service can be initialized with Backend interface"""
+        mock_backend = type('MockBackend', (), {'query_metadata_documents': lambda *args, **kwargs: []})()
+        service = SyntheticDataService(
+            backend=mock_backend,
+            generator_config=create_test_generator_config()
+        )
+        assert service.backend == mock_backend
 
     @pytest.mark.asyncio
     async def test_service_with_backend_config(self):
         """Test service with backend configuration"""
-        config = {
-            "video_processing_profiles": {
-                "profile1": {},
-                "profile2": {}
-            }
-        }
-        service = SyntheticDataService(backend_config=config)
+        from cogniverse_core.config.unified_config import BackendConfig
+        config = BackendConfig(profiles={})
+        service = SyntheticDataService(
+            backend_config=config,
+            generator_config=create_test_generator_config()
+        )
         assert service.backend_config == config
 
     @pytest.mark.asyncio
     async def test_generate_modality_examples(self):
         """Test generating modality examples"""
-        service = SyntheticDataService()
+        service = SyntheticDataService(generator_config=create_test_generator_config())
 
         request = SyntheticDataRequest(
             optimizer="modality",
@@ -65,7 +103,7 @@ class TestSyntheticDataService:
     @pytest.mark.asyncio
     async def test_generate_cross_modal_examples(self):
         """Test generating cross-modal fusion examples"""
-        service = SyntheticDataService()
+        service = SyntheticDataService(generator_config=create_test_generator_config())
 
         request = SyntheticDataRequest(
             optimizer="cross_modal",
@@ -82,7 +120,7 @@ class TestSyntheticDataService:
     @pytest.mark.asyncio
     async def test_generate_routing_examples(self):
         """Test generating routing experience examples"""
-        service = SyntheticDataService()
+        service = SyntheticDataService(generator_config=create_test_generator_config())
 
         request = SyntheticDataRequest(
             optimizer="routing",
@@ -99,7 +137,7 @@ class TestSyntheticDataService:
     @pytest.mark.asyncio
     async def test_generate_workflow_examples(self):
         """Test generating workflow execution examples"""
-        service = SyntheticDataService()
+        service = SyntheticDataService(generator_config=create_test_generator_config())
 
         request = SyntheticDataRequest(
             optimizer="workflow",
@@ -116,7 +154,7 @@ class TestSyntheticDataService:
     @pytest.mark.asyncio
     async def test_generate_with_custom_sample_size(self):
         """Test generation with custom sample size"""
-        service = SyntheticDataService()
+        service = SyntheticDataService(generator_config=create_test_generator_config())
 
         request = SyntheticDataRequest(
             optimizer="modality",
@@ -132,7 +170,7 @@ class TestSyntheticDataService:
     @pytest.mark.asyncio
     async def test_generate_with_max_profiles(self):
         """Test generation with max profiles setting"""
-        service = SyntheticDataService()
+        service = SyntheticDataService(generator_config=create_test_generator_config())
 
         request = SyntheticDataRequest(
             optimizer="modality",
@@ -148,7 +186,7 @@ class TestSyntheticDataService:
     @pytest.mark.asyncio
     async def test_generate_with_strategies(self):
         """Test generation with specific sampling strategies"""
-        service = SyntheticDataService()
+        service = SyntheticDataService(generator_config=create_test_generator_config())
 
         request = SyntheticDataRequest(
             optimizer="routing",
@@ -163,7 +201,7 @@ class TestSyntheticDataService:
     @pytest.mark.asyncio
     async def test_generate_invalid_optimizer(self):
         """Test generation with invalid optimizer name"""
-        service = SyntheticDataService()
+        service = SyntheticDataService(generator_config=create_test_generator_config())
 
         request = SyntheticDataRequest(
             optimizer="nonexistent_optimizer",
@@ -176,7 +214,7 @@ class TestSyntheticDataService:
     @pytest.mark.asyncio
     async def test_get_optimizer_info(self):
         """Test getting optimizer information"""
-        service = SyntheticDataService()
+        service = SyntheticDataService(generator_config=create_test_generator_config())
 
         info = service.get_optimizer_info("modality")
 
@@ -192,7 +230,7 @@ class TestSyntheticDataService:
     @pytest.mark.asyncio
     async def test_get_optimizer_info_all_optimizers(self):
         """Test getting info for all optimizers"""
-        service = SyntheticDataService()
+        service = SyntheticDataService(generator_config=create_test_generator_config())
 
         for optimizer_name in ["modality", "cross_modal", "routing", "workflow"]:
             info = service.get_optimizer_info(optimizer_name)
@@ -204,7 +242,7 @@ class TestSyntheticDataService:
     @pytest.mark.asyncio
     async def test_list_all_optimizers(self):
         """Test listing all available optimizers"""
-        service = SyntheticDataService()
+        service = SyntheticDataService(generator_config=create_test_generator_config())
 
         all_optimizers = service.list_all_optimizers()
 
@@ -225,7 +263,7 @@ class TestSyntheticDataService:
         # This test validates the entire pipeline:
         # Request -> Profile Selection -> Backend Query -> Generation -> Response
 
-        service = SyntheticDataService()
+        service = SyntheticDataService(generator_config=create_test_generator_config())
 
         request = SyntheticDataRequest(
             optimizer="routing",
@@ -259,7 +297,7 @@ class TestServiceErrorHandling:
     @pytest.mark.asyncio
     async def test_invalid_optimizer_in_generate(self):
         """Test error handling for invalid optimizer"""
-        service = SyntheticDataService()
+        service = SyntheticDataService(generator_config=create_test_generator_config())
 
         request = SyntheticDataRequest(
             optimizer="invalid_name",
@@ -275,7 +313,7 @@ class TestServiceErrorHandling:
     @pytest.mark.asyncio
     async def test_invalid_optimizer_in_get_info(self):
         """Test error handling for get_optimizer_info"""
-        service = SyntheticDataService()
+        service = SyntheticDataService(generator_config=create_test_generator_config())
 
         with pytest.raises(ValueError) as exc_info:
             service.get_optimizer_info("nonexistent")
@@ -289,14 +327,13 @@ class TestServiceWithBackendConfig:
     @pytest.mark.asyncio
     async def test_service_uses_backend_config_profiles(self):
         """Test that service uses profiles from backend config"""
-        config = {
-            "video_processing_profiles": {
-                "custom_profile_1": {"model": "test1"},
-                "custom_profile_2": {"model": "test2"},
-            }
-        }
+        from cogniverse_core.config.unified_config import BackendConfig
+        config = BackendConfig(profiles={})
 
-        service = SyntheticDataService(backend_config=config)
+        service = SyntheticDataService(
+            backend_config=config,
+            generator_config=create_test_generator_config()
+        )
 
         request = SyntheticDataRequest(
             optimizer="modality",
@@ -311,7 +348,7 @@ class TestServiceWithBackendConfig:
     @pytest.mark.asyncio
     async def test_service_without_backend_config_uses_defaults(self):
         """Test service falls back to default profiles when no config"""
-        service = SyntheticDataService()
+        service = SyntheticDataService(generator_config=create_test_generator_config())
 
         request = SyntheticDataRequest(
             optimizer="modality",

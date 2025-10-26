@@ -2,7 +2,7 @@
 
 **Package**: `libs/synthetic` (cogniverse-synthetic)
 
-The synthetic data generation system creates high-quality training examples for all Cogniverse optimizers by sampling real content from Vespa and generating realistic queries and metadata.
+The synthetic data generation system creates high-quality training examples for all Cogniverse optimizers by sampling real content from backend storage and generating realistic queries using DSPy-driven LLM modules with validation.
 
 ## Overview
 
@@ -30,7 +30,7 @@ graph TB
         Service --> Generators
 
         ProfileSelector[ProfileSelector<br/>LLM or Rule-based]
-        BackendQuerier[BackendQuerier<br/>Vespa Sampling]
+        BackendQuerier[BackendQuerier<br/>Backend Sampling]
 
         subgraph "Generators"
             ModalityGen[ModalityGenerator]
@@ -49,14 +49,14 @@ graph TB
     end
 
     subgraph "External Systems"
-        Vespa[(Vespa<br/>Vector DB)]
+        Backend[(Backend<br/>Vespa/Other)]
         LLM[LLM Client<br/>Optional]
         BackendConfig[Backend Config<br/>Profiles]
     end
 
     ProfileSelector -.-> LLM
     ProfileSelector --> BackendConfig
-    BackendQuerier --> Vespa
+    BackendQuerier --> Backend
 
     subgraph "Data Flow"
         Request[SyntheticDataRequest] --> Service
@@ -66,7 +66,7 @@ graph TB
     style Service fill:#4A90E2,stroke:#2E5C8A,color:#fff
     style Generators fill:#7ED321,stroke:#5FA319,color:#000
     style Utilities fill:#F5A623,stroke:#C4841D,color:#000
-    style Vespa fill:#BD10E0,stroke:#8B0CA6,color:#fff
+    style Backend fill:#BD10E0,stroke:#8B0CA6,color:#fff
 ```
 
 ### Generation Pipeline
@@ -79,7 +79,8 @@ sequenceDiagram
     participant BQ as BackendQuerier
     participant Gen as Generator
     participant Utils as PatternExtractor
-    participant Vespa as Vespa DB
+    participant Backend as Backend DB
+    participant DSPy as DSPy Modules
 
     API->>Service: generate(request)
 
@@ -90,8 +91,8 @@ sequenceDiagram
 
     Note over Service: Step 2: Content Sampling
     Service->>BQ: query_profiles(profiles, strategy)
-    BQ->>Vespa: YQL queries per profile
-    Vespa-->>BQ: sampled documents
+    BQ->>Backend: Query via Backend interface
+    Backend-->>BQ: sampled documents
     BQ-->>Service: sampled_content
 
     Note over Service: Step 3: Data Generation
@@ -100,7 +101,8 @@ sequenceDiagram
     Gen->>Utils: extract_entities(content)
     Gen->>Utils: infer_agents(characteristics)
     Utils-->>Gen: patterns
-    Gen->>Gen: generate examples<br/>using templates
+    Gen->>DSPy: Generate queries with<br/>validation & reasoning
+    DSPy-->>Gen: validated queries
     Gen-->>Service: List[BaseModel]
 
     Note over Service: Step 4: Response
@@ -152,13 +154,15 @@ profiles, reasoning = await selector.select_profiles(
 - **Rule-based**: Heuristic scoring with diversity selection (fallback)
 
 #### 4. BackendQuerier (`backend_querier.py`)
-Samples content from Vespa with multiple strategies:
+Samples content from backend storage (Vespa or other) using Backend interface:
 
 ```python
 from cogniverse_synthetic.backend_querier import BackendQuerier
+from cogniverse_vespa import VespaBackend
 
-querier = BackendQuerier(vespa_url="http://localhost", vespa_port=8080)
-querier.set_vespa_client(vespa_client)
+# Initialize with backend instance
+backend = VespaBackend(config=backend_config)
+querier = BackendQuerier(backend=backend)
 
 samples = await querier.query_profiles(
     profile_configs=[{"profile_name": "video_colpali_smol500_mv_frame"}],
@@ -175,17 +179,33 @@ samples = await querier.query_profiles(
 - `by_modality` - Specific modality filtering
 - `cross_modal_pairs` - Paired content from different modalities
 
+**Backend Abstraction**: Uses `Backend` interface to support any vector database (Vespa, Pinecone, Weaviate, etc.)
+
 #### 5. Generators (`generators/`)
 Four concrete generators implementing the `BaseGenerator` interface:
 
 **ModalityGenerator** (`generators/modality.py`):
 ```python
-# Generates queries like:
+# Uses DSPy modules to generate modality-specific queries
+# Example DSPy-generated queries:
 # "show me TensorFlow videos"
 # "find machine learning documents"
 
+from cogniverse_core.config.unified_config import OptimizerGenerationConfig, DSPyModuleConfig
+
+modality_config = OptimizerGenerationConfig(
+    optimizer_type="modality",
+    dspy_modules={
+        "query_generator": DSPyModuleConfig(
+            signature_class="cogniverse_synthetic.dspy_signatures.GenerateModalityQuery",
+            module_type="ChainOfThought"
+        )
+    }
+)
+
+modality_gen = ModalityGenerator(optimizer_config=modality_config)
 examples = await modality_gen.generate(
-    sampled_content=vespa_samples,
+    sampled_content=backend_samples,
     target_count=100,
     modality="VIDEO"
 )
@@ -199,7 +219,7 @@ examples = await modality_gen.generate(
 # fusion_context: {"agreement": 0.8, "ambiguity": 0.2, ...}
 
 examples = await cross_modal_gen.generate(
-    sampled_content=vespa_samples,
+    sampled_content=backend_samples,
     target_count=100
 )
 # Returns: List[FusionHistorySchema]
@@ -207,15 +227,31 @@ examples = await cross_modal_gen.generate(
 
 **RoutingGenerator** (`generators/routing.py`):
 ```python
-# Generates entity-annotated queries:
-# "TensorFlow(TECHNOLOGY) object detection(TECHNIQUE)"
+# Uses ValidatedEntityQueryGenerator with ChainOfThought and retry logic
+# Generates entity-annotated queries guaranteed to contain entities:
+# Query: "find TensorFlow object detection tutorial"
+# Enhanced: "find TensorFlow(TECHNOLOGY) object detection tutorial"
 # entities: [{"text": "TensorFlow", "type": "TECHNOLOGY"}]
 
+from cogniverse_core.config.unified_config import OptimizerGenerationConfig, DSPyModuleConfig
+
+routing_config = OptimizerGenerationConfig(
+    optimizer_type="routing",
+    dspy_modules={
+        "query_generator": DSPyModuleConfig(
+            signature_class="cogniverse_synthetic.dspy_signatures.GenerateEntityQuery",
+            module_type="ChainOfThought"  # LLM reasons about which entities to include
+        )
+    }
+)
+
+routing_gen = RoutingGenerator(optimizer_config=routing_config)
 examples = await routing_gen.generate(
-    sampled_content=vespa_samples,
+    sampled_content=backend_samples,
     target_count=100
 )
 # Returns: List[RoutingExperienceSchema]
+# Each example validated to contain at least one entity (3 retry attempts)
 ```
 
 **WorkflowGenerator** (`generators/workflow.py`):
@@ -225,7 +261,7 @@ examples = await routing_gen.generate(
 # Complex: ["video_search_agent", "summarizer", "detailed_report"]
 
 examples = await workflow_gen.generate(
-    sampled_content=vespa_samples,
+    sampled_content=backend_samples,
     target_count=100
 )
 # Returns: List[WorkflowExecutionSchema]
@@ -246,6 +282,77 @@ examples = await workflow_gen.generate(
 - Generate workflow sequences
 - Validate agent sequences
 
+#### 7. DSPy Signatures and Modules
+
+**DSPy Signatures** (`dspy_signatures.py`):
+
+Defines the interface between generators and LLMs for query generation. Signatures guide LLM behavior through field descriptions.
+
+```python
+class GenerateEntityQuery(dspy.Signature):
+    """Generate search query that MUST include at least one of the provided entities"""
+
+    topics: str = dspy.InputField(
+        desc="Comma-separated topics from content"
+    )
+    entities: str = dspy.InputField(
+        desc="Comma-separated named entities - YOUR QUERY MUST MENTION AT LEAST ONE OF THESE"
+    )
+    entity_types: str = dspy.InputField(
+        desc="Comma-separated entity types (TECHNOLOGY, ORGANIZATION, CONCEPT)"
+    )
+
+    reasoning: str = dspy.OutputField(
+        desc="Brief explanation of which entity/entities you're including and why"
+    )
+    query: str = dspy.OutputField(
+        desc="Natural query that explicitly mentions at least one entity"
+    )
+```
+
+**Available Signatures**:
+- `GenerateModalityQuery` - Generate modality-specific queries
+- `GenerateEntityQuery` - Generate entity-rich queries with reasoning
+- `InferAgentFromModality` - Infer correct agent for modality/query
+
+**DSPy Modules** (`dspy_modules.py`):
+
+Validated query generators with built-in quality checks and retry logic.
+
+```python
+class ValidatedEntityQueryGenerator(dspy.Module):
+    """
+    Entity query generator with validation.
+    Uses ChainOfThought for better quality - LLM reasons about which entities to include.
+    Validates output and retries if needed (max 3 attempts).
+    """
+
+    def __init__(self, max_retries: int = 3):
+        super().__init__()
+        self.max_retries = max_retries
+        self.generate = dspy.ChainOfThought(GenerateEntityQuery)
+
+    def forward(self, topics: str, entities: str, entity_types: str) -> dspy.Prediction:
+        # Retry loop with validation
+        for attempt in range(self.max_retries):
+            result = self.generate(topics=topics, entities=entities, entity_types=entity_types)
+
+            # Validate: at least one entity must appear in query (case-insensitive)
+            query_lower = result.query.lower()
+            if any(entity.lower() in query_lower for entity in entity_list):
+                return result  # Valid query found!
+
+        # After max retries, raise error (no arbitrary fallbacks)
+        raise ValueError(f"Failed to generate valid query after {self.max_retries} attempts")
+```
+
+**Key Features**:
+- **ChainOfThought**: LLM reasons before generating (better quality)
+- **Validation**: Ensures output meets requirements (e.g., entity presence)
+- **Retry Logic**: Up to 3 attempts to generate valid output
+- **No Fallbacks**: Raises exception if validation fails (no arbitrary defaults)
+- **Optimization Ready**: Can be compiled with DSPy optimizers (BootstrapFewShot, MIPRO, etc.)
+
 ## Usage
 
 ### Python API
@@ -253,21 +360,22 @@ examples = await workflow_gen.generate(
 ```python
 from cogniverse_synthetic import SyntheticDataService
 from cogniverse_synthetic.schemas import SyntheticDataRequest
+from cogniverse_vespa import VespaBackend
+
+# Initialize backend
+backend = VespaBackend(config=backend_config)
 
 # Initialize service
 service = SyntheticDataService(
-    vespa_client=vespa_client,  # Optional
-    backend_config=config,       # Optional
-    llm_client=llm_client,       # Optional for profile selection
-    vespa_url="http://localhost",
-    vespa_port=8080
+    backend=backend,            # Backend interface (Vespa, Pinecone, etc.)
+    llm_client=llm_client,      # Optional for profile selection
 )
 
 # Generate training data
 request = SyntheticDataRequest(
     optimizer="cross_modal",
     count=100,
-    vespa_sample_size=200,
+    sample_size=200,            # Number of documents to sample from backend
     strategies=["diverse"],
     max_profiles=3,
     tenant_id="default"
@@ -289,14 +397,13 @@ for example in response.data:
 ```python
 from fastapi import FastAPI
 from cogniverse_synthetic import router, configure_service
+from cogniverse_vespa import VespaBackend
 
 app = FastAPI()
 
 # Configure service (optional)
-configure_service(
-    vespa_client=vespa_client,
-    backend_config=config
-)
+backend = VespaBackend(config=backend_config)
+configure_service(backend=backend)
 
 # Mount router
 app.include_router(router)
@@ -545,9 +652,10 @@ async def test_new_optimizer_generator():
 
 - **Batch Size**: Use `batch/generate` endpoint for large datasets
 - **Profile Selection**: Rule-based is faster; LLM-based is higher quality
-- **Vespa Sampling**: Larger `vespa_sample_size` = more diverse patterns
+- **Backend Sampling**: Larger `sample_size` = more diverse patterns
 - **Caching**: Profile selection reasoning is not cached (stateless)
 - **Concurrency**: All generators are async-ready
+- **DSPy Optimization**: Compiled modules faster than uncompiled (use `compiled_path` in config)
 
 ## Troubleshooting
 
@@ -555,12 +663,20 @@ async def test_new_optimizer_generator():
 - **Fix**: Check `OPTIMIZER_REGISTRY.keys()` for valid names
 
 **Issue**: Empty `sampled_content` from BackendQuerier
-- **Fix**: Ensure Vespa client is configured with `set_vespa_client()`
-- **Note**: Falls back to mock data if no client
+- **Fix**: Ensure `Backend` instance is configured and passed to service
+- **Note**: Falls back to mock data if no backend provided
 
 **Issue**: Profile selection returns unexpected profiles
 - **Fix**: Provide `backend_config` with actual profile definitions
 - **Note**: System uses defaults if no config provided
+
+**Issue**: `ValueError: RoutingGenerator requires optimizer_config`
+- **Fix**: Provide `OptimizerGenerationConfig` with DSPy modules configuration
+- **Note**: Configuration is required - no defaults or fallbacks
+
+**Issue**: `ValueError: Failed to generate query containing entities after 3 attempts`
+- **Fix**: Check DSPy LM is configured correctly (`dspy.configure(lm=...)`)
+- **Note**: ValidatedEntityQueryGenerator retries 3 times before raising error
 
 **Issue**: Tests fail with import errors
 - **Fix**: Reinstall package: `uv pip install -e libs/synthetic`

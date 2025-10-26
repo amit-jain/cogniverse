@@ -3,12 +3,15 @@ Pattern Extraction Utilities
 
 Extract patterns from content for synthetic data generation.
 Includes topic extraction, entity recognition, and temporal pattern detection.
+Uses field mappings for schema-agnostic pattern extraction.
 """
 
 import logging
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Optional, Set
+
+from cogniverse_core.config.unified_config import FieldMappingConfig
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +25,8 @@ class PatternExtractor:
     - Entities (capitalized terms, technical names)
     - Temporal patterns (years, recency indicators)
     - Content types (tutorial, guide, overview, etc.)
+
+    Uses field mappings to work with any backend schema.
     """
 
     # Common content type indicators
@@ -48,9 +53,15 @@ class PatternExtractor:
         "intermediate",
     ]
 
-    def __init__(self):
-        """Initialize pattern extractor"""
-        logger.info("Initialized PatternExtractor")
+    def __init__(self, field_mappings: Optional[FieldMappingConfig] = None):
+        """
+        Initialize pattern extractor with field mappings
+
+        Args:
+            field_mappings: Field mapping configuration for extracting fields (uses default if None)
+        """
+        self.field_mappings = field_mappings or FieldMappingConfig()
+        logger.info("Initialized PatternExtractor with field mappings")
 
     def extract(self, content_samples: List[Dict[str, Any]]) -> Dict[str, List[str]]:
         """
@@ -92,6 +103,43 @@ class PatternExtractor:
 
         return patterns
 
+    def _get_text_from_sample(
+        self, sample: Dict[str, Any], field_types: List[str]
+    ) -> str:
+        """
+        Extract text from sample using field mappings
+
+        Args:
+            sample: Content sample
+            field_types: Types of fields to extract ('topic', 'description', 'transcript')
+
+        Returns:
+            Combined text from specified field types
+        """
+        texts = []
+
+        for field_type in field_types:
+            if field_type == "topic":
+                # Try all configured topic fields
+                for field_name in self.field_mappings.topic_fields:
+                    if field_name in sample and sample[field_name]:
+                        texts.append(str(sample[field_name]))
+                        break
+            elif field_type == "description":
+                # Try all configured description fields
+                for field_name in self.field_mappings.description_fields:
+                    if field_name in sample and sample[field_name]:
+                        texts.append(str(sample[field_name]))
+                        break
+            elif field_type == "transcript":
+                # Try all configured transcript fields
+                for field_name in self.field_mappings.transcript_fields:
+                    if field_name in sample and sample[field_name]:
+                        texts.append(str(sample[field_name]))
+                        break
+
+        return " ".join(texts)
+
     def extract_topics(self, content_samples: List[Dict[str, Any]]) -> List[str]:
         """
         Extract topics from content titles and descriptions
@@ -107,15 +155,10 @@ class PatternExtractor:
         topics: Set[str] = set()
 
         for sample in content_samples:
-            # Get text from various fields
-            title = sample.get("video_title", sample.get("title", "")).lower()
-            description = sample.get(
-                "segment_description", sample.get("description", "")
+            # Get text from configured fields
+            text = self._get_text_from_sample(
+                sample, ["topic", "description", "transcript"]
             ).lower()
-            transcript = sample.get("audio_transcript", "").lower()
-
-            # Combine all text
-            text = f"{title} {description} {transcript}"
 
             # Extract words
             words = re.findall(r"\b[a-z]+\b", text)
@@ -148,15 +191,10 @@ class PatternExtractor:
         entities: Set[str] = set()
 
         for sample in content_samples:
-            # Get text from various fields
-            title = sample.get("video_title", sample.get("title", ""))
-            description = sample.get(
-                "segment_description", sample.get("description", "")
+            # Get text from configured fields
+            text = self._get_text_from_sample(
+                sample, ["topic", "description", "transcript"]
             )
-            transcript = sample.get("audio_transcript", "")
-
-            # Combine all text
-            text = f"{title} {description} {transcript}"
 
             # Extract capitalized words and phrases (likely entities)
             # Matches: "TensorFlow", "Neural Networks", "Deep Learning"
@@ -187,14 +225,10 @@ class PatternExtractor:
         temporal: Set[str] = set()
 
         for sample in content_samples:
-            # Get text from various fields
-            title = sample.get("video_title", sample.get("title", ""))
-            description = sample.get(
-                "segment_description", sample.get("description", "")
-            )
+            # Get text from configured fields
+            text = self._get_text_from_sample(sample, ["topic", "description"])
 
             # Extract years (2020-2029)
-            text = f"{title} {description}"
             years = re.findall(r"\b(202\d)\b", text)
             temporal.update(years)
 
@@ -250,13 +284,8 @@ class PatternExtractor:
         content_types: Set[str] = set()
 
         for sample in content_samples:
-            # Get text from various fields
-            title = sample.get("video_title", sample.get("title", "")).lower()
-            description = sample.get(
-                "segment_description", sample.get("description", "")
-            ).lower()
-
-            text = f"{title} {description}"
+            # Get text from configured fields
+            text = self._get_text_from_sample(sample, ["topic", "description"]).lower()
 
             # Check for content type keywords
             for keyword in self.CONTENT_TYPE_KEYWORDS:

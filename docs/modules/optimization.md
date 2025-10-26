@@ -123,7 +123,7 @@ graph TB
 
     SpanCollection --> XGBoost[XGBoost Meta-Models Decision Making<br/>1. TrainingDecisionModel:<br/>• should_train context → bool + expected_improvement<br/>• Features: sample_count, success_rate, days_since_training<br/><br/>2. TrainingStrategyModel:<br/>• select_strategy context → SKIP / SYNTHETIC / HYBRID / REAL<br/>• Progressive strategies based on data availability]
 
-    XGBoost --> SyntheticService[Synthetic Data Generation libs/synthetic<br/>• SyntheticDataService with modular generators<br/>• Profile selector chooses backend schemas<br/>• BackendQuerier samples real Vespa content<br/>• Pattern extraction + agent inference<br/>• Generates ModalityExampleSchema objects]
+    XGBoost --> SyntheticService[Synthetic Data Generation libs/synthetic<br/>• SyntheticDataService with modular generators<br/>• Profile selector chooses backend schemas<br/>• BackendQuerier samples backend content using DSPy modules<br/>• Pattern extraction + agent inference<br/>• Generates ModalityExampleSchema objects]
 
     SyntheticService --> Training[Modality-Specific DSPy Module Training<br/>• ModalityRoutingSignature query, modality → agent + confidence<br/>• ChainOfThought reasoning<br/>• MIPROv2 if ≥50 examples or BootstrapFewShot if <50<br/>• Save trained models per modality]
 
@@ -806,7 +806,7 @@ from cogniverse_agents.search.multi_modal_reranker import QueryModality
 optimizer = ModalityOptimizer(
     tenant_id="production",
     model_dir=Path("outputs/models/modality"),
-    vespa_client=vespa_client  # For synthetic data generation
+    backend=backend  # For synthetic data generation
 )
 
 # Optimize all modalities automatically
@@ -1315,7 +1315,7 @@ argo cron resume daily-optimization-check -n cogniverse
 **Automatic Execution:**
 - Checks Phoenix for annotation count
 - Runs optimization if annotation threshold met (weekly: 50, daily: 20)
-- Generates synthetic data from Vespa backend
+- Generates synthetic data from backend storage using DSPy modules
 - Auto-selects DSPy optimizer based on data size
 - Deploys if improvement > 5%
 

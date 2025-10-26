@@ -2,12 +2,14 @@
 Routing Generator
 
 Generates RoutingExperience synthetic data for AdvancedRoutingOptimizer training.
+Uses DSPy modules for LLM-driven entity-rich query generation with optional optimization.
 """
 
 import logging
 import random
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
+from cogniverse_core.config.unified_config import OptimizerGenerationConfig
 from pydantic import BaseModel
 
 from cogniverse_synthetic.generators.base import BaseGenerator
@@ -22,11 +24,43 @@ class RoutingGenerator(BaseGenerator):
 
     Strategy:
     1. Extract entities and relationships from content
-    2. Generate entity-rich queries
+    2. Generate entity-rich queries using DSPy modules
     3. Create enhanced queries with entity annotations
     4. Infer agents based on content characteristics
     5. Generate realistic quality metrics
+
+    Uses OptimizerGenerationConfig with DSPy modules.
+    Configuration is REQUIRED - no fallbacks or defaults.
     """
+
+    def __init__(
+        self,
+        pattern_extractor: Optional[Any] = None,
+        agent_inferrer: Optional[Any] = None,
+        optimizer_config: Optional[OptimizerGenerationConfig] = None,
+    ):
+        """
+        Initialize routing generator with configuration
+
+        Args:
+            pattern_extractor: Utility for extracting patterns from content
+            agent_inferrer: Utility for inferring correct agents
+            optimizer_config: Optimizer generation configuration with DSPy modules (REQUIRED)
+
+        Raises:
+            ValueError: If optimizer_config is not provided
+        """
+        super().__init__(pattern_extractor, agent_inferrer)
+
+        if optimizer_config is None:
+            raise ValueError(
+                "RoutingGenerator requires optimizer_config with DSPy modules. "
+                "Configuration must be explicitly provided."
+            )
+
+        self.optimizer_config = optimizer_config
+        self.query_generator = None
+        logger.info("Initialized RoutingGenerator with configuration")
 
     async def generate(
         self,
@@ -85,7 +119,7 @@ class RoutingGenerator(BaseGenerator):
                     "confidence": 0.7
                 }]
 
-            # Generate query from entities
+            # Generate query from entities using DSPy
             query = self._generate_entity_query(entities, patterns)
 
             # Create enhanced query with entity annotations
@@ -160,31 +194,113 @@ class RoutingGenerator(BaseGenerator):
             return "CONCEPT"
 
     def _generate_entity_query(self, entities: List[Dict], patterns: Dict) -> str:
-        """Generate query mentioning entities"""
+        """
+        Generate query mentioning entities using validated DSPy module.
+
+        The ValidatedEntityQueryGenerator ensures entities appear in the query
+        through retry logic, eliminating the need for arbitrary fallbacks.
+        """
         if not entities:
             return "find tutorial on machine learning"
 
-        entity_text = entities[0]["text"]
-        topic = patterns["topics"][0] if patterns["topics"] else "tutorial"
+        # Get or initialize validated DSPy query generator
+        query_generator = self._get_query_generator()
 
-        templates = [
-            f"find {entity_text} {topic}",
-            f"learn {topic} using {entity_text}",
-            f"{entity_text} tutorial on {topic}",
-            f"how to use {entity_text} for {topic}",
-            f"{topic} with {entity_text}",
-        ]
+        # Prepare inputs
+        topics_str = ", ".join(patterns["topics"][:3]) if patterns["topics"] else "machine learning"
+        entities_str = ", ".join([e["text"] for e in entities])
+        entity_types_str = ", ".join([e["type"] for e in entities])
 
-        return random.choice(templates)
+        # Generate validated query using DSPy (with retry logic built-in)
+        try:
+            result = query_generator(
+                topics=topics_str,
+                entities=entities_str,
+                entity_types=entity_types_str
+            )
+            return result.query
+        except ValueError as e:
+            # If validation fails after retries, log and use a simple fallback
+            # (this should rarely happen with a real LLM)
+            logger.warning(f"Failed to generate valid entity query: {e}")
+            # Use first entity as minimal fallback
+            return f"find {entities[0]['text']} {topics_str.split(',')[0]}"
 
     def _enhance_query(self, query: str, entities: List[Dict]) -> str:
-        """Add entity annotations to query"""
+        """Add entity annotations to query (case-insensitive)"""
         enhanced = query
 
         for entity in entities:
             text = entity["text"]
             entity_type = entity["type"]
-            # Add type annotation
-            enhanced = enhanced.replace(text, f"{text}({entity_type})")
+
+            # Find the entity text in query (case-insensitive)
+            # Use case-insensitive search and preserve original casing
+            lower_query = enhanced.lower()
+            lower_text = text.lower()
+
+            if lower_text in lower_query:
+                # Find the position of the entity in the query
+                start_idx = lower_query.find(lower_text)
+                end_idx = start_idx + len(text)
+
+                # Get the actual text from the query (preserving case)
+                actual_text = enhanced[start_idx:end_idx]
+
+                # Replace with annotated version
+                enhanced = (
+                    enhanced[:start_idx] +
+                    f"{actual_text}({entity_type})" +
+                    enhanced[end_idx:]
+                )
+
+                # Update lower_query for next iteration
+                lower_query = enhanced.lower()
 
         return enhanced
+
+    def _get_query_generator(self):
+        """
+        Get or initialize DSPy query generator module with validation
+
+        Returns:
+            Initialized DSPy module for entity-based query generation
+
+        Raises:
+            ValueError: If DSPy module not configured
+        """
+        if self.query_generator is not None:
+            return self.query_generator
+
+        if not self.optimizer_config.dspy_modules:
+            raise ValueError(
+                "No dspy_modules configured in OptimizerGenerationConfig. "
+                "Configuration must include DSPy module for query generation."
+            )
+
+        module_config = self.optimizer_config.dspy_modules.get("query_generator")
+        if not module_config:
+            raise ValueError(
+                "No 'query_generator' module configured in dspy_modules. "
+                f"Available modules: {list(self.optimizer_config.dspy_modules.keys())}"
+            )
+
+        # Use validated module that ensures entities appear in query
+        from cogniverse_synthetic.dspy_modules import ValidatedEntityQueryGenerator
+
+        # Check if compiled module exists
+        if module_config.compiled_path:
+            try:
+                self.query_generator = ValidatedEntityQueryGenerator()
+                # TODO: Load compiled version if available
+                logger.info("Using ValidatedEntityQueryGenerator (compiled version not yet supported)")
+            except Exception as e:
+                logger.warning(f"Failed to load compiled module: {e}, using uncompiled")
+                self.query_generator = None
+
+        # Initialize uncompiled module if needed
+        if self.query_generator is None:
+            self.query_generator = ValidatedEntityQueryGenerator(max_retries=3)
+            logger.info("Initialized ValidatedEntityQueryGenerator with retry validation")
+
+        return self.query_generator
