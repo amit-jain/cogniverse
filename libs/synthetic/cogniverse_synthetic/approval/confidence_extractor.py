@@ -92,10 +92,22 @@ class SyntheticDataConfidenceExtractor(ConfidenceExtractor):
         query = data.get("query", "")
         entities = data.get("entities", [])
 
-        if entities:
+        # Handle entities being a dict (entity_types mapping) or list
+        if isinstance(entities, dict):
+            # Extract entity names from dict values
+            entity_list = []
+            for entity_values in entities.values():
+                if isinstance(entity_values, list):
+                    entity_list.extend(entity_values)
+                elif isinstance(entity_values, str):
+                    entity_list.append(entity_values)
+        else:
+            entity_list = entities if isinstance(entities, list) else []
+
+        if entity_list:
             # Check if at least one entity appears in query
             query_lower = query.lower()
-            has_entity = any(entity.lower() in query_lower for entity in entities)
+            has_entity = any(str(entity).lower() in query_lower for entity in entity_list)
 
             if has_entity:
                 # Small boost for entity presence
@@ -147,8 +159,19 @@ class SyntheticDataConfidenceExtractor(ConfidenceExtractor):
         entities = data.get("entities", [])
         reasoning = data.get("reasoning", "")
 
+        # Handle entities being a dict (entity_types mapping) or list
+        if isinstance(entities, dict):
+            entity_list = []
+            for entity_values in entities.values():
+                if isinstance(entity_values, list):
+                    entity_list.extend(entity_values)
+                elif isinstance(entity_values, str):
+                    entity_list.append(entity_values)
+        else:
+            entity_list = entities if isinstance(entities, list) else []
+
         retry_count = metadata.get("retry_count", 0)
-        has_entity = any(entity.lower() in query.lower() for entity in entities)
+        has_entity = any(str(entity).lower() in query.lower() for entity in entity_list) if entity_list else False
 
         return {
             "final_confidence": self.extract(data),
@@ -157,5 +180,5 @@ class SyntheticDataConfidenceExtractor(ConfidenceExtractor):
             "has_entity": has_entity,
             "query_length": len(query),
             "has_reasoning": len(reasoning) > 20,
-            "entities_provided": len(entities),
+            "entities_provided": len(entity_list),
         }

@@ -171,13 +171,53 @@ class HumanApprovalAgent:
         # Apply decision
         if decision.approved:
             item.status = ApprovalStatus.APPROVED
-            await self.storage.update_item(item)
-            logger.info(f"Item {item.item_id} approved")
+            await self.storage.update_item(item, batch_id=batch.batch_id)
+
+            # Log approval decision as Phoenix annotation (SpanEvaluation)
+            # Find span_id for this item and annotate it
+            from cogniverse_agents.approval.phoenix_storage import (
+                PhoenixApprovalStorage,
+            )
+            if isinstance(self.storage, PhoenixApprovalStorage):
+                span_id = await self.storage.get_item_span_id(item.item_id, batch_id=batch.batch_id)
+                if span_id:
+                    await self.storage.log_approval_decision(
+                        span_id=span_id,
+                        item_id=item.item_id,
+                        approved=True,
+                        feedback=decision.feedback,
+                        reviewer=decision.reviewer
+                    )
+
+                # Add approved item to training dataset
+                dataset_name = batch.context.get("dataset_name", "approved_synthetic_data")
+                await self.storage.append_to_training_dataset(
+                    dataset_name=dataset_name,
+                    items=[item],
+                    project_context=batch.context
+                )
+
+            logger.info(f"Item {item.item_id} approved and added to training dataset")
             return item
 
         else:
             item.status = ApprovalStatus.REJECTED
-            await self.storage.update_item(item)
+            await self.storage.update_item(item, batch_id=batch.batch_id)
+
+            # Log rejection decision as Phoenix annotation (SpanEvaluation)
+            from cogniverse_agents.approval.phoenix_storage import (
+                PhoenixApprovalStorage,
+            )
+            if isinstance(self.storage, PhoenixApprovalStorage):
+                span_id = await self.storage.get_item_span_id(item.item_id, batch_id=batch.batch_id)
+                if span_id:
+                    await self.storage.log_approval_decision(
+                        span_id=span_id,
+                        item_id=item.item_id,
+                        approved=False,
+                        feedback=decision.feedback,
+                        reviewer=decision.reviewer
+                    )
 
             # Attempt regeneration if feedback handler available
             if self.feedback_handler:
@@ -193,7 +233,7 @@ class HumanApprovalAgent:
                     regenerated.status = ApprovalStatus.REGENERATED
                     regenerated.metadata["original_item_id"] = item.item_id
                     regenerated.metadata["regeneration_feedback"] = decision.feedback
-                    await self.storage.update_item(regenerated)
+                    await self.storage.update_item(regenerated, batch_id=batch.batch_id)
                     logger.info(
                         f"Item {item.item_id} regenerated successfully as "
                         f"{regenerated.item_id}"

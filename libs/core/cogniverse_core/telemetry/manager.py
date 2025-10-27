@@ -57,7 +57,10 @@ class TelemetryManager:
         self._tenant_providers: Dict[str, TracerProvider] = {}
         self._tenant_tracers: Dict[str, Tracer] = {}
         self._lock = threading.RLock()
-        
+
+        # Per-project configs (single source of truth for project-specific settings)
+        self._project_configs: Dict[str, Dict[str, Any]] = {}
+
         # Metrics
         self._cache_hits = 0
         self._cache_misses = 0
@@ -66,55 +69,106 @@ class TelemetryManager:
         self._initialized = True
         logger.info(f"TelemetryManager initialized with config: {self.config}")
     
-    def get_tracer(self, tenant_id: str, service_name: Optional[str] = None) -> Optional[Tracer]:
+    def get_tracer(self, tenant_id: str, project_name: Optional[str] = None) -> Optional[Tracer]:
         """
-        Get tracer for a specific tenant.
-        
+        Get tracer for a specific tenant project (LEGACY - use span() instead).
+
         Args:
             tenant_id: Tenant identifier for project isolation
-            service_name: Optional service name override
-            
+            project_name: Optional project name (e.g., "search", "synthetic_data", "routing")
+
         Returns:
             Tracer instance or None if telemetry disabled/failed
         """
         if not self.config.enabled:
             return None
-            
-        service_name = service_name or self.config.service_name
-        cache_key = f"{tenant_id}:{service_name}"
-        
+
+        project_name = project_name or self.config.service_name
+        cache_key = f"{tenant_id}:{project_name}"
+
         # Check cache first
         with self._lock:
             if cache_key in self._tenant_tracers:
                 self._cache_hits += 1
                 return self._tenant_tracers[cache_key]
-            
+
             self._cache_misses += 1
-            
+
             # Create tracer provider for tenant if needed
             try:
                 if tenant_id not in self._tenant_providers:
                     self._tenant_providers[tenant_id] = self._create_tenant_provider(tenant_id)
-                
+
                 tracer_provider = self._tenant_providers[tenant_id]
-                tracer = tracer_provider.get_tracer(service_name)
-                
+                tracer = tracer_provider.get_tracer(project_name)
+
                 # Cache with LRU eviction
                 self._tenant_tracers[cache_key] = tracer
                 self._evict_old_tracers()
-                
+
                 return tracer
-                
+
             except Exception as e:
                 self._failed_initializations += 1
                 logger.warning(f"Failed to create tracer for tenant {tenant_id}: {e}")
                 return None
-    
+
+    def register_project(
+        self,
+        tenant_id: str,
+        project_name: str,
+        **kwargs
+    ) -> None:
+        """
+        Register a project with optional config overrides.
+
+        Allows per-project configuration (e.g., different Phoenix endpoints for tests).
+        Single source of truth for project settings.
+
+        Args:
+            tenant_id: Tenant identifier
+            project_name: Project name (e.g., "search", "synthetic_data", "routing")
+            **kwargs: Optional overrides:
+                - phoenix_endpoint: Override Phoenix gRPC endpoint
+                - use_sync_export: Override batch/sync export mode
+
+        Examples:
+            # Use defaults from config
+            manager.register_project(tenant_id="customer-123", project_name="search")
+
+            # Override endpoint for tests
+            manager.register_project(
+                tenant_id="test-tenant1",
+                project_name="synthetic_data",
+                phoenix_endpoint="http://localhost:24317",
+                use_sync_export=True
+            )
+
+        Phoenix project naming: cogniverse-{tenant_id}-{project_name}
+        """
+        project_key = f"{tenant_id}:{project_name}"
+
+        # Build config with optional overrides
+        project_config = {
+            "tenant_id": tenant_id,
+            "project_name": project_name,
+            "phoenix_endpoint": kwargs.get("phoenix_endpoint", self.config.phoenix_endpoint),
+            "use_sync_export": kwargs.get("use_sync_export", self.config.batch_config.use_sync_export),
+        }
+
+        with self._lock:
+            self._project_configs[project_key] = project_config
+
+        logger.info(
+            f"Registered project {project_key} "
+            f"(endpoint={project_config['phoenix_endpoint']}, sync_export={project_config['use_sync_export']})"
+        )
+
     @contextmanager
     def span(self,
              name: str,
              tenant_id: str,
-             service_name: Optional[str] = None,
+             project_name: Optional[str] = None,
              attributes: Optional[Dict[str, Any]] = None):
         """
         Context manager for creating tenant-specific spans.
@@ -122,20 +176,20 @@ class TelemetryManager:
         Args:
             name: Span name
             tenant_id: Tenant identifier
-            service_name: Optional service name
+            project_name: Optional project name (e.g., "search", "synthetic_data", "routing")
             attributes: Optional span attributes
 
         Usage:
-            # Service span
+            # Search project span
             tenant_id = context.get("tenant_id", config.default_tenant_id)
-            with telemetry.span("search", tenant_id=tenant_id) as span:
+            with telemetry.span("search", tenant_id=tenant_id, project_name="search") as span:
                 span.set_attribute("query", "test")
 
-            # Routing span (child of cogniverse.request)
-            with telemetry.span("cogniverse.routing", tenant_id=tenant_id) as span:
+            # Routing project span
+            with telemetry.span("cogniverse.routing", tenant_id=tenant_id, project_name="routing") as span:
                 span.set_attribute("routing.chosen_agent", "video_search")
         """
-        tracer = self._get_tracer_for_project(tenant_id, service_name)
+        tracer = self._get_tracer_for_project(tenant_id, project_name)
 
         if tracer is None:
             # Graceful degradation - yield no-op span
@@ -145,7 +199,7 @@ class TelemetryManager:
         with tracer.start_as_current_span(name) as span:
             # Add tenant context to all spans
             span.set_attribute("tenant.id", tenant_id)
-            span.set_attribute("service.name", service_name or self.config.service_name)
+            span.set_attribute("service.name", self.config.service_name)
             span.set_attribute("environment", self.config.environment)
 
             # Add user-provided attributes (including openinference.project.name for routing)
@@ -166,15 +220,15 @@ class TelemetryManager:
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 raise
 
-    def _get_tracer_for_project(self, tenant_id: str, service_name: Optional[str]) -> Optional[Tracer]:
+    def _get_tracer_for_project(self, tenant_id: str, project_name: Optional[str]) -> Optional[Tracer]:
         """Get tracer for specific project."""
         if not self.config.enabled:
             return None
 
-        # Determine project key and name
-        service_name = service_name or self.config.service_name
-        cache_key = f"{tenant_id}:{service_name}"
-        project_suffix = service_name
+        # Determine project key and name (default to service_name if not provided)
+        project_name = project_name or self.config.service_name
+        cache_key = f"{tenant_id}:{project_name}"
+        project_suffix = project_name
 
         # Check cache first
         with self._lock:
@@ -215,59 +269,45 @@ class TelemetryManager:
         if not self.config.phoenix_enabled:
             raise RuntimeError("Phoenix not enabled")
 
+        project_key = f"{tenant_id}:{project_suffix}"
+
+        # Check for registered project config (single source of truth)
+        if project_key in self._project_configs:
+            cfg = self._project_configs[project_key]
+            endpoint = cfg["phoenix_endpoint"]
+            use_sync_export = cfg["use_sync_export"]
+            logger.debug(f"Using registered config for {project_key}")
+        else:
+            # Fall back to default config
+            endpoint = self.config.phoenix_endpoint
+            use_sync_export = self.config.batch_config.use_sync_export
+            logger.debug(f"Using default config for {project_key}")
+
         try:
-            # Determine project name
+            # Determine full project name: cogniverse-{tenant_id}-{project_suffix}
             project_name = self.config.get_project_name(tenant_id, project_suffix)
 
-            # For test mode with synchronous export, create provider manually
-            if self.config.batch_config.use_sync_export:
-                from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
-                    OTLPSpanExporter,
-                )
-                from opentelemetry.sdk.resources import Resource
-                from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-
-                # Create OTLP exporter pointing to Phoenix
-                endpoint = self.config.phoenix_endpoint
-                if not endpoint.startswith("http"):
-                    endpoint = f"http://{endpoint}"
-
-                exporter = OTLPSpanExporter(
-                    endpoint=endpoint,
-                    insecure=not self.config.phoenix_use_tls,
-                    timeout=5  # 5 second timeout to prevent hanging
-                )
-
-                # Create resource with project name using OpenInference semantic convention
-                resource = Resource.create({
-                    "service.name": project_suffix,
-                    "openinference.project.name": project_name,  # OpenInference semantic convention
-                    "telemetry.sdk.name": "opentelemetry",
-                    "telemetry.sdk.language": "python",
-                })
-
-                # Create tracer provider with synchronous processor
-                tracer_provider = TracerProvider(resource=resource)
-                tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
-
-                logger.info(f"Created SYNC tracer provider for tenant {tenant_id} -> project {project_name}")
-                return tracer_provider
-
-            # Production mode: use Phoenix register with batch export
             from phoenix.otel import register
 
+            batch_mode = not use_sync_export
+
             tracer_provider = register(
+                endpoint=endpoint,  # Single source of truth
                 project_name=project_name,
-                batch=True,
+                batch=batch_mode,
+                protocol="grpc",
                 auto_instrument=False,
                 set_global_tracer_provider=False
             )
 
-            logger.info(f"Created BATCH tracer provider for tenant {tenant_id} -> project {project_name}")
+            mode = "BATCH" if batch_mode else "SYNC"
+            logger.info(
+                f"Created {mode} tracer provider: {project_name} (endpoint={endpoint})"
+            )
             return tracer_provider
 
         except Exception as e:
-            logger.error(f"Failed to create tracer provider for tenant {tenant_id}, project {project_suffix}: {e}")
+            logger.error(f"Failed to create tracer provider for {project_key}: {e}")
             raise
     
     def _evict_old_tracers(self):
@@ -339,6 +379,58 @@ class TelemetryManager:
 
             self._tenant_providers.clear()
             self._tenant_tracers.clear()
+
+    @classmethod
+    def reset(cls) -> None:
+        """
+        Reset singleton instance - FOR TESTS ONLY.
+
+        Shuts down all tracer providers and clears singleton state.
+        Allows tests to start with fresh TelemetryManager.
+        """
+        if cls._instance is not None:
+            try:
+                cls._instance.shutdown()
+            except Exception as e:
+                logger.warning(f"Error during reset: {e}")
+            finally:
+                cls._instance = None
+                logger.info("TelemetryManager singleton reset")
+
+    def unregister_project(self, tenant_id: str, project_name: str) -> None:
+        """
+        Unregister and shutdown specific project's tracer provider.
+
+        Args:
+            tenant_id: Tenant identifier
+            project_name: Project name (e.g., "search", "synthetic_data")
+        """
+        project_key = f"{tenant_id}:{project_name}"
+
+        with self._lock:
+            # Shutdown and remove tracer provider
+            if project_key in self._tenant_providers:
+                provider = self._tenant_providers[project_key]
+                try:
+                    if hasattr(provider, 'force_flush'):
+                        provider.force_flush(timeout_millis=5000)
+                    if hasattr(provider, 'shutdown'):
+                        provider.shutdown()
+                    del self._tenant_providers[project_key]
+                    logger.debug(f"Shutdown tracer provider for {project_key}")
+                except Exception as e:
+                    logger.error(f"Error shutting down provider for {project_key}: {e}")
+
+            # Remove cached tracers for this project
+            tracers_to_remove = [k for k in self._tenant_tracers if k.startswith(project_key)]
+            for k in tracers_to_remove:
+                del self._tenant_tracers[k]
+                logger.debug(f"Removed cached tracer: {k}")
+
+            # Remove project config
+            self._project_configs.pop(project_key, None)
+
+            logger.info(f"Unregistered project {project_key}")
 
 
 class NoOpSpan:
