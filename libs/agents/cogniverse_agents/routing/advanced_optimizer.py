@@ -1272,7 +1272,6 @@ class AdvancedRoutingOptimizer:
             Number of examples added to experiences
         """
         from cogniverse_synthetic import (
-            RoutingExperienceSchema,
             SyntheticDataRequest,
             SyntheticDataService,
         )

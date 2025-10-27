@@ -377,7 +377,6 @@ class CrossModalOptimizer:
             Number of examples added to fusion_history
         """
         from cogniverse_synthetic import (
-            FusionHistorySchema,
             SyntheticDataRequest,
             SyntheticDataService,
         )

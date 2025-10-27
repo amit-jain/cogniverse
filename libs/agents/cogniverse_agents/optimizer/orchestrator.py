@@ -18,6 +18,8 @@ from typing import Any, Dict, List
 
 from dotenv import load_dotenv
 
+from cogniverse_core.config.utils import get_config
+
 # Import all providers to register them
 from .providers.base_provider import DSPyLMProvider, ProviderFactory
 from .router_optimizer import RouterModule, evaluate_routing_accuracy

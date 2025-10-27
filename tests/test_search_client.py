@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from cogniverse_agents.search.service import SearchService
-from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
+from cogniverse_vespa.vespa_search_client import RankingStrategy, VespaVideoSearchClient
 
 # Setup logging with more verbose output
 logging.basicConfig(

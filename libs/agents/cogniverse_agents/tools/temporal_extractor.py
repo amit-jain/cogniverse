@@ -208,167 +208,167 @@ class EnhancedTemporalExtractor:
                         "end_date": last_day,
                         "detected_pattern": pattern
                     }
-        
-                 # Enhanced pattern resolvers
-         def resolve_yesterday():
-             return {
-                 "start_date": (today - datetime.timedelta(days=1)).strftime("%Y-%m-%d"),
-                 "end_date": (today - datetime.timedelta(days=1)).strftime("%Y-%m-%d"),
-                 "detected_pattern": "yesterday"
-             }
-         
-         def resolve_day_before_yesterday():
-             return {
-                 "start_date": (today - datetime.timedelta(days=2)).strftime("%Y-%m-%d"),
-                 "end_date": (today - datetime.timedelta(days=2)).strftime("%Y-%m-%d"),
-                 "detected_pattern": "day_before_yesterday"
-             }
-         
-         def resolve_two_days_ago():
-             return {
-                 "start_date": (today - datetime.timedelta(days=2)).strftime("%Y-%m-%d"),
-                 "end_date": (today - datetime.timedelta(days=2)).strftime("%Y-%m-%d"),
-                 "detected_pattern": "two_days_ago"
-             }
-         
-         def resolve_three_days_ago():
-             return {
-                 "start_date": (today - datetime.timedelta(days=3)).strftime("%Y-%m-%d"),
-                 "end_date": (today - datetime.timedelta(days=3)).strftime("%Y-%m-%d"),
-                 "detected_pattern": "three_days_ago"
-             }
-         
-         def resolve_last_week():
-             return {
-                 "start_date": (today - datetime.timedelta(weeks=1)).strftime("%Y-%m-%d"),
-                 "end_date": today.strftime("%Y-%m-%d"),
-                 "detected_pattern": "last_week"
-             }
-         
-         def resolve_past_week():
-             return {
-                 "start_date": (today - datetime.timedelta(days=7)).strftime("%Y-%m-%d"),
-                 "end_date": today.strftime("%Y-%m-%d"),
-                 "detected_pattern": "past_week"
-             }
-         
-         def resolve_past_7_days():
-             return {
-                 "start_date": (today - datetime.timedelta(days=7)).strftime("%Y-%m-%d"),
-                 "end_date": today.strftime("%Y-%m-%d"),
-                 "detected_pattern": "past_7_days"
-             }
-         
-         def resolve_two_weeks_ago():
-             return {
-                 "start_date": (today - datetime.timedelta(weeks=2)).strftime("%Y-%m-%d"),
-                 "end_date": (today - datetime.timedelta(weeks=2)).strftime("%Y-%m-%d"),
-                 "detected_pattern": "two_weeks_ago"
-             }
-         
-         def resolve_last_month():
-             return {
-                 "start_date": (today - datetime.timedelta(days=30)).strftime("%Y-%m-%d"),
-                 "end_date": today.strftime("%Y-%m-%d"),
-                 "detected_pattern": "last_month"
-             }
-         
-         def resolve_past_month():
-             return {
-                 "start_date": (today - datetime.timedelta(days=30)).strftime("%Y-%m-%d"),
-                 "end_date": today.strftime("%Y-%m-%d"),
-                 "detected_pattern": "past_month"
-             }
-         
-         def resolve_month_ago():
-             return {
-                 "start_date": (today - datetime.timedelta(days=30)).strftime("%Y-%m-%d"),
-                 "end_date": (today - datetime.timedelta(days=30)).strftime("%Y-%m-%d"),
-                 "detected_pattern": "month_ago"
-             }
-         
-         def resolve_this_week():
-             return {
-                 "start_date": (today - datetime.timedelta(days=today.weekday())).strftime("%Y-%m-%d"),
-                 "end_date": today.strftime("%Y-%m-%d"),
-                 "detected_pattern": "this_week"
-             }
-         
-         def resolve_this_month():
-             return {
-                 "start_date": today.replace(day=1).strftime("%Y-%m-%d"),
-                 "end_date": today.strftime("%Y-%m-%d"),
-                 "detected_pattern": "this_month"
-             }
-         
-         def resolve_beginning_of_month():
-             return {
-                 "start_date": today.replace(day=1).strftime("%Y-%m-%d"),
-                 "end_date": (today.replace(day=1) + datetime.timedelta(days=6)).strftime("%Y-%m-%d"),
-                 "detected_pattern": "beginning_of_month"
-             }
-         
-         def resolve_first_quarter():
-             return {
-                 "start_date": today.replace(month=1, day=1).strftime("%Y-%m-%d"),
-                 "end_date": today.replace(month=3, day=31).strftime("%Y-%m-%d"),
-                 "detected_pattern": "first_quarter"
-             }
-         
-         def resolve_monday_last_week():
-             days_since_monday = (today.weekday() + 7) % 7  # Days since last Monday
-             last_monday = today - datetime.timedelta(days=days_since_monday + 7)
-             return {
-                 "start_date": last_monday.strftime("%Y-%m-%d"),
-                 "end_date": last_monday.strftime("%Y-%m-%d"),
-                 "detected_pattern": "monday_last_week"
-             }
-         
-         def resolve_last_tuesday():
-             # Find the most recent Tuesday
-             days_since_tuesday = (today.weekday() - 1) % 7
-             if days_since_tuesday == 0:  # Today is Tuesday
-                 days_since_tuesday = 7
-             last_tuesday = today - datetime.timedelta(days=days_since_tuesday)
-             return {
-                 "start_date": last_tuesday.strftime("%Y-%m-%d"),
-                 "end_date": last_tuesday.strftime("%Y-%m-%d"),
-                 "detected_pattern": "last_tuesday"
-             }
-         
-         def resolve_weekend():
-             # Find last weekend (Saturday-Sunday)
-             days_since_saturday = (today.weekday() + 2) % 7
-             if days_since_saturday < 2:  # This weekend
-                 days_since_saturday += 7
-             last_saturday = today - datetime.timedelta(days=days_since_saturday)
-             last_sunday = last_saturday + datetime.timedelta(days=1)
-             return {
-                 "start_date": last_saturday.strftime("%Y-%m-%d"),
-                 "end_date": last_sunday.strftime("%Y-%m-%d"),
-                 "detected_pattern": "weekend"
-             }
-         
-         enhanced_resolvers = {
-             "yesterday": resolve_yesterday,
-             "day_before_yesterday": resolve_day_before_yesterday,
-             "two_days_ago": resolve_two_days_ago,
-             "three_days_ago": resolve_three_days_ago,
-             "last_week": resolve_last_week,
-             "past_week": resolve_past_week,
-             "past_7_days": resolve_past_7_days,
-             "two_weeks_ago": resolve_two_weeks_ago,
-             "last_month": resolve_last_month,
-             "past_month": resolve_past_month,
-             "month_ago": resolve_month_ago,
-             "this_week": resolve_this_week,
-             "this_month": resolve_this_month,
-             "beginning_of_month": resolve_beginning_of_month,
-             "first_quarter": resolve_first_quarter,
-             "monday_last_week": resolve_monday_last_week,
-             "last_tuesday": resolve_last_tuesday,
-             "weekend": resolve_weekend
-         }
+
+        # Enhanced pattern resolvers
+        def resolve_yesterday():
+            return {
+                "start_date": (today - datetime.timedelta(days=1)).strftime("%Y-%m-%d"),
+                "end_date": (today - datetime.timedelta(days=1)).strftime("%Y-%m-%d"),
+                "detected_pattern": "yesterday"
+            }
+
+        def resolve_day_before_yesterday():
+            return {
+                "start_date": (today - datetime.timedelta(days=2)).strftime("%Y-%m-%d"),
+                "end_date": (today - datetime.timedelta(days=2)).strftime("%Y-%m-%d"),
+                "detected_pattern": "day_before_yesterday"
+            }
+
+        def resolve_two_days_ago():
+            return {
+                "start_date": (today - datetime.timedelta(days=2)).strftime("%Y-%m-%d"),
+                "end_date": (today - datetime.timedelta(days=2)).strftime("%Y-%m-%d"),
+                "detected_pattern": "two_days_ago"
+            }
+
+        def resolve_three_days_ago():
+            return {
+                "start_date": (today - datetime.timedelta(days=3)).strftime("%Y-%m-%d"),
+                "end_date": (today - datetime.timedelta(days=3)).strftime("%Y-%m-%d"),
+                "detected_pattern": "three_days_ago"
+            }
+
+        def resolve_last_week():
+            return {
+                "start_date": (today - datetime.timedelta(weeks=1)).strftime("%Y-%m-%d"),
+                "end_date": today.strftime("%Y-%m-%d"),
+                "detected_pattern": "last_week"
+            }
+
+        def resolve_past_week():
+            return {
+                "start_date": (today - datetime.timedelta(days=7)).strftime("%Y-%m-%d"),
+                "end_date": today.strftime("%Y-%m-%d"),
+                "detected_pattern": "past_week"
+            }
+
+        def resolve_past_7_days():
+            return {
+                "start_date": (today - datetime.timedelta(days=7)).strftime("%Y-%m-%d"),
+                "end_date": today.strftime("%Y-%m-%d"),
+                "detected_pattern": "past_7_days"
+            }
+
+        def resolve_two_weeks_ago():
+            return {
+                "start_date": (today - datetime.timedelta(weeks=2)).strftime("%Y-%m-%d"),
+                "end_date": (today - datetime.timedelta(weeks=2)).strftime("%Y-%m-%d"),
+                "detected_pattern": "two_weeks_ago"
+            }
+
+        def resolve_last_month():
+            return {
+                "start_date": (today - datetime.timedelta(days=30)).strftime("%Y-%m-%d"),
+                "end_date": today.strftime("%Y-%m-%d"),
+                "detected_pattern": "last_month"
+            }
+
+        def resolve_past_month():
+            return {
+                "start_date": (today - datetime.timedelta(days=30)).strftime("%Y-%m-%d"),
+                "end_date": today.strftime("%Y-%m-%d"),
+                "detected_pattern": "past_month"
+            }
+
+        def resolve_month_ago():
+            return {
+                "start_date": (today - datetime.timedelta(days=30)).strftime("%Y-%m-%d"),
+                "end_date": (today - datetime.timedelta(days=30)).strftime("%Y-%m-%d"),
+                "detected_pattern": "month_ago"
+            }
+
+        def resolve_this_week():
+            return {
+                "start_date": (today - datetime.timedelta(days=today.weekday())).strftime("%Y-%m-%d"),
+                "end_date": today.strftime("%Y-%m-%d"),
+                "detected_pattern": "this_week"
+            }
+
+        def resolve_this_month():
+            return {
+                "start_date": today.replace(day=1).strftime("%Y-%m-%d"),
+                "end_date": today.strftime("%Y-%m-%d"),
+                "detected_pattern": "this_month"
+            }
+
+        def resolve_beginning_of_month():
+            return {
+                "start_date": today.replace(day=1).strftime("%Y-%m-%d"),
+                "end_date": (today.replace(day=1) + datetime.timedelta(days=6)).strftime("%Y-%m-%d"),
+                "detected_pattern": "beginning_of_month"
+            }
+
+        def resolve_first_quarter():
+            return {
+                "start_date": today.replace(month=1, day=1).strftime("%Y-%m-%d"),
+                "end_date": today.replace(month=3, day=31).strftime("%Y-%m-%d"),
+                "detected_pattern": "first_quarter"
+            }
+
+        def resolve_monday_last_week():
+            days_since_monday = (today.weekday() + 7) % 7  # Days since last Monday
+            last_monday = today - datetime.timedelta(days=days_since_monday + 7)
+            return {
+                "start_date": last_monday.strftime("%Y-%m-%d"),
+                "end_date": last_monday.strftime("%Y-%m-%d"),
+                "detected_pattern": "monday_last_week"
+            }
+
+        def resolve_last_tuesday():
+            # Find the most recent Tuesday
+            days_since_tuesday = (today.weekday() - 1) % 7
+            if days_since_tuesday == 0:  # Today is Tuesday
+                days_since_tuesday = 7
+            last_tuesday = today - datetime.timedelta(days=days_since_tuesday)
+            return {
+                "start_date": last_tuesday.strftime("%Y-%m-%d"),
+                "end_date": last_tuesday.strftime("%Y-%m-%d"),
+                "detected_pattern": "last_tuesday"
+            }
+
+        def resolve_weekend():
+            # Find last weekend (Saturday-Sunday)
+            days_since_saturday = (today.weekday() + 2) % 7
+            if days_since_saturday < 2:  # This weekend
+                days_since_saturday += 7
+            last_saturday = today - datetime.timedelta(days=days_since_saturday)
+            last_sunday = last_saturday + datetime.timedelta(days=1)
+            return {
+                "start_date": last_saturday.strftime("%Y-%m-%d"),
+                "end_date": last_sunday.strftime("%Y-%m-%d"),
+                "detected_pattern": "weekend"
+            }
+
+        enhanced_resolvers = {
+            "yesterday": resolve_yesterday,
+            "day_before_yesterday": resolve_day_before_yesterday,
+            "two_days_ago": resolve_two_days_ago,
+            "three_days_ago": resolve_three_days_ago,
+            "last_week": resolve_last_week,
+            "past_week": resolve_past_week,
+            "past_7_days": resolve_past_7_days,
+            "two_weeks_ago": resolve_two_weeks_ago,
+            "last_month": resolve_last_month,
+            "past_month": resolve_past_month,
+            "month_ago": resolve_month_ago,
+            "this_week": resolve_this_week,
+            "this_month": resolve_this_month,
+            "beginning_of_month": resolve_beginning_of_month,
+            "first_quarter": resolve_first_quarter,
+            "monday_last_week": resolve_monday_last_week,
+            "last_tuesday": resolve_last_tuesday,
+            "weekend": resolve_weekend
+        }
         
         resolver = enhanced_resolvers.get(pattern)
         if resolver:

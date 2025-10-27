@@ -509,9 +509,7 @@ class SystemTester:
                 print(f"Average Recall@5: {sum(total_metrics['recall@5'])/len(total_metrics['recall@5']):.3f}")
                 print(f"Average Recall@10: {sum(total_metrics['recall@10'])/len(total_metrics['recall@10']):.3f}")
                 print(f"Average MRR: {sum(total_metrics['mrr'])/len(total_metrics['mrr']):.3f}")
-            
-            success = successful_tests > 0
-            
+
             self.log_test(
                 "End-to-End System",
                 True,
@@ -531,10 +529,7 @@ class SystemTester:
         """Run selected tests or all tests and return comprehensive results."""
         print("🧪 Starting Multi-Agent RAG System Test Suite")
         print("=" * 60)
-        
-        # Setup environment
-        setup_environment()
-        
+
         # All available tests
         all_test_functions = [
             ("Configuration", self.test_configuration),

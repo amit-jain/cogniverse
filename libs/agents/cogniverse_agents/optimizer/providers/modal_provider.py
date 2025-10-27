@@ -11,6 +11,8 @@ from typing import Any, Dict, List
 
 import requests
 
+from cogniverse_core.config.utils import get_config
+
 from .base_provider import ArtifactProvider, ModelProvider, ProviderFactory
 
 
@@ -81,8 +83,8 @@ class ModalModelProvider(ModelProvider):
                     self.deployed_services["inference_endpoint"] = existing_endpoint
                     self.deployed_services["health_endpoint"] = health_url
                     return self.deployed_services
-            except:
-                print("⚠️ Existing endpoint not responding, will redeploy")
+            except Exception as e:
+                print(f"⚠️ Existing endpoint not responding, will redeploy: {e}")
         
         print("🚀 Deploying Modal model service...")
         
