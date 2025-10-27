@@ -370,7 +370,7 @@ class ModalityEvaluator:
             SyntheticDataService,
         )
 
-        service = SyntheticDataService(vespa_client=None, backend_config=None)
+        service = SyntheticDataService(backend=None, backend_config=None)
         augmented_examples = training_examples.copy()
 
         for modality, real_examples in training_examples.items():

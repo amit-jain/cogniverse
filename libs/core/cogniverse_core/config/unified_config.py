@@ -695,6 +695,48 @@ class OptimizerGenerationConfig:
 
 
 @dataclass
+class ApprovalConfig:
+    """
+    Configuration for human-in-the-loop approval system.
+
+    Controls how AI-generated outputs are reviewed and approved before use.
+    Supports confidence-based auto-approval and manual review workflows.
+    """
+    enabled: bool = False
+    confidence_threshold: float = 0.85
+    storage_backend: str = "phoenix"  # phoenix, database, file
+    phoenix_project_name: str = "approval_system"
+    max_regeneration_attempts: int = 2
+    reviewer_email: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary"""
+        return {
+            "enabled": self.enabled,
+            "confidence_threshold": self.confidence_threshold,
+            "storage_backend": self.storage_backend,
+            "phoenix_project_name": self.phoenix_project_name,
+            "max_regeneration_attempts": self.max_regeneration_attempts,
+            "reviewer_email": self.reviewer_email,
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ApprovalConfig":
+        """Create from dictionary"""
+        return cls(
+            enabled=data.get("enabled", False),
+            confidence_threshold=data.get("confidence_threshold", 0.85),
+            storage_backend=data.get("storage_backend", "phoenix"),
+            phoenix_project_name=data.get("phoenix_project_name", "approval_system"),
+            max_regeneration_attempts=data.get("max_regeneration_attempts", 2),
+            reviewer_email=data.get("reviewer_email"),
+            metadata=data.get("metadata", {}),
+        )
+
+
+@dataclass
 class SyntheticGeneratorConfig:
     """
     Main configuration for synthetic data generation system.

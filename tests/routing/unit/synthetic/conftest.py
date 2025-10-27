@@ -64,16 +64,22 @@ class DummyLM(dspy.LM):
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_dspy():
-    """Set up DSPy with dummy LM for all tests"""
+    """Set up DSPy with dummy LM for all tests in synthetic directory"""
     dummy_lm = DummyLM()
     dspy.configure(lm=dummy_lm)
     yield dummy_lm
-    # Cleanup after tests
+    # Cleanup after ALL synthetic tests complete
     dspy.configure(lm=None)
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def reset_dspy_lm(setup_dspy):
-    """Reset the dummy LM call count between tests"""
+    """Reset the dummy LM state between tests"""
+    # Reset state and reconfigure for this test
     setup_dspy.call_count = 0
+    setup_dspy.history = []
+    dspy.configure(lm=setup_dspy)
+
     yield setup_dspy
+
+    # Don't restore original - let session fixture handle final cleanup

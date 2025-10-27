@@ -120,7 +120,7 @@ class RoutingGenerator(BaseGenerator):
                 }]
 
             # Generate query from entities using DSPy
-            query = self._generate_entity_query(entities, patterns)
+            query, generation_metadata = self._generate_entity_query(entities, patterns)
 
             # Create enhanced query with entity annotations
             enhanced_query = self._enhance_query(query, entities)
@@ -141,7 +141,7 @@ class RoutingGenerator(BaseGenerator):
             if user_satisfaction:
                 user_satisfaction = min(1.0, user_satisfaction)
 
-            # Create example
+            # Create example with generation metadata
             example = RoutingExperienceSchema(
                 query=query,
                 entities=entities,
@@ -151,7 +151,8 @@ class RoutingGenerator(BaseGenerator):
                 routing_confidence=round(routing_confidence, 2),
                 search_quality=round(search_quality, 2),
                 agent_success=agent_success,
-                user_satisfaction=round(user_satisfaction, 2) if user_satisfaction else None
+                user_satisfaction=round(user_satisfaction, 2) if user_satisfaction else None,
+                metadata=generation_metadata
             )
             examples.append(example)
 
@@ -193,15 +194,24 @@ class RoutingGenerator(BaseGenerator):
         else:
             return "CONCEPT"
 
-    def _generate_entity_query(self, entities: List[Dict], patterns: Dict) -> str:
+    def _generate_entity_query(self, entities: List[Dict], patterns: Dict) -> tuple[str, Dict[str, Any]]:
         """
         Generate query mentioning entities using validated DSPy module.
 
         The ValidatedEntityQueryGenerator ensures entities appear in the query
         through retry logic, eliminating the need for arbitrary fallbacks.
+
+        Returns:
+            Tuple of (query, metadata) where metadata includes generation details
         """
         if not entities:
-            return "find tutorial on machine learning"
+            return "find tutorial on machine learning", {
+                "_generation_metadata": {
+                    "retry_count": 0,
+                    "max_retries": 0,
+                    "fallback_used": True
+                }
+            }
 
         # Get or initialize validated DSPy query generator
         query_generator = self._get_query_generator()
@@ -218,13 +228,37 @@ class RoutingGenerator(BaseGenerator):
                 entities=entities_str,
                 entity_types=entity_types_str
             )
-            return result.query
+
+            # Extract generation metadata from DSPy result
+            metadata = {
+                "_generation_metadata": {
+                    "retry_count": getattr(result, "_retry_count", 0),
+                    "max_retries": getattr(result, "_max_retries", 3),
+                    "fallback_used": False,
+                    "reasoning": getattr(result, "reasoning", "")
+                }
+            }
+
+            return result.query, metadata
+
         except ValueError as e:
             # If validation fails after retries, log and use a simple fallback
             # (this should rarely happen with a real LLM)
             logger.warning(f"Failed to generate valid entity query: {e}")
+
             # Use first entity as minimal fallback
-            return f"find {entities[0]['text']} {topics_str.split(',')[0]}"
+            fallback_query = f"find {entities[0]['text']} {topics_str.split(',')[0]}"
+
+            metadata = {
+                "_generation_metadata": {
+                    "retry_count": query_generator.max_retries,
+                    "max_retries": query_generator.max_retries,
+                    "fallback_used": True,
+                    "error": str(e)
+                }
+            }
+
+            return fallback_query, metadata
 
     def _enhance_query(self, query: str, entities: List[Dict]) -> str:
         """Add entity annotations to query (case-insensitive)"""

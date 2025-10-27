@@ -36,7 +36,7 @@ class ValidatedEntityQueryGenerator(dspy.Module):
             entity_types: Comma-separated entity types
 
         Returns:
-            Prediction with validated query
+            Prediction with validated query and generation metadata
 
         Raises:
             ValueError: If unable to generate valid query after max_retries
@@ -55,6 +55,11 @@ class ValidatedEntityQueryGenerator(dspy.Module):
             query_lower = result.query.lower()
             if any(entity.lower() in query_lower for entity in entity_list):
                 logger.debug(f"Generated valid query on attempt {attempt + 1}: {result.query}")
+
+                # Add generation metadata to result
+                result._retry_count = attempt
+                result._max_retries = self.max_retries
+
                 return result
 
             logger.debug(

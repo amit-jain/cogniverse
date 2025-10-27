@@ -447,7 +447,7 @@ class ModalityOptimizer:
             # Generate synthetic data directly using SyntheticDataService
             synthetic_count = max(50, len(real_examples) * 2)
             service = SyntheticDataService(
-                vespa_client=self.vespa_client,
+                backend=self.vespa_client,
                 backend_config=self.backend_config
             )
             request = SyntheticDataRequest(
@@ -466,7 +466,7 @@ class ModalityOptimizer:
             # Mix real and synthetic directly using SyntheticDataService
             synthetic_count = len(real_examples)  # 1:1 ratio
             service = SyntheticDataService(
-                vespa_client=self.vespa_client,
+                backend=self.vespa_client,
                 backend_config=self.backend_config
             )
             request = SyntheticDataRequest(

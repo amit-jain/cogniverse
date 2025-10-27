@@ -515,7 +515,53 @@ def _render_synthetic_data_tab():
     with col3:
         vespa_sample_size = st.number_input("Vespa Sample Size", 10, 10000, 200, 10)
 
-    # Advanced options
+    # Quality Control Section (Prominent, outside Advanced Options)
+    st.markdown("---")
+    st.markdown("### 🔍 Quality Control")
+
+    col1, col2 = st.columns([2, 3])
+
+    with col1:
+        enable_approval = st.checkbox(
+            "✅ Enable Human-in-the-Loop Review",
+            value=True,
+            key="enable_approval_checkbox",
+            help="Review AI-generated outputs before using them in optimization (enabled by default)"
+        )
+
+    with col2:
+        if enable_approval:
+            st.info(
+                "💡 **How it works:** High-confidence items (≥ threshold) are auto-approved. "
+                "Low-confidence items require your review."
+            )
+
+    # Show confidence threshold slider when enabled
+    if enable_approval:
+        st.markdown("**Confidence Settings:**")
+        col1, col2 = st.columns(2)
+
+        with col1:
+            confidence_threshold = st.slider(
+                "Auto-Approval Threshold",
+                0.0, 1.0, 0.85, 0.05,
+                help="Items with confidence ≥ this value are automatically approved",
+                key="confidence_threshold_slider"
+            )
+
+        with col2:
+            st.metric(
+                "Expected Review Rate",
+                f"~{int((1 - confidence_threshold) * 100)}%",
+                help="Estimated percentage of items requiring review"
+            )
+
+        st.caption(
+            f"ℹ️ With threshold {confidence_threshold:.2f}, items scoring {confidence_threshold:.2f}+ "
+            "will be auto-approved. Lower-confidence items will require your review below."
+        )
+
+    # Advanced options (collapsed by default)
     with st.expander("⚙️ Advanced Options"):
         col1, col2 = st.columns(2)
         with col1:
@@ -556,7 +602,12 @@ def _render_synthetic_data_tab():
                     result = response.json()
 
                     st.session_state["synthetic_data_result"] = result
-                    st.success(f"✅ Generated {result['count']} examples using {len(result['selected_profiles'])} profiles")
+
+                    # Process through approval if enabled
+                    if enable_approval:
+                        _process_approval_workflow(result, confidence_threshold)
+                    else:
+                        st.success(f"✅ Generated {result['count']} examples using {len(result['selected_profiles'])} profiles")
 
                     # Show profile selection reasoning
                     st.info(f"**Profile Selection**: {result['profile_selection_reasoning']}")
@@ -580,6 +631,11 @@ def _render_synthetic_data_tab():
                         st.subheader("📊 Sample Generated Examples")
                         sample_df = pd.DataFrame(result['data'][:10])
                         st.dataframe(sample_df, use_container_width=True)
+
+                    # Show inline approval interface if enabled
+                    if enable_approval and "last_generated_batch" in st.session_state:
+                        st.markdown("---")
+                        _render_inline_approval_interface()
 
                 else:
                     st.error(f"❌ Generation failed: {response.status_code} - {response.text}")
@@ -1453,6 +1509,339 @@ def _render_metrics_dashboard_tab():
         st.error(f"Error fetching optimization metrics: {e}")
         st.info("Make sure Phoenix is running at http://localhost:6006")
         st.info("Start Phoenix with: `import phoenix as px; px.launch_app()`")
+
+
+def _render_inline_approval_interface():
+    """
+    Render inline approval interface in the optimization tab
+
+    Shows pending items with approve/reject controls directly in the results section.
+    """
+    batch = st.session_state.get("last_generated_batch")
+    if not batch:
+        return
+
+    pending_items = batch.pending_review
+
+    if not pending_items:
+        st.success("✨ All items automatically approved! No review needed.")
+        return
+
+    st.subheader("🔍 Review Low-Confidence Items")
+    st.markdown(
+        f"**{len(pending_items)} items** need your review. "
+        f"Items below confidence threshold require human validation."
+    )
+
+    # Display each pending item for inline review
+    for idx, item in enumerate(pending_items[:5]):  # Show first 5 inline, rest in approval queue
+        with st.expander(
+            f"📝 Item {idx + 1}/{len(pending_items)} - "
+            f"Confidence: {item.confidence:.2f} - "
+            f"{item.data.get('query', 'N/A')[:60]}...",
+            expanded=(idx == 0)  # Expand first item
+        ):
+            _render_inline_review_item(item, idx)
+
+    # Show link to full approval queue if there are more items
+    if len(pending_items) > 5:
+        st.info(
+            f"📋 Showing 5 of {len(pending_items)} items. "
+            f"Navigate to **Approval Queue** tab to review all items."
+        )
+
+
+def _render_inline_review_item(item, idx: int):
+    """Render a single review item inline with approval controls"""
+
+    data = item.data
+    query = data.get("query", "N/A")
+    entities = data.get("entities", [])
+    reasoning = data.get("reasoning", "")
+    metadata = data.get("_generation_metadata", {})
+
+    # Display item data in columns
+    col1, col2 = st.columns([3, 1])
+
+    with col1:
+        st.markdown("**Generated Query:**")
+        st.info(query)
+
+        if reasoning:
+            st.markdown("**Reasoning:**")
+            st.caption(reasoning)
+
+        st.markdown("**Entities:**")
+        if entities:
+            entity_str = ", ".join([str(e) for e in entities])
+            st.code(entity_str, language=None)
+        else:
+            st.warning("No entities")
+
+    with col2:
+        st.metric("Confidence", f"{item.confidence:.2f}")
+        st.metric("Retries", metadata.get("retry_count", 0))
+
+        # Quality indicators
+        if item.confidence >= 0.75:
+            st.success("🟢 Medium-Low")
+        elif item.confidence >= 0.60:
+            st.warning("🟡 Low")
+        else:
+            st.error("🔴 Very Low")
+
+    # Generation metadata toggle
+    if metadata:
+        with st.expander("🔧 Generation Details"):
+            st.json(metadata)
+
+    # Approval controls
+    st.markdown("---")
+    st.markdown("**Your Decision:**")
+
+    col1, col2, col3 = st.columns([1, 1, 3])
+
+    with col1:
+        if st.button(
+            "✅ Approve",
+            key=f"inline_approve_{idx}",
+            type="primary",
+            use_container_width=True
+        ):
+            _handle_inline_approval(item, idx)
+
+    with col2:
+        if st.button(
+            "❌ Reject",
+            key=f"inline_reject_{idx}",
+            use_container_width=True
+        ):
+            st.session_state[f"inline_rejecting_{idx}"] = True
+
+    # Show rejection form if user clicked reject
+    if st.session_state.get(f"inline_rejecting_{idx}", False):
+        st.markdown("---")
+        st.markdown("**📝 Rejection Feedback & Annotations:**")
+
+        feedback = st.text_area(
+            "Why are you rejecting this item?",
+            key=f"inline_feedback_{idx}",
+            placeholder="e.g., Query doesn't include required entities, Poor grammar, Doesn't match topic...",
+            help="Provide specific feedback to help improve future generations"
+        )
+
+        st.markdown("**Corrections (optional):**")
+        col1, col2 = st.columns(2)
+
+        with col1:
+            corrected_entities = st.text_input(
+                "Corrected Entities (comma-separated)",
+                key=f"inline_entities_{idx}",
+                value=", ".join([str(e) for e in entities]),
+                help="Update the entities that should be included"
+            )
+
+        with col2:
+            corrected_topics = st.text_input(
+                "Corrected Topics (comma-separated)",
+                key=f"inline_topics_{idx}",
+                value=data.get("topics", ""),
+                help="Update the topics for better context"
+            )
+
+        col1, col2, col3 = st.columns([1, 1, 2])
+
+        with col1:
+            if st.button(
+                "💾 Submit Rejection",
+                key=f"inline_submit_reject_{idx}",
+                type="primary",
+                use_container_width=True
+            ):
+                corrections = {}
+                if corrected_entities:
+                    corrections["entities"] = [e.strip() for e in corrected_entities.split(",")]
+                if corrected_topics:
+                    corrections["topics"] = corrected_topics.strip()
+
+                _handle_inline_rejection(item, idx, feedback, corrections)
+                st.session_state[f"inline_rejecting_{idx}"] = False
+                st.rerun()
+
+        with col2:
+            if st.button("Cancel", key=f"inline_cancel_{idx}", use_container_width=True):
+                st.session_state[f"inline_rejecting_{idx}"] = False
+                st.rerun()
+
+
+def _handle_inline_approval(item, idx: int):
+    """Handle inline approval"""
+    from cogniverse_agents.approval import ApprovalStatus, ReviewDecision
+
+    try:
+        decision = ReviewDecision(
+            item_id=item.item_id,
+            approved=True,
+            reviewer=st.session_state.get("user_email", "unknown"),
+        )
+
+        # Update item status
+        item.status = ApprovalStatus.APPROVED
+        import pandas as pd
+        item.reviewed_at = pd.Timestamp.now()
+
+        st.success(f"✅ Approved: {item.data.get('query', item.item_id)[:50]}...")
+
+        # Update batch and session state
+        batch = st.session_state.get("last_generated_batch")
+        if batch:
+            # Move from pending to approved
+            approved_items = st.session_state.get("approved_items", [])
+            approved_items.append(item)
+            st.session_state.approved_items = approved_items
+
+            # Update pending items
+            pending_items = [i for i in batch.pending_review if i.item_id != item.item_id]
+            st.session_state.pending_items = pending_items
+
+        st.rerun()
+
+    except Exception as e:
+        st.error(f"Failed to approve item: {e}")
+        logger.exception("Inline approval failed")
+
+
+def _handle_inline_rejection(item, idx: int, feedback: str, corrections: Dict):
+    """Handle inline rejection with feedback"""
+    from cogniverse_agents.approval import ApprovalStatus, ReviewDecision
+
+    try:
+        decision = ReviewDecision(
+            item_id=item.item_id,
+            approved=False,
+            feedback=feedback,
+            corrections=corrections,
+            reviewer=st.session_state.get("user_email", "unknown"),
+        )
+
+        # Update item status
+        item.status = ApprovalStatus.REJECTED
+        import pandas as pd
+        item.reviewed_at = pd.Timestamp.now()
+
+        st.warning(f"❌ Rejected: {item.data.get('query', item.item_id)[:50]}...")
+        if feedback:
+            st.info(f"📝 Feedback: {feedback}")
+
+        # Update batch and session state
+        batch = st.session_state.get("last_generated_batch")
+        if batch:
+            # Move from pending to rejected
+            rejected_items = st.session_state.get("rejected_items", [])
+            rejected_items.append((item, decision))
+            st.session_state.rejected_items = rejected_items
+
+            # Update pending items
+            pending_items = [i for i in batch.pending_review if i.item_id != item.item_id]
+            st.session_state.pending_items = pending_items
+
+        st.rerun()
+
+    except Exception as e:
+        st.error(f"Failed to reject item: {e}")
+        logger.exception("Inline rejection failed")
+
+
+def _process_approval_workflow(result: Dict, confidence_threshold: float):
+    """
+    Process synthetic data through human approval workflow
+
+    Args:
+        result: Synthetic data generation result
+        confidence_threshold: Confidence threshold for auto-approval
+    """
+    try:
+        from cogniverse_agents.approval import HumanApprovalAgent
+        from cogniverse_synthetic.approval import (
+            SyntheticDataConfidenceExtractor,
+            SyntheticDataFeedbackHandler,
+        )
+
+        # Initialize approval agent
+        confidence_extractor = SyntheticDataConfidenceExtractor()
+        feedback_handler = SyntheticDataFeedbackHandler()
+
+        agent = HumanApprovalAgent(
+            confidence_extractor=confidence_extractor,
+            feedback_handler=feedback_handler,
+            confidence_threshold=confidence_threshold,
+            storage=None  # Using session state instead of Phoenix for demo
+        )
+
+        # Process batch through approval agent
+        batch_id = f"synthetic_{result['optimizer']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+        # Create mock batch (in production, would call agent.process_batch() asynchronously)
+        from cogniverse_agents.approval import ReviewItem, ApprovalBatch, ApprovalStatus
+
+        review_items = []
+        for i, item_data in enumerate(result['data']):
+            confidence = confidence_extractor.extract(item_data)
+            status = (
+                ApprovalStatus.AUTO_APPROVED
+                if confidence >= confidence_threshold
+                else ApprovalStatus.PENDING_REVIEW
+            )
+
+            review_item = ReviewItem(
+                item_id=f"{batch_id}_{i}",
+                data=item_data,
+                confidence=confidence,
+                status=status
+            )
+            review_items.append(review_item)
+
+        batch = ApprovalBatch(
+            batch_id=batch_id,
+            items=review_items,
+            context={
+                "optimizer": result['optimizer'],
+                "tenant_id": result.get('tenant_id', 'default'),
+                "profiles": result['selected_profiles']
+            }
+        )
+
+        # Store in session state for approval queue tab
+        st.session_state["last_generated_batch"] = batch
+        st.session_state["pending_items"] = batch.pending_review
+        st.session_state["approved_items"] = batch.auto_approved
+
+        # Display approval summary
+        st.success(
+            f"✅ Generated {len(batch.items)} examples: "
+            f"{len(batch.auto_approved)} auto-approved, "
+            f"{len(batch.pending_review)} awaiting review"
+        )
+
+        if len(batch.pending_review) > 0:
+            st.info(
+                f"📋 **{len(batch.pending_review)} items need your review**. "
+                "Navigate to the **Approval Queue** tab to review them."
+            )
+
+            # Show approval stats
+            stats = agent.get_approval_stats(batch)
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Auto-Approved", stats['auto_approved'])
+            with col2:
+                st.metric("Pending Review", stats['pending_review'])
+            with col3:
+                st.metric("Avg Confidence", f"{stats['avg_confidence']:.2f}")
+
+    except Exception as e:
+        st.error(f"❌ Approval workflow failed: {e}")
+        logger.exception("Approval workflow error")
 
 
 if __name__ == "__main__":

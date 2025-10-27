@@ -1186,16 +1186,18 @@ class WorkflowIntelligence:
     async def generate_synthetic_training_data(
         self,
         count: int = 100,
-        vespa_client: Optional[Any] = None,
+        backend: Optional[Any] = None,
         backend_config: Optional[Dict[str, Any]] = None,
+        generator_config: Optional[Any] = None,
     ) -> int:
         """
         Generate synthetic training data using libs/synthetic system
 
         Args:
             count: Number of synthetic examples to generate
-            vespa_client: Optional Vespa client for content sampling
+            backend: Optional Backend instance for content sampling
             backend_config: Backend configuration with profiles
+            generator_config: Optional SyntheticGeneratorConfig for DSPy modules
 
         Returns:
             Number of examples added to workflow history
@@ -1210,8 +1212,9 @@ class WorkflowIntelligence:
 
         # Generate synthetic data directly
         service = SyntheticDataService(
-            vespa_client=vespa_client,
-            backend_config=backend_config
+            backend=backend,
+            backend_config=backend_config,
+            generator_config=generator_config
         )
         request = SyntheticDataRequest(optimizer="workflow", count=count)
         response = await service.generate(request)

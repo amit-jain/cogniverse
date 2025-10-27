@@ -9,11 +9,13 @@ Tests the complete end-to-end flow:
 """
 
 import logging
+import subprocess
 import time
 from datetime import datetime, timedelta
 
 import phoenix as px
 import pytest
+import requests
 from cogniverse_agents.routing.base import SearchModality
 from cogniverse_agents.routing.router import ComprehensiveRouter
 from cogniverse_core.telemetry.config import (
@@ -28,10 +30,144 @@ from tests.utils.async_polling import simulate_processing_delay, wait_for_vespa_
 logger = logging.getLogger(__name__)
 
 
+@pytest.fixture(scope="function", autouse=True)
+def phoenix_container():
+    """Start Phoenix Docker container on non-default ports for each test"""
+    import os
+
+    # CRITICAL: Set environment variables BEFORE any TelemetryManager is created
+    # TelemetryManager is a singleton that only initializes once, so we need to:
+    # 1. Set the env vars first
+    # 2. Reset the singleton so it re-reads the env vars
+    original_endpoint = os.environ.get("PHOENIX_COLLECTOR_ENDPOINT")
+    original_sync_export = os.environ.get("TELEMETRY_SYNC_EXPORT")
+
+    os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = "http://localhost:14317"
+    os.environ["TELEMETRY_SYNC_EXPORT"] = "true"  # Use sync export for tests
+
+    # Reset TelemetryManager singleton to force re-initialization with new env var
+    from cogniverse_core.telemetry.manager import TelemetryManager
+    if hasattr(TelemetryManager, '_instance') and TelemetryManager._instance is not None:
+        # Shutdown existing instance
+        try:
+            TelemetryManager._instance.shutdown()
+        except Exception:
+            pass
+        # Reset singleton
+        TelemetryManager._instance = None
+
+    container_name = f"phoenix_test_{int(time.time() * 1000)}"
+
+    # Clean up any existing Phoenix test containers
+    try:
+        # Find and stop old containers using these ports
+        result = subprocess.run(
+            ["docker", "ps", "-a", "-q", "--filter", "name=phoenix_test"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.stdout.strip():
+            old_containers = result.stdout.strip().split('\n')
+            for container_id in old_containers:
+                subprocess.run(["docker", "rm", "-f", container_id], capture_output=True, timeout=10)
+            logger.info(f"Cleaned up {len(old_containers)} old Phoenix test containers")
+    except Exception as e:
+        logger.warning(f"Error cleaning up old containers: {e}")
+
+    try:
+        # Start Phoenix container
+        result = subprocess.run(
+            [
+                "docker", "run", "-d",
+                "--name", container_name,
+                "-p", "16006:6006",  # HTTP port
+                "-p", "14317:4317",  # gRPC port
+                "arizephoenix/phoenix:latest"
+            ],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        logger.info(f"Phoenix container {container_name} started")
+
+        # Wait for Phoenix to be ready (takes ~15-20 seconds for DB migrations)
+        # Use polling loop similar to Vespa with retry logic
+        max_wait_time = 60  # seconds
+        poll_interval = 0.5  # seconds
+        start_time = time.time()
+        phoenix_ready = False
+
+        while time.time() - start_time < max_wait_time:
+            try:
+                response = requests.get("http://localhost:16006", timeout=2)
+                if response.status_code == 200:
+                    phoenix_ready = True
+                    elapsed = time.time() - start_time
+                    logger.info(f"Phoenix ready after {elapsed:.1f} seconds")
+                    break
+            except Exception:
+                pass
+            time.sleep(poll_interval)
+
+        if not phoenix_ready:
+            # Get logs for debugging
+            logs_result = subprocess.run(
+                ["docker", "logs", container_name],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            logger.error(f"Phoenix logs:\n{logs_result.stdout}\n{logs_result.stderr}")
+            raise RuntimeError(f"Phoenix failed to start after {max_wait_time} seconds")
+
+        yield container_name
+
+    finally:
+        # Cleanup: stop and remove container
+        try:
+            subprocess.run(
+                ["docker", "stop", container_name],
+                check=False,
+                capture_output=True,
+                timeout=30
+            )
+            subprocess.run(
+                ["docker", "rm", container_name],
+                check=False,
+                capture_output=True,
+                timeout=10
+            )
+            logger.info(f"Phoenix container {container_name} stopped and removed")
+        except Exception as e:
+            logger.warning(f"Error cleaning up Phoenix container: {e}")
+            # Force remove if normal stop failed
+            try:
+                subprocess.run(
+                    ["docker", "rm", "-f", container_name],
+                    check=False,
+                    capture_output=True,
+                    timeout=10
+                )
+            except Exception:
+                pass
+
+        # Restore original environment variables
+        if original_endpoint:
+            os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = original_endpoint
+        else:
+            os.environ.pop("PHOENIX_COLLECTOR_ENDPOINT", None)
+
+        if original_sync_export:
+            os.environ["TELEMETRY_SYNC_EXPORT"] = original_sync_export
+        else:
+            os.environ.pop("TELEMETRY_SYNC_EXPORT", None)
+
+
 @pytest.fixture
 def phoenix_client():
-    """Phoenix client for querying spans"""
-    return px.Client()
+    """Phoenix client for querying spans on non-default port"""
+    return px.Client(endpoint="http://localhost:16006")
 
 
 @pytest.fixture
@@ -41,14 +177,20 @@ def test_tenant_id():
 
 
 @pytest.fixture
-def telemetry_config(test_tenant_id):
-    """Telemetry config for test tenant"""
-    return TelemetryConfig.from_env()
+def telemetry_config(test_tenant_id, phoenix_container):
+    """Telemetry config for test tenant pointing to non-default Phoenix port"""
+    # Depend on phoenix_container to ensure env var is set before reading config
+    # Environment variable is already set in phoenix_container fixture
+    config = TelemetryConfig.from_env()
+    return config
 
 
 @pytest.fixture
-def telemetry_manager(test_tenant_id, telemetry_config):
+def telemetry_manager(test_tenant_id, telemetry_config, phoenix_container):
     """Telemetry manager for creating test spans"""
+    # Depend on phoenix_container to ensure singleton is reset before creating manager
+    # TelemetryManager singleton has been reset in phoenix_container fixture
+    # It will read the PHOENIX_COLLECTOR_ENDPOINT env var (http://localhost:14317)
     manager = TelemetryManager()
     return manager
 
@@ -62,8 +204,10 @@ def project_name(test_tenant_id, telemetry_config):
 
 
 @pytest.fixture
-def router():
+def router(phoenix_container):
     """Comprehensive router for testing"""
+    # Depend on phoenix_container to ensure env var is set before router initialization
+    # Router may create TelemetryManager internally
     return ComprehensiveRouter()
 
 

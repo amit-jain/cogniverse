@@ -5,7 +5,7 @@ Tests that synthetic data generation integrates correctly with all optimizers.
 """
 
 import pytest
-from cogniverse_agents.agents.workflow_intelligence import WorkflowIntelligence
+from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
 
@@ -66,27 +66,31 @@ class TestAdvancedRoutingOptimizerIntegration:
 
     def test_advanced_optimizer_initialization(self):
         """Test AdvancedRoutingOptimizer can be initialized"""
-        optimizer = AdvancedRoutingOptimizer()
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant")
         assert optimizer is not None
         assert isinstance(optimizer.experiences, list)
 
     @pytest.mark.asyncio
-    async def test_generate_synthetic_routing_data(self):
+    async def test_generate_synthetic_routing_data(self, test_generator_config):
         """Test generating synthetic data for AdvancedRoutingOptimizer"""
-        optimizer = AdvancedRoutingOptimizer()
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant")
+
+        # Clear any existing experiences
+        initial_count = len(optimizer.experiences)
+        optimizer.experiences.clear()
 
         # Generate small batch without Vespa (uses mock data)
-        count = await optimizer.generate_synthetic_training_data(count=10)
+        count = await optimizer.generate_synthetic_training_data(count=10, generator_config=test_generator_config)
 
         assert count == 10
         assert len(optimizer.experiences) == 10
 
     @pytest.mark.asyncio
-    async def test_routing_data_structure(self):
+    async def test_routing_data_structure(self, test_generator_config):
         """Test generated data has correct structure"""
-        optimizer = AdvancedRoutingOptimizer()
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant")
 
-        await optimizer.generate_synthetic_training_data(count=5)
+        await optimizer.generate_synthetic_training_data(count=5, generator_config=test_generator_config)
 
         # Check first experience
         experience = optimizer.experiences[0]
@@ -99,11 +103,11 @@ class TestAdvancedRoutingOptimizerIntegration:
         assert 0 <= experience.search_quality <= 1
 
     @pytest.mark.asyncio
-    async def test_routing_data_variety(self):
+    async def test_routing_data_variety(self, test_generator_config):
         """Test that generated data has variety"""
-        optimizer = AdvancedRoutingOptimizer()
+        optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant")
 
-        await optimizer.generate_synthetic_training_data(count=20)
+        await optimizer.generate_synthetic_training_data(count=20, generator_config=test_generator_config)
 
         # Check we have variety in queries
         queries = [exp.query for exp in optimizer.experiences]
@@ -177,15 +181,15 @@ class TestMultiOptimizerIntegration:
     """Integration tests across multiple optimizers"""
 
     @pytest.mark.asyncio
-    async def test_all_optimizers_can_generate_data(self):
+    async def test_all_optimizers_can_generate_data(self, test_generator_config):
         """Test that all optimizers can generate synthetic data"""
         cross_modal = CrossModalOptimizer()
-        routing = AdvancedRoutingOptimizer()
+        routing = AdvancedRoutingOptimizer(tenant_id="test_tenant")
         workflow = WorkflowIntelligence()
 
         # Generate for all
         cross_modal_count = await cross_modal.generate_synthetic_training_data(count=5)
-        routing_count = await routing.generate_synthetic_training_data(count=5)
+        routing_count = await routing.generate_synthetic_training_data(count=5, generator_config=test_generator_config)
         workflow_count = await workflow.generate_synthetic_training_data(count=5)
 
         assert cross_modal_count == 5
@@ -193,13 +197,17 @@ class TestMultiOptimizerIntegration:
         assert workflow_count == 5
 
     @pytest.mark.asyncio
-    async def test_synthetic_data_is_independent(self):
+    async def test_synthetic_data_is_independent(self, test_generator_config):
         """Test that each optimizer gets independent data"""
         cross_modal = CrossModalOptimizer()
-        routing = AdvancedRoutingOptimizer()
+        routing = AdvancedRoutingOptimizer(tenant_id="test_tenant")
+
+        # Clear state before testing
+        cross_modal.fusion_history.clear()
+        routing.experiences.clear()
 
         await cross_modal.generate_synthetic_training_data(count=3)
-        await routing.generate_synthetic_training_data(count=3)
+        await routing.generate_synthetic_training_data(count=3, generator_config=test_generator_config)
 
         # Data should be different (fusion history vs routing experiences)
         assert len(cross_modal.fusion_history) == 3

@@ -104,44 +104,69 @@ class SyntheticDataService:
         self.pattern_extractor = PatternExtractor(field_mappings=field_mappings)
         self.agent_inferrer = AgentInferrer()
 
-        # Initialize generator instances with optimizer-specific configs
+        # Lazy initialization - generators created on first use
         self.generators = {}
 
-        # ModalityGenerator - requires configuration
-        modality_config = self.generator_config.get_optimizer_config("modality")
-        if not modality_config:
-            raise ValueError(
-                "ModalityGenerator requires optimizer configuration. "
-                "SyntheticGeneratorConfig must include optimizer_configs['modality'] with query_templates and agent_mappings."
-            )
-        self.generators["ModalityGenerator"] = ModalityGenerator(
-            pattern_extractor=self.pattern_extractor,
-            agent_inferrer=self.agent_inferrer,
-            optimizer_config=modality_config
-        )
-
-        # RoutingGenerator - requires configuration
-        routing_config = self.generator_config.get_optimizer_config("routing")
-        if not routing_config:
-            raise ValueError(
-                "RoutingGenerator requires optimizer configuration. "
-                "SyntheticGeneratorConfig must include optimizer_configs['routing'] with query_templates."
-            )
-        self.generators["RoutingGenerator"] = RoutingGenerator(
-            pattern_extractor=self.pattern_extractor,
-            agent_inferrer=self.agent_inferrer,
-            optimizer_config=routing_config
-        )
-
-        # CrossModalGenerator and WorkflowGenerator (no config yet)
-        self.generators["CrossModalGenerator"] = CrossModalGenerator()
-        self.generators["WorkflowGenerator"] = WorkflowGenerator()
-
         logger.info(
-            f"Initialized SyntheticDataService with {len(self.generators)} generators "
+            f"Initialized SyntheticDataService "
             f"(backend: {self.backend_config.backend_type}, "
             f"config: {'configured' if generator_config else 'default'})"
         )
+
+    def _get_generator(self, optimizer_name: str):
+        """
+        Get or create generator for optimizer (lazy initialization)
+
+        Args:
+            optimizer_name: Name of optimizer (modality, routing, cross_modal, workflow)
+
+        Returns:
+            Generator instance
+
+        Raises:
+            ValueError: If optimizer requires config but none provided
+        """
+        # Return cached generator if exists
+        generator_class_name = f"{optimizer_name.title().replace('_', '')}Generator"
+        if generator_class_name in self.generators:
+            return self.generators[generator_class_name]
+
+        # Create generator based on type
+        if optimizer_name == "modality":
+            modality_config = self.generator_config.get_optimizer_config("modality")
+            if not modality_config:
+                raise ValueError(
+                    "ModalityGenerator requires optimizer configuration. "
+                    "SyntheticGeneratorConfig must include optimizer_configs['modality'] with query_templates and agent_mappings."
+                )
+            generator = ModalityGenerator(
+                pattern_extractor=self.pattern_extractor,
+                agent_inferrer=self.agent_inferrer,
+                optimizer_config=modality_config
+            )
+        elif optimizer_name == "routing":
+            routing_config = self.generator_config.get_optimizer_config("routing")
+            if not routing_config:
+                raise ValueError(
+                    "RoutingGenerator requires optimizer configuration. "
+                    "SyntheticGeneratorConfig must include optimizer_configs['routing'] with query_templates."
+                )
+            generator = RoutingGenerator(
+                pattern_extractor=self.pattern_extractor,
+                agent_inferrer=self.agent_inferrer,
+                optimizer_config=routing_config
+            )
+        elif optimizer_name == "cross_modal":
+            generator = CrossModalGenerator()
+        elif optimizer_name == "workflow":
+            generator = WorkflowGenerator()
+        else:
+            raise ValueError(f"Unknown optimizer: {optimizer_name}")
+
+        # Cache and return
+        self.generators[generator_class_name] = generator
+        logger.info(f"Initialized {generator_class_name} (lazy)")
+        return generator
 
     async def generate(
         self,
@@ -273,19 +298,12 @@ class SyntheticDataService:
         sampled_content: List[Dict[str, Any]]
     ) -> List[BaseModel]:
         """Generate synthetic examples using appropriate generator"""
-        generator_name = config.generator_class_name
-
-        if generator_name not in self.generators:
-            raise ValueError(
-                f"Generator '{generator_name}' not found. "
-                f"Available: {list(self.generators.keys())}"
-            )
-
-        generator = self.generators[generator_name]
+        # Get generator lazily (creates on first use)
+        generator = self._get_generator(request.optimizer)
 
         # For modality generator, add modality hint if possible (not in current schema, but we can infer)
         generation_kwargs = {}
-        if generator_name == "ModalityGenerator" and hasattr(request, "modality"):
+        if request.optimizer == "modality" and hasattr(request, "modality"):
             generation_kwargs["modality"] = request.modality
 
         examples = await generator.generate(
