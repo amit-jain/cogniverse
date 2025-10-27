@@ -107,7 +107,9 @@ class SyntheticDataConfidenceExtractor(ConfidenceExtractor):
         if entity_list:
             # Check if at least one entity appears in query
             query_lower = query.lower()
-            has_entity = any(str(entity).lower() in query_lower for entity in entity_list)
+            has_entity = any(
+                str(entity).lower() in query_lower for entity in entity_list
+            )
 
             if has_entity:
                 # Small boost for entity presence
@@ -116,9 +118,7 @@ class SyntheticDataConfidenceExtractor(ConfidenceExtractor):
             else:
                 # Penalty for missing entities
                 confidence *= 0.7
-                logger.debug(
-                    f"Missing entity penalty -> confidence={confidence:.2f}"
-                )
+                logger.debug(f"Missing entity penalty -> confidence={confidence:.2f}")
 
         # Signal 3: Query length (reasonable length = good quality)
         query_len = len(query)
@@ -171,7 +171,11 @@ class SyntheticDataConfidenceExtractor(ConfidenceExtractor):
             entity_list = entities if isinstance(entities, list) else []
 
         retry_count = metadata.get("retry_count", 0)
-        has_entity = any(str(entity).lower() in query.lower() for entity in entity_list) if entity_list else False
+        has_entity = (
+            any(str(entity).lower() in query.lower() for entity in entity_list)
+            if entity_list
+            else False
+        )
 
         return {
             "final_confidence": self.extract(data),

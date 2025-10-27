@@ -6,9 +6,8 @@ Human-in-the-loop approval interface for synthetic data generation
 and other AI outputs requiring human review.
 """
 
-import json
 import logging
-from typing import Dict, List
+from typing import Dict
 
 import pandas as pd
 import streamlit as st
@@ -16,8 +15,8 @@ import streamlit as st
 # Import approval system components
 from cogniverse_agents.approval import (
     ApprovalStatus,
+    ApprovalStorageImpl,
     HumanApprovalAgent,
-    PhoenixApprovalStorage,
     ReviewDecision,
 )
 from cogniverse_synthetic.approval import (
@@ -40,12 +39,9 @@ def render_approval_queue_tab():
         _initialize_approval_agent()
 
     # Create sub-tabs
-    approval_tabs = st.tabs([
-        "📋 Pending Review",
-        "✅ Approved Items",
-        "❌ Rejected Items",
-        "📊 Statistics"
-    ])
+    approval_tabs = st.tabs(
+        ["📋 Pending Review", "✅ Approved Items", "❌ Rejected Items", "📊 Statistics"]
+    )
 
     with approval_tabs[0]:
         _render_pending_review_tab()
@@ -65,13 +61,13 @@ def _initialize_approval_agent():
     try:
         confidence_extractor = SyntheticDataConfidenceExtractor()
         feedback_handler = SyntheticDataFeedbackHandler()
-        storage = PhoenixApprovalStorage()
+        storage = ApprovalStorageImpl()
 
         agent = HumanApprovalAgent(
             confidence_extractor=confidence_extractor,
             feedback_handler=feedback_handler,
             confidence_threshold=0.85,
-            storage=storage
+            storage=storage,
         )
 
         st.session_state.approval_agent = agent
@@ -107,7 +103,7 @@ def _render_pending_review_tab():
     for idx, item in enumerate(pending_items):
         with st.expander(
             f"Item {idx + 1} - Confidence: {item.confidence:.2f} - {item.item_id}",
-            expanded=(idx == 0)  # Expand first item by default
+            expanded=(idx == 0),  # Expand first item by default
         ):
             _render_review_item(item, idx)
 
@@ -163,7 +159,7 @@ def _render_review_item(item, idx: int):
         feedback = st.text_area(
             "Why are you rejecting this item?",
             key=f"feedback_{idx}",
-            placeholder="e.g., Query doesn't match entities, Grammar issues, ..."
+            placeholder="e.g., Query doesn't match entities, Grammar issues, ...",
         )
 
         col1, col2 = st.columns(2)
@@ -174,15 +170,19 @@ def _render_review_item(item, idx: int):
             corrected_entities = st.text_input(
                 "Corrected Entities (comma-separated)",
                 key=f"corrected_entities_{idx}",
-                value=", ".join([str(e) for e in entities])
+                value=", ".join([str(e) for e in entities]),
             )
 
         with col2:
             st.markdown("&nbsp;")  # Spacer
-            if st.button("Submit Rejection", key=f"submit_reject_{idx}", type="primary"):
+            if st.button(
+                "Submit Rejection", key=f"submit_reject_{idx}", type="primary"
+            ):
                 corrections = {}
                 if corrected_entities:
-                    corrections["entities"] = [e.strip() for e in corrected_entities.split(",")]
+                    corrections["entities"] = [
+                        e.strip() for e in corrected_entities.split(",")
+                    ]
 
                 _handle_rejection(item, idx, feedback, corrections)
                 st.session_state[f"rejecting_{idx}"] = False
@@ -270,12 +270,14 @@ def _render_approved_items_tab():
     # Display as dataframe
     df_data = []
     for item in approved_items:
-        df_data.append({
-            "Item ID": item.item_id,
-            "Query": item.data.get("query", "N/A"),
-            "Confidence": item.confidence,
-            "Approved At": item.reviewed_at
-        })
+        df_data.append(
+            {
+                "Item ID": item.item_id,
+                "Query": item.data.get("query", "N/A"),
+                "Confidence": item.confidence,
+                "Approved At": item.reviewed_at,
+            }
+        )
 
     df = pd.DataFrame(df_data)
     st.dataframe(df, use_container_width=True)
@@ -299,7 +301,7 @@ def _render_rejected_items_tab():
             st.markdown(f"**Feedback:** {decision.feedback}")
             st.markdown(f"**Corrections:** {decision.corrections}")
 
-            if st.button(f"🔄 Regenerate", key=f"regen_{idx}"):
+            if st.button("🔄 Regenerate", key=f"regen_{idx}"):
                 st.info("Regeneration triggered (would use FeedbackHandler)")
 
 
@@ -335,18 +337,19 @@ def _render_statistics_tab():
     # Confidence distribution
     st.markdown("### Confidence Distribution")
 
-    all_items = (
-        st.session_state.get("pending_items", []) +
-        st.session_state.get("approved_items", [])
+    all_items = st.session_state.get("pending_items", []) + st.session_state.get(
+        "approved_items", []
     )
 
     if all_items:
         confidences = [item.confidence for item in all_items]
-        df_confidence = pd.DataFrame({
-            "Confidence": confidences,
-            "Status": ["Pending"] * len(st.session_state.get("pending_items", [])) +
-                      ["Approved"] * len(st.session_state.get("approved_items", []))
-        })
+        df_confidence = pd.DataFrame(
+            {
+                "Confidence": confidences,
+                "Status": ["Pending"] * len(st.session_state.get("pending_items", []))
+                + ["Approved"] * len(st.session_state.get("approved_items", [])),
+            }
+        )
 
         st.bar_chart(df_confidence.groupby("Status")["Confidence"].mean())
 

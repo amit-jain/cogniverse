@@ -26,12 +26,12 @@ graph TB
 
     subgraph "Approval Workflow"
         ApprovalAgent[HumanApprovalAgent]
-        Storage[PhoenixApprovalStorage]
+        Storage[ApprovalStorageImpl]
 
         Extractor --> ApprovalAgent
         ApprovalAgent --> Storage
 
-        subgraph "Phoenix Backend"
+        subgraph "Telemetry Backend"
             Spans[(Phoenix Spans)]
             Annotations[(Annotations API)]
             Datasets[(Datasets API)]
@@ -55,18 +55,18 @@ graph TB
 
 ## Core Components
 
-### 1. PhoenixApprovalStorage
+### 1. ApprovalStorageImpl
 
-Stores approval data as Phoenix spans with annotations for status updates.
+Stores approval data as telemetry spans with annotations for status updates.
 
 **Initialization** (Breaking Change from v1.0):
 
 ```python
-from cogniverse_agents.approval import PhoenixApprovalStorage
+from cogniverse_agents.approval import ApprovalStorageImpl
 from cogniverse_core.telemetry.manager import TelemetryManager
 
-# Initialize storage with Phoenix endpoints
-storage = PhoenixApprovalStorage(
+# Initialize storage with telemetry endpoints
+storage = ApprovalStorageImpl(
     phoenix_grpc_endpoint="http://localhost:4317",  # gRPC for span export
     phoenix_http_endpoint="http://localhost:6006",  # HTTP for queries
     tenant_id="default",
@@ -156,11 +156,11 @@ Span Hierarchy:
 Orchestrates the approval workflow with confidence-based auto-approval.
 
 ```python
-from cogniverse_agents.approval import HumanApprovalAgent, PhoenixApprovalStorage
+from cogniverse_agents.approval import HumanApprovalAgent, ApprovalStorageImpl
 from cogniverse_synthetic.approval import ConfidenceExtractor, FeedbackHandler
 
 # Initialize components
-storage = PhoenixApprovalStorage(
+storage = ApprovalStorageImpl(
     phoenix_grpc_endpoint="http://localhost:4317",
     phoenix_http_endpoint="http://localhost:6006",
 )
@@ -442,7 +442,7 @@ If you were using the old SQLite-based approval storage:
 
 **Old Code (v1.0)**:
 ```python
-storage = PhoenixApprovalStorage(
+storage = ApprovalStorageImpl(
     phoenix_endpoint="http://localhost:6006",
     phoenix_container_name="phoenix-container",
     project_name="approval_system"
@@ -455,7 +455,7 @@ storage.update_item(item)
 
 **New Code (v2.0)**:
 ```python
-storage = PhoenixApprovalStorage(
+storage = ApprovalStorageImpl(
     phoenix_grpc_endpoint="http://localhost:4317",  # Split endpoints
     phoenix_http_endpoint="http://localhost:6006",
     tenant_id="default"  # Multi-tenant support

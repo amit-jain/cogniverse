@@ -164,37 +164,40 @@ class HumanApprovalAgent:
 
         item = next((i for i in batch.items if i.item_id == decision.item_id), None)
         if not item:
-            raise ValueError(
-                f"Item {decision.item_id} not found in batch {batch_id}"
-            )
+            raise ValueError(f"Item {decision.item_id} not found in batch {batch_id}")
 
         # Apply decision
         if decision.approved:
             item.status = ApprovalStatus.APPROVED
             await self.storage.update_item(item, batch_id=batch.batch_id)
 
-            # Log approval decision as Phoenix annotation (SpanEvaluation)
+            # Log approval decision as telemetry annotation (SpanEvaluation)
             # Find span_id for this item and annotate it
             from cogniverse_agents.approval.phoenix_storage import (
-                PhoenixApprovalStorage,
+                ApprovalStorageImpl,
             )
-            if isinstance(self.storage, PhoenixApprovalStorage):
-                span_id = await self.storage.get_item_span_id(item.item_id, batch_id=batch.batch_id)
+
+            if isinstance(self.storage, ApprovalStorageImpl):
+                span_id = await self.storage.get_item_span_id(
+                    item.item_id, batch_id=batch.batch_id
+                )
                 if span_id:
                     await self.storage.log_approval_decision(
                         span_id=span_id,
                         item_id=item.item_id,
                         approved=True,
                         feedback=decision.feedback,
-                        reviewer=decision.reviewer
+                        reviewer=decision.reviewer,
                     )
 
                 # Add approved item to training dataset
-                dataset_name = batch.context.get("dataset_name", "approved_synthetic_data")
+                dataset_name = batch.context.get(
+                    "dataset_name", "approved_synthetic_data"
+                )
                 await self.storage.append_to_training_dataset(
                     dataset_name=dataset_name,
                     items=[item],
-                    project_context=batch.context
+                    project_context=batch.context,
                 )
 
             logger.info(f"Item {item.item_id} approved and added to training dataset")
@@ -204,19 +207,22 @@ class HumanApprovalAgent:
             item.status = ApprovalStatus.REJECTED
             await self.storage.update_item(item, batch_id=batch.batch_id)
 
-            # Log rejection decision as Phoenix annotation (SpanEvaluation)
+            # Log rejection decision as telemetry annotation (SpanEvaluation)
             from cogniverse_agents.approval.phoenix_storage import (
-                PhoenixApprovalStorage,
+                ApprovalStorageImpl,
             )
-            if isinstance(self.storage, PhoenixApprovalStorage):
-                span_id = await self.storage.get_item_span_id(item.item_id, batch_id=batch.batch_id)
+
+            if isinstance(self.storage, ApprovalStorageImpl):
+                span_id = await self.storage.get_item_span_id(
+                    item.item_id, batch_id=batch.batch_id
+                )
                 if span_id:
                     await self.storage.log_approval_decision(
                         span_id=span_id,
                         item_id=item.item_id,
                         approved=False,
                         feedback=decision.feedback,
-                        reviewer=decision.reviewer
+                        reviewer=decision.reviewer,
                     )
 
             # Attempt regeneration if feedback handler available
@@ -261,9 +267,7 @@ class HumanApprovalAgent:
         Returns:
             Updated ApprovalBatch
         """
-        logger.info(
-            f"Applying {len(decisions)} decisions to batch {batch_id}"
-        )
+        logger.info(f"Applying {len(decisions)} decisions to batch {batch_id}")
 
         for decision in decisions:
             await self.apply_decision(batch_id, decision)
@@ -332,8 +336,6 @@ class HumanApprovalAgent:
             "rejected_pct": rejected / total if total > 0 else 0,
             "overall_approval_rate": batch.approval_rate,
             "avg_confidence": (
-                sum(item.confidence for item in batch.items) / total
-                if total > 0
-                else 0
+                sum(item.confidence for item in batch.items) / total if total > 0 else 0
             ),
         }

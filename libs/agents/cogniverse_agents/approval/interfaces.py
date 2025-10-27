@@ -169,7 +169,7 @@ class ApprovalStorage(ABC):
 
     Implementations define where approval data is persisted.
     Examples:
-    - PhoenixApprovalStorage: Store as Phoenix spans with annotations
+    - ApprovalStorageImpl: Store as telemetry spans with annotations
     - DatabaseApprovalStorage: Store in relational database
     - FileApprovalStorage: Store as JSON files
     """

@@ -1,7 +1,7 @@
 """
-Phoenix Approval Storage
+Approval Storage Implementation
 
-Stores approval data as Phoenix spans with annotations.
+Stores approval data as telemetry spans with annotations using pluggable provider.
 Enables approval workflow tracing and analysis.
 """
 
@@ -43,9 +43,9 @@ def _serialize_for_json(obj: Any) -> Any:
         return obj
 
 
-class PhoenixApprovalStorage(ApprovalStorage):
+class ApprovalStorageImpl(ApprovalStorage):
     """
-    Store approval data in Phoenix as spans
+    Store approval data using telemetry provider as spans
 
     Structure:
     - approval_batch (root span): Contains batch metadata
@@ -54,10 +54,11 @@ class PhoenixApprovalStorage(ApprovalStorage):
         - Annotations: Human decisions with feedback
 
     Benefits:
-    - Integrated with existing Phoenix infrastructure
+    - Integrated with telemetry infrastructure (Phoenix, LangSmith, etc.)
     - Trace approval workflows alongside optimization
     - Query and analyze approval patterns
     - No additional database needed
+    - Provider-agnostic implementation
     """
 
     def __init__(
@@ -129,7 +130,7 @@ class PhoenixApprovalStorage(ApprovalStorage):
         self.provider = self.telemetry_manager.get_provider(tenant_id=tenant_id)
 
         logger.info(
-            f"Initialized PhoenixApprovalStorage "
+            f"Initialized ApprovalStorageImpl "
             f"(tenant: {tenant_id}, project: {self.full_project_name}, "
             f"grpc: {phoenix_grpc_endpoint}, http: {phoenix_http_endpoint}, "
             f"provider: {self.provider.name})"

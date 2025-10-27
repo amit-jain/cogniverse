@@ -16,7 +16,7 @@ from cogniverse_agents.approval.interfaces import (
     ReviewItem,
 )
 from cogniverse_agents.approval.orchestrator import DecisionOrchestrator
-from cogniverse_agents.approval.phoenix_storage import PhoenixApprovalStorage
+from cogniverse_agents.approval.phoenix_storage import ApprovalStorageImpl
 
 __all__ = [
     "ApprovalStatus",
@@ -27,6 +27,6 @@ __all__ = [
     "FeedbackHandler",
     "ApprovalStorage",
     "HumanApprovalAgent",
-    "PhoenixApprovalStorage",
+    "ApprovalStorageImpl",
     "DecisionOrchestrator",
 ]

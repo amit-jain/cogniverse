@@ -68,9 +68,7 @@ class SyntheticDataFeedbackHandler(FeedbackHandler):
         Returns:
             New ReviewItem with regenerated data, or None if regeneration failed
         """
-        logger.info(
-            f"Processing rejection for {item.item_id}: {decision.feedback}"
-        )
+        logger.info(f"Processing rejection for {item.item_id}: {decision.feedback}")
 
         # Extract original data
         original_data = item.data
@@ -112,7 +110,9 @@ class SyntheticDataFeedbackHandler(FeedbackHandler):
                 # Create new data with regenerated query
                 regenerated_data = {
                     "query": result.query,
-                    "reasoning": result.reasoning if hasattr(result, "reasoning") else "",
+                    "reasoning": (
+                        result.reasoning if hasattr(result, "reasoning") else ""
+                    ),
                     "topics": topics,
                     "entities": entities,
                     "entity_types": entity_types,
@@ -140,8 +140,7 @@ class SyntheticDataFeedbackHandler(FeedbackHandler):
                 )
 
                 logger.info(
-                    f"Successfully regenerated {item.item_id}: "
-                    f"'{result.query}'"
+                    f"Successfully regenerated {item.item_id}: " f"'{result.query}'"
                 )
 
                 return new_item
@@ -157,9 +156,7 @@ class SyntheticDataFeedbackHandler(FeedbackHandler):
         )
         return None
 
-    def get_regeneration_stats(
-        self, items: list[ReviewItem]
-    ) -> Dict[str, Any]:
+    def get_regeneration_stats(self, items: list[ReviewItem]) -> Dict[str, Any]:
         """
         Get regeneration statistics
 
@@ -170,9 +167,7 @@ class SyntheticDataFeedbackHandler(FeedbackHandler):
             Dictionary with regeneration metrics
         """
         regenerated = [
-            item
-            for item in items
-            if item.status == ApprovalStatus.REGENERATED
+            item for item in items if item.status == ApprovalStatus.REGENERATED
         ]
         successful = [
             item

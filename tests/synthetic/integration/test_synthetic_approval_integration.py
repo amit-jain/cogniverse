@@ -30,7 +30,7 @@ from cogniverse_agents.approval.interfaces import (
     ReviewDecision,
     ReviewItem,
 )
-from cogniverse_agents.approval.phoenix_storage import PhoenixApprovalStorage
+from cogniverse_agents.approval.phoenix_storage import ApprovalStorageImpl
 from cogniverse_core.config.unified_config import (
     BackendConfig,
     DSPyModuleConfig,
@@ -104,7 +104,9 @@ def phoenix_container():
             old_containers = result.stdout.strip().split("\n")
             for container_id in old_containers:
                 subprocess.run(
-                    ["docker", "rm", "-f", container_id], capture_output=True, timeout=10
+                    ["docker", "rm", "-f", container_id],
+                    capture_output=True,
+                    timeout=10,
                 )
             logger.info(f"Cleaned up {len(old_containers)} old Phoenix test containers")
     except Exception as e:
@@ -114,7 +116,10 @@ def phoenix_container():
         # Create temporary directory for Phoenix data
         import os
         import tempfile
-        test_data_dir = os.path.join(tempfile.gettempdir(), f"phoenix_test_{int(time.time())}")
+
+        test_data_dir = os.path.join(
+            tempfile.gettempdir(), f"phoenix_test_{int(time.time())}"
+        )
         os.makedirs(test_data_dir, exist_ok=True)
 
         # Start Phoenix container with SQLite persistent storage
@@ -287,7 +292,7 @@ def approval_storage(phoenix_container, telemetry_manager):
     """Phoenix approval storage with proper TelemetryManager integration"""
     # Depend on phoenix_container to ensure it's running and env vars are set
     # Depend on telemetry_manager to use proper tenant-scoped span creation
-    return PhoenixApprovalStorage(
+    return ApprovalStorageImpl(
         phoenix_grpc_endpoint="http://localhost:24317",  # gRPC port for span export
         phoenix_http_endpoint="http://localhost:26006",  # HTTP port for span queries
         tenant_id="test-tenant1",
@@ -483,7 +488,9 @@ class TestSyntheticApprovalIntegration:
             logger.info(f"Regenerated: {regenerated_query}")
 
     @pytest.mark.asyncio
-    async def test_pending_batches_retrieval(self, approval_storage, confidence_extractor, feedback_handler):
+    async def test_pending_batches_retrieval(
+        self, approval_storage, confidence_extractor, feedback_handler
+    ):
         """Test retrieving batches with pending reviews"""
 
         # Create approval agent with very high threshold so nothing auto-approves
@@ -516,7 +523,9 @@ class TestSyntheticApprovalIntegration:
         assert any(b.batch_id == "batch1" for b in routing_batches)
 
     @pytest.mark.asyncio
-    async def test_batch_approval_rate_calculation(self, approval_agent, approval_storage):
+    async def test_batch_approval_rate_calculation(
+        self, approval_agent, approval_storage
+    ):
         """Test approval rate calculation for batch"""
 
         items = [{"query": f"test {i}"} for i in range(4)]
@@ -543,9 +552,7 @@ class TestSyntheticApprovalIntegration:
         logger.info(f"Approval rate: {approval_rate:.2%}")
 
     @pytest.mark.asyncio
-    async def test_phoenix_storage_integration(
-        self, approval_storage, phoenix_client
-    ):
+    async def test_phoenix_storage_integration(self, approval_storage, phoenix_client):
         """Test that approval data is correctly stored and retrievable from Phoenix"""
 
         # Create and save a batch

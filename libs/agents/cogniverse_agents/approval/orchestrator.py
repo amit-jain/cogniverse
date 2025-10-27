@@ -80,9 +80,7 @@ class DecisionOrchestrator:
         # Setup standard state transitions
         self._setup_transitions()
 
-        logger.info(
-            f"Initialized DecisionOrchestrator (workflow: {workflow_id})"
-        )
+        logger.info(f"Initialized DecisionOrchestrator (workflow: {workflow_id})")
 
     def _setup_transitions(self) -> None:
         """Setup standard workflow state transitions"""
@@ -187,15 +185,15 @@ class DecisionOrchestrator:
             }
         )
 
-        logger.info(
-            f"Registered step '{name}' (approval: {requires_approval})"
-        )
+        logger.info(f"Registered step '{name}' (approval: {requires_approval})")
 
         # Update context
         self.state_machine.context["steps_registered"] = True
         self.state_machine.context["total_steps"] = len(self.steps)
 
-    async def execute(self, context_updates: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def execute(
+        self, context_updates: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """
         Execute workflow with approval checkpoints
 
@@ -320,11 +318,13 @@ class DecisionOrchestrator:
         pending_count = len(batch.pending_review)
         rejection_count = len(batch.rejected)
 
-        self.state_machine.context.update({
-            "current_batch": batch,
-            "pending_review_count": pending_count,
-            "rejection_count": rejection_count,
-        })
+        self.state_machine.context.update(
+            {
+                "current_batch": batch,
+                "pending_review_count": pending_count,
+                "rejection_count": rejection_count,
+            }
+        )
 
         logger.info(
             f"Approval decisions applied: {pending_count} still pending, "
@@ -347,9 +347,7 @@ class DecisionOrchestrator:
             logger.error("No batch for regeneration")
             return
 
-        logger.info(
-            f"Regenerating {len(batch.rejected)} rejected items"
-        )
+        logger.info(f"Regenerating {len(batch.rejected)} rejected items")
 
         # Mark regeneration complete
         self.state_machine.context["regeneration_complete"] = True
