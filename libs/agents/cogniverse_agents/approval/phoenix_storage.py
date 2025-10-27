@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import pandas as pd
 from opentelemetry.trace import Status, StatusCode
-from phoenix.client import AsyncClient
 
 from cogniverse_agents.approval.interfaces import (
     ApprovalBatch,
@@ -66,7 +65,7 @@ class PhoenixApprovalStorage(ApprovalStorage):
         phoenix_grpc_endpoint: str,
         phoenix_http_endpoint: str,
         tenant_id: str = "default",
-        telemetry_manager: Optional['TelemetryManager'] = None,
+        telemetry_manager: Optional["TelemetryManager"] = None,
     ):
         """
         Initialize Phoenix storage for synthetic data approval workflow
@@ -84,8 +83,33 @@ class PhoenixApprovalStorage(ApprovalStorage):
 
         # Use TelemetryManager for creating spans with proper tenant scoping
         if telemetry_manager is None:
+            from cogniverse_core.telemetry.config import TelemetryConfig
             from cogniverse_core.telemetry.manager import TelemetryManager
-            telemetry_manager = TelemetryManager()
+
+            # Configure telemetry with Phoenix provider
+            config = TelemetryConfig(
+                provider="phoenix",
+                provider_config={
+                    "http_endpoint": phoenix_http_endpoint,
+                    "grpc_endpoint": phoenix_grpc_endpoint,
+                },
+            )
+            telemetry_manager = TelemetryManager(config=config)
+        else:
+            # Update existing manager's config with provider settings
+            if (
+                not hasattr(telemetry_manager.config, "provider")
+                or not telemetry_manager.config.provider
+            ):
+                telemetry_manager.config.provider = "phoenix"
+            if not telemetry_manager.config.provider_config:
+                telemetry_manager.config.provider_config = {}
+            telemetry_manager.config.provider_config.update(
+                {
+                    "http_endpoint": phoenix_http_endpoint,
+                    "grpc_endpoint": phoenix_grpc_endpoint,
+                }
+            )
 
         self.telemetry_manager = telemetry_manager
 
@@ -94,21 +118,21 @@ class PhoenixApprovalStorage(ApprovalStorage):
             tenant_id=tenant_id,
             project_name=self.project_name,
             phoenix_endpoint=phoenix_grpc_endpoint,
-            use_sync_export=True  # Use sync export for tests
+            use_sync_export=True,  # Use sync export for tests
         )
 
         # Compute full Phoenix project name using TelemetryManager logic
         # Format: cogniverse-{tenant_id}-{project_name}
         self.full_project_name = f"cogniverse-{tenant_id}-{self.project_name}"
 
-        # Phoenix async client for querying spans and annotations
-        # Use base_url parameter for phoenix-client library
-        self.client = AsyncClient(base_url=phoenix_http_endpoint)
+        # Get telemetry provider for querying spans/annotations/datasets
+        self.provider = self.telemetry_manager.get_provider(tenant_id=tenant_id)
 
         logger.info(
             f"Initialized PhoenixApprovalStorage "
             f"(tenant: {tenant_id}, project: {self.full_project_name}, "
-            f"grpc: {phoenix_grpc_endpoint}, http: {phoenix_http_endpoint})"
+            f"grpc: {phoenix_grpc_endpoint}, http: {phoenix_http_endpoint}, "
+            f"provider: {self.provider.name})"
         )
 
     async def save_batch(self, batch: ApprovalBatch) -> str:
@@ -156,15 +180,23 @@ class PhoenixApprovalStorage(ApprovalStorage):
         try:
             # Access the cached tracer provider for this tenant/project
             cache_key = f"{self.tenant_id}:{self.project_name}"
-            if hasattr(self.telemetry_manager, '_tenant_providers'):
-                tracer_provider = self.telemetry_manager._tenant_providers.get(cache_key)
-                if tracer_provider and hasattr(tracer_provider, 'force_flush'):
+            if hasattr(self.telemetry_manager, "_tenant_providers"):
+                tracer_provider = self.telemetry_manager._tenant_providers.get(
+                    cache_key
+                )
+                if tracer_provider and hasattr(tracer_provider, "force_flush"):
                     success = tracer_provider.force_flush(timeout_millis=5000)
-                    logger.info(f"Force flush completed for tenant {self.tenant_id}: success={success}")
+                    logger.info(
+                        f"Force flush completed for tenant {self.tenant_id}: success={success}"
+                    )
                 else:
-                    logger.warning(f"Tracer provider for {cache_key} does not support force_flush")
+                    logger.warning(
+                        f"Tracer provider for {cache_key} does not support force_flush"
+                    )
             else:
-                logger.warning("TelemetryManager does not have _tenant_providers attribute")
+                logger.warning(
+                    "TelemetryManager does not have _tenant_providers attribute"
+                )
         except Exception as e:
             logger.error(f"Failed to flush tracer provider: {e}", exc_info=True)
 
@@ -217,46 +249,58 @@ class PhoenixApprovalStorage(ApprovalStorage):
 
             project_spans = None
             for attempt, delay in enumerate(retry_delays):
-                logger.debug(f"Attempt {attempt + 1}/{max_retries}: Querying Phoenix for batch {batch_id}")
+                logger.debug(
+                    f"Attempt {attempt + 1}/{max_retries}: Querying Phoenix for batch {batch_id}"
+                )
 
-                # Query spans using Phoenix SDK
-                project_spans = await self.client.spans.get_spans_dataframe(
-                    project_identifier=self.full_project_name
+                # Query spans using telemetry provider
+                project_spans = await self.provider.traces.get_spans(
+                    project=self.full_project_name
                 )
 
                 if not project_spans.empty:
-                    logger.info(f"Got {len(project_spans)} spans for project {self.full_project_name}")
+                    logger.info(
+                        f"Got {len(project_spans)} spans for project {self.full_project_name}"
+                    )
 
                     if not project_spans.empty:
                         # Check if batch exists
                         # In Phoenix 11.18.0, attributes are flattened as columns: attributes.batch_id
-                        if 'attributes.batch_id' in project_spans.columns:
+                        if "attributes.batch_id" in project_spans.columns:
                             batch_check = project_spans[
-                                (project_spans['name'] == 'approval_batch') &
-                                (project_spans['attributes.batch_id'] == batch_id)
+                                (project_spans["name"] == "approval_batch")
+                                & (project_spans["attributes.batch_id"] == batch_id)
                             ]
                             if not batch_check.empty:
-                                logger.info(f"Found batch {batch_id} on attempt {attempt + 1}")
+                                logger.info(
+                                    f"Found batch {batch_id} on attempt {attempt + 1}"
+                                )
                                 break
 
                 # Retry with exponential backoff
                 if attempt < len(retry_delays) - 1:
-                    logger.debug(f"Batch {batch_id} not found yet, retrying in {delay}s")
+                    logger.debug(
+                        f"Batch {batch_id} not found yet, retrying in {delay}s"
+                    )
                     time.sleep(delay)
 
             if project_spans is None or project_spans.empty:
-                logger.warning(f"No spans found for project {self.full_project_name} after retries")
+                logger.warning(
+                    f"No spans found for project {self.full_project_name} after retries"
+                )
                 return None
 
             # Filter for this batch
             # Attributes are flattened: attributes.batch_id, attributes.total_items, etc.
-            if 'attributes.batch_id' not in project_spans.columns:
-                logger.warning("No attributes.batch_id column in DataFrame - attributes not available")
+            if "attributes.batch_id" not in project_spans.columns:
+                logger.warning(
+                    "No attributes.batch_id column in DataFrame - attributes not available"
+                )
                 return None
 
             batch_spans = project_spans[
-                (project_spans['name'] == 'approval_batch') &
-                (project_spans['attributes.batch_id'] == batch_id)
+                (project_spans["name"] == "approval_batch")
+                & (project_spans["attributes.batch_id"] == batch_id)
             ]
 
             if batch_spans.empty:
@@ -265,25 +309,27 @@ class PhoenixApprovalStorage(ApprovalStorage):
 
             # Get batch span row
             batch_row = batch_spans.iloc[0]
-            batch_span_id = batch_row['context.span_id']
+            batch_span_id = batch_row["context.span_id"]
 
             # Get child item spans
             item_spans = project_spans[
-                (project_spans['name'] == 'approval_item') &
-                (project_spans['parent_id'] == batch_span_id)
+                (project_spans["name"] == "approval_item")
+                & (project_spans["parent_id"] == batch_span_id)
             ]
 
             # Query annotations to get latest status for each item
             annotations_df = pd.DataFrame()
             try:
                 # Log span IDs being queried
-                span_ids = item_spans['context.span_id'].tolist()
-                logger.debug(f"Querying annotations for {len(span_ids)} spans: {span_ids}")
+                span_ids = item_spans["context.span_id"].tolist()
+                logger.debug(
+                    f"Querying annotations for {len(span_ids)} spans: {span_ids}"
+                )
 
-                annotations_df = await self.client.spans.get_span_annotations_dataframe(
-                    spans_dataframe=item_spans,
-                    project_identifier=self.full_project_name,
-                    include_annotation_names=["item_status_update", "human_approval"],
+                annotations_df = await self.provider.annotations.get_annotations(
+                    spans_df=item_spans,
+                    project=self.full_project_name,
+                    annotation_names=["item_status_update", "human_approval"],
                 )
                 logger.info(f"Found {len(annotations_df)} annotations for batch items")
                 if not annotations_df.empty:
@@ -295,18 +341,18 @@ class PhoenixApprovalStorage(ApprovalStorage):
             items = []
             for _, item_row in item_spans.iterrows():
                 # In Phoenix 11.18.0, attributes are flattened as columns
-                item_id = item_row.get('attributes.item_id', '')
+                item_id = item_row.get("attributes.item_id", "")
 
                 # Get initial status from span (default: pending_review)
-                status_value = item_row.get('attributes.status', 'pending_review')
+                status_value = item_row.get("attributes.status", "pending_review")
                 status = ApprovalStatus(status_value)
 
                 # Parse timestamps from span attributes first
-                created_at = item_row.get('attributes.created_at')
+                created_at = item_row.get("attributes.created_at")
                 if isinstance(created_at, str):
                     created_at = datetime.fromisoformat(created_at)
 
-                reviewed_at = item_row.get('attributes.reviewed_at')
+                reviewed_at = item_row.get("attributes.reviewed_at")
                 if isinstance(reviewed_at, str):
                     reviewed_at = datetime.fromisoformat(reviewed_at)
 
@@ -316,49 +362,70 @@ class PhoenixApprovalStorage(ApprovalStorage):
                 if not annotations_df.empty:
                     # Filter annotations for this specific item using metadata.item_id
                     item_annotations = annotations_df[
-                        annotations_df['metadata'].apply(
-                            lambda x: isinstance(x, dict) and x.get('item_id') == item_id
+                        annotations_df["metadata"].apply(
+                            lambda x: isinstance(x, dict)
+                            and x.get("item_id") == item_id
                         )
                     ]
 
-                    logger.debug(f"Item {item_id}: found {len(item_annotations)} annotations")
+                    logger.debug(
+                        f"Item {item_id}: found {len(item_annotations)} annotations"
+                    )
 
                     if not item_annotations.empty:
                         # Get latest annotation (most recent status)
                         # Sort by created_at if available
-                        if 'created_at' in item_annotations.columns:
-                            latest_annotation = item_annotations.sort_values('created_at', ascending=False).iloc[0]
+                        if "created_at" in item_annotations.columns:
+                            latest_annotation = item_annotations.sort_values(
+                                "created_at", ascending=False
+                            ).iloc[0]
                         else:
                             latest_annotation = item_annotations.iloc[-1]
 
                         # Update status from annotation
                         # Phoenix annotations API returns label in 'result.label' column
-                        annotation_label = latest_annotation.get('result.label', '')
+                        annotation_label = latest_annotation.get("result.label", "")
                         if annotation_label:
                             try:
                                 status = ApprovalStatus(annotation_label)
-                                logger.debug(f"Item {item_id} status from annotation: {status.value}")
+                                logger.debug(
+                                    f"Item {item_id} status from annotation: {status.value}"
+                                )
 
                                 # Also extract reviewed_at from annotation metadata if available
-                                annotation_metadata = latest_annotation.get('metadata', {})
+                                annotation_metadata = latest_annotation.get(
+                                    "metadata", {}
+                                )
                                 if isinstance(annotation_metadata, dict):
-                                    reviewed_at_str = annotation_metadata.get('reviewed_at')
+                                    reviewed_at_str = annotation_metadata.get(
+                                        "reviewed_at"
+                                    )
                                     if reviewed_at_str:
-                                        reviewed_at = datetime.fromisoformat(reviewed_at_str)
+                                        reviewed_at = datetime.fromisoformat(
+                                            reviewed_at_str
+                                        )
 
                             except ValueError:
-                                logger.warning(f"Invalid status label in annotation: {annotation_label}")
+                                logger.warning(
+                                    f"Invalid status label in annotation: {annotation_label}"
+                                )
                     else:
-                        logger.debug(f"Item {item_id}: no annotations matched, keeping span status {status.value}")
+                        logger.debug(
+                            f"Item {item_id}: no annotations matched, keeping span status {status.value}"
+                        )
 
                 # Parse data and metadata from flattened attributes
-                data_raw = item_row.get('attributes.data', '{}')
+                data_raw = item_row.get("attributes.data", "{}")
                 data = json.loads(data_raw) if isinstance(data_raw, str) else data_raw
 
-                metadata_raw = item_row.get('attributes.metadata', '{}')
-                metadata = json.loads(metadata_raw) if isinstance(metadata_raw, str) else metadata_raw
+                metadata_raw = item_row.get("attributes.metadata", "{}")
+                metadata = (
+                    json.loads(metadata_raw)
+                    if isinstance(metadata_raw, str)
+                    else metadata_raw
+                )
 
-                confidence = float(item_row.get('attributes.confidence', 0.0))
+                confidence = float(item_row.get("attributes.confidence", 0.0))
 
                 item = ReviewItem(
                     item_id=item_id,
@@ -372,8 +439,10 @@ class PhoenixApprovalStorage(ApprovalStorage):
                 items.append(item)
 
             # Parse context from batch attributes
-            context_raw = batch_row.get('attributes.context', '{}')
-            context = json.loads(context_raw) if isinstance(context_raw, str) else context_raw
+            context_raw = batch_row.get("attributes.context", "{}")
+            context = (
+                json.loads(context_raw) if isinstance(context_raw, str) else context_raw
+            )
 
             batch = ApprovalBatch(
                 batch_id=batch_id,
@@ -381,19 +450,27 @@ class PhoenixApprovalStorage(ApprovalStorage):
                 context=context,
             )
 
-            logger.info(f"Retrieved batch {batch_id} from Phoenix with {len(items)} items (status from annotations)")
+            logger.info(
+                f"Retrieved batch {batch_id} from Phoenix with {len(items)} items (status from annotations)"
+            )
             # Debug: log item statuses
             status_counts = {}
             for item in items:
-                status_counts[item.status.value] = status_counts.get(item.status.value, 0) + 1
+                status_counts[item.status.value] = (
+                    status_counts.get(item.status.value, 0) + 1
+                )
             logger.info(f"Batch {batch_id} status breakdown: {status_counts}")
             return batch
 
         except Exception as e:
-            logger.error(f"Error retrieving batch {batch_id} from Phoenix: {e}", exc_info=True)
+            logger.error(
+                f"Error retrieving batch {batch_id} from Phoenix: {e}", exc_info=True
+            )
             return None
 
-    async def update_item(self, item: ReviewItem, batch_id: Optional[str] = None) -> None:
+    async def update_item(
+        self, item: ReviewItem, batch_id: Optional[str] = None
+    ) -> None:
         """
         Update review item status using Phoenix annotations
 
@@ -422,22 +499,27 @@ class PhoenixApprovalStorage(ApprovalStorage):
             if item.reviewed_at:
                 metadata["reviewed_at"] = item.reviewed_at.isoformat()
 
-            # Add annotation using Phoenix annotations API
-            logger.info(f"Creating annotation for item {item.item_id} (status={item.status.value}) on span {span_id}")
-            await self.client.annotations.add_span_annotation(
+            # Add annotation using telemetry provider
+            logger.info(
+                f"Creating annotation for item {item.item_id} (status={item.status.value}) on span {span_id}"
+            )
+            await self.provider.annotations.add_annotation(
                 span_id=span_id,
-                annotation_name="item_status_update",
-                annotator_kind="HUMAN",
+                name="item_status_update",
                 label=item.status.value,  # "approved", "rejected", etc.
                 score=1.0 if item.status == ApprovalStatus.APPROVED else 0.0,
-                explanation=f"Status updated to {item.status.value}",
                 metadata=metadata,
+                project=self.full_project_name,
             )
 
-            logger.info(f"Successfully created annotation for item {item.item_id}: status={item.status.value}, span_id={span_id}")
+            logger.info(
+                f"Successfully created annotation for item {item.item_id}: status={item.status.value}, span_id={span_id}"
+            )
 
         except Exception as e:
-            logger.error(f"Failed to add annotation for item {item.item_id}: {e}", exc_info=True)
+            logger.error(
+                f"Failed to add annotation for item {item.item_id}: {e}", exc_info=True
+            )
             raise
 
     async def get_pending_batches(
@@ -454,11 +536,12 @@ class PhoenixApprovalStorage(ApprovalStorage):
         """
         try:
             import time
+
             time.sleep(0.5)  # Give Phoenix time to process spans
 
-            # Query spans using Phoenix SDK
-            spans_df = await self.client.spans.get_spans_dataframe(
-                project_identifier=self.full_project_name
+            # Query spans using telemetry provider
+            spans_df = await self.provider.traces.get_spans(
+                project=self.full_project_name
             )
 
             if spans_df.empty:
@@ -466,27 +549,34 @@ class PhoenixApprovalStorage(ApprovalStorage):
 
             # Filter for approval_batch spans with pending_review > 0
             # In Phoenix 11.18.0, attributes are flattened
-            if 'attributes.batch_id' not in spans_df.columns or 'attributes.pending_review' not in spans_df.columns:
+            if (
+                "attributes.batch_id" not in spans_df.columns
+                or "attributes.pending_review" not in spans_df.columns
+            ):
                 logger.warning("Required attributes columns not found in DataFrame")
                 return []
 
             # Filter batch spans with pending_review > 0, handling NA values
             batch_spans = spans_df[
-                (spans_df['name'] == 'approval_batch') &
-                (spans_df['attributes.pending_review'].fillna(0).astype(int) > 0)
+                (spans_df["name"] == "approval_batch")
+                & (spans_df["attributes.pending_review"].fillna(0).astype(int) > 0)
             ]
 
             pending_batches = []
             for _, row in batch_spans.iterrows():
-                batch_id = row.get('attributes.batch_id')
+                batch_id = row.get("attributes.batch_id")
 
                 if not batch_id:
                     continue
 
                 # Apply context filter if provided
                 if context_filter:
-                    context_raw = row.get('attributes.context', '{}')
-                    context = json.loads(context_raw) if isinstance(context_raw, str) else context_raw
+                    context_raw = row.get("attributes.context", "{}")
+                    context = (
+                        json.loads(context_raw)
+                        if isinstance(context_raw, str)
+                        else context_raw
+                    )
                     match = all(context.get(k) == v for k, v in context_filter.items())
                     if not match:
                         continue
@@ -503,9 +593,7 @@ class PhoenixApprovalStorage(ApprovalStorage):
             logger.error(f"Error retrieving pending batches from Phoenix: {e}")
             return []
 
-    async def record_decision(
-        self, decision: ReviewDecision, item: ReviewItem
-    ) -> None:
+    async def record_decision(self, decision: ReviewDecision, item: ReviewItem) -> None:
         """
         Record human decision as Phoenix annotation
 
@@ -517,7 +605,11 @@ class PhoenixApprovalStorage(ApprovalStorage):
             "item_id": decision.item_id,
             "approved": decision.approved,
             "reviewer": decision.reviewer or "unknown",
-            "timestamp": decision.timestamp.isoformat() if decision.timestamp else datetime.utcnow().isoformat(),
+            "timestamp": (
+                decision.timestamp.isoformat()
+                if decision.timestamp
+                else datetime.utcnow().isoformat()
+            ),
             "feedback": decision.feedback or "",
             "corrections": json.dumps(decision.corrections),
         }
@@ -545,7 +637,9 @@ class PhoenixApprovalStorage(ApprovalStorage):
                 f"{'APPROVED' if decision.approved else 'REJECTED'}"
             )
 
-    async def get_item_span_id(self, item_id: str, batch_id: Optional[str] = None) -> Optional[str]:
+    async def get_item_span_id(
+        self, item_id: str, batch_id: Optional[str] = None
+    ) -> Optional[str]:
         """
         Get span ID for an approval_item by item_id using Phoenix SDK with retry
 
@@ -566,33 +660,41 @@ class PhoenixApprovalStorage(ApprovalStorage):
             retry_delays = [0.5, 1, 2]  # seconds
 
             for attempt, delay in enumerate(retry_delays):
-                # Query spans using Phoenix SDK
-                project_spans = await self.client.spans.get_spans_dataframe(
-                    project_identifier=self.full_project_name
+                # Query spans using telemetry provider
+                project_spans = await self.provider.traces.get_spans(
+                    project=self.full_project_name
                 )
 
                 if not project_spans.empty:
                     # Filter for approval_item spans with matching item_id
                     # In Phoenix 11.18.0, attributes are flattened
-                    if 'attributes.item_id' in project_spans.columns:
+                    if "attributes.item_id" in project_spans.columns:
                         item_spans = project_spans[
-                            (project_spans['name'] == 'approval_item') &
-                            (project_spans['attributes.item_id'] == item_id)
+                            (project_spans["name"] == "approval_item")
+                            & (project_spans["attributes.item_id"] == item_id)
                         ]
 
                         if not item_spans.empty:
                             # Get the most recent span (by start_time)
-                            latest_span = item_spans.sort_values('start_time', ascending=False).iloc[0]
-                            span_id = latest_span['context.span_id']
-                            logger.debug(f"Found span {span_id} for item {item_id} on attempt {attempt + 1}")
+                            latest_span = item_spans.sort_values(
+                                "start_time", ascending=False
+                            ).iloc[0]
+                            span_id = latest_span["context.span_id"]
+                            logger.debug(
+                                f"Found span {span_id} for item {item_id} on attempt {attempt + 1}"
+                            )
                             return span_id
 
                 # Retry with backoff
                 if attempt < len(retry_delays) - 1:
-                    logger.debug(f"Span for item {item_id} not found, retrying in {delay}s")
+                    logger.debug(
+                        f"Span for item {item_id} not found, retrying in {delay}s"
+                    )
                     time.sleep(delay)
 
-            logger.warning(f"No span found for item {item_id} after {max_retries} retries")
+            logger.warning(
+                f"No span found for item {item_id} after {max_retries} retries"
+            )
             return None
 
         except Exception as e:
@@ -605,7 +707,7 @@ class PhoenixApprovalStorage(ApprovalStorage):
         item_id: str,
         approved: bool,
         feedback: Optional[str] = None,
-        reviewer: Optional[str] = None
+        reviewer: Optional[str] = None,
     ) -> bool:
         """
         Log approval decision as annotation using Phoenix annotations API
@@ -634,15 +736,14 @@ class PhoenixApprovalStorage(ApprovalStorage):
             if feedback:
                 metadata["feedback"] = feedback
 
-            # Add annotation using Phoenix annotations API
-            await self.client.annotations.add_span_annotation(
-                annotation_name="human_approval",
-                annotator_kind="HUMAN",
+            # Add annotation using telemetry provider
+            await self.provider.annotations.add_annotation(
                 span_id=span_id,
+                name="human_approval",
                 label="approved" if approved else "rejected",
                 score=1.0 if approved else 0.0,
-                explanation=feedback or f"Item {'approved' if approved else 'rejected'}",
                 metadata=metadata,
+                project=self.full_project_name,
             )
 
             logger.info(
@@ -652,14 +753,16 @@ class PhoenixApprovalStorage(ApprovalStorage):
             return True
 
         except Exception as e:
-            logger.error(f"Failed to log approval decision annotation: {e}", exc_info=True)
+            logger.error(
+                f"Failed to log approval decision annotation: {e}", exc_info=True
+            )
             return False
 
     async def append_to_training_dataset(
         self,
         dataset_name: str,
         items: List[ReviewItem],
-        project_context: Optional[Dict[str, Any]] = None
+        project_context: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """
         Append approved items to Phoenix dataset for training
@@ -687,8 +790,12 @@ class PhoenixApprovalStorage(ApprovalStorage):
                     "item_id": item.item_id,
                     "confidence": item.confidence,
                     "status": item.status.value,
-                    "created_at": item.created_at.isoformat() if item.created_at else None,
-                    "reviewed_at": item.reviewed_at.isoformat() if item.reviewed_at else None,
+                    "created_at": (
+                        item.created_at.isoformat() if item.created_at else None
+                    ),
+                    "reviewed_at": (
+                        item.reviewed_at.isoformat() if item.reviewed_at else None
+                    ),
                 }
 
                 # Add item data fields
@@ -696,11 +803,15 @@ class PhoenixApprovalStorage(ApprovalStorage):
 
                 # Add metadata
                 if item.metadata:
-                    record.update({f"metadata.{k}": v for k, v in item.metadata.items()})
+                    record.update(
+                        {f"metadata.{k}": v for k, v in item.metadata.items()}
+                    )
 
                 # Add project context
                 if project_context:
-                    record.update({f"context.{k}": v for k, v in project_context.items()})
+                    record.update(
+                        {f"context.{k}": v for k, v in project_context.items()}
+                    )
 
                 dataset_records.append(record)
 
@@ -713,34 +824,32 @@ class PhoenixApprovalStorage(ApprovalStorage):
 
             # Try to load existing dataset and append
             try:
-                await self.client.get_dataset(name=dataset_name)
+                await self.provider.datasets.get_dataset(name=dataset_name)
                 # Dataset exists, append to it
-                logger.info(f"Appending {len(dataset_records)} items to existing dataset '{dataset_name}'")
-                # Note: Phoenix client doesn't have append method yet, so we re-upload
-                # In future Phoenix versions, use append_to_dataset()
-                # For now, we'll create a new version
-                version_suffix = datetime.now().strftime("%Y%m%d_%H%M%S")
-                versioned_name = f"{dataset_name}_v{version_suffix}"
-                await self.client.upload_dataset(
-                    dataset_name=versioned_name,
-                    dataframe=df,
-                    input_keys=["item_id"],
-                    output_keys=list(data.keys()) if data else []
+                logger.info(
+                    f"Appending {len(dataset_records)} items to existing dataset '{dataset_name}'"
                 )
-                logger.info(f"Created versioned dataset '{versioned_name}' with {len(dataset_records)} items")
+                # Use provider's append method (which creates versioned copy in Phoenix)
+                await self.provider.datasets.append_to_dataset(
+                    name=dataset_name, data=df
+                )
+                logger.info(
+                    f"Appended to dataset '{dataset_name}' with {len(dataset_records)} items"
+                )
             except Exception:
                 # Dataset doesn't exist, create new one
-                logger.info(f"Creating new dataset '{dataset_name}' with {len(dataset_records)} items")
-                await self.client.upload_dataset(
-                    dataset_name=dataset_name,
-                    dataframe=df,
-                    input_keys=["item_id"],
-                    output_keys=list(data.keys()) if data else []
+                logger.info(
+                    f"Creating new dataset '{dataset_name}' with {len(dataset_records)} items"
                 )
+                await self.provider.datasets.create_dataset(name=dataset_name, data=df)
 
-            logger.info(f"Successfully added {len(dataset_records)} approved items to dataset '{dataset_name}'")
+            logger.info(
+                f"Successfully added {len(dataset_records)} approved items to dataset '{dataset_name}'"
+            )
             return True
 
         except Exception as e:
-            logger.error(f"Failed to append items to training dataset: {e}", exc_info=True)
+            logger.error(
+                f"Failed to append items to training dataset: {e}", exc_info=True
+            )
             return False

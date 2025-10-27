@@ -119,8 +119,7 @@ class ModalityMetricsTracker:
         self.last_request_time[modality] = now
 
         logger.debug(
-            f"📝 Recorded {modality.value}: {latency_ms:.0f}ms, "
-            f"success={success}"
+            f"📝 Recorded {modality.value}: {latency_ms:.0f}ms, " f"success={success}"
         )
 
     def get_modality_stats(self, modality: QueryModality) -> Dict[str, Any]:
@@ -257,10 +256,14 @@ class ModalityMetricsTracker:
 
         total_requests = sum(s["total_requests"] for s in all_stats.values())
         total_success = sum(s["success_count"] for s in all_stats.values())
-        overall_success_rate = total_success / total_requests if total_requests > 0 else 0.0
+        overall_success_rate = (
+            total_success / total_requests if total_requests > 0 else 0.0
+        )
 
         # Average P95 latency across modalities
-        p95_latencies = [s["p95_latency"] for s in all_stats.values() if s["total_requests"] > 0]
+        p95_latencies = [
+            s["p95_latency"] for s in all_stats.values() if s["total_requests"] > 0
+        ]
         avg_p95 = float(np.mean(p95_latencies)) if p95_latencies else 0.0
 
         return {
@@ -301,7 +304,9 @@ class ModalityMetricsTracker:
             for mod, stats in sorted_modalities[:top_k]
         ]
 
-    def get_error_prone_modalities(self, min_error_rate: float = 0.1) -> List[Dict[str, Any]]:
+    def get_error_prone_modalities(
+        self, min_error_rate: float = 0.1
+    ) -> List[Dict[str, Any]]:
         """
         Get modalities with high error rates
 
@@ -317,12 +322,14 @@ class ModalityMetricsTracker:
         for modality, stats in all_stats.items():
             error_rate = 1.0 - stats["success_rate"]
             if error_rate >= min_error_rate:
-                error_prone.append({
-                    "modality": modality,
-                    "error_rate": error_rate,
-                    "error_count": stats["error_count"],
-                    "error_breakdown": stats["error_breakdown"],
-                })
+                error_prone.append(
+                    {
+                        "modality": modality,
+                        "error_rate": error_rate,
+                        "error_count": stats["error_count"],
+                        "error_breakdown": stats["error_breakdown"],
+                    }
+                )
 
         # Sort by error rate
         error_prone.sort(key=lambda x: x["error_rate"], reverse=True)

@@ -24,20 +24,20 @@ logger = logging.getLogger(__name__)
 class TelemetryManager:
     """
     Multi-tenant telemetry manager with lazy initialization and caching.
-    
+
     Usage:
         # Initialize once (singleton pattern)
         telemetry = TelemetryManager()
-        
+
         # Use per-request with tenant-id
         with telemetry.span("search_service.search", tenant_id="tenant-123") as span:
             span.set_attribute("query", "test")
             # ... search logic ...
     """
-    
+
     _instance = None
     _lock = threading.Lock()
-    
+
     def __new__(cls, config: Optional[TelemetryConfig] = None):
         if cls._instance is None:
             with cls._lock:
@@ -45,14 +45,14 @@ class TelemetryManager:
                     cls._instance = super().__new__(cls)
                     cls._instance._initialized = False
         return cls._instance
-    
+
     def __init__(self, config: Optional[TelemetryConfig] = None):
         if self._initialized:
             return
-            
+
         self.config = config or TelemetryConfig.from_env()
         self.config.validate()
-        
+
         # Thread-safe caches
         self._tenant_providers: Dict[str, TracerProvider] = {}
         self._tenant_tracers: Dict[str, Tracer] = {}
@@ -65,11 +65,13 @@ class TelemetryManager:
         self._cache_hits = 0
         self._cache_misses = 0
         self._failed_initializations = 0
-        
+
         self._initialized = True
         logger.info(f"TelemetryManager initialized with config: {self.config}")
-    
-    def get_tracer(self, tenant_id: str, project_name: Optional[str] = None) -> Optional[Tracer]:
+
+    def get_tracer(
+        self, tenant_id: str, project_name: Optional[str] = None
+    ) -> Optional[Tracer]:
         """
         Get tracer for a specific tenant project (LEGACY - use span() instead).
 
@@ -97,7 +99,9 @@ class TelemetryManager:
             # Create tracer provider for tenant if needed
             try:
                 if tenant_id not in self._tenant_providers:
-                    self._tenant_providers[tenant_id] = self._create_tenant_provider(tenant_id)
+                    self._tenant_providers[tenant_id] = self._create_tenant_provider(
+                        tenant_id
+                    )
 
                 tracer_provider = self._tenant_providers[tenant_id]
                 tracer = tracer_provider.get_tracer(project_name)
@@ -113,12 +117,7 @@ class TelemetryManager:
                 logger.warning(f"Failed to create tracer for tenant {tenant_id}: {e}")
                 return None
 
-    def register_project(
-        self,
-        tenant_id: str,
-        project_name: str,
-        **kwargs
-    ) -> None:
+    def register_project(self, tenant_id: str, project_name: str, **kwargs) -> None:
         """
         Register a project with optional config overrides.
 
@@ -152,8 +151,12 @@ class TelemetryManager:
         project_config = {
             "tenant_id": tenant_id,
             "project_name": project_name,
-            "phoenix_endpoint": kwargs.get("phoenix_endpoint", self.config.phoenix_endpoint),
-            "use_sync_export": kwargs.get("use_sync_export", self.config.batch_config.use_sync_export),
+            "phoenix_endpoint": kwargs.get(
+                "phoenix_endpoint", self.config.phoenix_endpoint
+            ),
+            "use_sync_export": kwargs.get(
+                "use_sync_export", self.config.batch_config.use_sync_export
+            ),
         }
 
         with self._lock:
@@ -165,11 +168,13 @@ class TelemetryManager:
         )
 
     @contextmanager
-    def span(self,
-             name: str,
-             tenant_id: str,
-             project_name: Optional[str] = None,
-             attributes: Optional[Dict[str, Any]] = None):
+    def span(
+        self,
+        name: str,
+        tenant_id: str,
+        project_name: Optional[str] = None,
+        attributes: Optional[Dict[str, Any]] = None,
+    ):
         """
         Context manager for creating tenant-specific spans.
 
@@ -220,7 +225,9 @@ class TelemetryManager:
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 raise
 
-    def _get_tracer_for_project(self, tenant_id: str, project_name: Optional[str]) -> Optional[Tracer]:
+    def _get_tracer_for_project(
+        self, tenant_id: str, project_name: Optional[str]
+    ) -> Optional[Tracer]:
         """Get tracer for specific project."""
         if not self.config.enabled:
             return None
@@ -242,8 +249,10 @@ class TelemetryManager:
             try:
                 provider_key = f"{tenant_id}:{project_suffix}"
                 if provider_key not in self._tenant_providers:
-                    self._tenant_providers[provider_key] = self._create_tenant_provider_for_project(
-                        tenant_id, project_suffix
+                    self._tenant_providers[provider_key] = (
+                        self._create_tenant_provider_for_project(
+                            tenant_id, project_suffix
+                        )
                     )
 
                 tracer_provider = self._tenant_providers[provider_key]
@@ -259,12 +268,71 @@ class TelemetryManager:
                 self._failed_initializations += 1
                 logger.warning(f"Failed to create tracer for {cache_key}: {e}")
                 return None
-    
+
+    def get_provider(self, tenant_id: str):
+        """
+        Get telemetry provider for querying spans/annotations/datasets.
+
+        This is separate from span export (which uses OpenTelemetry OTLP).
+        Providers are used for reading data from the telemetry backend.
+
+        Args:
+            tenant_id: Tenant identifier
+
+        Returns:
+            TelemetryProvider instance
+
+        Raises:
+            ValueError: If no providers available or provider initialization fails
+
+        Usage:
+            # Get provider for querying
+            provider = telemetry_manager.get_provider(tenant_id="customer-123")
+
+            # Query spans
+            spans_df = await provider.traces.get_spans(
+                project="cogniverse-customer-123-search",
+                start_time=datetime(2025, 1, 1),
+                limit=1000
+            )
+
+            # Add annotations
+            await provider.annotations.add_annotation(
+                span_id="abc123",
+                name="human_approval",
+                label="approved",
+                score=1.0,
+                metadata={"reviewer": "alice"},
+                project="cogniverse-customer-123-synthetic_data"
+            )
+        """
+        from cogniverse_core.telemetry.registry import get_telemetry_registry
+
+        registry = get_telemetry_registry()
+
+        # Build generic config for provider (provider interprets keys)
+        provider_config = {
+            "tenant_id": tenant_id,
+            **self.config.provider_config,  # Merge provider-specific config from TelemetryConfig
+        }
+
+        # Get provider from registry (auto-discovers via entry points)
+        # If config.provider is None, registry auto-selects first available
+        return registry.get_telemetry_provider(
+            name=self.config.provider,  # None = auto-detect
+            tenant_id=tenant_id,
+            config=provider_config,  # Generic dict - provider interprets
+        )
+
     def _create_tenant_provider(self, tenant_id: str) -> TracerProvider:
         """Create and configure TracerProvider for a tenant (legacy method)."""
-        return self._create_tenant_provider_for_project(tenant_id, self.config.service_name)
+        return self._create_tenant_provider_for_project(
+            tenant_id, self.config.service_name
+        )
 
-    def _create_tenant_provider_for_project(self, tenant_id: str, project_suffix: str) -> TracerProvider:
+    def _create_tenant_provider_for_project(
+        self, tenant_id: str, project_suffix: str
+    ) -> TracerProvider:
         """Create and configure TracerProvider for a specific tenant project."""
         if not self.config.phoenix_enabled:
             raise RuntimeError("Phoenix not enabled")
@@ -297,7 +365,7 @@ class TelemetryManager:
                 batch=batch_mode,
                 protocol="grpc",
                 auto_instrument=False,
-                set_global_tracer_provider=False
+                set_global_tracer_provider=False,
             )
 
             mode = "BATCH" if batch_mode else "SYNC"
@@ -309,21 +377,21 @@ class TelemetryManager:
         except Exception as e:
             logger.error(f"Failed to create tracer provider for {project_key}: {e}")
             raise
-    
+
     def _evict_old_tracers(self):
         """Evict old tracers using LRU policy."""
         if len(self._tenant_tracers) <= self.config.max_cached_tenants:
             return
-        
+
         # Simple LRU - remove oldest entries
         # In production, you'd want a proper LRU cache
         items_to_remove = len(self._tenant_tracers) - self.config.max_cached_tenants
         oldest_keys = list(self._tenant_tracers.keys())[:items_to_remove]
-        
+
         for key in oldest_keys:
             del self._tenant_tracers[key]
             logger.debug(f"Evicted tracer from cache: {key}")
-    
+
     def get_stats(self) -> Dict[str, Any]:
         """Get telemetry manager statistics."""
         return {
@@ -335,10 +403,10 @@ class TelemetryManager:
             "config": {
                 "enabled": self.config.enabled,
                 "level": self.config.level.value,
-                "environment": self.config.environment
-            }
+                "environment": self.config.environment,
+            },
         }
-    
+
     def force_flush(self, timeout_millis: int = 10000) -> bool:
         """
         Force flush all spans for all tenants.
@@ -353,13 +421,15 @@ class TelemetryManager:
         with self._lock:
             for tenant_id, provider in self._tenant_providers.items():
                 try:
-                    if hasattr(provider, 'force_flush'):
+                    if hasattr(provider, "force_flush"):
                         success = provider.force_flush(timeout_millis=timeout_millis)
                         if not success:
                             logger.warning(f"Force flush failed for tenant {tenant_id}")
                             all_success = False
                         else:
-                            logger.info(f"Successfully flushed spans for tenant {tenant_id}")
+                            logger.info(
+                                f"Successfully flushed spans for tenant {tenant_id}"
+                            )
                 except Exception as e:
                     logger.error(f"Error flushing spans for tenant {tenant_id}: {e}")
                     all_success = False
@@ -370,12 +440,14 @@ class TelemetryManager:
         with self._lock:
             for tenant_id, provider in self._tenant_providers.items():
                 try:
-                    if hasattr(provider, 'force_flush'):
+                    if hasattr(provider, "force_flush"):
                         provider.force_flush(timeout_millis=5000)
-                    if hasattr(provider, 'shutdown'):
+                    if hasattr(provider, "shutdown"):
                         provider.shutdown()
                 except Exception as e:
-                    logger.warning(f"Error shutting down provider for tenant {tenant_id}: {e}")
+                    logger.warning(
+                        f"Error shutting down provider for tenant {tenant_id}: {e}"
+                    )
 
             self._tenant_providers.clear()
             self._tenant_tracers.clear()
@@ -412,9 +484,9 @@ class TelemetryManager:
             if project_key in self._tenant_providers:
                 provider = self._tenant_providers[project_key]
                 try:
-                    if hasattr(provider, 'force_flush'):
+                    if hasattr(provider, "force_flush"):
                         provider.force_flush(timeout_millis=5000)
-                    if hasattr(provider, 'shutdown'):
+                    if hasattr(provider, "shutdown"):
                         provider.shutdown()
                     del self._tenant_providers[project_key]
                     logger.debug(f"Shutdown tracer provider for {project_key}")
@@ -422,7 +494,9 @@ class TelemetryManager:
                     logger.error(f"Error shutting down provider for {project_key}: {e}")
 
             # Remove cached tracers for this project
-            tracers_to_remove = [k for k in self._tenant_tracers if k.startswith(project_key)]
+            tracers_to_remove = [
+                k for k in self._tenant_tracers if k.startswith(project_key)
+            ]
             for k in tracers_to_remove:
                 del self._tenant_tracers[k]
                 logger.debug(f"Removed cached tracer: {k}")
@@ -435,22 +509,22 @@ class TelemetryManager:
 
 class NoOpSpan:
     """No-op span for graceful degradation."""
-    
+
     def set_attribute(self, key: str, value: Any):
         pass
-    
+
     def add_event(self, name: str, attributes: Optional[Dict[str, Any]] = None):
         pass
-    
+
     def set_status(self, status):
         pass
-    
+
     def record_exception(self, exception: Exception):
         pass
-    
+
     def __enter__(self):
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         pass
 

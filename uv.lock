@@ -20,6 +20,7 @@ members = [
     "cogniverse-dashboard",
     "cogniverse-runtime",
     "cogniverse-synthetic",
+    "cogniverse-telemetry-phoenix",
     "cogniverse-vespa",
     "congniverse",
 ]
@@ -958,6 +959,23 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.100.0" },
     { name = "httpx", specifier = ">=0.24.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
+]
+
+[[package]]
+name = "cogniverse-telemetry-phoenix"
+version = "0.1.0"
+source = { editable = "libs/telemetry-phoenix" }
+dependencies = [
+    { name = "arize-phoenix" },
+    { name = "cogniverse-core" },
+    { name = "pandas" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "arize-phoenix", specifier = ">=4.0.0" },
+    { name = "cogniverse-core", editable = "libs/core" },
+    { name = "pandas", specifier = ">=2.0.0" },
 ]
 
 [[package]]

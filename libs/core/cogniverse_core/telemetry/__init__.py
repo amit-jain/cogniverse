@@ -12,7 +12,4 @@ This module provides:
 from .config import TelemetryConfig
 from .manager import TelemetryManager
 
-__all__ = [
-    "TelemetryManager", 
-    "TelemetryConfig"
-]
+__all__ = ["TelemetryManager", "TelemetryConfig"]

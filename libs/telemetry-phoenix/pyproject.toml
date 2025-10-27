@@ -1,0 +1,29 @@
+[project]
+name = "cogniverse-telemetry-phoenix"
+version = "0.1.0"
+description = "Phoenix telemetry provider for Cogniverse"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+authors = [
+    {name = "Cogniverse Team"}
+]
+
+dependencies = [
+    "cogniverse-core",
+    "arize-phoenix>=4.0.0",
+    "pandas>=2.0.0",
+]
+
+[project.entry-points."cogniverse.telemetry.providers"]
+phoenix = "cogniverse_telemetry_phoenix:PhoenixProvider"
+
+[tool.uv.sources]
+cogniverse-core = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["cogniverse_telemetry_phoenix"]
