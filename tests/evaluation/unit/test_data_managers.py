@@ -17,20 +17,26 @@ class TestDatasetManager:
     @pytest.fixture
     def manager(self, mock_phoenix_client):
         """Create dataset manager with mocked storage."""
-        with patch(
-            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
-        ):
-            with patch("cogniverse_core.evaluation.data.storage.trace"):
-                manager = DatasetManager()
-                # Mock the removed methods that DatasetManager still expects
-                manager.storage.create_dataset = Mock(return_value="test_dataset_id")
-                # Create a proper mock for get_dataset that has the expected attributes
-                mock_dataset = Mock()
-                mock_dataset.id = "test_id"
-                mock_dataset.name = "test_dataset"
-                manager.storage.get_dataset = Mock(return_value=mock_dataset)
-                manager.storage.update_trace_metadata = Mock(return_value=True)
-                return manager
+        with patch("cogniverse_core.evaluation.data.storage.TelemetryStorage") as mock_storage_class:
+            # Create mock storage instance
+            mock_storage = Mock()
+            # Create mock provider structure
+            mock_provider = Mock()
+            mock_provider.telemetry.traces.get_spans = Mock(return_value=mock_phoenix_client.get_spans_dataframe())
+            mock_storage.provider = mock_provider
+            mock_storage.connection_state = Mock(value="connected")
+            mock_storage_class.return_value = mock_storage
+
+            manager = DatasetManager()
+            # Mock the removed methods that DatasetManager still expects
+            manager.storage.create_dataset = Mock(return_value="test_dataset_id")
+            # Create a proper mock for get_dataset that has the expected attributes
+            mock_dataset = Mock()
+            mock_dataset.id = "test_id"
+            mock_dataset.name = "test_dataset"
+            manager.storage.get_dataset = Mock(return_value=mock_dataset)
+            manager.storage.update_trace_metadata = Mock(return_value=True)
+            return manager
 
     @pytest.mark.unit
     def test_create_from_queries(self, manager):
@@ -211,14 +217,24 @@ class TestTraceManager:
     @pytest.fixture
     def manager(self, mock_phoenix_client):
         """Create trace manager with mocked storage."""
-        with patch(
-            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
-        ):
-            with patch("cogniverse_core.evaluation.data.storage.trace"):
-                manager = TraceManager()
-                # Mock the removed methods that TraceManager still expects
-                manager.storage.update_trace_metadata = Mock(return_value=True)
-                return manager
+        from unittest.mock import AsyncMock
+        with patch("cogniverse_core.evaluation.data.storage.TelemetryStorage") as mock_storage_class:
+            # Create mock storage instance
+            mock_storage = Mock()
+            # Create mock provider structure
+            mock_provider = Mock()
+            mock_provider.telemetry.traces.get_spans = AsyncMock(return_value=mock_phoenix_client.get_spans_dataframe())
+            mock_storage.provider = mock_provider
+            from cogniverse_core.evaluation.data.storage import ConnectionState
+            mock_storage.connection_state = ConnectionState.CONNECTED
+            mock_storage_class.return_value = mock_storage
+
+            manager = TraceManager()
+            # Mock get_traces_for_evaluation to return the mock dataframe directly
+            manager.storage.get_traces_for_evaluation = Mock(return_value=mock_phoenix_client.get_spans_dataframe())
+            # Mock the removed methods that TraceManager still expects
+            manager.storage.update_trace_metadata = Mock(return_value=True)
+            return manager
 
     @pytest.mark.unit
     def test_get_recent_traces(self, manager):
@@ -228,8 +244,8 @@ class TestTraceManager:
         assert df is not None
         assert not df.empty
 
-        # Check that time filter was applied
-        call_kwargs = manager.storage.client.get_spans_dataframe.call_args[1]
+        # Check that get_traces_for_evaluation was called with time filter
+        call_kwargs = manager.storage.get_traces_for_evaluation.call_args[1]
         assert "start_time" in call_kwargs
 
         # Check time is roughly 2 hours ago
@@ -247,9 +263,12 @@ class TestTraceManager:
         df = manager.get_traces_by_ids(trace_ids)
 
         assert df is not None
-        # PhoenixStorage calls get_spans_dataframe once during init, then once per trace ID
-        # So total should be 1 (init) + 3 (traces) = 4
-        assert manager.storage.client.get_spans_dataframe.call_count == 4
+        # Check that get_traces_for_evaluation was called once per trace_id
+        assert manager.storage.get_traces_for_evaluation.call_count == 3
+        # Verify each trace_id was requested
+        all_calls = manager.storage.get_traces_for_evaluation.call_args_list
+        requested_ids = [call[1]["trace_ids"][0] for call in all_calls]
+        assert set(requested_ids) == set(trace_ids)
 
     @pytest.mark.unit
     def test_extract_trace_data(self, manager):
@@ -314,8 +333,9 @@ class TestTraceManager:
 
         assert traces is not None
 
-        # Verify filtering was applied
-        call_kwargs = manager.storage.client.get_spans_dataframe.call_args[1]
+        # Verify get_traces_for_evaluation was called with filtering
+        manager.storage.get_traces_for_evaluation.assert_called()
+        call_kwargs = manager.storage.get_traces_for_evaluation.call_args[1]
         assert "filter_condition" in call_kwargs
 
     @pytest.mark.unit
@@ -356,7 +376,7 @@ class TestTraceManager:
                 },
             ]
         )
-        manager.storage.client.get_spans_dataframe.return_value = df
+        manager.storage.get_traces_for_evaluation.return_value = df
 
         unevaluated = manager.get_unevaluated_traces(hours_back=1)
 
@@ -398,7 +418,7 @@ class TestTraceManager:
                 },
             ]
         )
-        manager.storage.client.get_spans_dataframe.return_value = df
+        manager.storage.get_traces_for_evaluation.return_value = df
 
         stats = manager.get_trace_statistics(hours_back=1)
 

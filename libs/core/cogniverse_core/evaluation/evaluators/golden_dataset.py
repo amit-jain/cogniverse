@@ -9,8 +9,8 @@ import logging
 from typing import Any
 
 import numpy as np
-from phoenix.experiments.evaluators.base import Evaluator
-from phoenix.experiments.types import EvaluationResult
+
+from .base import Evaluator, create_evaluation_result
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class GoldenDatasetEvaluator(Evaluator):
         output: list[dict[str, Any]],
         metadata: dict[str, Any] | None = None,
         **kwargs,
-    ) -> EvaluationResult:
+    ) -> Any:
         """
         Evaluate results against golden dataset if applicable
 
@@ -50,7 +50,7 @@ class GoldenDatasetEvaluator(Evaluator):
         """
         # Check if this span is marked for evaluation
         if not metadata:
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=-1.0,
                 label="not_evaluable",
                 explanation="No metadata to identify if this is a test query",
@@ -60,7 +60,7 @@ class GoldenDatasetEvaluator(Evaluator):
         is_test_query = metadata.get("is_test_query", False)
 
         if not dataset_id and not is_test_query:
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=-1.0,
                 label="not_test_query",
                 explanation="This span is not marked as a test query",
@@ -69,7 +69,7 @@ class GoldenDatasetEvaluator(Evaluator):
         # Find golden data for this query
         golden_data = self.golden_dataset.get(input)
         if not golden_data:
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=0.0,
                 label="no_golden_data",
                 explanation=f"No golden data found for query: {input}",
@@ -104,7 +104,7 @@ class GoldenDatasetEvaluator(Evaluator):
         else:
             label = "failed"
 
-        return EvaluationResult(
+        return create_evaluation_result(
             score=float(overall_score),
             label=label,
             explanation=f"MRR: {metrics['mrr']:.3f}, P@5: {metrics['precision_at_5']:.3f}, NDCG: {metrics['ndcg']:.3f}",

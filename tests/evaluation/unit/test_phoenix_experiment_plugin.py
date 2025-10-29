@@ -5,7 +5,7 @@ Unit tests for Phoenix experiment plugin.
 from unittest.mock import Mock, patch
 
 import pytest
-from cogniverse_core.evaluation.plugins.phoenix_experiment import (
+from cogniverse_telemetry_phoenix.evaluation.experiments import (
     PhoenixExperimentPlugin,
     get_phoenix_evaluators,
     register,
@@ -239,7 +239,7 @@ class TestPhoenixExperimentPlugin:
         with (
             patch("phoenix.Client", return_value=mock_client),
             patch(
-                "cogniverse_core.evaluation.plugins.phoenix_experiment.run_experiment",
+                "cogniverse_telemetry_phoenix.evaluation.experiments.run_experiment",
                 return_value=mock_result,
             ) as mock_run_exp,
             patch("cogniverse_core.evaluation.core.solvers.create_retrieval_solver") as mock_solver,
@@ -303,7 +303,7 @@ class TestPhoenixExperimentPlugin:
         with (
             patch("phoenix.Client", return_value=mock_client),
             patch(
-                "cogniverse_core.evaluation.plugins.phoenix_experiment.run_experiment",
+                "cogniverse_telemetry_phoenix.evaluation.experiments.run_experiment",
                 return_value=mock_result,
             ),
             patch("cogniverse_core.evaluation.core.solvers.create_retrieval_solver"),

@@ -7,12 +7,13 @@ by understanding the visual content, not just computing embeddings.
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import torch
-from phoenix.experiments.evaluators.base import Evaluator
-from phoenix.experiments.types import EvaluationResult
 from PIL import Image
 from transformers import AutoProcessor, Qwen2VLForConditionalGeneration
+
+from .base import Evaluator, create_evaluation_result
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ class Qwen2VLVisualJudge(Evaluator):
         self.model.eval()
         logger.info(f"Qwen2-VL loaded successfully on {self.device}")
 
-    def evaluate(self, *, input=None, output=None, **kwargs) -> EvaluationResult:
+    def evaluate(self, *, input=None, output=None, **kwargs) -> Any:
         """
         Evaluate visual relevance using Qwen2-VL
 
@@ -93,7 +94,7 @@ class Qwen2VLVisualJudge(Evaluator):
             results = output if isinstance(output, list) else []
 
         if not results:
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=0.0, label="no_results", explanation="No results to evaluate"
             )
 
@@ -105,7 +106,7 @@ class Qwen2VLVisualJudge(Evaluator):
                 frame_paths.append(frame_path)
 
         if not frame_paths:
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=0.0,
                 label="no_frames",
                 explanation="No frame images found for evaluation",
@@ -125,7 +126,7 @@ class Qwen2VLVisualJudge(Evaluator):
             else:
                 label = "poor_match"
 
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=float(score),
                 label=label,
                 explanation=f"Qwen2-VL: {reasoning}",
@@ -137,7 +138,7 @@ class Qwen2VLVisualJudge(Evaluator):
 
         except Exception as e:
             logger.error(f"Qwen2-VL evaluation failed: {e}")
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=0.0,
                 label="evaluation_failed",
                 explanation=f"Visual evaluation failed: {str(e)}",

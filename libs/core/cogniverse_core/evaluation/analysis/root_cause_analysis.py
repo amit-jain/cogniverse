@@ -1,5 +1,5 @@
 """
-Root Cause Analysis for Phoenix Traces
+Root Cause Analysis for Evaluation Traces
 
 This module provides automated and semi-automated root cause analysis
 for failures and performance issues in traces.

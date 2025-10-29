@@ -4,10 +4,10 @@ Base evaluator class that doesn't create spans
 
 import functools
 
-from phoenix.experiments.evaluators.base import Evaluator as PhoenixEvaluator
+from .base import Evaluator
 
 
-class NoSpanEvaluator(PhoenixEvaluator):
+class NoSpanEvaluator(Evaluator):
     """Base evaluator that prevents span creation"""
 
     def evaluate(self, **kwargs):

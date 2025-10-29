@@ -11,9 +11,9 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
+from typing import Any
 
-from phoenix.experiments.evaluators.base import Evaluator
-from phoenix.experiments.types import EvaluationResult
+from .base import Evaluator, create_evaluation_result
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +186,7 @@ class SyncLLMReferenceFreeEvaluator(Evaluator, LLMJudgeBase):
         """
         LLMJudgeBase.__init__(self, model_name, base_url)
 
-    def evaluate(self, *, input=None, output=None, **kwargs) -> EvaluationResult:
+    def evaluate(self, *, input=None, output=None, **kwargs) -> Any:
         """
         Synchronous evaluation for Phoenix experiments
         """
@@ -201,7 +201,7 @@ class SyncLLMReferenceFreeEvaluator(Evaluator, LLMJudgeBase):
 
         return loop.run_until_complete(self._evaluate_async(input, output, **kwargs))
 
-    async def _evaluate_async(self, input, output, **kwargs) -> EvaluationResult:
+    async def _evaluate_async(self, input, output, **kwargs) -> Any:
         """
         Evaluate query-result relevance using LLM
         """
@@ -217,7 +217,7 @@ class SyncLLMReferenceFreeEvaluator(Evaluator, LLMJudgeBase):
             results = output if isinstance(output, list) else []
 
         if not results:
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=0.0, label="no_results", explanation="No results to evaluate"
             )
 
@@ -299,7 +299,7 @@ Explanation: Your visual assessment"""
         else:
             label = "not_relevant"
 
-        return EvaluationResult(
+        return create_evaluation_result(
             score=score, label=label, explanation=f"LLM Judge: {explanation}"
         )
 
@@ -327,7 +327,7 @@ class SyncLLMReferenceBasedEvaluator(Evaluator, LLMJudgeBase):
 
     def evaluate(
         self, *, input=None, output=None, expected=None, **kwargs
-    ) -> EvaluationResult:
+    ) -> Any:
         """
         Synchronous evaluation for Phoenix experiments
         """
@@ -383,7 +383,7 @@ class SyncLLMReferenceBasedEvaluator(Evaluator, LLMJudgeBase):
 
     async def _evaluate_async(
         self, input, output, expected=None, **kwargs
-    ) -> EvaluationResult:
+    ) -> Any:
         """
         Evaluate results against ground truth using LLM
         """
@@ -410,7 +410,7 @@ class SyncLLMReferenceBasedEvaluator(Evaluator, LLMJudgeBase):
                 expected_videos = expected
 
         if not results:
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=0.0,
                 label="no_results",
                 explanation="No results to evaluate against ground truth",
@@ -517,7 +517,7 @@ Format: Score: X/10"""
         else:
             label = "poor_match"
 
-        return EvaluationResult(
+        return create_evaluation_result(
             score=final_score,
             label=label,
             explanation=f"LLM: {explanation} | P:{precision:.2f} R:{recall:.2f}",
@@ -559,7 +559,7 @@ class SyncLLMHybridEvaluator(Evaluator, LLMJudgeBase):
 
     def evaluate(
         self, *, input=None, output=None, expected=None, **kwargs
-    ) -> EvaluationResult:
+    ) -> Any:
         """
         Hybrid evaluation combining both approaches
         """
@@ -577,7 +577,7 @@ class SyncLLMHybridEvaluator(Evaluator, LLMJudgeBase):
 
     async def _evaluate_async(
         self, input, output, expected=None, **kwargs
-    ) -> EvaluationResult:
+    ) -> Any:
         """
         Perform hybrid evaluation
         """
@@ -602,7 +602,7 @@ class SyncLLMHybridEvaluator(Evaluator, LLMJudgeBase):
         relevance_result = results[0]
         if isinstance(relevance_result, Exception):
             logger.error(f"Reference-free evaluation failed: {relevance_result}")
-            relevance_result = EvaluationResult(
+            relevance_result = create_evaluation_result(
                 score=0.5, label="error", explanation=str(relevance_result)
             )
 
@@ -610,7 +610,7 @@ class SyncLLMHybridEvaluator(Evaluator, LLMJudgeBase):
             reference_result = results[1]
             if isinstance(reference_result, Exception):
                 logger.error(f"Reference-based evaluation failed: {reference_result}")
-                reference_result = EvaluationResult(
+                reference_result = create_evaluation_result(
                     score=0.5, label="error", explanation=str(reference_result)
                 )
 
@@ -651,7 +651,7 @@ class SyncLLMHybridEvaluator(Evaluator, LLMJudgeBase):
         else:
             label = "poor"
 
-        return EvaluationResult(
+        return create_evaluation_result(
             score=final_score, label=label, explanation=explanation, metadata=metadata
         )
 

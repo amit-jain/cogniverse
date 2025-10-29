@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
-import phoenix as px
+# Provider import moved to function scope to avoid circular deps
 from inspect_ai import Task, eval
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.model import GenerateConfig
@@ -53,27 +53,44 @@ def evaluation_task(
     if mode == "experiment" and not (profiles and strategies):
         raise ValueError("profiles and strategies required for experiment mode")
 
-    # Load dataset from Phoenix
-    phoenix_client = px.Client()
-    phoenix_dataset = phoenix_client.get_dataset(name=dataset_name)
+    # Load dataset from telemetry provider
+    import asyncio
 
-    if not phoenix_dataset:
-        raise ValueError(f"Dataset '{dataset_name}' not found in Phoenix")
+    from cogniverse_core.evaluation.providers import get_evaluator_provider
 
-    # Convert Phoenix dataset to Inspect AI dataset
+    provider = get_evaluator_provider()
+
+    # Handle case where event loop is already running (e.g., in tests)
+    try:
+        asyncio.get_running_loop()
+        # If we're here, loop is running - run in a separate thread
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            dataset_data = pool.submit(
+                lambda: asyncio.run(provider.telemetry.datasets.get_dataset(dataset_name))
+            ).result()
+    except RuntimeError:
+        # No event loop running, safe to use asyncio.run()
+        dataset_data = asyncio.run(provider.telemetry.datasets.get_dataset(dataset_name))
+
+    if not dataset_data or not dataset_data.get("examples"):
+        raise ValueError(f"Dataset '{dataset_name}' not found or empty")
+
+    # Convert dataset to Inspect AI dataset
     samples = []
-    for example in phoenix_dataset.examples:
+    examples = dataset_data.get("examples", [])
+    for example in examples:
         # Extract query and expected results
-        query = example.input.get("query", "")
-        expected_videos = example.output.get("expected_videos", [])
+        query = example.get("input", {}).get("query", "")
+        expected_videos = example.get("output", {}).get("expected_videos", [])
 
         # Create Inspect AI sample
         sample = Sample(
             input=query,
             target=expected_videos,  # Ground truth for reference-based metrics
             metadata={
-                "example_id": example.id,
-                "category": example.input.get("category", "general"),
+                "example_id": example.get("id", ""),
+                "category": example.get("input", {}).get("category", "general"),
             },
         )
         samples.append(sample)

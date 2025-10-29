@@ -8,6 +8,7 @@ query and retrieved video frames.
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -15,9 +16,9 @@ from cogniverse_agents.query_encoders import ColPaliQueryEncoder
 
 # Use existing model infrastructure
 from cogniverse_core.common.models import get_or_load_model
-from phoenix.experiments.evaluators.base import Evaluator
-from phoenix.experiments.types import EvaluationResult
 from PIL import Image
+
+from .base import Evaluator, create_evaluation_result
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ class VisualRelevanceEvaluator(Evaluator):
 
         logger.info(f"Initialized VisualRelevanceEvaluator with {model_name}")
 
-    def evaluate(self, *, input=None, output=None, **kwargs) -> EvaluationResult:
+    def evaluate(self, *, input=None, output=None, **kwargs) -> Any:
         """
         Evaluate visual relevance of search results
 
@@ -73,7 +74,7 @@ class VisualRelevanceEvaluator(Evaluator):
             results = output if isinstance(output, list) else []
 
         if not results:
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=0.0, label="no_results", explanation="No results to evaluate"
             )
 
@@ -91,7 +92,7 @@ class VisualRelevanceEvaluator(Evaluator):
                 evaluated_frames += 1
 
         if not visual_scores:
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=0.0,
                 label="no_visual_data",
                 explanation="Could not evaluate visual content - no frames available",
@@ -126,7 +127,7 @@ class VisualRelevanceEvaluator(Evaluator):
                 f"Poor visual match (avg: {avg_score:.2f}, max: {max_score:.2f})"
             )
 
-        return EvaluationResult(
+        return create_evaluation_result(
             score=float(final_score),
             label=label,
             explanation=f"Visual evaluation: {explanation} ({evaluated_frames} frames evaluated)",

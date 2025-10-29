@@ -13,7 +13,7 @@ import pytest
 from cogniverse_core.evaluation.data.storage import (
     ConnectionConfig,
     ConnectionState,
-    PhoenixStorage,
+    TelemetryStorage,
 )
 
 from tests.utils.async_polling import wait_for_phoenix_processing
@@ -39,7 +39,7 @@ class TestPhoenixProductionIntegration:
     def storage(self, phoenix_required):
         """Create production storage instance."""
         config = ConnectionConfig(enable_health_checks=False)  # Disable for tests
-        storage = PhoenixStorage(config)
+        storage = TelemetryStorage(config)
         yield storage
         storage.shutdown()
 
@@ -49,7 +49,7 @@ class TestPhoenixProductionIntegration:
         config = ConnectionConfig(enable_health_checks=False)
 
         # Test initialization
-        storage = PhoenixStorage(config)
+        storage = TelemetryStorage(config)
         assert storage.connection_state == ConnectionState.CONNECTED
 
         # Test metrics are initialized
@@ -156,7 +156,7 @@ class TestPhoenixProductionIntegration:
             enable_health_checks=True, health_check_interval_seconds=0.5
         )
 
-        storage = PhoenixStorage(config)
+        storage = TelemetryStorage(config)
 
         try:
             # Verify initial connection
@@ -269,7 +269,7 @@ class TestPhoenixProductionIntegration:
         """Test context manager properly cleans up resources."""
         config = ConnectionConfig(enable_health_checks=False)
 
-        with PhoenixStorage(config) as storage:
+        with TelemetryStorage(config) as storage:
             # Use storage
             storage.log_experiment_results(
                 experiment_name="context_test",

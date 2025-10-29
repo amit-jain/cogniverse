@@ -12,11 +12,11 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+from cogniverse_telemetry_phoenix.evaluation.monitoring import RetrievalMonitor
 from tabulate import tabulate
 
 from cogniverse_core.evaluation.core.task import evaluation_task
 from cogniverse_core.evaluation.data.datasets import DatasetManager
-from cogniverse_core.evaluation.phoenix.monitoring import RetrievalMonitor
 from cogniverse_core.evaluation.plugins import register_plugin
 
 logger = logging.getLogger(__name__)

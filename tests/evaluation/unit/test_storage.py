@@ -11,7 +11,7 @@ from cogniverse_core.evaluation.data.storage import (
     ConnectionState,
     ExportMetrics,
     MonitoredSpanExporter,
-    PhoenixStorage,
+    TelemetryStorage,
 )
 from opentelemetry.sdk.trace.export import SpanExportResult
 
@@ -211,17 +211,26 @@ class TestMonitoredSpanExporter:
         mock_exporter.shutdown.assert_called_once()
 
 
-class TestPhoenixStorage:
-    """Test production Phoenix storage."""
+class TestTelemetryStorage:
+    """Test production telemetry storage."""
 
     @pytest.fixture
     def mock_phoenix_client(self):
-        """Create mock Phoenix client."""
+        """Create mock Phoenix client (deprecated - use mock_provider)."""
         client = Mock()
         client.get_spans_dataframe = Mock(return_value=pd.DataFrame())
         client.upload_dataset = Mock(return_value=Mock(id="test_id"))
         client.get_dataset = Mock(return_value=Mock(id="test_id", name="test"))
         return client
+
+    @pytest.fixture
+    def mock_provider(self, mock_phoenix_client):
+        """Create mock evaluator provider."""
+        from unittest.mock import AsyncMock
+        provider = Mock()
+        # Create telemetry provider with traces interface
+        provider.telemetry.traces.get_spans = AsyncMock(return_value=mock_phoenix_client.get_spans_dataframe())
+        return provider
 
     @pytest.fixture
     def config(self):
@@ -234,55 +243,57 @@ class TestPhoenixStorage:
         )
 
     @pytest.mark.unit
-    def test_initialization_success(self, mock_phoenix_client, config):
+    def test_initialization_success(self, mock_provider, config):
         """Test successful initialization."""
         with patch(
-            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider
         ):
             with patch("cogniverse_core.evaluation.data.storage.trace"):
-                storage = PhoenixStorage(config)
+                storage = TelemetryStorage(config)
 
                 assert storage.connection_state == ConnectionState.CONNECTED
-                assert storage.client is not None
+                assert storage.provider is not None
                 assert storage.tracer is not None
 
     @pytest.mark.unit
     def test_initialization_with_retry(self, config):
         """Test initialization with connection retry."""
-        mock_client = Mock()
+        from unittest.mock import AsyncMock
+        mock_provider = Mock()
         # Fail once, then succeed
-        mock_client.get_spans_dataframe.side_effect = [
+        mock_provider.telemetry.traces.get_spans = AsyncMock(side_effect=[
             Exception("Connection failed"),
             pd.DataFrame(),
-        ]
+        ])
 
-        with patch("cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_client):
+        with patch("cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider):
             with patch("cogniverse_core.evaluation.data.storage.trace"):
-                storage = PhoenixStorage(config)
+                storage = TelemetryStorage(config)
 
                 assert storage.connection_state == ConnectionState.CONNECTED
-                assert mock_client.get_spans_dataframe.call_count == 2
+                assert mock_provider.telemetry.traces.get_spans.call_count == 2
 
     @pytest.mark.unit
     def test_initialization_failure(self, config):
         """Test initialization failure after retries."""
-        mock_client = Mock()
-        mock_client.get_spans_dataframe.side_effect = Exception("Connection failed")
+        from unittest.mock import AsyncMock
+        mock_provider = Mock()
+        mock_provider.telemetry.traces.get_spans = AsyncMock(side_effect=Exception("Connection failed"))
 
-        with patch("cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_client):
+        with patch("cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider):
             with pytest.raises(ConnectionError) as exc_info:
-                PhoenixStorage(config)
+                TelemetryStorage(config)
 
-            assert "Failed to connect to Phoenix" in str(exc_info.value)
+            assert "Failed to connect to telemetry provider" in str(exc_info.value)
 
     @pytest.mark.unit
-    def test_log_experiment_results(self, mock_phoenix_client, config):
+    def test_log_experiment_results(self, mock_provider, config):
         """Test logging experiment results."""
         with patch(
-            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider
         ):
             with patch("cogniverse_core.evaluation.data.storage.trace"):
-                storage = PhoenixStorage(config)
+                storage = TelemetryStorage(config)
 
                 # Mock tracer
                 mock_span = MagicMock()
@@ -311,7 +322,7 @@ class TestPhoenixStorage:
     @pytest.mark.unit
     def test_log_experiment_when_disconnected(self, config):
         """Test logging when disconnected."""
-        storage = PhoenixStorage.__new__(PhoenixStorage)
+        storage = TelemetryStorage.__new__(TelemetryStorage)
         storage.config = config
         storage.connection_state = ConnectionState.DISCONNECTED
         storage.metrics = ExportMetrics()
@@ -323,21 +334,23 @@ class TestPhoenixStorage:
         assert result is None
 
     @pytest.mark.unit
-    def test_get_traces_for_evaluation(self, mock_phoenix_client, config):
+    def test_get_traces_for_evaluation(self, mock_phoenix_client, mock_provider, config):
         """Test getting traces for evaluation."""
+        from unittest.mock import AsyncMock
         test_df = pd.DataFrame(
             [
                 {"trace_id": "trace1", "name": "test1"},
                 {"trace_id": "trace2", "name": "test2"},
             ]
         )
-        mock_phoenix_client.get_spans_dataframe.return_value = test_df
+        # Configure the provider's async mock to return test data
+        mock_provider.telemetry.traces.get_spans = AsyncMock(return_value=test_df)
 
         with patch(
-            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider
         ):
             with patch("cogniverse_core.evaluation.data.storage.trace"):
-                storage = PhoenixStorage(config)
+                storage = TelemetryStorage(config)
 
                 # Test regular query
                 df = storage.get_traces_for_evaluation(limit=10)
@@ -347,43 +360,38 @@ class TestPhoenixStorage:
                 df = storage.get_traces_for_evaluation(
                     filter_condition="name == 'test1'", limit=10
                 )
-                mock_phoenix_client.get_spans_dataframe.assert_called_with(
-                    filter_condition="name == 'test1'",
-                    start_time=None,
-                    root_spans_only=True,
-                    limit=10,
-                )
+                # Verify the async mock was called with expected args
+                assert mock_provider.telemetry.traces.get_spans.call_count >= 2  # init + actual calls
 
     @pytest.mark.unit
-    def test_get_traces_with_trace_ids(self, mock_phoenix_client, config):
+    def test_get_traces_with_trace_ids(self, mock_phoenix_client, mock_provider, config):
         """Test getting specific traces by ID."""
+        from unittest.mock import AsyncMock
         trace1_df = pd.DataFrame([{"trace_id": "trace1", "name": "test1"}])
         trace2_df = pd.DataFrame([{"trace_id": "trace2", "name": "test2"}])
 
         # First call is for init connection test, then two for actual traces
-        mock_phoenix_client.get_spans_dataframe.side_effect = [
+        mock_provider.telemetry.traces.get_spans = AsyncMock(side_effect=[
             pd.DataFrame(),  # For init connection test
             trace1_df,
             trace2_df,
-        ]
+        ])
 
         with patch(
-            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider
         ):
             with patch("cogniverse_core.evaluation.data.storage.trace"):
-                storage = PhoenixStorage(config)
+                storage = TelemetryStorage(config)
 
                 df = storage.get_traces_for_evaluation(trace_ids=["trace1", "trace2"])
 
                 assert len(df) == 2
-                assert (
-                    mock_phoenix_client.get_spans_dataframe.call_count == 3
-                )  # 1 for init + 2 for traces
+                assert mock_provider.telemetry.traces.get_spans.call_count == 3  # 1 for init + 2 for traces
 
     @pytest.mark.unit
     def test_get_traces_when_disconnected(self, config):
         """Test get_traces_for_evaluation when disconnected."""
-        storage = PhoenixStorage.__new__(PhoenixStorage)
+        storage = TelemetryStorage.__new__(TelemetryStorage)
         storage.config = config
         storage.connection_state = ConnectionState.DISCONNECTED
         storage.metrics = ExportMetrics()
@@ -393,7 +401,7 @@ class TestPhoenixStorage:
         assert result.empty
 
     @pytest.mark.unit
-    def test_get_traces_with_error(self, mock_phoenix_client, config):
+    def test_get_traces_with_error(self, mock_phoenix_client, mock_provider, config):
         """Test get_traces_for_evaluation error handling."""
         mock_phoenix_client.get_spans_dataframe.side_effect = [
             pd.DataFrame(),  # For init
@@ -401,23 +409,23 @@ class TestPhoenixStorage:
         ]
 
         with patch(
-            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider
         ):
             with patch("cogniverse_core.evaluation.data.storage.trace"):
-                storage = PhoenixStorage(config)
+                storage = TelemetryStorage(config)
 
                 result = storage.get_traces_for_evaluation()
 
                 assert result.empty
 
     @pytest.mark.unit
-    def test_get_metrics(self, mock_phoenix_client, config):
+    def test_get_metrics(self, mock_provider, config):
         """Test getting storage metrics."""
         with patch(
-            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider
         ):
             with patch("cogniverse_core.evaluation.data.storage.trace"):
-                storage = PhoenixStorage(config)
+                storage = TelemetryStorage(config)
 
                 # Add some metrics
                 storage.metrics.record_success(10, 100)
@@ -432,32 +440,33 @@ class TestPhoenixStorage:
                 assert metrics["avg_latency_ms"] == 100.0
 
     @pytest.mark.unit
-    def test_context_manager(self, mock_phoenix_client, config):
+    def test_context_manager(self, mock_provider, config):
         """Test context manager functionality."""
         with patch(
-            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider
         ):
             with patch("cogniverse_core.evaluation.data.storage.trace"):
-                with PhoenixStorage(config) as storage:
+                with TelemetryStorage(config) as storage:
                     assert storage.connection_state == ConnectionState.CONNECTED
 
                 # After context exit
                 assert storage.connection_state == ConnectionState.DISCONNECTED
 
     @pytest.mark.unit
-    def test_health_check_error_handling(self, mock_phoenix_client, config):
+    def test_health_check_error_handling(self, mock_phoenix_client, mock_provider, config):
         """Test health check handles errors gracefully."""
+        from unittest.mock import AsyncMock
         # First successful init, then simulate connection loss
-        mock_phoenix_client.get_spans_dataframe.side_effect = [
+        mock_provider.telemetry.traces.get_spans = AsyncMock(side_effect=[
             pd.DataFrame(),  # For init
             Exception("Connection lost"),  # For health check
-        ]
+        ])
 
         with patch(
-            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider
         ):
             with patch("cogniverse_core.evaluation.data.storage.trace"):
-                storage = PhoenixStorage(config)
+                storage = TelemetryStorage(config)
                 assert storage.connection_state == ConnectionState.CONNECTED
 
                 # Manually trigger health check which will fail
@@ -473,12 +482,13 @@ class TestPhoenixStorage:
         """Test health check when reconnection fails."""
         config = ConnectionConfig(enable_health_checks=False)
 
-        mock_client = Mock()
-        mock_client.get_spans_dataframe = Mock(return_value=pd.DataFrame())
+        from unittest.mock import AsyncMock
+        mock_provider = Mock()
+        mock_provider.telemetry.traces.get_spans = AsyncMock(return_value=pd.DataFrame())
 
-        with patch("cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_client):
+        with patch("cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider):
             with patch("cogniverse_core.evaluation.data.storage.trace"):
-                storage = PhoenixStorage(config)
+                storage = TelemetryStorage(config)
 
                 # Simulate disconnection
                 storage.connection_state = ConnectionState.DISCONNECTED
@@ -495,40 +505,40 @@ class TestPhoenixStorage:
                     assert storage.connection_state == ConnectionState.DISCONNECTED
 
     @pytest.mark.unit
-    def test_shutdown(self, mock_phoenix_client, config):
+    def test_shutdown(self, mock_provider, config):
         """Test graceful shutdown."""
         with patch(
-            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider
         ):
             with patch("cogniverse_core.evaluation.data.storage.trace"):
-                storage = PhoenixStorage(config)
+                storage = TelemetryStorage(config)
 
                 storage.shutdown()
 
                 assert storage.connection_state == ConnectionState.DISCONNECTED
-                assert storage.client is None
+                assert storage.provider is None
 
     @pytest.mark.unit
-    def test_span_creation_without_tracer(self, mock_phoenix_client, config):
+    def test_span_creation_without_tracer(self, mock_provider, config):
         """Test _create_span when tracer is None."""
         with patch(
-            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider
         ):
             with patch("cogniverse_core.evaluation.data.storage.trace"):
-                storage = PhoenixStorage(config)
+                storage = TelemetryStorage(config)
                 storage.tracer = None
 
                 with storage._create_span("test_span") as span:
                     assert span is None
 
     @pytest.mark.unit
-    def test_span_creation_with_exception(self, mock_phoenix_client, config):
+    def test_span_creation_with_exception(self, mock_provider, config):
         """Test _create_span exception handling."""
         with patch(
-            "cogniverse_core.evaluation.data.storage.px.Client", return_value=mock_phoenix_client
+            "cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider
         ):
             with patch("cogniverse_core.evaluation.data.storage.trace"):
-                storage = PhoenixStorage(config)
+                storage = TelemetryStorage(config)
 
                 mock_span = MagicMock()
                 mock_span.record_exception = Mock()

@@ -10,8 +10,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-from phoenix.experiments.evaluators.base import Evaluator
-from phoenix.experiments.types import EvaluationResult
+
+from .base import Evaluator, create_evaluation_result
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class QueryResultRelevanceEvaluator(Evaluator):
 
     async def evaluate(
         self, input: str, output: list[dict[str, Any]], **kwargs
-    ) -> EvaluationResult:
+    ) -> Any:
         """
         Evaluate query-result relevance without golden dataset
 
@@ -47,7 +47,7 @@ class QueryResultRelevanceEvaluator(Evaluator):
             EvaluationResult with relevance score
         """
         if not output:
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=0.0,
                 label="no_results",
                 explanation="No results returned for query",
@@ -69,7 +69,7 @@ class QueryResultRelevanceEvaluator(Evaluator):
         else:
             label = "low_relevance"
 
-        return EvaluationResult(
+        return create_evaluation_result(
             score=float(avg_top_score),
             label=label,
             explanation=f"Average relevance score of top {len(top_scores)} results: {avg_top_score:.3f}",
@@ -84,7 +84,7 @@ class ResultDiversityEvaluator(Evaluator):
 
     async def evaluate(
         self, input: str, output: list[dict[str, Any]], **kwargs
-    ) -> EvaluationResult:
+    ) -> Any:
         """
         Evaluate result diversity
 
@@ -96,7 +96,7 @@ class ResultDiversityEvaluator(Evaluator):
             EvaluationResult with diversity score
         """
         if len(output) < 2:
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=0.0,
                 label="insufficient_results",
                 explanation="Need at least 2 results to evaluate diversity",
@@ -120,7 +120,7 @@ class ResultDiversityEvaluator(Evaluator):
         else:
             label = "low_diversity"
 
-        return EvaluationResult(
+        return create_evaluation_result(
             score=float(diversity_score),
             label=label,
             explanation=f"{len(video_ids)} unique videos out of {len(output)} results",
@@ -135,7 +135,7 @@ class TemporalCoverageEvaluator(Evaluator):
 
     async def evaluate(
         self, input: str, output: list[dict[str, Any]], **kwargs
-    ) -> EvaluationResult:
+    ) -> Any:
         """
         Evaluate temporal coverage of results
 
@@ -147,7 +147,7 @@ class TemporalCoverageEvaluator(Evaluator):
             EvaluationResult with temporal coverage score
         """
         if not output:
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=0.0,
                 label="no_results",
                 explanation="No results to evaluate temporal coverage",
@@ -163,7 +163,7 @@ class TemporalCoverageEvaluator(Evaluator):
                 time_ranges.append((start, end))
 
         if not time_ranges:
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=0.0,
                 label="no_temporal_info",
                 explanation="No temporal information in results",
@@ -183,7 +183,7 @@ class TemporalCoverageEvaluator(Evaluator):
         else:
             label = "poor_coverage"
 
-        return EvaluationResult(
+        return create_evaluation_result(
             score=float(coverage_score),
             label=label,
             explanation=f"{unique_segments} unique time segments covering {total_duration:.1f}s",
@@ -205,7 +205,7 @@ class LLMRelevanceEvaluator(Evaluator):
 
     async def evaluate(
         self, input: str, output: list[dict[str, Any]], **kwargs
-    ) -> EvaluationResult:
+    ) -> Any:
         """
         Use LLM to evaluate relevance
 
@@ -223,7 +223,7 @@ class LLMRelevanceEvaluator(Evaluator):
         # 3. Parse LLM response into score and explanation
 
         # For now, return a mock evaluation
-        return EvaluationResult(
+        return create_evaluation_result(
             score=0.75,
             label="llm_evaluated",
             explanation="LLM evaluation placeholder - would analyze query-result relevance",
@@ -246,7 +246,7 @@ class CompositeEvaluator(Evaluator):
 
     async def evaluate(
         self, input: str, output: list[dict[str, Any]], **kwargs
-    ) -> EvaluationResult:
+    ) -> Any:
         """
         Run all evaluators and combine results
 
@@ -281,7 +281,7 @@ class CompositeEvaluator(Evaluator):
                 f"{evaluator_name}: {result.score:.3f} ({result.label})"
             )
 
-        return EvaluationResult(
+        return create_evaluation_result(
             score=float(weighted_score),
             label=f"composite_{len(self.evaluators)}_evaluators",
             explanation=" | ".join(explanations),

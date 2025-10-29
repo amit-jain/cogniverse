@@ -6,8 +6,8 @@ import logging
 from typing import Any
 
 import numpy as np
-from phoenix.experiments.evaluators.base import Evaluator
-from phoenix.experiments.types import EvaluationResult
+
+from .base import Evaluator, create_evaluation_result
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class SyncGoldenDatasetEvaluator(Evaluator):
 
     def evaluate(
         self, *, input=None, output=None, expected=None, **kwargs
-    ) -> EvaluationResult:
+    ) -> Any:
         """
         Evaluate results against golden dataset
         """
@@ -65,7 +65,7 @@ class SyncGoldenDatasetEvaluator(Evaluator):
         if not expected_videos and not golden_data:
             # Not a golden query, return a neutral score instead of -1
             # This allows the experiment to proceed without penalizing non-golden queries
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=0.5,
                 label="not_golden",
                 explanation="Query not in golden dataset - neutral score assigned",
@@ -98,7 +98,7 @@ class SyncGoldenDatasetEvaluator(Evaluator):
         else:
             label = "failed"
 
-        return EvaluationResult(
+        return create_evaluation_result(
             score=float(score),
             label=label,
             explanation=f"MRR: {metrics['mrr']:.3f}, P@5: {metrics['precision_at_5']:.3f}, R@5: {metrics['recall_at_5']:.3f}",

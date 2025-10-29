@@ -5,10 +5,11 @@ These evaluators don't require golden datasets and can evaluate any retrieval re
 """
 
 import logging
+from typing import Any
 
 import numpy as np
-from phoenix.experiments.evaluators.base import Evaluator
-from phoenix.experiments.types import EvaluationResult
+
+from .base import Evaluator, create_evaluation_result
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ class SyncQueryResultRelevanceEvaluator(Evaluator):
     def __init__(self, min_score_threshold: float = 0.5):
         self.min_score_threshold = min_score_threshold
 
-    def evaluate(self, *, input=None, output=None, **kwargs) -> EvaluationResult:
+    def evaluate(self, *, input=None, output=None, **kwargs) -> Any:
         """
         Evaluate query-result relevance without golden dataset
         """
@@ -34,7 +35,7 @@ class SyncQueryResultRelevanceEvaluator(Evaluator):
             results = output if isinstance(output, list) else []
 
         if not results:
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=0.0,
                 label="no_results",
                 explanation="No results returned for query",
@@ -59,7 +60,7 @@ class SyncQueryResultRelevanceEvaluator(Evaluator):
         else:
             label = "low_relevance"
 
-        return EvaluationResult(
+        return create_evaluation_result(
             score=float(avg_top_score),
             label=label,
             explanation=f"Average relevance score of top {len(top_scores)} results: {avg_top_score:.3f}",
@@ -71,7 +72,7 @@ class SyncResultDiversityEvaluator(Evaluator):
     Synchronous evaluator for result diversity
     """
 
-    def evaluate(self, *, input=None, output=None, **kwargs) -> EvaluationResult:
+    def evaluate(self, *, input=None, output=None, **kwargs) -> Any:
         """
         Evaluate result diversity
         """
@@ -84,7 +85,7 @@ class SyncResultDiversityEvaluator(Evaluator):
             results = output if isinstance(output, list) else []
 
         if len(results) < 2:
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=0.0,
                 label="insufficient_results",
                 explanation="Need at least 2 results to evaluate diversity",
@@ -112,7 +113,7 @@ class SyncResultDiversityEvaluator(Evaluator):
         else:
             label = "low_diversity"
 
-        return EvaluationResult(
+        return create_evaluation_result(
             score=float(diversity_score),
             label=label,
             explanation=f"{len(video_ids)} unique videos out of {len(results)} results",
@@ -124,7 +125,7 @@ class SyncResultDistributionEvaluator(Evaluator):
     Evaluates the distribution of scores in results
     """
 
-    def evaluate(self, *, input=None, output=None, **kwargs) -> EvaluationResult:
+    def evaluate(self, *, input=None, output=None, **kwargs) -> Any:
         """
         Evaluate score distribution for quality assessment
         """
@@ -137,7 +138,7 @@ class SyncResultDistributionEvaluator(Evaluator):
             results = output if isinstance(output, list) else []
 
         if not results:
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=0.0,
                 label="no_results",
                 explanation="No results to evaluate distribution",
@@ -177,7 +178,7 @@ class SyncResultDistributionEvaluator(Evaluator):
             label = "no_scores"
             mean_score = std_score = score_range = 0
 
-        return EvaluationResult(
+        return create_evaluation_result(
             score=float(quality_score),
             label=label,
             explanation=f"Mean: {mean_score:.3f}, Std: {std_score:.3f}, Range: {score_range:.3f}",
@@ -189,7 +190,7 @@ class SyncTemporalCoverageEvaluator(Evaluator):
     Evaluates temporal coverage for video results
     """
 
-    def evaluate(self, *, input=None, output=None, **kwargs) -> EvaluationResult:
+    def evaluate(self, *, input=None, output=None, **kwargs) -> Any:
         """
         Evaluate temporal coverage of video results
         """
@@ -202,7 +203,7 @@ class SyncTemporalCoverageEvaluator(Evaluator):
             results = output if isinstance(output, list) else []
 
         if not results:
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=0.0,
                 label="no_temporal_data",
                 explanation="No results with temporal information",
@@ -222,7 +223,7 @@ class SyncTemporalCoverageEvaluator(Evaluator):
         if not segments:
             # No temporal data, but still give partial score based on result count
             coverage_score = min(len(results) / 10, 0.5)  # Max 0.5 for non-temporal
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=float(coverage_score),
                 label="no_temporal_coverage",
                 explanation=f"{len(results)} results without temporal information",
@@ -255,7 +256,7 @@ class SyncTemporalCoverageEvaluator(Evaluator):
         else:
             label = "poor_coverage"
 
-        return EvaluationResult(
+        return create_evaluation_result(
             score=float(coverage_score),
             label=label,
             explanation=f"{unique_segments} segments covering {total_duration:.1f}s total",

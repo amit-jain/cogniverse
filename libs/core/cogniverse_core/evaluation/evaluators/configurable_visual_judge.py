@@ -5,11 +5,12 @@ Configurable Visual Judge that uses config to determine provider (Ollama, Modal,
 import base64
 import logging
 from pathlib import Path
+from typing import Any
 
 import requests
 from cogniverse_core.config.utils import get_config
-from phoenix.experiments.evaluators.base import Evaluator
-from phoenix.experiments.types import EvaluationResult
+
+from .base import Evaluator, create_evaluation_result
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ class ConfigurableVisualJudge(Evaluator):
             f"Initialized {self.provider} visual judge with model {self.model} at {self.base_url}"
         )
 
-    def evaluate(self, *, input=None, output=None, **kwargs) -> EvaluationResult:
+    def evaluate(self, *, input=None, output=None, **kwargs) -> Any:
         """
         Evaluate visual relevance using configured provider
         """
@@ -68,7 +69,7 @@ class ConfigurableVisualJudge(Evaluator):
             results = output if isinstance(output, list) else []
 
         if not results:
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=0.0, label="no_results", explanation="No results to evaluate"
             )
 
@@ -111,7 +112,7 @@ class ConfigurableVisualJudge(Evaluator):
             logger.warning(
                 f"No videos found for evaluation. Searched results: {[r.get('video_id', r.get('source_id')) if isinstance(r, dict) else str(r) for r in results[:3]]}"
             )
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=0.0,
                 label="no_frames",
                 explanation="No video frames could be extracted for evaluation",
@@ -138,7 +139,7 @@ class ConfigurableVisualJudge(Evaluator):
             else:
                 label = "poor_match"
 
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=float(score),
                 label=label,
                 explanation=f"{self.provider}/{self.model}: {reasoning}",
@@ -151,7 +152,7 @@ class ConfigurableVisualJudge(Evaluator):
 
         except Exception as e:
             logger.error(f"Visual evaluation failed: {e}")
-            return EvaluationResult(
+            return create_evaluation_result(
                 score=0.0,
                 label="evaluation_failed",
                 explanation=f"Visual evaluation failed: {str(e)}",

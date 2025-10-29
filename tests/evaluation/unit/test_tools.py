@@ -170,8 +170,8 @@ class TestPhoenixQueryTool:
     @pytest.mark.asyncio
     async def test_phoenix_query_traces(self):
         """Test querying traces from Phoenix."""
-        mock_px = MagicMock()
-        mock_client = Mock()
+        from unittest.mock import AsyncMock
+
         mock_df = pd.DataFrame(
             {
                 "span_id": ["span1", "span2"],
@@ -179,10 +179,11 @@ class TestPhoenixQueryTool:
                 "duration": [100, 50],
             }
         )
-        mock_client.get_spans_dataframe.return_value = mock_df
-        mock_px.Client.return_value = mock_client
 
-        with patch.dict("sys.modules", {"phoenix": mock_px}):
+        mock_provider = Mock()
+        mock_provider.telemetry.traces.get_spans = AsyncMock(return_value=mock_df)
+
+        with patch("cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider):
             tool_func = phoenix_query_tool()
             results = await tool_func(
                 query_type="traces", filter="name == 'search'", limit=10
@@ -197,17 +198,18 @@ class TestPhoenixQueryTool:
     @pytest.mark.asyncio
     async def test_phoenix_query_datasets(self):
         """Test querying datasets from Phoenix."""
-        mock_px = MagicMock()
-        mock_client = Mock()
-        mock_dataset = Mock()
-        mock_dataset.name = "test_dataset"
-        mock_example = Mock()
-        mock_example.to_dict.return_value = {"input": "test", "output": "result"}
-        mock_dataset.examples = [mock_example] * 5
-        mock_client.get_dataset.return_value = mock_dataset
-        mock_px.Client.return_value = mock_client
+        from unittest.mock import AsyncMock
 
-        with patch.dict("sys.modules", {"phoenix": mock_px}):
+        mock_dataset_data = {
+            "name": "test_dataset",
+            "num_examples": 5,
+            "examples": [{"input": "test", "output": "result"}] * 5
+        }
+
+        mock_provider = Mock()
+        mock_provider.telemetry.datasets.get_dataset = AsyncMock(return_value=mock_dataset_data)
+
+        with patch("cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider):
             tool_func = phoenix_query_tool()
             result = await tool_func(query_type="datasets", name="test_dataset")
 
@@ -235,36 +237,40 @@ class TestPhoenixQueryTool:
     @pytest.mark.asyncio
     async def test_phoenix_query_experiments(self):
         """Test querying experiments through spans."""
-        mock_px = MagicMock()
-        mock_client = Mock()
+        from unittest.mock import AsyncMock
 
         # Test listing all experiments
-        mock_df = Mock()
-        mock_df.empty = False
-        mock_df.columns = ["attributes.metadata.experiment_name", "other_column"]
-        mock_df.__getitem__ = lambda self, key: Mock(
-            dropna=lambda: Mock(
-                unique=lambda: Mock(tolist=lambda: ["exp1", "exp2", "exp3"])
-            )
+        mock_df_list = pd.DataFrame(
+            {
+                "attributes.metadata.experiment_name": ["exp1", "exp2", "exp3", "exp1"],
+                "other_column": [1, 2, 3, 4]
+            }
         )
-        mock_client.get_spans_dataframe.return_value = mock_df
-        mock_px.Client.return_value = mock_client
 
-        with patch.dict("sys.modules", {"phoenix": mock_px}):
+        # Test getting specific experiment
+        mock_df_specific = pd.DataFrame(
+            {
+                "trace": ["data"] * 5,
+                "attributes.metadata.experiment_name": ["exp1"] * 5
+            }
+        )
+
+        mock_provider = Mock()
+
+        with patch("cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider):
             tool_func = phoenix_query_tool()
 
             # Test listing experiments
+            mock_provider.telemetry.traces.get_spans = AsyncMock(return_value=mock_df_list)
             result = await tool_func(query_type="experiments")
             assert result == {"experiments": ["exp1", "exp2", "exp3"], "count": 3}
 
             # Test getting specific experiment
-            mock_df.to_dict.return_value = [{"trace": "data"}]
-            mock_df.__len__ = lambda self: 5
-
+            mock_provider.telemetry.traces.get_spans = AsyncMock(return_value=mock_df_specific)
             result = await tool_func(query_type="experiments", name="exp1")
             assert result == {
                 "experiment_name": "exp1",
-                "traces": [{"trace": "data"}],
+                "traces": mock_df_specific.to_dict(orient="records"),
                 "count": 5,
             }
 
@@ -288,16 +294,19 @@ class TestPhoenixQueryTool:
     @pytest.mark.asyncio
     async def test_phoenix_query_error_handling(self):
         """Test Phoenix query error handling."""
-        mock_px = MagicMock()
-        mock_px.Client.side_effect = Exception("Phoenix connection failed")
+        from unittest.mock import AsyncMock
 
-        with patch.dict("sys.modules", {"phoenix": mock_px}):
+        mock_provider = Mock()
+        mock_provider.telemetry.traces.get_spans = AsyncMock(side_effect=Exception("Phoenix connection failed"))
+
+        with patch("cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider):
             tool_func = phoenix_query_tool()
 
-            # The function raises the original exception, not RuntimeError
-            with pytest.raises(Exception) as exc_info:
+            # The function raises RuntimeError wrapping the original exception
+            with pytest.raises(RuntimeError) as exc_info:
                 await tool_func(query_type="traces")
 
+            assert "Phoenix query tool failed" in str(exc_info.value)
             assert "Phoenix connection failed" in str(exc_info.value)
 
     @pytest.mark.unit
@@ -305,14 +314,13 @@ class TestPhoenixQueryTool:
     async def test_phoenix_query_traces_with_params(self):
         """Test querying traces with all parameters."""
         from datetime import datetime
+        from unittest.mock import AsyncMock
 
-        mock_px = MagicMock()
-        mock_client = Mock()
         mock_df = pd.DataFrame({"span_id": ["span1"]})
-        mock_client.get_spans_dataframe.return_value = mock_df
-        mock_px.Client.return_value = mock_client
+        mock_provider = Mock()
+        mock_provider.telemetry.traces.get_spans = AsyncMock(return_value=mock_df)
 
-        with patch.dict("sys.modules", {"phoenix": mock_px}):
+        with patch("cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider):
             tool_func = phoenix_query_tool()
 
             start_time = datetime.now()
@@ -326,10 +334,9 @@ class TestPhoenixQueryTool:
                 limit=50,
             )
 
-            # Check that parameters were passed
-            mock_client.get_spans_dataframe.assert_called_once_with(
-                filter_condition="status == 'success'",
-                start_time=start_time,
-                end_time=end_time,
-                limit=50,
-            )
+            # Check that parameters were passed to the async method
+            mock_provider.telemetry.traces.get_spans.assert_called_once()
+            call_kwargs = mock_provider.telemetry.traces.get_spans.call_args[1]
+            assert call_kwargs["start_time"] == start_time
+            assert call_kwargs["end_time"] == end_time
+            assert call_kwargs["limit"] == 50

@@ -102,12 +102,14 @@ def video_search_tool():
 @tool
 def phoenix_query_tool():
     """
-    Tool for querying Phoenix for traces and datasets.
+    Tool for querying telemetry provider for traces and datasets.
+
+    Note: Name kept as 'phoenix_query_tool' for backward compatibility.
     """
 
     async def run(query_type: str, **kwargs) -> Any:
         """
-        Query Phoenix for various data types.
+        Query telemetry provider for various data types.
 
         Args:
             query_type: Type of query ("traces", "datasets", "experiments")
@@ -116,15 +118,18 @@ def phoenix_query_tool():
         Returns:
             Query results
         """
-        import phoenix as px
+        from cogniverse_core.evaluation.providers import get_evaluator_provider
 
-        client = px.Client()
+        provider = get_evaluator_provider(
+            tenant_id=kwargs.get("tenant_id", "default"),
+            project_name=kwargs.get("project_name", "cogniverse-default"),
+        )
 
         try:
             if query_type == "traces":
                 # Query for traces
-                df = client.get_spans_dataframe(
-                    filter_condition=kwargs.get("filter"),
+                df = await provider.telemetry.traces.get_spans(
+                    project=kwargs.get("project_name", "cogniverse-default"),
                     start_time=kwargs.get("start_time"),
                     end_time=kwargs.get("end_time"),
                     limit=kwargs.get("limit", 100),
@@ -135,11 +140,11 @@ def phoenix_query_tool():
                 # Get dataset information
                 dataset_name = kwargs.get("name")
                 if dataset_name:
-                    dataset = client.get_dataset(dataset_name)
+                    dataset = await provider.telemetry.datasets.get_dataset(dataset_name)
                     return {
-                        "name": dataset.name,
-                        "num_examples": len(dataset.examples),
-                        "examples": [ex.to_dict() for ex in dataset.examples[:10]],
+                        "name": dataset.get("name"),
+                        "num_examples": dataset.get("num_examples", 0),
+                        "examples": dataset.get("examples", [])[:10],
                     }
                 else:
                     raise ValueError("Dataset name is required for dataset queries")
@@ -149,7 +154,10 @@ def phoenix_query_tool():
                 experiment_name = kwargs.get("name")
                 if not experiment_name:
                     # List all experiments by finding unique experiment names in spans
-                    df = client.get_spans_dataframe(limit=1000)
+                    df = await provider.telemetry.traces.get_spans(
+                        project=kwargs.get("project_name", "cogniverse-default"),
+                        limit=1000
+                    )
                     if (
                         not df.empty
                         and "attributes.metadata.experiment_name" in df.columns
@@ -165,10 +173,13 @@ def phoenix_query_tool():
                         return {"experiments": [], "count": 0}
                 else:
                     # Get specific experiment data
-                    df = client.get_spans_dataframe(
-                        filter_condition=f"attributes.metadata.experiment_name == '{experiment_name}'",
+                    df = await provider.telemetry.traces.get_spans(
+                        project=kwargs.get("project_name", "cogniverse-default"),
                         limit=kwargs.get("limit", 1000),
                     )
+                    # Filter by experiment name
+                    if not df.empty and "attributes.metadata.experiment_name" in df.columns:
+                        df = df[df["attributes.metadata.experiment_name"] == experiment_name]
                     if not df.empty:
                         return {
                             "experiment_name": experiment_name,

@@ -228,6 +228,116 @@ def mock_get_config():
         yield mock_config
 
 
+@pytest.fixture
+def mock_evaluator_provider(mock_phoenix_client):
+    """Mock evaluator provider for testing."""
+    with patch("cogniverse_core.evaluation.providers.get_evaluator_provider") as mock_get_provider:
+        # Create mock provider structure
+        mock_provider = MagicMock()
+
+        # Mock telemetry provider with datasets and traces
+        mock_telemetry = MagicMock()
+
+        # Mock datasets interface - async method
+        async def mock_get_dataset(name):
+            dataset = mock_phoenix_client.get_dataset(name)
+            if dataset is None:
+                return None
+            return {
+                "id": dataset.id,
+                "name": dataset.name,
+                "examples": [
+                    {
+                        "id": ex.id,
+                        "input": ex.input,
+                        "output": ex.output,
+                    }
+                    for ex in dataset.examples
+                ],
+            }
+
+        mock_datasets = MagicMock()
+        mock_datasets.get_dataset = mock_get_dataset
+        mock_telemetry.datasets = mock_datasets
+
+        # Mock traces interface - async method
+        async def mock_get_spans(**kwargs):
+            return mock_phoenix_client.get_spans_dataframe(**kwargs)
+
+        mock_traces = MagicMock()
+        mock_traces.get_spans = mock_get_spans
+        mock_telemetry.traces = mock_traces
+
+        # Attach to provider
+        mock_provider.telemetry = mock_telemetry
+
+        # Set return value
+        mock_get_provider.return_value = mock_provider
+
+        yield mock_provider
+
+
+@pytest.fixture(autouse=True)
+def mock_provider_for_unit_tests(request):
+    """Auto-mock provider for unit tests that don't explicitly need a real provider."""
+    # Only apply to unit tests, skip integration tests
+    if "unit" in request.keywords or (
+        "integration" not in request.keywords and "phoenix" not in request.keywords
+    ):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        # Mock the provider to prevent initialization errors
+        with patch("cogniverse_core.evaluation.providers.get_evaluator_provider") as mock_get:
+            mock_provider = MagicMock()
+
+            # Mock Phoenix evaluator base class
+            from unittest.mock import Mock
+
+            class MockPhoenixEvaluator:
+                """Mock Phoenix evaluator base"""
+                pass
+
+            # Mock framework
+            mock_framework = MagicMock()
+            mock_framework.get_evaluator_base_class.return_value = MockPhoenixEvaluator
+            mock_framework.get_evaluation_result_type.return_value = dict
+
+            def mock_create_result(score, label, explanation, metadata=None):
+                return MagicMock(
+                    score=score,
+                    label=label,
+                    explanation=explanation,
+                    metadata=metadata or {}
+                )
+
+            mock_framework.create_evaluation_result = mock_create_result
+            mock_provider.framework = mock_framework
+
+            # Mock telemetry provider with async methods
+            mock_telemetry = MagicMock()
+
+            # Mock datasets with async get_dataset
+            mock_datasets = MagicMock()
+            async def mock_get_dataset(name):
+                return None  # Default return, tests can override
+            mock_datasets.get_dataset = AsyncMock(side_effect=mock_get_dataset)
+            mock_telemetry.datasets = mock_datasets
+
+            # Mock traces with async get_spans
+            mock_traces = MagicMock()
+            async def mock_get_spans(**kwargs):
+                return pd.DataFrame()  # Default empty dataframe
+            mock_traces.get_spans = AsyncMock(side_effect=mock_get_spans)
+            mock_telemetry.traces = mock_traces
+
+            mock_provider.telemetry = mock_telemetry
+
+            mock_get.return_value = mock_provider
+            yield
+    else:
+        yield
+
+
 @pytest.fixture(autouse=True)
 def reset_singletons():
     """Reset any singleton instances between tests."""

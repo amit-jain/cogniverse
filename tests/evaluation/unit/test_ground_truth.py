@@ -255,21 +255,26 @@ class TestDatasetGroundTruthStrategy:
     @pytest.mark.asyncio
     async def test_extract_from_dataset(self, strategy):
         """Test extraction from dataset."""
-        # Mock phoenix module
-        mock_px = MagicMock()
-        mock_client = Mock()
-        mock_dataset = Mock()
+        from unittest.mock import AsyncMock
 
-        # Create mock example with matching query
-        mock_example = Mock()
-        mock_example.input = {"query": "test query"}
-        mock_example.output = {"expected_items": ["item1", "item2", "item3"]}
+        # Mock provider's dataset method
+        with patch("cogniverse_core.evaluation.providers.get_evaluator_provider") as mock_get_provider:
+            mock_provider = MagicMock()
 
-        mock_dataset.examples = [mock_example]
-        mock_client.get_dataset.return_value = mock_dataset
-        mock_px.Client.return_value = mock_client
+            # Create dataset data with matching query
+            dataset_data = {
+                "examples": [
+                    {
+                        "id": "ex1",
+                        "input": {"query": "test query"},
+                        "output": {"expected_items": ["item1", "item2", "item3"]}
+                    }
+                ]
+            }
 
-        with patch.dict("sys.modules", {"phoenix": mock_px}):
+            # Mock async get_dataset method
+            mock_provider.telemetry.datasets.get_dataset = AsyncMock(return_value=dataset_data)
+            mock_get_provider.return_value = mock_provider
 
             trace_data = {
                 "query": "test query",
@@ -706,21 +711,26 @@ class TestDatasetGroundTruthStrategyExtended:
     @pytest.mark.asyncio
     async def test_extract_with_alternative_field_names(self, strategy):
         """Test extraction trying alternative field names."""
-        # Mock phoenix module
-        mock_px = MagicMock()
-        mock_client = Mock()
-        mock_dataset = Mock()
+        from unittest.mock import AsyncMock
 
-        # Create mock example with alternative field names
-        mock_example = Mock()
-        mock_example.input = {"query": "test query"}
-        mock_example.output = {"expected_videos": ["video1", "video2"]}
+        # Mock provider's dataset method
+        with patch("cogniverse_core.evaluation.providers.get_evaluator_provider") as mock_get_provider:
+            mock_provider = MagicMock()
 
-        mock_dataset.examples = [mock_example]
-        mock_client.get_dataset.return_value = mock_dataset
-        mock_px.Client.return_value = mock_client
+            # Create dataset data with alternative field names
+            dataset_data = {
+                "examples": [
+                    {
+                        "id": "ex1",
+                        "input": {"query": "test query"},
+                        "output": {"expected_videos": ["video1", "video2"]}
+                    }
+                ]
+            }
 
-        with patch.dict("sys.modules", {"phoenix": mock_px}):
+            # Mock async get_dataset method
+            mock_provider.telemetry.datasets.get_dataset = AsyncMock(return_value=dataset_data)
+            mock_get_provider.return_value = mock_provider
 
             trace_data = {
                 "query": "test query",

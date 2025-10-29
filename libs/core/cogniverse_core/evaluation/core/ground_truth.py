@@ -565,24 +565,45 @@ class DatasetGroundTruthStrategy(GroundTruthStrategy):
             }
 
         try:
-            # Connect to Phoenix or other dataset store
-            import phoenix as px
+            # Connect to telemetry provider dataset store
+            from cogniverse_core.evaluation.providers import get_evaluator_provider
 
             try:
-                client = px.Client()
-                dataset = client.get_dataset(dataset_name)
+                provider = get_evaluator_provider()
+                # Note: This needs to be called from async context
+                # For now, this is synchronous but should be updated to async
+                import asyncio
+
+                # Handle case where event loop is already running (e.g., in tests)
+                try:
+                    asyncio.get_running_loop()
+                    # If we're here, loop is running - schedule the coroutine as a task
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        dataset_data = pool.submit(
+                            lambda: asyncio.run(provider.telemetry.datasets.get_dataset(dataset_name))
+                        ).result()
+                except RuntimeError:
+                    # No event loop running, safe to use asyncio.run()
+                    dataset_data = asyncio.run(
+                        provider.telemetry.datasets.get_dataset(dataset_name)
+                    )
+
+                # dataset_data is a dict, extract examples
+                examples = dataset_data.get("examples", [])
 
                 # Find matching query in dataset
-                for example in dataset.examples:
-                    if example.input.get("query") == query:
+                for example in examples:
+                    if example.get("input", {}).get("query") == query:
                         # Found matching query
-                        expected_items = example.output.get("expected_items", [])
+                        output = example.get("output", {})
+                        expected_items = output.get("expected_items", [])
 
                         # Try multiple field names for compatibility
                         if not expected_items:
-                            expected_items = example.output.get("expected_videos", [])
+                            expected_items = output.get("expected_videos", [])
                         if not expected_items:
-                            expected_items = example.output.get("ground_truth", [])
+                            expected_items = output.get("ground_truth", [])
 
                         return {
                             "expected_items": expected_items,
