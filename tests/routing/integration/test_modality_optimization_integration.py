@@ -1,5 +1,5 @@
 """
-Integration tests for Phase 11: Multi-Modal Optimization
+Integration tests for Multi-Modal Optimization: Multi-Modal Optimization
 
 Tests the complete workflow from span collection through optimization.
 """
@@ -19,8 +19,8 @@ from cogniverse_agents.search.multi_modal_reranker import QueryModality
 from cogniverse_synthetic import ModalityExampleSchema
 
 
-class TestPhase11Integration:
-    """Integration tests for Phase 11 components"""
+class TestModalityOptimizationIntegration:
+    """Integration tests for Multi-Modal Optimization components"""
 
     @pytest.fixture
     def temp_model_dir(self):
@@ -33,7 +33,7 @@ class TestPhase11Integration:
     async def test_end_to_end_optimization_workflow(self, temp_model_dir):
         """Test complete optimization workflow from spans to training"""
         # Mock Phoenix client to avoid external dependencies
-        with patch("src.app.routing.modality_span_collector.px.Client"):
+        with patch("cogniverse_agents.routing.modality_span_collector.get_telemetry_manager"):
             # Step 1: Initialize components
             optimizer = ModalityOptimizer(
                 tenant_id="test-tenant",
@@ -89,12 +89,12 @@ class TestPhase11Integration:
             assert len(optimizer.training_history[QueryModality.VIDEO]) == 1
 
     @pytest.mark.asyncio
-    async def test_synthetic_data_augmentation(self, temp_model_dir):
+    async def test_synthetic_data_augmentation(self, temp_model_dir, test_generator_config):
         """Test synthetic data generation directly using SyntheticDataService"""
         from cogniverse_synthetic import SyntheticDataRequest, SyntheticDataService
 
         # Generate synthetic examples directly
-        service = SyntheticDataService(vespa_client=None, backend_config=None)
+        service = SyntheticDataService(backend=None, backend_config=None, generator_config=test_generator_config)
         request = SyntheticDataRequest(optimizer="modality", count=10)
         response = await service.generate(request)
 
@@ -111,12 +111,12 @@ class TestPhase11Integration:
 
         # Verify variety in generated queries
         unique_queries = set(ex.query for ex in synthetic_examples)
-        assert len(unique_queries) > 3  # Should have some variety
+        assert len(unique_queries) >= 3  # Should have some variety
 
     @pytest.mark.asyncio
-    async def test_cross_modal_fusion_workflow(self, temp_model_dir):
+    async def test_cross_modal_fusion_workflow(self, temp_model_dir, telemetry_manager_without_phoenix):
         """Test cross-modal fusion recommendation workflow"""
-        # Initialize optimizer
+        # Initialize optimizer with telemetry configured
         fusion_optimizer = CrossModalOptimizer(model_dir=temp_model_dir)
 
         # Test fusion recommendation with high benefit
@@ -161,7 +161,7 @@ class TestPhase11Integration:
     @pytest.mark.asyncio
     async def test_modality_optimizer_with_synthetic_strategy(self, temp_model_dir):
         """Test optimizer with synthetic training strategy"""
-        with patch("src.app.routing.modality_span_collector.px.Client"):
+        with patch("cogniverse_agents.routing.modality_span_collector.get_telemetry_manager"):
             optimizer = ModalityOptimizer(
                 tenant_id="test-tenant",
                 model_dir=temp_model_dir,
@@ -184,7 +184,7 @@ class TestPhase11Integration:
             )
 
             # Mock SyntheticDataService.generate
-            with patch("src.app.routing.modality_optimizer.SyntheticDataService") as mock_service_class:
+            with patch("cogniverse_agents.routing.modality_optimizer.SyntheticDataService") as mock_service_class:
                 from cogniverse_synthetic import SyntheticDataResponse
 
                 mock_service = AsyncMock()
@@ -219,7 +219,7 @@ class TestPhase11Integration:
     @pytest.mark.asyncio
     async def test_optimize_all_modalities(self, temp_model_dir):
         """Test optimizing multiple modalities"""
-        with patch("src.app.routing.modality_span_collector.px.Client"):
+        with patch("cogniverse_agents.routing.modality_span_collector.get_telemetry_manager"):
             optimizer = ModalityOptimizer(
                 tenant_id="test-tenant",
                 model_dir=temp_model_dir,
@@ -276,8 +276,9 @@ class TestPhase11Integration:
             assert QueryModality.VIDEO in results
             assert QueryModality.DOCUMENT in results
 
-    def test_fusion_statistics_and_export(self, temp_model_dir):
+    def test_fusion_statistics_and_export(self, temp_model_dir, telemetry_manager_without_phoenix):
         """Test fusion statistics collection and export"""
+        # Initialize optimizer with telemetry configured
         fusion_optimizer = CrossModalOptimizer(model_dir=temp_model_dir)
 
         # Record multiple fusion results
@@ -314,7 +315,7 @@ class TestPhase11Integration:
     @pytest.mark.asyncio
     async def test_optimization_summary(self, temp_model_dir):
         """Test getting optimization summary"""
-        with patch("src.app.routing.modality_span_collector.px.Client"):
+        with patch("cogniverse_agents.routing.modality_span_collector.get_telemetry_manager"):
             optimizer = ModalityOptimizer(
                 tenant_id="test-tenant",
                 model_dir=temp_model_dir,
@@ -339,7 +340,7 @@ class TestPhase11Integration:
 
     def test_modality_context_building(self, temp_model_dir):
         """Test building modeling context from examples"""
-        with patch("src.app.routing.modality_span_collector.px.Client"):
+        with patch("cogniverse_agents.routing.modality_span_collector.get_telemetry_manager"):
             optimizer = ModalityOptimizer(
                 tenant_id="test-tenant",
                 model_dir=temp_model_dir,

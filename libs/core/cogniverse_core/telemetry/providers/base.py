@@ -305,6 +305,33 @@ class TelemetryProvider(ABC):
         """
         pass
 
+    @abstractmethod
+    def configure_span_export(
+        self,
+        endpoint: str,
+        project_name: str,
+        use_batch_export: bool = True,
+    ) -> Any:
+        """
+        Configure OTLP span export for a project.
+
+        Creates and returns a TracerProvider for the specified project.
+        Used by TelemetryManager to set up span export for each tenant/project.
+
+        Args:
+            endpoint: OTLP gRPC endpoint for span export (e.g., "localhost:4317")
+            project_name: Full project name (e.g., "cogniverse-tenant-service")
+            use_batch_export: Use batch processor (True) vs simple/sync processor (False)
+
+        Returns:
+            TracerProvider instance (OpenTelemetry type)
+
+        Raises:
+            RuntimeError: If span export configuration fails
+            ValueError: If endpoint or project_name invalid
+        """
+        pass
+
     @property
     def traces(self) -> TraceStore:
         """Get trace store (query spans)"""

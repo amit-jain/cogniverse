@@ -173,7 +173,7 @@ class HumanApprovalAgent:
 
             # Log approval decision as telemetry annotation (SpanEvaluation)
             # Find span_id for this item and annotate it
-            from cogniverse_agents.approval.phoenix_storage import (
+            from cogniverse_agents.approval.approval_storage import (
                 ApprovalStorageImpl,
             )
 
@@ -208,7 +208,7 @@ class HumanApprovalAgent:
             await self.storage.update_item(item, batch_id=batch.batch_id)
 
             # Log rejection decision as telemetry annotation (SpanEvaluation)
-            from cogniverse_agents.approval.phoenix_storage import (
+            from cogniverse_agents.approval.approval_storage import (
                 ApprovalStorageImpl,
             )
 

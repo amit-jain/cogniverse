@@ -9,6 +9,7 @@ Tests the complete end-to-end flow:
 """
 
 import logging
+import os
 import subprocess
 import time
 from datetime import datetime, timedelta
@@ -21,6 +22,7 @@ from cogniverse_agents.routing.router import ComprehensiveRouter
 from cogniverse_core.telemetry.config import (
     SERVICE_NAME_ORCHESTRATION,
     SPAN_NAME_ROUTING,
+    BatchExportConfig,
     TelemetryConfig,
 )
 from cogniverse_core.telemetry.manager import TelemetryManager
@@ -39,10 +41,10 @@ def phoenix_container():
     # TelemetryManager is a singleton that only initializes once, so we need to:
     # 1. Set the env vars first
     # 2. Reset the singleton so it re-reads the env vars
-    original_endpoint = os.environ.get("PHOENIX_COLLECTOR_ENDPOINT")
+    original_endpoint = os.environ.get("OTLP_ENDPOINT")
     original_sync_export = os.environ.get("TELEMETRY_SYNC_EXPORT")
 
-    os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = "http://localhost:14317"
+    os.environ["OTLP_ENDPOINT"] = "http://localhost:14317"
     os.environ["TELEMETRY_SYNC_EXPORT"] = "true"  # Use sync export for tests
 
     # Reset TelemetryManager singleton to force re-initialization with new env var
@@ -154,9 +156,9 @@ def phoenix_container():
 
         # Restore original environment variables
         if original_endpoint:
-            os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = original_endpoint
+            os.environ["OTLP_ENDPOINT"] = original_endpoint
         else:
-            os.environ.pop("PHOENIX_COLLECTOR_ENDPOINT", None)
+            os.environ.pop("OTLP_ENDPOINT", None)
 
         if original_sync_export:
             os.environ["TELEMETRY_SYNC_EXPORT"] = original_sync_export
@@ -180,18 +182,29 @@ def test_tenant_id():
 def telemetry_config(test_tenant_id, phoenix_container):
     """Telemetry config for test tenant pointing to non-default Phoenix port"""
     # Depend on phoenix_container to ensure env var is set before reading config
-    # Environment variable is already set in phoenix_container fixture
-    config = TelemetryConfig.from_env()
+    # Read the OTLP_ENDPOINT from environment (set by phoenix_container)
+    otlp_endpoint = os.getenv("OTLP_ENDPOINT", "localhost:4317")
+    config = TelemetryConfig(
+        otlp_endpoint=otlp_endpoint,
+        provider_config={
+            "http_endpoint": "http://localhost:16006",
+            "grpc_endpoint": "http://localhost:14317",
+        },
+        batch_config=BatchExportConfig(use_sync_export=True),
+    )
     return config
 
 
 @pytest.fixture
 def telemetry_manager(test_tenant_id, telemetry_config, phoenix_container):
     """Telemetry manager for creating test spans"""
+    import cogniverse_core.telemetry.manager as telemetry_manager_module
+
     # Depend on phoenix_container to ensure singleton is reset before creating manager
     # TelemetryManager singleton has been reset in phoenix_container fixture
-    # It will read the PHOENIX_COLLECTOR_ENDPOINT env var (http://localhost:14317)
-    manager = TelemetryManager()
+    # Pass the config explicitly to ensure it has the correct endpoints
+    manager = TelemetryManager(config=telemetry_config)
+    telemetry_manager_module._telemetry_manager = manager
     return manager
 
 
@@ -253,7 +266,7 @@ class TestMultiModalRoutingIntegration:
             with telemetry_manager.span(
                 name=SPAN_NAME_ROUTING,
                 tenant_id=test_tenant_id,
-                service_name=SERVICE_NAME_ORCHESTRATION,
+                project_name=SERVICE_NAME_ORCHESTRATION,
                 attributes={
                     "routing.query": query,
                     "routing.chosen_agent": "audio_search",
@@ -319,7 +332,7 @@ class TestMultiModalRoutingIntegration:
             with telemetry_manager.span(
                 name=SPAN_NAME_ROUTING,
                 tenant_id=test_tenant_id,
-                service_name=SERVICE_NAME_ORCHESTRATION,
+                project_name=SERVICE_NAME_ORCHESTRATION,
                 attributes={
                     "routing.query": query,
                     "routing.chosen_agent": "image_search",
@@ -383,7 +396,7 @@ class TestMultiModalRoutingIntegration:
             with telemetry_manager.span(
                 name=SPAN_NAME_ROUTING,
                 tenant_id=test_tenant_id,
-                service_name=SERVICE_NAME_ORCHESTRATION,
+                project_name=SERVICE_NAME_ORCHESTRATION,
                 attributes={
                     "routing.query": query,
                     "routing.chosen_agent": "document_search",
@@ -447,7 +460,7 @@ class TestMultiModalRoutingIntegration:
             with telemetry_manager.span(
                 name=SPAN_NAME_ROUTING,
                 tenant_id=test_tenant_id,
-                service_name=SERVICE_NAME_ORCHESTRATION,
+                project_name=SERVICE_NAME_ORCHESTRATION,
                 attributes={
                     "routing.query": query,
                     "routing.chosen_agent": "multi_search",
@@ -521,7 +534,7 @@ class TestMultiModalRoutingIntegration:
             with telemetry_manager.span(
                 name=SPAN_NAME_ROUTING,
                 tenant_id=test_tenant_id,
-                service_name=SERVICE_NAME_ORCHESTRATION,
+                project_name=SERVICE_NAME_ORCHESTRATION,
                 attributes={
                     "routing.query": query,
                     "routing.chosen_agent": "legacy_search",
@@ -577,7 +590,7 @@ class TestMultiModalRoutingIntegration:
         with telemetry_manager.span(
             name=SPAN_NAME_ROUTING,
             tenant_id=test_tenant_id,
-            service_name=SERVICE_NAME_ORCHESTRATION,
+            project_name=SERVICE_NAME_ORCHESTRATION,
             attributes={
                 "routing.query": test_query,
                 "routing.chosen_agent": "multi_search",

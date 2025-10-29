@@ -23,11 +23,17 @@ import streamlit as st
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from cogniverse_agents.routing.annotation_agent import AnnotationAgent, AnnotationPriority
-from cogniverse_agents.routing.annotation_storage import AnnotationStorage
-from cogniverse_agents.routing.llm_auto_annotator import AnnotationLabel, LLMAutoAnnotator
-from cogniverse_core.telemetry.config import SERVICE_NAME_ORCHESTRATION
+from cogniverse_agents.routing.annotation_agent import (
+    AnnotationAgent,
+    AnnotationPriority,
+)
+from cogniverse_agents.routing.annotation_storage import RoutingAnnotationStorage
+from cogniverse_agents.routing.llm_auto_annotator import (
+    AnnotationLabel,
+    LLMAutoAnnotator,
+)
 from cogniverse_core.evaluation.evaluators.routing_evaluator import RoutingEvaluator
+from cogniverse_core.telemetry.config import SERVICE_NAME_ORCHESTRATION
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +56,13 @@ def render_routing_evaluation_tab():
         project_name = f"cogniverse-{tenant_id}-{SERVICE_NAME_ORCHESTRATION}"
         st.info(f"📊 Querying spans from project: `{project_name}`")
 
-    # Initialize evaluator
+    # Initialize evaluator with telemetry provider
     try:
-        evaluator = RoutingEvaluator(project_name=project_name)
+        from cogniverse_core.telemetry.manager import get_telemetry_manager
+
+        telemetry_manager = get_telemetry_manager()
+        provider = telemetry_manager.get_provider(tenant_id=tenant_id)
+        evaluator = RoutingEvaluator(provider=provider, project_name=project_name)
     except Exception as e:
         st.error(f"❌ Failed to initialize RoutingEvaluator: {e}")
         return
@@ -427,7 +437,7 @@ def _render_annotation_section(tenant_id: str, project_name: str, lookback_hours
             confidence_threshold=0.6
         )
         llm_annotator = LLMAutoAnnotator()
-        annotation_storage = AnnotationStorage(tenant_id=tenant_id)
+        annotation_storage = RoutingAnnotationStorage(tenant_id=tenant_id)
     except Exception as e:
         st.error(f"❌ Failed to initialize annotation agents: {e}")
         return

@@ -12,7 +12,8 @@ Tests the COMPLETE end-to-end optimization flow without manual intervention:
 8. Measurable improvements are validated
 9. Results visible in Phoenix
 
-NO MOCKS - all tests against real Phoenix server.
+NO MOCKS - all tests against real Phoenix server (Docker container).
+Uses standardized fixtures from tests/conftest.py.
 """
 
 import logging
@@ -20,58 +21,16 @@ import os
 import time
 from datetime import datetime, timedelta
 
-import phoenix as px
 import pytest
 from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
 from cogniverse_core.telemetry.config import (
     SERVICE_NAME_ORCHESTRATION,
     SPAN_NAME_ROUTING,
-    TelemetryConfig,
 )
-from cogniverse_core.telemetry.manager import TelemetryManager
 
 from tests.utils.async_polling import simulate_processing_delay, wait_for_vespa_indexing
 
 logger = logging.getLogger(__name__)
-
-
-@pytest.fixture(scope="module")
-def phoenix_session():
-    """Start Phoenix server for tests"""
-    logger.info("🔥 Starting Phoenix server...")
-    session = px.launch_app()
-
-    # Wait for Phoenix to be ready
-    import time
-    max_retries = 30
-    for i in range(max_retries):
-        try:
-            client = px.Client()
-            # Try a simple query to verify Phoenix is ready
-            client.get_spans_dataframe(
-                start_time=datetime.now() - timedelta(seconds=1),
-                end_time=datetime.now()
-            )
-            logger.info("✅ Phoenix server ready")
-            break
-        except Exception as e:
-            if i == max_retries - 1:
-                raise RuntimeError(f"Phoenix failed to start after {max_retries} attempts: {e}")
-            time.sleep(1)
-
-    yield session
-
-    logger.info("🔥 Closing Phoenix server...")
-    try:
-        session.close()
-    except Exception as e:
-        logger.warning(f"Error closing Phoenix session: {e}")
-
-
-@pytest.fixture
-def phoenix_client(phoenix_session):
-    """Phoenix client for querying spans (depends on phoenix_session)"""
-    return px.Client()
 
 
 @pytest.fixture
@@ -81,22 +40,9 @@ def test_tenant_id():
 
 
 @pytest.fixture
-def telemetry_config(test_tenant_id):
-    """Telemetry config for test tenant"""
-    return TelemetryConfig.from_env()
-
-
-@pytest.fixture
-def telemetry_manager(test_tenant_id, telemetry_config):
-    """Telemetry manager for creating test spans"""
-    manager = TelemetryManager()
-    return manager
-
-
-@pytest.fixture
-def project_name(test_tenant_id, telemetry_config):
+def project_name(test_tenant_id, telemetry_config_with_phoenix):
     """Get Phoenix project name for test tenant"""
-    return telemetry_config.get_project_name(
+    return telemetry_config_with_phoenix.get_project_name(
         test_tenant_id, service=SERVICE_NAME_ORCHESTRATION
     )
 
@@ -118,7 +64,7 @@ class TestCompleteOptimizationIntegration:
         self,
         phoenix_client,
         test_tenant_id,
-        telemetry_manager,
+        telemetry_manager_with_phoenix,
         project_name,
     ):
         """
@@ -154,10 +100,10 @@ class TestCompleteOptimizationIntegration:
         start_time = datetime.now()
 
         for query, agent, confidence in test_cases:
-            with telemetry_manager.span(
+            with telemetry_manager_with_phoenix.span(
                 name=SPAN_NAME_ROUTING,
                 tenant_id=test_tenant_id,
-                service_name=SERVICE_NAME_ORCHESTRATION,
+                project_name=SERVICE_NAME_ORCHESTRATION,
                 attributes={
                     "routing.query": query,
                     "routing.chosen_agent": agent,
@@ -167,7 +113,7 @@ class TestCompleteOptimizationIntegration:
             ):
                 simulate_processing_delay(delay=0.05, description="processing")
 
-        telemetry_manager.force_flush(timeout_millis=5000)
+        telemetry_manager_with_phoenix.force_flush(timeout_millis=5000)
         wait_for_vespa_indexing(delay=2)
 
         # STEP 2: Verify spans exist in Phoenix
@@ -271,7 +217,7 @@ class TestCompleteOptimizationIntegration:
         self,
         phoenix_client,
         test_tenant_id,
-        telemetry_manager,
+        telemetry_manager_with_phoenix,
         project_name,
     ):
         """
@@ -298,10 +244,10 @@ class TestCompleteOptimizationIntegration:
         ]
 
         for query, agent, confidence in low_quality_cases:
-            with telemetry_manager.span(
+            with telemetry_manager_with_phoenix.span(
                 name=SPAN_NAME_ROUTING,
                 tenant_id=test_tenant_id,
-                service_name=SERVICE_NAME_ORCHESTRATION,
+                project_name=SERVICE_NAME_ORCHESTRATION,
                 attributes={
                     "routing.query": query,
                     "routing.chosen_agent": agent,
@@ -311,7 +257,7 @@ class TestCompleteOptimizationIntegration:
             ):
                 simulate_processing_delay(delay=0.05, description="processing")
 
-        telemetry_manager.force_flush(timeout_millis=5000)
+        telemetry_manager_with_phoenix.force_flush(timeout_millis=5000)
         wait_for_vespa_indexing(delay=2)
 
         # STEP 2: Initialize orchestrator with low thresholds
@@ -377,7 +323,7 @@ class TestCompleteOptimizationIntegration:
         self,
         phoenix_client,
         test_tenant_id,
-        telemetry_manager,
+        telemetry_manager_with_phoenix,
         project_name,
     ):
         """
@@ -400,10 +346,10 @@ class TestCompleteOptimizationIntegration:
             query = f"Test query {i}"
             agent = ["video_search", "summarizer", "detailed_report"][i % 3]
 
-            with telemetry_manager.span(
+            with telemetry_manager_with_phoenix.span(
                 name=SPAN_NAME_ROUTING,
                 tenant_id=test_tenant_id,
-                service_name=SERVICE_NAME_ORCHESTRATION,
+                project_name=SERVICE_NAME_ORCHESTRATION,
                 attributes={
                     "routing.query": query,
                     "routing.chosen_agent": agent,
@@ -413,7 +359,7 @@ class TestCompleteOptimizationIntegration:
             ):
                 simulate_processing_delay(delay=0.02, description="processing")
 
-        telemetry_manager.force_flush(timeout_millis=5000)
+        telemetry_manager_with_phoenix.force_flush(timeout_millis=5000)
         wait_for_vespa_indexing(delay=2)
 
         # STEP 2: Initialize orchestrator with low optimization threshold
@@ -468,7 +414,7 @@ class TestCompleteOptimizationIntegration:
         self,
         phoenix_client,
         test_tenant_id,
-        telemetry_manager,
+        telemetry_manager_with_phoenix,
         project_name,
     ):
         """
@@ -502,10 +448,10 @@ class TestCompleteOptimizationIntegration:
         logger.info("\n=== Creating test routing spans ===")
 
         for i in range(5):
-            with telemetry_manager.span(
+            with telemetry_manager_with_phoenix.span(
                 name=SPAN_NAME_ROUTING,
                 tenant_id=test_tenant_id,
-                service_name=SERVICE_NAME_ORCHESTRATION,
+                project_name=SERVICE_NAME_ORCHESTRATION,
                 attributes={
                     "routing.query": f"Test {i}",
                     "routing.chosen_agent": "video_search",
@@ -515,7 +461,7 @@ class TestCompleteOptimizationIntegration:
             ):
                 simulate_processing_delay(delay=0.05, description="processing")
 
-        telemetry_manager.force_flush(timeout_millis=5000)
+        telemetry_manager_with_phoenix.force_flush(timeout_millis=5000)
         wait_for_vespa_indexing(delay=2)
 
         # STEP 4: Run orchestration

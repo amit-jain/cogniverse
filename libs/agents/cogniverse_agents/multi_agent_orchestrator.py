@@ -21,7 +21,10 @@ import logging
 import uuid
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from cogniverse_core.telemetry.config import TelemetryConfig
 
 # DSPy 3.0 imports
 import dspy
@@ -117,6 +120,7 @@ class MultiAgentOrchestrator:
     def __init__(
         self,
         tenant_id: str,
+        telemetry_config: "TelemetryConfig",
         routing_agent: Optional[RoutingAgent] = None,
         available_agents: Optional[Dict[str, Dict[str, Any]]] = None,
         max_parallel_tasks: int = 3,
@@ -128,7 +132,8 @@ class MultiAgentOrchestrator:
         Initialize Multi-Agent Orchestrator
 
         Args:
-            tenant_id: Tenant identifier (REQUIRED - no default)
+            tenant_id: Tenant identifier (REQUIRED)
+            telemetry_config: Telemetry configuration (REQUIRED)
             routing_agent: Optional pre-configured routing agent
             available_agents: Dictionary of available agents
             max_parallel_tasks: Maximum parallel task execution
@@ -137,16 +142,19 @@ class MultiAgentOrchestrator:
             optimization_strategy: Optimization strategy
 
         Raises:
-            ValueError: If tenant_id is empty or None
+            ValueError: If tenant_id is empty
         """
         if not tenant_id:
-            raise ValueError("tenant_id is required - no default tenant")
+            raise ValueError("tenant_id is required")
 
         self.tenant_id = tenant_id
         self.logger = logging.getLogger(__name__)
 
         # Initialize routing agent
-        self.routing_agent = routing_agent or RoutingAgent(tenant_id=tenant_id)
+        self.routing_agent = routing_agent or RoutingAgent(
+            tenant_id=tenant_id,
+            telemetry_config=telemetry_config
+        )
 
         # Configure available agents and their capabilities
         self.available_agents = available_agents or self._get_default_agents()

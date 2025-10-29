@@ -28,7 +28,7 @@ class TestModalityImprovementValidation:
     """Validate that modality-specific models improve routing accuracy"""
 
     @pytest.fixture
-    def modality_optimizer(self, tmp_path: Path):
+    def modality_optimizer(self, tmp_path: Path, telemetry_manager_with_phoenix):
         """Create modality optimizer with test directory"""
         optimizer = ModalityOptimizer(
             model_dir=tmp_path / "models", tenant_id="test_tenant"
@@ -180,7 +180,7 @@ class TestModalityImprovementValidation:
 
     @pytest.mark.asyncio
     async def test_modality_prediction_influences_routing_decision(
-        self, mock_router, video_training_examples, tmp_path
+        self, mock_router, video_training_examples, tmp_path, telemetry_manager_with_phoenix
     ):
         """
         Test that high-confidence modality predictions influence routing decisions

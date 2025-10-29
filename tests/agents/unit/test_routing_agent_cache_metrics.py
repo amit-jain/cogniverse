@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingConfig
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_core.telemetry.config import TelemetryConfig
 
 
 class TestRoutingAgentCacheMetrics:
@@ -36,7 +37,8 @@ class TestRoutingAgentCacheMetrics:
         with patch.object(RoutingAgent, "_configure_dspy", return_value=None), \
              patch("cogniverse_agents.dspy_a2a_agent_base.FastAPI"), \
              patch("cogniverse_agents.dspy_a2a_agent_base.A2AClient"):
-            agent = RoutingAgent(tenant_id="test_tenant", config=config, port=8001, enable_telemetry=False)
+            telemetry_config = TelemetryConfig(enabled=False)
+            agent = RoutingAgent(tenant_id="test_tenant", config=config, port=8001, telemetry_config=telemetry_config)
 
             # Yield agent for test use
             yield agent

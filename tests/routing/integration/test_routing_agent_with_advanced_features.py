@@ -14,6 +14,7 @@ Validates:
 
 import pytest
 from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
 
 
 @pytest.mark.integration
@@ -39,8 +40,12 @@ class TestRoutingAgentWithAdvancedFeatures:
     @pytest.fixture
     async def routing_agent(self, mock_config):
         """Create RoutingAgent instance with mocked dependencies"""
-        # Initialize without telemetry to avoid complex mocking
-        agent = RoutingAgent(tenant_id="test-tenant", config=mock_config, enable_telemetry=False)
+        telemetry_config = TelemetryConfig(
+            otlp_endpoint="http://localhost:24317",
+            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        agent = RoutingAgent(tenant_id="test-tenant", config=mock_config, telemetry_config=telemetry_config)
         yield agent
 
     @pytest.mark.asyncio

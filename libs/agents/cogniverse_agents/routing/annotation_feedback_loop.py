@@ -14,7 +14,7 @@ from cogniverse_agents.routing.advanced_optimizer import (
     AdvancedRoutingOptimizer,
     RoutingExperience,
 )
-from cogniverse_agents.routing.annotation_storage import AnnotationStorage
+from cogniverse_agents.routing.annotation_storage import RoutingAnnotationStorage
 from cogniverse_agents.routing.llm_auto_annotator import AnnotationLabel
 
 logger = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ class AnnotationFeedbackLoop:
         self.min_annotations_for_update = min_annotations_for_update
 
         # Initialize storage
-        self.annotation_storage = AnnotationStorage(tenant_id=tenant_id)
+        self.annotation_storage = RoutingAnnotationStorage(tenant_id=tenant_id)
 
         # Track last processed time
         self._last_processed_time = datetime.now()
@@ -97,7 +97,7 @@ class AnnotationFeedbackLoop:
         start_time = self._last_processed_time
 
         try:
-            annotated_spans = self.annotation_storage.query_annotated_spans(
+            annotated_spans = await self.annotation_storage.query_annotated_spans(
                 start_time=start_time,
                 end_time=end_time,
                 only_human_reviewed=True,  # Only use human-reviewed annotations

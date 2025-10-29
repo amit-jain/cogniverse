@@ -80,7 +80,7 @@ class PhoenixExperimentRunner:
         # Phoenix will override the project destination when running experiments
         provider = TracerProvider()
 
-        endpoint = os.environ.get("PHOENIX_COLLECTOR_ENDPOINT", "http://localhost:6006")
+        endpoint = os.environ.get("OTLP_ENDPOINT", "http://localhost:6006")
         headers = {"x-phoenix-project-name": self.experiment_project}
 
         exporter = OTLPSpanExporter(endpoint=f"{endpoint}/v1/traces", headers=headers)

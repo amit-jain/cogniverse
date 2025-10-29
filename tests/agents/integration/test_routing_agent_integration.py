@@ -9,7 +9,7 @@ import tempfile
 
 import pytest
 from cogniverse_agents.routing_agent import RoutingAgent
-from fastapi.testclient import TestClient
+from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
 
 
 class TestRoutingAgentIntegration:
@@ -70,7 +70,12 @@ class TestRoutingAgentIntegration:
         from cogniverse_agents.routing_agent import RoutingConfig
 
         config = RoutingConfig(**test_config)
-        agent = RoutingAgent(tenant_id="test_tenant", config=config)
+        telemetry_config = TelemetryConfig(
+            otlp_endpoint="http://localhost:24317",
+            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        agent = RoutingAgent(tenant_id="test_tenant", config=config, telemetry_config=telemetry_config)
 
         # Verify agent initialized properly
         assert agent.config is not None
@@ -85,7 +90,12 @@ class TestRoutingAgentIntegration:
         from cogniverse_agents.routing_agent import RoutingConfig
 
         config = RoutingConfig(**test_config)
-        agent = RoutingAgent(tenant_id="test_tenant", config=config)
+        telemetry_config = TelemetryConfig(
+            otlp_endpoint="http://localhost:24317",
+            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        agent = RoutingAgent(tenant_id="test_tenant", config=config, telemetry_config=telemetry_config)
 
         # Test different query types
         test_queries = [
@@ -113,7 +123,12 @@ class TestRoutingAgentIntegration:
         from cogniverse_agents.routing_agent import RoutingConfig
 
         config = RoutingConfig(**test_config)
-        agent = RoutingAgent(tenant_id="test_tenant", config=config)
+        telemetry_config = TelemetryConfig(
+            otlp_endpoint="http://localhost:24317",
+            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        agent = RoutingAgent(tenant_id="test_tenant", config=config, telemetry_config=telemetry_config)
 
         context = {
             "user_id": "test_user",
@@ -134,7 +149,12 @@ class TestRoutingAgentIntegration:
 
         # Test with minimal valid config (default values)
         minimal_config = RoutingConfig()
-        agent = RoutingAgent(tenant_id="test_tenant", config=minimal_config)
+        telemetry_config = TelemetryConfig(
+            otlp_endpoint="http://localhost:24317",
+            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        agent = RoutingAgent(tenant_id="test_tenant", config=minimal_config, telemetry_config=telemetry_config)
         assert agent.config is not None
         assert hasattr(agent, 'logger')
 
@@ -144,7 +164,7 @@ class TestRoutingAgentIntegration:
             base_url="http://localhost:11434",
             confidence_threshold=0.8,
         )
-        agent = RoutingAgent(tenant_id="test_tenant", config=full_config)
+        agent = RoutingAgent(tenant_id="test_tenant", config=full_config, telemetry_config=telemetry_config)
         assert agent.config is not None
         assert hasattr(agent, 'routing_module')
 
@@ -155,7 +175,12 @@ class TestRoutingAgentIntegration:
         from cogniverse_agents.routing_agent import RoutingConfig
 
         config = RoutingConfig(**test_config)
-        agent = RoutingAgent(tenant_id="test_tenant", config=config)
+        telemetry_config = TelemetryConfig(
+            otlp_endpoint="http://localhost:24317",
+            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        agent = RoutingAgent(tenant_id="test_tenant", config=config, telemetry_config=telemetry_config)
         query = "Show me training videos"
 
         # Run same query multiple times
@@ -172,100 +197,6 @@ class TestRoutingAgentIntegration:
             # Confidence and reasoning should be present and non-trivial
             assert result.confidence > 0
             assert result.reasoning is not None
-
-
-class TestRoutingAgentFastAPIIntegration:
-    """Integration tests for FastAPI endpoints in agent_orchestrator"""
-
-    @pytest.fixture(scope="class")
-    def vespa_backend(self):
-        """Start Vespa Docker container, deploy schemas, yield, cleanup"""
-        from tests.system.vespa_test_manager import VespaTestManager
-        manager = VespaTestManager(app_name="test-orchestrator", http_port=8083)
-
-        # Actually start Vespa and deploy schemas
-        if not manager.setup_application_directory():
-            pytest.skip("Failed to setup application directory")
-
-        if not manager.deploy_test_application():
-            pytest.skip("Failed to deploy Vespa test application")
-
-        yield manager
-        manager.cleanup()
-
-    @pytest.fixture
-    def test_client(self, vespa_backend):
-        """Create test client for FastAPI app with Vespa backend"""
-        import os
-        # Set environment variables for Vespa configuration
-        os.environ["VESPA_ENDPOINT"] = f"http://localhost:{vespa_backend.http_port}"
-        os.environ["VESPA_SCHEMA"] = "video_colpali_smol500_mv_frame"
-
-        from cogniverse_agents.agent_orchestrator import app
-        return TestClient(app)
-
-    @pytest.mark.ci_fast
-    def test_health_check(self):
-        """Test health check endpoint without requiring Vespa"""
-        from cogniverse_agents.agent_orchestrator import app
-        client = TestClient(app)
-        response = client.get("/health")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "healthy"
-        assert data["service"] == "agent_orchestrator"
-        assert "capabilities" in data
-
-    @pytest.mark.integration
-    @pytest.mark.requires_vespa
-    def test_config_with_tenant_id(self, test_client):
-        """Test config endpoint with tenant_id
-
-        This test starts Vespa infrastructure and verifies proper tenant isolation.
-        """
-        response = test_client.get("/config?tenant_id=test_tenant")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["tenant_id"] == "test_tenant"
-        assert "default_profiles" in data
-        assert "components_initialized" in data
-        assert data["components_initialized"]["routing_agent"] is True
-        assert data["components_initialized"]["result_aggregator"] is True
-        assert data["components_initialized"]["vespa_client"] is True
-
-    @pytest.mark.integration
-    @pytest.mark.requires_vespa
-    def test_process_with_tenant_id(self, test_client):
-        """Test process endpoint with tenant_id in request
-
-        This test verifies complete pipeline with proper Vespa infrastructure.
-        """
-        request_data = {
-            "query": "test query",
-            "tenant_id": "test_tenant",
-            "profiles": ["video_colpali_smol500_mv_frame"],
-            "strategies": ["binary_binary"]
-        }
-        response = test_client.post("/process", json=request_data)
-        # With proper Vespa infrastructure, should succeed
-        assert response.status_code == 200
-        data = response.json()
-        assert data["original_query"] == "test query"
-        assert data["routing_decision"] is not None
-        assert data["aggregated_result"] is not None
-
-    @pytest.mark.integration
-    @pytest.mark.requires_vespa
-    def test_routing_only_with_tenant_id(self, test_client):
-        """Test routing-only endpoint with tenant_id
-
-        This endpoint only performs routing and should succeed with proper setup.
-        """
-        response = test_client.post("/process/routing-only?query=test&tenant_id=test_tenant")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["query"] == "test"
-        assert data["recommended_agent"] is not None
 
 
 class TestRoutingAgentErrorHandling:

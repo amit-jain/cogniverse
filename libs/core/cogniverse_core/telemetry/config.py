@@ -36,17 +36,10 @@ class BatchExportConfig:
     max_export_batch_size: int = 512
     export_timeout_millis: int = 30_000
     schedule_delay_millis: int = 500
-
-    # Queue behavior when full
-    drop_on_queue_full: bool = True  # Drop spans instead of blocking
+    drop_on_queue_full: bool = True
     log_dropped_spans: bool = True
     max_drop_log_rate_per_minute: int = 10
-
-    # Test mode - use synchronous export for immediate flush
-    use_sync_export: bool = field(
-        default_factory=lambda: os.getenv("TELEMETRY_SYNC_EXPORT", "false").lower()
-        == "true"
-    )
+    use_sync_export: bool = False
 
 
 @dataclass
@@ -59,34 +52,18 @@ class TelemetryConfig:
     """
 
     # Core settings
-    enabled: bool = field(
-        default_factory=lambda: os.getenv("TELEMETRY_ENABLED", "true").lower() == "true"
-    )
-    level: TelemetryLevel = field(
-        default_factory=lambda: TelemetryLevel(os.getenv("TELEMETRY_LEVEL", "detailed"))
-    )
-    environment: str = field(
-        default_factory=lambda: os.getenv("ENVIRONMENT", "development")
-    )
+    enabled: bool = True
+    level: TelemetryLevel = TelemetryLevel.DETAILED
+    environment: str = "development"
 
-    # OpenTelemetry span export (generic OTLP)
-    phoenix_enabled: bool = field(
-        default_factory=lambda: os.getenv("PHOENIX_ENABLED", "true").lower() == "true"
-    )
-    phoenix_endpoint: str = field(
-        default_factory=lambda: os.getenv(
-            "PHOENIX_COLLECTOR_ENDPOINT", "localhost:4317"
-        )
-    )
-    phoenix_use_tls: bool = field(
-        default_factory=lambda: os.getenv("PHOENIX_USE_TLS", "false").lower() == "true"
-    )
+    # OpenTelemetry span export (generic OTLP) - backend-agnostic
+    otlp_enabled: bool = True
+    otlp_endpoint: str = "localhost:4317"
+    otlp_use_tls: bool = False
 
     # Provider selection (for querying spans/annotations/datasets)
     # Separate from span export (which uses OpenTelemetry OTLP)
-    provider: Optional[str] = field(
-        default_factory=lambda: os.getenv("TELEMETRY_PROVIDER")
-    )  # "phoenix" | "langsmith" | None (auto-detect)
+    provider: Optional[str] = None  # "phoenix" | "langsmith" | None (auto-detect)
 
     # Generic provider configuration (dict - provider interprets)
     # Core doesn't know what keys providers expect
@@ -145,9 +122,9 @@ class TelemetryConfig:
 
     def validate(self) -> None:
         """Validate configuration."""
-        if self.enabled and self.phoenix_enabled:
-            if not self.phoenix_endpoint:
-                raise ValueError("phoenix_endpoint required when Phoenix enabled")
+        if self.enabled and self.otlp_enabled:
+            if not self.otlp_endpoint:
+                raise ValueError("otlp_endpoint required when OTLP span export enabled")
 
         if self.batch_config.max_queue_size <= 0:
             raise ValueError("max_queue_size must be positive")

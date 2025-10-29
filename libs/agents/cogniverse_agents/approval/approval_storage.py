@@ -63,22 +63,23 @@ class ApprovalStorageImpl(ApprovalStorage):
 
     def __init__(
         self,
-        phoenix_grpc_endpoint: str,
-        phoenix_http_endpoint: str,
+        grpc_endpoint: str,
+        http_endpoint: str,
         tenant_id: str = "default",
         telemetry_manager: Optional["TelemetryManager"] = None,
     ):
         """
-        Initialize Phoenix storage for synthetic data approval workflow
+        Initialize approval storage for synthetic data workflow
 
         Args:
-            phoenix_grpc_endpoint: Phoenix gRPC endpoint for span export (e.g., "http://localhost:4317")
-            phoenix_http_endpoint: Phoenix HTTP endpoint for span queries (e.g., "http://localhost:6006")
-            tenant_id: Tenant ID for multi-tenant Phoenix project scoping
+            grpc_endpoint: OTLP gRPC endpoint for span export (e.g., "http://localhost:4317")
+            http_endpoint: HTTP endpoint for span queries (e.g., "http://localhost:6006")
+            tenant_id: Tenant ID for multi-tenant project scoping
             telemetry_manager: TelemetryManager instance (if None, creates one)
         """
-        self.phoenix_grpc_endpoint = phoenix_grpc_endpoint
-        self.phoenix_http_endpoint = phoenix_http_endpoint
+
+        self.grpc_endpoint = grpc_endpoint
+        self.http_endpoint = http_endpoint
         self.tenant_id = tenant_id
         self.project_name = "synthetic_data"
 
@@ -87,58 +88,56 @@ class ApprovalStorageImpl(ApprovalStorage):
             from cogniverse_core.telemetry.config import TelemetryConfig
             from cogniverse_core.telemetry.manager import TelemetryManager
 
-            # Configure telemetry with Phoenix provider
+            # Configure telemetry (provider auto-discovered via registry)
             config = TelemetryConfig(
-                provider="phoenix",
                 provider_config={
-                    "http_endpoint": phoenix_http_endpoint,
-                    "grpc_endpoint": phoenix_grpc_endpoint,
+                    "http_endpoint": http_endpoint,
+                    "grpc_endpoint": grpc_endpoint,
                 },
             )
             telemetry_manager = TelemetryManager(config=config)
         else:
-            # Update existing manager's config with provider settings
-            if (
-                not hasattr(telemetry_manager.config, "provider")
-                or not telemetry_manager.config.provider
-            ):
-                telemetry_manager.config.provider = "phoenix"
+            # Update existing manager's config with endpoint settings
             if not telemetry_manager.config.provider_config:
                 telemetry_manager.config.provider_config = {}
             telemetry_manager.config.provider_config.update(
                 {
-                    "http_endpoint": phoenix_http_endpoint,
-                    "grpc_endpoint": phoenix_grpc_endpoint,
+                    "http_endpoint": http_endpoint,
+                    "grpc_endpoint": grpc_endpoint,
                 }
             )
 
         self.telemetry_manager = telemetry_manager
 
-        # Register project with TelemetryManager using gRPC endpoint for span export
+        # Register project with TelemetryManager using both endpoints
         self.telemetry_manager.register_project(
             tenant_id=tenant_id,
             project_name=self.project_name,
-            phoenix_endpoint=phoenix_grpc_endpoint,
+            otlp_endpoint=grpc_endpoint,
+            http_endpoint=http_endpoint,
             use_sync_export=True,  # Use sync export for tests
         )
 
-        # Compute full Phoenix project name using TelemetryManager logic
+        # Compute full project name using TelemetryManager logic
         # Format: cogniverse-{tenant_id}-{project_name}
         self.full_project_name = f"cogniverse-{tenant_id}-{self.project_name}"
 
         # Get telemetry provider for querying spans/annotations/datasets
-        self.provider = self.telemetry_manager.get_provider(tenant_id=tenant_id)
+        # Pass project_name so provider can get http_endpoint from registered project config
+        self.provider = self.telemetry_manager.get_provider(
+            tenant_id=tenant_id, project_name=self.project_name
+        )
 
         logger.info(
             f"Initialized ApprovalStorageImpl "
             f"(tenant: {tenant_id}, project: {self.full_project_name}, "
-            f"grpc: {phoenix_grpc_endpoint}, http: {phoenix_http_endpoint}, "
+            f"grpc: {grpc_endpoint}, http: {http_endpoint}, "
             f"provider: {self.provider.name})"
         )
 
     async def save_batch(self, batch: ApprovalBatch) -> str:
         """
-        Save approval batch as Phoenix span tree
+        Save approval batch as telemetry span tree
 
         Creates:
         - Root span for batch with context attributes
@@ -173,7 +172,7 @@ class ApprovalStorageImpl(ApprovalStorage):
                 self._create_item_span(item)
 
             batch_span.set_status(Status(StatusCode.OK))
-            logger.info(f"Saved batch {batch.batch_id} to Phoenix")
+            logger.info(f"Saved batch {batch.batch_id} to telemetry backend")
 
         # Force flush to ensure spans are exported immediately
         # With sync export (SimpleSpanProcessor), spans should be exported immediately
@@ -204,7 +203,7 @@ class ApprovalStorageImpl(ApprovalStorage):
         return batch.batch_id
 
     def _create_item_span(self, item: ReviewItem) -> None:
-        """Create Phoenix span for a review item"""
+        """Create telemetry span for a review item"""
         attributes = {
             "item_id": item.item_id,
             "confidence": item.confidence,
@@ -229,10 +228,10 @@ class ApprovalStorageImpl(ApprovalStorage):
 
     async def get_batch(self, batch_id: str) -> Optional[ApprovalBatch]:
         """
-        Retrieve approval batch from Phoenix using SDK APIs with retry
+        Retrieve approval batch from telemetry backend using SDK APIs with retry
 
         Queries spans (immutable item creation) and annotations (status updates)
-        to reconstruct current batch state. Uses exponential backoff for Phoenix indexing lag.
+        to reconstruct current batch state. Uses exponential backoff for telemetry backend indexing lag.
 
         Args:
             batch_id: Batch ID to retrieve
@@ -243,7 +242,7 @@ class ApprovalStorageImpl(ApprovalStorage):
         try:
             import time
 
-            # Retry with exponential backoff for Phoenix indexing lag
+            # Retry with exponential backoff for telemetry backend indexing lag
             # Phoenix SDK can take significant time to index spans
             max_retries = 5
             retry_delays = [2, 5, 10, 15, 20]  # seconds (total: 52s)
@@ -251,7 +250,7 @@ class ApprovalStorageImpl(ApprovalStorage):
             project_spans = None
             for attempt, delay in enumerate(retry_delays):
                 logger.debug(
-                    f"Attempt {attempt + 1}/{max_retries}: Querying Phoenix for batch {batch_id}"
+                    f"Attempt {attempt + 1}/{max_retries}: Querying telemetry backend for batch {batch_id}"
                 )
 
                 # Query spans using telemetry provider
@@ -305,7 +304,7 @@ class ApprovalStorageImpl(ApprovalStorage):
             ]
 
             if batch_spans.empty:
-                logger.warning(f"Batch {batch_id} not found in Phoenix after retries")
+                logger.warning(f"Batch {batch_id} not found in telemetry backend after retries")
                 return None
 
             # Get batch span row
@@ -384,7 +383,7 @@ class ApprovalStorageImpl(ApprovalStorage):
                             latest_annotation = item_annotations.iloc[-1]
 
                         # Update status from annotation
-                        # Phoenix annotations API returns label in 'result.label' column
+                        # telemetry annotations API returns label in 'result.label' column
                         annotation_label = latest_annotation.get("result.label", "")
                         if annotation_label:
                             try:
@@ -452,7 +451,7 @@ class ApprovalStorageImpl(ApprovalStorage):
             )
 
             logger.info(
-                f"Retrieved batch {batch_id} from Phoenix with {len(items)} items (status from annotations)"
+                f"Retrieved batch {batch_id} from telemetry backend with {len(items)} items (status from annotations)"
             )
             # Debug: log item statuses
             status_counts = {}
@@ -465,7 +464,7 @@ class ApprovalStorageImpl(ApprovalStorage):
 
         except Exception as e:
             logger.error(
-                f"Error retrieving batch {batch_id} from Phoenix: {e}", exc_info=True
+                f"Error retrieving batch {batch_id} from telemetry backend: {e}", exc_info=True
             )
             return None
 
@@ -473,10 +472,10 @@ class ApprovalStorageImpl(ApprovalStorage):
         self, item: ReviewItem, batch_id: Optional[str] = None
     ) -> None:
         """
-        Update review item status using Phoenix annotations
+        Update review item status using telemetry annotations
 
         Logs status change as annotation on the original item span.
-        Uses Phoenix's annotations API for human/system feedback.
+        Uses telemetry backend's annotations API for human/system feedback.
 
         Args:
             item: Item with updated status
@@ -489,7 +488,7 @@ class ApprovalStorageImpl(ApprovalStorage):
             logger.error(f"Cannot update item {item.item_id}: span not found")
             raise ValueError(f"Span not found for item {item.item_id}")
 
-        # Log the status update as annotation using Phoenix annotations API
+        # Log the status update as annotation using telemetry annotations API
         try:
             # Prepare metadata
             metadata = {
@@ -527,7 +526,7 @@ class ApprovalStorageImpl(ApprovalStorage):
         self, context_filter: Optional[Dict[str, Any]] = None
     ) -> List[ApprovalBatch]:
         """
-        Get batches with pending reviews by querying Phoenix
+        Get batches with pending reviews by querying telemetry backend
 
         Args:
             context_filter: Optional filter by batch context
@@ -538,7 +537,7 @@ class ApprovalStorageImpl(ApprovalStorage):
         try:
             import time
 
-            time.sleep(0.5)  # Give Phoenix time to process spans
+            time.sleep(0.5)  # Give telemetry backend time to process spans
 
             # Query spans using telemetry provider
             spans_df = await self.provider.traces.get_spans(
@@ -591,12 +590,12 @@ class ApprovalStorageImpl(ApprovalStorage):
             return pending_batches
 
         except Exception as e:
-            logger.error(f"Error retrieving pending batches from Phoenix: {e}")
+            logger.error(f"Error retrieving pending batches from telemetry backend: {e}")
             return []
 
     async def record_decision(self, decision: ReviewDecision, item: ReviewItem) -> None:
         """
-        Record human decision as Phoenix annotation
+        Record human decision as telemetry annotation
 
         Args:
             decision: Human decision
@@ -642,9 +641,9 @@ class ApprovalStorageImpl(ApprovalStorage):
         self, item_id: str, batch_id: Optional[str] = None
     ) -> Optional[str]:
         """
-        Get span ID for an approval_item by item_id using Phoenix SDK with retry
+        Get span ID for an approval_item by item_id using telemetry SDK with retry
 
-        Uses exponential backoff to handle Phoenix indexing lag.
+        Uses exponential backoff to handle telemetry backend indexing lag.
 
         Args:
             item_id: Item ID to find span for
@@ -711,10 +710,10 @@ class ApprovalStorageImpl(ApprovalStorage):
         reviewer: Optional[str] = None,
     ) -> bool:
         """
-        Log approval decision as annotation using Phoenix annotations API
+        Log approval decision as annotation using telemetry annotations API
 
         Records human approval/rejection decisions as annotations on item spans.
-        Uses Phoenix's proper annotations API for semantic feedback.
+        Uses telemetry backend's proper annotations API for semantic feedback.
 
         Args:
             span_id: Span ID of the approval_item span to annotate
@@ -766,13 +765,13 @@ class ApprovalStorageImpl(ApprovalStorage):
         project_context: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """
-        Append approved items to Phoenix dataset for training
+        Append approved items to telemetry backend dataset for training
 
-        Organizes approved items into a Phoenix dataset that can be used for
+        Organizes approved items into a telemetry dataset that can be used for
         DSPy optimization or model training.
 
         Args:
-            dataset_name: Name of the Phoenix dataset (will be created if doesn't exist)
+            dataset_name: Name of the telemetry dataset (will be created if doesn't exist)
             items: List of approved ReviewItems to add to dataset
             project_context: Optional context about the project/task
 
@@ -830,7 +829,7 @@ class ApprovalStorageImpl(ApprovalStorage):
                 logger.info(
                     f"Appending {len(dataset_records)} items to existing dataset '{dataset_name}'"
                 )
-                # Use provider's append method (which creates versioned copy in Phoenix)
+                # Use provider's append method (which creates versioned copy in telemetry backend)
                 await self.provider.datasets.append_to_dataset(
                     name=dataset_name, data=df
                 )

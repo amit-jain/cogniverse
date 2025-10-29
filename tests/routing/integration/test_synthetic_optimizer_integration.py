@@ -5,9 +5,9 @@ Tests that synthetic data generation integrates correctly with all optimizers.
 """
 
 import pytest
-from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
+from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
 
 
 class TestCrossModalOptimizerIntegration:

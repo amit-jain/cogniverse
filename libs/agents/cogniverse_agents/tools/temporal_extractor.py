@@ -5,11 +5,11 @@ Enhanced temporal pattern recognition based on failure analysis.
 Handles complex temporal expressions that the basic system misses.
 """
 
-import re
-import datetime
-from typing import Dict, Any, Optional, List
-from dateutil import parser as date_parser
 import calendar
+import datetime
+import re
+from typing import Any, Dict, Optional
+
 
 class EnhancedTemporalExtractor:
     """Enhanced temporal pattern extractor with better coverage."""
@@ -150,7 +150,7 @@ class EnhancedTemporalExtractor:
                             month_num = self.month_names.get(month_name.lower())
                             if month_num:
                                 return f"{year}-{month_num}-{day.zfill(2)}"
-                    except:
+                    except Exception:
                         continue
         
         return None

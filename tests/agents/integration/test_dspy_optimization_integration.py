@@ -14,6 +14,7 @@ from cogniverse_agents.dspy_agent_optimizer import (
 from cogniverse_agents.query_analysis_tool_v3 import QueryAnalysisToolV3
 from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_agents.summarizer_agent import SummarizerAgent
+from cogniverse_core.telemetry.config import TelemetryConfig
 
 
 @pytest.fixture
@@ -343,7 +344,8 @@ class TestDSPyAgentIntegration:
                 "builtins.open", mock_open(read_data=json.dumps(mock_prompts))
             ):
 
-                agent = RoutingAgent(tenant_id="test_tenant")
+                telemetry_config = TelemetryConfig(enabled=False)
+                agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
 
                 # Should have DSPy module from parent class
                 assert hasattr(agent, "dspy_module")

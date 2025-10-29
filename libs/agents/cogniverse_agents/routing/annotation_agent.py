@@ -10,21 +10,23 @@ Identifies routing decisions that need human review based on:
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import pandas as pd
-import phoenix as px
 from cogniverse_core.telemetry.config import (
     SERVICE_NAME_ORCHESTRATION,
     SPAN_NAME_ROUTING,
-    TelemetryConfig,
 )
+from cogniverse_core.telemetry.manager import get_telemetry_manager
 from cogniverse_dashboard.evaluation.evaluators.routing_evaluator import (
     RoutingEvaluator,
     RoutingOutcome,
 )
+
+if TYPE_CHECKING:
+    from cogniverse_core.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
 
@@ -99,15 +101,22 @@ class AnnotationAgent:
         self.failure_lookback_hours = failure_lookback_hours
         self.max_annotations_per_run = max_annotations_per_run
 
-        # Initialize components
-        self.telemetry_config = TelemetryConfig.from_env()
-        self.phoenix_client = px.Client()
+        # Initialize components - use shared telemetry manager config
+        telemetry_manager = get_telemetry_manager()
+        self.telemetry_config = telemetry_manager.config
+
+        # Get project name for routing orchestration
         self.project_name = self.telemetry_config.get_project_name(
             tenant_id, service=SERVICE_NAME_ORCHESTRATION
         )
 
-        # Initialize evaluator for outcome classification
-        self.evaluator = RoutingEvaluator(project_name=self.project_name)
+        # Get telemetry provider for querying spans (pass project_name for config)
+        self.provider: "TelemetryProvider" = telemetry_manager.get_provider(
+            tenant_id=tenant_id, project_name=SERVICE_NAME_ORCHESTRATION
+        )
+
+        # Initialize evaluator for outcome classification (using provider, not Phoenix)
+        self.evaluator = RoutingEvaluator(provider=self.provider, project_name=self.project_name)
 
         logger.info(
             f"🎯 Initialized AnnotationAgent for tenant '{tenant_id}' "
@@ -115,7 +124,7 @@ class AnnotationAgent:
             f"project: {self.project_name})"
         )
 
-    def identify_spans_needing_annotation(
+    async def identify_spans_needing_annotation(
         self, lookback_hours: Optional[int] = None
     ) -> List[AnnotationRequest]:
         """
@@ -134,16 +143,17 @@ class AnnotationAgent:
             f"(lookback: {lookback_hours}h, max: {self.max_annotations_per_run})"
         )
 
-        # Query routing spans from Phoenix
-        end_time = datetime.now()
+        # Query routing spans from telemetry provider
+        # Use UTC timezone-aware datetime to avoid timezone confusion
+        end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(hours=lookback_hours)
 
         try:
-            spans_df = self.phoenix_client.get_spans_dataframe(
-                project_name=self.project_name, start_time=start_time, end_time=end_time
+            spans_df = await self.provider.traces.get_spans(
+                project=self.project_name, start_time=start_time, end_time=end_time, limit=10000
             )
         except Exception as e:
-            logger.error(f"❌ Error querying Phoenix spans: {e}")
+            logger.error(f"❌ Error querying spans: {e}")
             return []
 
         if spans_df.empty:

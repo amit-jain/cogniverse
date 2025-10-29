@@ -11,8 +11,8 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
-import phoenix as px
-from cogniverse_core.telemetry.config import SPAN_NAME_ROUTING, TelemetryConfig
+from cogniverse_core.telemetry.config import SPAN_NAME_ROUTING
+from cogniverse_core.telemetry.manager import get_telemetry_manager
 
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
@@ -38,8 +38,13 @@ class ModalitySpanCollector:
             tenant_id: Tenant identifier for multi-tenancy
         """
         self.tenant_id = tenant_id
-        self.telemetry_config = TelemetryConfig.from_env()
-        self.phoenix_client = px.Client()
+
+        # Get telemetry manager and use its config (shared singleton config)
+        telemetry_manager = get_telemetry_manager()
+        self.telemetry_config = telemetry_manager.config
+
+        # Get provider from telemetry manager (replaces direct Phoenix client)
+        self.provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
         # Get project name where routing spans are stored
         self.project_name = self.telemetry_config.get_project_name(
@@ -80,18 +85,18 @@ class ModalitySpanCollector:
             f"(project: {self.project_name})"
         )
 
-        # Query Phoenix for routing spans
+        # Query spans via provider abstraction
         end_time = datetime.now()
         start_time = end_time - timedelta(hours=lookback_hours)
 
         try:
-            spans_df = self.phoenix_client.get_spans_dataframe(
-                project_name=self.project_name,
+            spans_df = await self.provider.traces.get_spans(
+                project=self.project_name,
                 start_time=start_time,
                 end_time=end_time,
             )
         except Exception as e:
-            logger.error(f"❌ Error querying Phoenix spans: {e}")
+            logger.error(f"❌ Error querying spans: {e}")
             return {}
 
         if spans_df.empty:

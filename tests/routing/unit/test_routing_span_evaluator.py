@@ -1,7 +1,7 @@
 """
-Unit tests for PhoenixSpanEvaluator
+Unit tests for RoutingSpanEvaluator
 
-Tests the extraction of routing experiences from Phoenix spans and
+Tests the extraction of routing experiences from telemetry spans and
 feeding them to the AdvancedRoutingOptimizer.
 """
 
@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pandas as pd
 import pytest
-from cogniverse_agents.routing.phoenix_span_evaluator import PhoenixSpanEvaluator
+from cogniverse_agents.routing.routing_span_evaluator import RoutingSpanEvaluator
 
 
 @pytest.fixture
@@ -22,48 +22,68 @@ def mock_optimizer():
 
 
 @pytest.fixture
-def mock_phoenix_client():
-    """Create mock Phoenix client"""
-    client = Mock()
-    return client
+def mock_provider():
+    """Create mock telemetry provider"""
+    provider = Mock()
+    provider.traces = Mock()
+    provider.traces.get_spans = AsyncMock(return_value=pd.DataFrame())
+    return provider
 
 
 @pytest.fixture
-def span_evaluator(mock_optimizer, mock_phoenix_client):
-    """Create PhoenixSpanEvaluator with mocked dependencies"""
+def span_evaluator(mock_optimizer, mock_provider):
+    """Create RoutingSpanEvaluator with mocked dependencies"""
     with patch(
-        "cogniverse_agents.routing.phoenix_span_evaluator.px.Client",
-        return_value=mock_phoenix_client,
-    ):
-        evaluator = PhoenixSpanEvaluator(
+        "cogniverse_agents.routing.routing_span_evaluator.get_telemetry_manager"
+    ) as mock_get_manager:
+        mock_manager = Mock()
+        mock_config = Mock()
+        mock_config.get_project_name = Mock(return_value="cogniverse-test-tenant-routing-optimization")
+        mock_manager.config = mock_config
+        mock_manager.get_provider = Mock(return_value=mock_provider)
+        mock_get_manager.return_value = mock_manager
+
+        evaluator = RoutingSpanEvaluator(
             optimizer=mock_optimizer, tenant_id="test-tenant"
         )
     return evaluator
 
 
-class TestPhoenixSpanEvaluatorInit:
-    """Test PhoenixSpanEvaluator initialization"""
+class TestRoutingSpanEvaluatorInit:
+    """Test RoutingSpanEvaluator initialization"""
 
-    def test_initialization_default_tenant(self, mock_optimizer, mock_phoenix_client):
+    def test_initialization_default_tenant(self, mock_optimizer, mock_provider):
         """Test initialization with default tenant"""
         with patch(
-            "cogniverse_agents.routing.phoenix_span_evaluator.px.Client",
-            return_value=mock_phoenix_client,
-        ):
-            evaluator = PhoenixSpanEvaluator(optimizer=mock_optimizer)
+            "cogniverse_agents.routing.routing_span_evaluator.get_telemetry_manager"
+        ) as mock_get_manager:
+            mock_manager = Mock()
+            mock_config = Mock()
+            mock_config.get_project_name = Mock(return_value="cogniverse-default-routing-optimization")
+            mock_manager.config = mock_config
+            mock_manager.get_provider = Mock(return_value=mock_provider)
+            mock_get_manager.return_value = mock_manager
+
+            evaluator = RoutingSpanEvaluator(optimizer=mock_optimizer)
 
         assert evaluator.optimizer == mock_optimizer
         assert evaluator.tenant_id == "default"
-        assert evaluator.phoenix_client == mock_phoenix_client
-        assert evaluator.project_name.startswith("cogniverse-default-")
+        assert evaluator.provider == mock_provider
+        assert evaluator.project_name == "cogniverse-default-routing-optimization"
 
-    def test_initialization_custom_tenant(self, mock_optimizer, mock_phoenix_client):
+    def test_initialization_custom_tenant(self, mock_optimizer, mock_provider):
         """Test initialization with custom tenant"""
         with patch(
-            "cogniverse_agents.routing.phoenix_span_evaluator.px.Client",
-            return_value=mock_phoenix_client,
-        ):
-            evaluator = PhoenixSpanEvaluator(
+            "cogniverse_agents.routing.routing_span_evaluator.get_telemetry_manager"
+        ) as mock_get_manager:
+            mock_manager = Mock()
+            mock_config = Mock()
+            mock_config.get_project_name = Mock(return_value="cogniverse-custom-tenant-routing-optimization")
+            mock_manager.config = mock_config
+            mock_manager.get_provider = Mock(return_value=mock_provider)
+            mock_get_manager.return_value = mock_manager
+
+            evaluator = RoutingSpanEvaluator(
                 optimizer=mock_optimizer, tenant_id="custom-tenant"
             )
 
@@ -243,7 +263,7 @@ class TestEvaluateRoutingSpans:
 
     @pytest.mark.asyncio
     async def test_evaluate_routing_spans_success(
-        self, span_evaluator, mock_phoenix_client
+        self, span_evaluator, mock_provider
     ):
         """Test successful evaluation of routing spans"""
         # Mock Phoenix client to return routing spans
@@ -274,7 +294,7 @@ class TestEvaluateRoutingSpans:
             ]
         )
 
-        mock_phoenix_client.get_spans_dataframe = Mock(return_value=routing_spans)
+        mock_provider.traces.get_spans = AsyncMock(return_value=routing_spans)
 
         results = await span_evaluator.evaluate_routing_spans(lookback_hours=1)
 
@@ -284,10 +304,10 @@ class TestEvaluateRoutingSpans:
 
     @pytest.mark.asyncio
     async def test_evaluate_routing_spans_no_spans(
-        self, span_evaluator, mock_phoenix_client
+        self, span_evaluator, mock_provider
     ):
         """Test evaluation when no spans are found"""
-        mock_phoenix_client.get_spans_dataframe = Mock(return_value=pd.DataFrame())
+        mock_provider.traces.get_spans = AsyncMock(return_value=pd.DataFrame())
 
         results = await span_evaluator.evaluate_routing_spans(lookback_hours=1)
 
@@ -297,7 +317,7 @@ class TestEvaluateRoutingSpans:
 
     @pytest.mark.asyncio
     async def test_evaluate_routing_spans_no_routing_spans(
-        self, span_evaluator, mock_phoenix_client
+        self, span_evaluator, mock_provider
     ):
         """Test evaluation when spans exist but none are routing spans"""
         non_routing_spans = pd.DataFrame(
@@ -315,7 +335,7 @@ class TestEvaluateRoutingSpans:
             ]
         )
 
-        mock_phoenix_client.get_spans_dataframe = Mock(return_value=non_routing_spans)
+        mock_provider.traces.get_spans = AsyncMock(return_value=non_routing_spans)
 
         results = await span_evaluator.evaluate_routing_spans(lookback_hours=1)
 
@@ -324,7 +344,7 @@ class TestEvaluateRoutingSpans:
 
     @pytest.mark.asyncio
     async def test_evaluate_routing_spans_filters_duplicates(
-        self, span_evaluator, mock_phoenix_client
+        self, span_evaluator, mock_provider
     ):
         """Test that duplicate span IDs are not processed twice"""
         routing_spans = pd.DataFrame(
@@ -343,7 +363,7 @@ class TestEvaluateRoutingSpans:
             ]
         )
 
-        mock_phoenix_client.get_spans_dataframe = Mock(return_value=routing_spans)
+        mock_provider.traces.get_spans = AsyncMock(return_value=routing_spans)
 
         # Evaluate twice
         results1 = await span_evaluator.evaluate_routing_spans(lookback_hours=1)
@@ -354,10 +374,10 @@ class TestEvaluateRoutingSpans:
 
     @pytest.mark.asyncio
     async def test_evaluate_routing_spans_handles_errors(
-        self, span_evaluator, mock_phoenix_client
+        self, span_evaluator, mock_provider
     ):
         """Test error handling during span evaluation"""
-        mock_phoenix_client.get_spans_dataframe = Mock(
+        mock_provider.traces.get_spans = AsyncMock(
             side_effect=Exception("Phoenix connection error")
         )
 
@@ -370,7 +390,7 @@ class TestEvaluateRoutingSpans:
 
     @pytest.mark.asyncio
     async def test_evaluate_routing_spans_batch_size(
-        self, span_evaluator, mock_phoenix_client
+        self, span_evaluator, mock_provider
     ):
         """Test batch size limiting"""
         # Create 100 routing spans
@@ -391,7 +411,7 @@ class TestEvaluateRoutingSpans:
             ]
         )
 
-        mock_phoenix_client.get_spans_dataframe = Mock(return_value=routing_spans)
+        mock_provider.traces.get_spans = AsyncMock(return_value=routing_spans)
 
         results = await span_evaluator.evaluate_routing_spans(
             lookback_hours=1, batch_size=10

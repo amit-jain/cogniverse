@@ -16,10 +16,13 @@ Features:
 import asyncio
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from cogniverse_core.telemetry.config import TelemetryConfig
 
 from cogniverse_agents.multi_agent_orchestrator import (
     MultiAgentOrchestrator,
@@ -130,7 +133,8 @@ class A2AGateway:
 
     def __init__(
         self,
-        tenant_id: str = "default",
+        tenant_id: str,
+        telemetry_config: "TelemetryConfig",
         routing_config: Optional[RoutingConfig] = None,
         enable_orchestration: bool = True,
         port: int = 8000,
@@ -139,6 +143,7 @@ class A2AGateway:
 
         # Configuration
         self.tenant_id = tenant_id
+        self.telemetry_config = telemetry_config
         self.enable_orchestration = enable_orchestration
         self.port = port
 
@@ -166,15 +171,16 @@ class A2AGateway:
             # Initialize routing agent
             self.router = RoutingAgent(
                 tenant_id=self.tenant_id,
+                telemetry_config=self.telemetry_config,
                 config=config or RoutingConfig(),
                 port=self.port + 1,  # Use different port to avoid conflicts
-                enable_telemetry=True,
             )
 
             # Initialize multi-agent orchestrator
             if self.enable_orchestration:
                 self.orchestrator = MultiAgentOrchestrator(
                     tenant_id=self.tenant_id,
+                    telemetry_config=self.telemetry_config,
                     routing_agent=self.router
                 )
 

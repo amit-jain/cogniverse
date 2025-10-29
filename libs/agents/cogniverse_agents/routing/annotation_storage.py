@@ -1,37 +1,38 @@
 """
-Annotation Storage for Phoenix
+Annotation Storage for Telemetry
 
-Stores human and LLM annotations in Phoenix using SpanEvaluations.
+Stores human and LLM annotations in telemetry backend using annotations API.
 Provides query capabilities for the feedback loop.
 Reuses common evaluation patterns from cogniverse_dashboard.evaluation.span_evaluator.
 """
 
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
-import pandas as pd
-import phoenix as px
-from cogniverse_core.telemetry.config import SERVICE_NAME_ORCHESTRATION, TelemetryConfig
-from phoenix.trace import SpanEvaluations
+from cogniverse_core.telemetry.config import SERVICE_NAME_ORCHESTRATION
+from cogniverse_core.telemetry.manager import get_telemetry_manager
 
 from cogniverse_agents.routing.llm_auto_annotator import AnnotationLabel, AutoAnnotation
+
+if TYPE_CHECKING:
+    from cogniverse_core.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
 
 
-class AnnotationStorage:
+class RoutingAnnotationStorage:
     """
-    Stores and retrieves routing annotations in Phoenix
+    Stores and retrieves routing annotations in telemetry backend
 
-    Annotations are stored as span attributes with the following structure:
-    - annotation.label: The annotation label (correct_routing, wrong_routing, etc.)
-    - annotation.confidence: Confidence score (0-1)
-    - annotation.reasoning: Human or LLM reasoning
-    - annotation.annotator: Who provided the annotation (human or llm)
-    - annotation.timestamp: When annotation was created
-    - annotation.suggested_agent: Suggested correct agent (if wrong_routing)
-    - annotation.human_reviewed: Whether human has reviewed this
+    Annotations are stored using the telemetry provider's annotation API with the following metadata:
+    - label: The annotation label (correct_routing, wrong_routing, etc.)
+    - score: Confidence score (0-1)
+    - metadata.reasoning: Human or LLM reasoning
+    - metadata.annotator: Who provided the annotation (human or llm)
+    - metadata.timestamp: When annotation was created
+    - metadata.suggested_agent: Suggested correct agent (if wrong_routing)
+    - metadata.human_reviewed: Whether human has reviewed this
     """
 
     def __init__(self, tenant_id: str = "default"):
@@ -42,22 +43,33 @@ class AnnotationStorage:
             tenant_id: Tenant identifier
         """
         self.tenant_id = tenant_id
-        self.telemetry_config = TelemetryConfig.from_env()
-        self.phoenix_client = px.Client()
+
+        # Get telemetry manager and use its config (shared singleton config)
+        telemetry_manager = get_telemetry_manager()
+        self.telemetry_config = telemetry_manager.config
+
+        # Get project name for routing annotations
         self.project_name = self.telemetry_config.get_project_name(
             tenant_id, service=SERVICE_NAME_ORCHESTRATION
         )
 
-        logger.info(
-            f"💾 Initialized AnnotationStorage for tenant '{tenant_id}' (project: {self.project_name})"
+        # Get telemetry provider for annotations (pass project_name for config)
+        self.provider: "TelemetryProvider" = telemetry_manager.get_provider(
+            tenant_id=tenant_id, project_name=SERVICE_NAME_ORCHESTRATION
         )
 
-    def store_llm_annotation(self, span_id: str, annotation: AutoAnnotation) -> bool:
+        logger.info(
+            f"💾 Initialized RoutingAnnotationStorage for tenant '{tenant_id}' (project: {self.project_name})"
+        )
+
+    async def store_llm_annotation(
+        self, span_id: str, annotation: AutoAnnotation
+    ) -> bool:
         """
         Store LLM-generated annotation for a span
 
         Args:
-            span_id: Phoenix span ID
+            span_id: Span ID
             annotation: LLM annotation to store
 
         Returns:
@@ -80,9 +92,9 @@ class AnnotationStorage:
                 annotation.suggested_correct_agent
             )
 
-        return self._update_span_attributes(span_id, annotation_data)
+        return await self._update_span_attributes(span_id, annotation_data)
 
-    def store_human_annotation(
+    async def store_human_annotation(
         self,
         span_id: str,
         label: AnnotationLabel,
@@ -94,7 +106,7 @@ class AnnotationStorage:
         Store human annotation for a span
 
         Args:
-            span_id: Phoenix span ID
+            span_id: Span ID
             label: Annotation label
             reasoning: Human reasoning
             suggested_agent: Suggested correct agent (if wrong_routing)
@@ -118,14 +130,16 @@ class AnnotationStorage:
         if suggested_agent:
             annotation_data["annotation.suggested_agent"] = suggested_agent
 
-        return self._update_span_attributes(span_id, annotation_data)
+        return await self._update_span_attributes(span_id, annotation_data)
 
-    def approve_llm_annotation(self, span_id: str, annotator_id: str = "human") -> bool:
+    async def approve_llm_annotation(
+        self, span_id: str, annotator_id: str = "human"
+    ) -> bool:
         """
         Mark LLM annotation as reviewed and approved by human
 
         Args:
-            span_id: Phoenix span ID
+            span_id: Span ID
             annotator_id: Human annotator identifier
 
         Returns:
@@ -140,47 +154,41 @@ class AnnotationStorage:
             "annotation.approval_timestamp": datetime.now().isoformat(),
         }
 
-        return self._update_span_attributes(span_id, update_data)
+        return await self._update_span_attributes(span_id, update_data)
 
-    def _update_span_attributes(self, span_id: str, attributes: Dict) -> bool:
+    async def _update_span_attributes(self, span_id: str, attributes: Dict) -> bool:
         """
-        Store annotation as span evaluation in Phoenix using SpanEvaluations API
-
-        This follows the pattern from cogniverse_dashboard.evaluation.span_evaluator for consistency.
+        Store annotation using telemetry provider's annotation API
 
         Args:
-            span_id: Phoenix span ID
-            attributes: Dictionary of attributes to set
+            span_id: Span ID
+            attributes: Dictionary of annotation attributes
 
         Returns:
             True if stored successfully
         """
         try:
-            # Prepare evaluation data following Phoenix SpanEvaluations format
-            # This matches the pattern in src.evaluation.span_evaluator.upload_evaluations_to_phoenix
-            eval_data = {
-                "context.span_id": [span_id],
-                "label": [attributes.get("annotation.label", "")],
-                "score": [attributes.get("annotation.confidence", 0.0)],
-                "explanation": [attributes.get("annotation.reasoning", "")],
-            }
+            # Extract label, score, and metadata from attributes
+            label = attributes.get("annotation.label", "")
+            score = attributes.get("annotation.confidence", 0.0)
 
-            # Add custom metadata fields
+            # Build metadata dictionary (remove annotation. prefix)
+            metadata = {}
             for key, value in attributes.items():
-                if not key.startswith("annotation."):
-                    continue
-                # Store as separate columns for querying
-                safe_key = key.replace(".", "_")
-                eval_data[safe_key] = [value]
+                if key.startswith("annotation."):
+                    # Strip prefix for metadata
+                    meta_key = key.replace("annotation.", "")
+                    metadata[meta_key] = value
 
-            # Create evaluations dataframe
-            eval_df = pd.DataFrame(eval_data)
-
-            # Log using SpanEvaluations with eval_name (like span_evaluator does)
-            span_evals = SpanEvaluations(
-                eval_name="routing_annotation", dataframe=eval_df
+            # Use provider's annotation API
+            await self.provider.annotations.add_annotation(
+                span_id=span_id,
+                name="routing_annotation",
+                label=label,
+                score=score,
+                metadata=metadata,
+                project=self.project_name,
             )
-            self.phoenix_client.log_evaluations(span_evals)
 
             logger.info(f"✅ Stored routing annotation for span {span_id}")
             return True
@@ -189,7 +197,7 @@ class AnnotationStorage:
             logger.error(f"❌ Failed to store annotation for span {span_id}: {e}")
             raise
 
-    def query_annotated_spans(
+    async def query_annotated_spans(
         self, start_time: datetime, end_time: datetime, only_human_reviewed: bool = True
     ) -> List[Dict]:
         """
@@ -211,8 +219,8 @@ class AnnotationStorage:
 
         try:
             # Get all spans in time range
-            spans_df = self.phoenix_client.get_spans_dataframe(
-                project_name=self.project_name, start_time=start_time, end_time=end_time
+            spans_df = await self.provider.traces.get_spans(
+                project=self.project_name, start_time=start_time, end_time=end_time, limit=10000
             )
 
             if spans_df.empty:
@@ -268,7 +276,7 @@ class AnnotationStorage:
             logger.error(f"❌ Error querying annotated spans: {e}")
             return []
 
-    def get_annotation_statistics(self) -> Dict:
+    async def get_annotation_statistics(self) -> Dict:
         """
         Get statistics about stored annotations
 
@@ -282,7 +290,7 @@ class AnnotationStorage:
             end_time = datetime.now()
             start_time = end_time - timedelta(days=30)
 
-            annotated_spans = self.query_annotated_spans(
+            annotated_spans = await self.query_annotated_spans(
                 start_time=start_time, end_time=end_time, only_human_reviewed=False
             )
 

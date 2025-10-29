@@ -1,35 +1,37 @@
 """
-Phoenix Span Evaluator for Routing Optimization
+Routing Span Evaluator for Routing Optimization
 
-This module extracts routing experiences from Phoenix telemetry spans
+This module extracts routing experiences from telemetry spans
 and feeds them to the AdvancedRoutingOptimizer for continuous learning.
 """
 
 import asyncio
 import logging
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-import phoenix as px
 from cogniverse_core.telemetry.config import (
     SERVICE_NAME_ORCHESTRATION,
     SPAN_NAME_ROUTING,
-    TelemetryConfig,
 )
+from cogniverse_core.telemetry.manager import get_telemetry_manager
 from cogniverse_dashboard.evaluation.span_evaluator import SpanEvaluator
 from opentelemetry.trace import Span as ReadableSpan
+
+if TYPE_CHECKING:
+    from cogniverse_core.telemetry.providers.base import TelemetryProvider
 
 from .advanced_optimizer import AdvancedRoutingOptimizer, RoutingExperience
 
 logger = logging.getLogger(__name__)
 
 
-class PhoenixSpanEvaluator:
+class RoutingSpanEvaluator:
     """
-    Evaluates Phoenix spans to extract routing experiences for optimization
+    Evaluates telemetry spans to extract routing experiences for optimization
 
     This class leverages the existing SpanEvaluator infrastructure to:
-    1. Extract routing decisions and outcomes from Phoenix spans
+    1. Extract routing decisions and outcomes from telemetry spans
     2. Compute quality metrics from span data
     3. Feed real experiences to the routing optimizer
     4. Replace synthetic training data with actual routing telemetry
@@ -39,26 +41,29 @@ class PhoenixSpanEvaluator:
         """Initialize span evaluator with routing optimizer"""
         self.optimizer = optimizer
         self.tenant_id = tenant_id
-        self.telemetry_config = TelemetryConfig.from_env()
 
         # Initialize SpanEvaluator for reading existing spans
         self.span_evaluator = SpanEvaluator()
         self._last_evaluation_time = datetime.now()
         self._processed_span_ids = set()
 
-        # Initialize Phoenix client
-        self.phoenix_client = px.Client()
+        # Get telemetry manager and use its config (shared singleton config)
+        telemetry_manager = get_telemetry_manager()
+        self.telemetry_config = telemetry_manager.config
+        self.provider: "TelemetryProvider" = telemetry_manager.get_provider(
+            tenant_id=tenant_id
+        )
 
         # Get the project name where routing spans are stored
         # Routing spans are created with SERVICE_NAME_ORCHESTRATION
         # This ensures parent (cogniverse.request) and child (cogniverse.routing) spans
-        # are in the same Phoenix project, maintaining proper span hierarchy
+        # are in the same project, maintaining proper span hierarchy
         self.project_name = self.telemetry_config.get_project_name(
             tenant_id, service=SERVICE_NAME_ORCHESTRATION
         )
 
         logger.info(
-            f"🔧 Initialized PhoenixSpanEvaluator for tenant '{tenant_id}' "
+            f"🔧 Initialized RoutingSpanEvaluator for tenant '{tenant_id}' "
             f"(project: {self.project_name})"
         )
 
@@ -80,20 +85,22 @@ class PhoenixSpanEvaluator:
             f"(project: {self.project_name})"
         )
 
-        # Query cogniverse.routing spans from main project using Phoenix client
+        # Query cogniverse.routing spans from main project using telemetry provider
         from datetime import timedelta
 
-        end_time = datetime.now()
+        # Use UTC timezone-aware datetime to avoid timezone confusion
+        end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(hours=lookback_hours)
 
         try:
-            spans_df = self.phoenix_client.get_spans_dataframe(
-                project_name=self.project_name,
+            spans_df = await self.provider.traces.get_spans(
+                project=self.project_name,
                 start_time=start_time,
                 end_time=end_time,
+                limit=10000,
             )
         except Exception as e:
-            logger.error(f"❌ Error querying Phoenix spans: {e}")
+            logger.error(f"❌ Error querying telemetry spans: {e}")
             return {"spans_processed": 0, "experiences_created": 0, "errors": [str(e)]}
 
         if spans_df.empty:

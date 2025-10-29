@@ -15,18 +15,21 @@ NO MOCKS - tests against actual Phoenix server.
 
 import logging
 import os
+import subprocess
+import tempfile
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import phoenix as px
 import pytest
+import requests
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 from cogniverse_agents.routing.annotation_agent import (
     AnnotationAgent,
     AnnotationPriority,
 )
 from cogniverse_agents.routing.annotation_feedback_loop import AnnotationFeedbackLoop
-from cogniverse_agents.routing.annotation_storage import AnnotationStorage
+from cogniverse_agents.routing.annotation_storage import RoutingAnnotationStorage
 from cogniverse_agents.routing.llm_auto_annotator import (
     AnnotationLabel,
     LLMAutoAnnotator,
@@ -46,18 +49,149 @@ from tests.utils.async_polling import (
 logger = logging.getLogger(__name__)
 
 
-@pytest.fixture
-def phoenix_client():
-    """Get Phoenix client - requires Phoenix server running"""
+@pytest.fixture(scope="module", autouse=True)
+def phoenix_container():
+    """Start Phoenix Docker container on non-default ports for routing annotation tests"""
+    # Set environment variables for OTLP span export ONLY
+    original_endpoint = os.environ.get("OTLP_ENDPOINT")
+    original_sync_export = os.environ.get("TELEMETRY_SYNC_EXPORT")
+
+    os.environ["OTLP_ENDPOINT"] = "http://localhost:24317"
+    os.environ["TELEMETRY_SYNC_EXPORT"] = "true"
+
+    # Reset TelemetryManager singleton
+    TelemetryManager.reset()
+
+    container_name = f"phoenix_routing_annotation_test_{int(time.time() * 1000)}"
+
+    # Clean up old containers
     try:
-        client = px.Client()
-        # Test connection
-        client.get_spans_dataframe(
-            start_time=datetime.now() - timedelta(hours=1), end_time=datetime.now()
+        result = subprocess.run(
+            ["docker", "ps", "-a", "-q", "--filter", "name=phoenix_routing_annotation_test"],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
-        return client
-    except Exception:
-        pass
+        if result.stdout.strip():
+            old_containers = result.stdout.strip().split("\n")
+            for container_id in old_containers:
+                subprocess.run(
+                    ["docker", "rm", "-f", container_id],
+                    capture_output=True,
+                    timeout=10,
+                )
+            logger.info(f"Cleaned up {len(old_containers)} old Phoenix test containers")
+    except Exception as e:
+        logger.warning(f"Error cleaning up old containers: {e}")
+
+    try:
+        # Create temporary directory for Phoenix data
+        test_data_dir = os.path.join(
+            tempfile.gettempdir(), f"phoenix_routing_annotation_{int(time.time())}"
+        )
+        os.makedirs(test_data_dir, exist_ok=True)
+
+        # Start Phoenix container
+        result = subprocess.run(
+            [
+                "docker",
+                "run",
+                "-d",
+                "--name",
+                container_name,
+                "-p",
+                "26006:6006",  # HTTP port
+                "-p",
+                "24317:4317",  # gRPC port
+                "-v",
+                f"{test_data_dir}:/phoenix_data",
+                "-e",
+                "PHOENIX_WORKING_DIR=/phoenix_data",
+                "-e",
+                "PHOENIX_SQL_DATABASE_URL=sqlite:////phoenix_data/phoenix.db",
+                "arizephoenix/phoenix:latest",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        logger.info(f"Phoenix container {container_name} started")
+
+        # Wait for Phoenix to be ready
+        max_wait_time = 60
+        poll_interval = 0.5
+        start_time = time.time()
+        phoenix_ready = False
+
+        while time.time() - start_time < max_wait_time:
+            try:
+                response = requests.get("http://localhost:26006", timeout=2)
+                if response.status_code == 200:
+                    phoenix_ready = True
+                    elapsed = time.time() - start_time
+                    logger.info(f"Phoenix ready after {elapsed:.1f} seconds")
+                    break
+            except Exception:
+                pass
+            time.sleep(poll_interval)
+
+        if not phoenix_ready:
+            logs_result = subprocess.run(
+                ["docker", "logs", container_name],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            logger.error(f"Phoenix logs:\n{logs_result.stdout}\n{logs_result.stderr}")
+            raise RuntimeError(f"Phoenix failed to start after {max_wait_time} seconds")
+
+        yield container_name
+
+    finally:
+        # Stop and remove Phoenix container
+        try:
+            subprocess.run(
+                ["docker", "stop", container_name],
+                check=False,
+                capture_output=True,
+                timeout=30,
+            )
+            subprocess.run(
+                ["docker", "rm", container_name],
+                check=False,
+                capture_output=True,
+                timeout=10,
+            )
+            logger.info(f"Phoenix container {container_name} stopped and removed")
+        except Exception as e:
+            logger.warning(f"Error cleaning up Phoenix container: {e}")
+            try:
+                subprocess.run(
+                    ["docker", "rm", "-f", container_name],
+                    check=False,
+                    capture_output=True,
+                    timeout=10,
+                )
+            except Exception:
+                pass
+
+        # Restore original environment variables
+        if original_endpoint:
+            os.environ["OTLP_ENDPOINT"] = original_endpoint
+        else:
+            os.environ.pop("OTLP_ENDPOINT", None)
+
+        if original_sync_export:
+            os.environ["TELEMETRY_SYNC_EXPORT"] = original_sync_export
+        else:
+            os.environ.pop("TELEMETRY_SYNC_EXPORT", None)
+
+
+@pytest.fixture
+def phoenix_client(phoenix_container):
+    """Phoenix client for querying spans (depends on phoenix_container)"""
+    return px.Client(endpoint="http://localhost:26006")
+
 
 @pytest.fixture
 def test_tenant_id():
@@ -66,9 +200,31 @@ def test_tenant_id():
 
 
 @pytest.fixture
-def telemetry_manager():
-    """Get telemetry manager for creating test spans"""
-    return TelemetryManager()
+def telemetry_manager(phoenix_container):
+    """Get telemetry manager with Phoenix HTTP and gRPC endpoints configured"""
+    import cogniverse_core.telemetry.manager as telemetry_manager_module
+    from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
+    from cogniverse_core.telemetry.registry import get_telemetry_registry
+
+    # Reset TelemetryManager singleton AND clear provider cache
+    TelemetryManager.reset()
+    get_telemetry_registry().clear_cache()
+
+    # Create config with OTLP endpoint for span export and provider endpoints for queries
+    config = TelemetryConfig(
+        otlp_endpoint="http://localhost:24317",  # gRPC endpoint for span export
+        provider_config={
+            "http_endpoint": "http://localhost:26006",  # HTTP endpoint for queries
+            "grpc_endpoint": "http://localhost:24317",  # gRPC endpoint (same as OTLP)
+        },
+        batch_config=BatchExportConfig(use_sync_export=True),  # Synchronous export for tests
+    )
+
+    # Set as the global singleton so telemetry_manager.span() uses this config
+    manager = TelemetryManager(config=config)
+    telemetry_manager_module._telemetry_manager = manager
+
+    return manager
 
 
 class TestAnnotationSystemIntegration:
@@ -113,7 +269,7 @@ class TestAnnotationSystemIntegration:
             with telemetry_manager.span(
                 name=SPAN_NAME_ROUTING,
                 tenant_id=test_tenant_id,
-                service_name=SERVICE_NAME_ORCHESTRATION,
+                project_name=SERVICE_NAME_ORCHESTRATION,
                 attributes={
                     "routing.query": query,
                     "routing.chosen_agent": agent,
@@ -142,7 +298,7 @@ class TestAnnotationSystemIntegration:
             test_tenant_id, SERVICE_NAME_ORCHESTRATION
         )
 
-        end_time = datetime.now()
+        end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(minutes=5)
 
         spans_df = phoenix_client.get_spans_dataframe(
@@ -167,7 +323,7 @@ class TestAnnotationSystemIntegration:
             max_annotations_per_run=10,
         )
 
-        annotation_requests = annotation_agent.identify_spans_needing_annotation(
+        annotation_requests = await annotation_agent.identify_spans_needing_annotation(
             lookback_hours=1
         )
 
@@ -245,9 +401,9 @@ class TestAnnotationSystemIntegration:
         # STEP 5: Store annotation in Phoenix
         logger.info("\n=== STEP 5: Storing annotation in Phoenix ===")
 
-        annotation_storage = AnnotationStorage(tenant_id=test_tenant_id)
+        annotation_storage = RoutingAnnotationStorage(tenant_id=test_tenant_id)
 
-        success = annotation_storage.store_llm_annotation(
+        success = await annotation_storage.store_llm_annotation(
             span_id=annotation_requests[0].span_id, annotation=auto_annotation
         )
 
@@ -265,7 +421,7 @@ class TestAnnotationSystemIntegration:
         try:
             # Phoenix stores evaluations separately from spans
             # We should be able to query them
-            eval_end_time = datetime.now()
+            eval_end_time = datetime.now(timezone.utc)
             eval_start_time = eval_end_time - timedelta(minutes=5)
 
             # Query the project for evaluations
@@ -330,7 +486,7 @@ class TestAnnotationSystemIntegration:
         with telemetry_manager.span(
             name=SPAN_NAME_ROUTING,
             tenant_id=test_tenant_id,
-            service_name=SERVICE_NAME_ORCHESTRATION,
+            project_name=SERVICE_NAME_ORCHESTRATION,
             attributes={
                 "routing.query": "Test persistence query",
                 "routing.chosen_agent": "video_search",
@@ -348,7 +504,7 @@ class TestAnnotationSystemIntegration:
         wait_for_phoenix_processing(delay=2)
 
         # Store annotation
-        annotation_storage = AnnotationStorage(tenant_id=test_tenant_id)
+        annotation_storage = RoutingAnnotationStorage(tenant_id=test_tenant_id)
 
         from cogniverse_agents.routing.llm_auto_annotator import AutoAnnotation
 
@@ -361,7 +517,7 @@ class TestAnnotationSystemIntegration:
             requires_human_review=False,
         )
 
-        success = annotation_storage.store_llm_annotation(
+        success = await annotation_storage.store_llm_annotation(
             span_id=test_span_id, annotation=test_annotation
         )
 
@@ -378,8 +534,8 @@ class TestAnnotationSystemIntegration:
         # Verify the span exists
         spans_df = phoenix_client.get_spans_dataframe(
             project_name=project_name,
-            start_time=datetime.now() - timedelta(minutes=5),
-            end_time=datetime.now(),
+            start_time=datetime.now(timezone.utc) - timedelta(minutes=5),
+            end_time=datetime.now(timezone.utc),
         )
 
         assert not spans_df.empty, "No spans found after storage"
@@ -388,7 +544,8 @@ class TestAnnotationSystemIntegration:
             f"✅ Annotation persistence verified ({len(spans_df)} spans in project)"
         )
 
-    def test_annotation_agent_with_real_data(
+    @pytest.mark.asyncio
+    async def test_annotation_agent_with_real_data(
         self, phoenix_client, test_tenant_id, telemetry_manager
     ):
         """
@@ -407,7 +564,7 @@ class TestAnnotationSystemIntegration:
             with telemetry_manager.span(
                 name=SPAN_NAME_ROUTING,
                 tenant_id=test_tenant_id,
-                service_name=SERVICE_NAME_ORCHESTRATION,
+                project_name=SERVICE_NAME_ORCHESTRATION,
                 attributes={
                     "routing.query": query,
                     "routing.chosen_agent": agent,
@@ -432,7 +589,7 @@ class TestAnnotationSystemIntegration:
             max_annotations_per_run=10,
         )
 
-        requests = annotation_agent.identify_spans_needing_annotation(lookback_hours=1)
+        requests = await annotation_agent.identify_spans_needing_annotation(lookback_hours=1)
 
         # Should identify at least the low confidence spans
         assert len(requests) >= 2, f"Expected at least 2 requests, got {len(requests)}"
@@ -467,7 +624,7 @@ class TestAnnotationSystemIntegration:
         with telemetry_manager.span(
             name=SPAN_NAME_ROUTING,
             tenant_id=test_tenant_id,
-            service_name=SERVICE_NAME_ORCHESTRATION,
+            project_name=SERVICE_NAME_ORCHESTRATION,
             attributes={
                 "routing.query": "Feedback loop test query",
                 "routing.chosen_agent": "video_search",
@@ -484,14 +641,14 @@ class TestAnnotationSystemIntegration:
         annotation_agent = AnnotationAgent(
             tenant_id=test_tenant_id, confidence_threshold=0.6
         )
-        requests = annotation_agent.identify_spans_needing_annotation(lookback_hours=1)
+        requests = await annotation_agent.identify_spans_needing_annotation(lookback_hours=1)
 
         assert len(requests) > 0, "No annotation requests found"
 
         # Store annotation directly
-        annotation_storage = AnnotationStorage(tenant_id=test_tenant_id)
+        annotation_storage = RoutingAnnotationStorage(tenant_id=test_tenant_id)
 
-        success = annotation_storage.store_human_annotation(
+        success = await annotation_storage.store_human_annotation(
             span_id=requests[0].span_id,
             label=AnnotationLabel.WRONG_ROUTING,
             reasoning="Human identified wrong routing",

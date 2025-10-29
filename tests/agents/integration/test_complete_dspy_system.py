@@ -20,7 +20,7 @@ class TestCompleteDSPySystem:
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
-    async def test_end_to_end_query_processing(self):
+    async def test_end_to_end_query_processing(self, telemetry_manager_without_phoenix):
         """Test complete query processing pipeline"""
 
         # Test that the core components can be imported and work together
@@ -33,10 +33,10 @@ class TestCompleteDSPySystem:
         ):
             with patch("cogniverse_core.config.utils.get_config") as mock_config:
                 with patch(
-                    "cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient"
+                    "cogniverse_vespa.tenant_aware_search_client.TenantAwareVespaSearchClient"
                 ):
                     with patch(
-                        "cogniverse_agents.video_search_agent.QueryEncoderFactory"
+                        "cogniverse_agents.query.encoders.QueryEncoderFactory"
                     ):
 
                         # Mock configuration
@@ -48,7 +48,7 @@ class TestCompleteDSPySystem:
                         mock_config.return_value = mock_config_obj
 
                         # Initialize routing agent
-                        routing_agent = RoutingAgent(tenant_id="test_tenant")
+                        routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
 
                         # Test that it can process a query
                         query = "Find videos of robots playing soccer"
@@ -103,43 +103,6 @@ class TestCompleteDSPySystem:
                         else:
                             # Result should be a RoutingDecision or dict with routing info
                             assert result is not None
-
-    @pytest.mark.asyncio
-    async def test_enhanced_video_search_with_relationships(self):
-        """Test enhanced video search with relationship context"""
-
-        from cogniverse_agents.video_search_agent import VideoSearchAgent
-
-        with patch("cogniverse_agents.video_search_agent.TenantAwareVespaSearchClient"):
-            with patch(
-                "cogniverse_agents.video_search_agent.get_config"
-            ) as mock_config:
-                with patch(
-                    "cogniverse_agents.video_search_agent.QueryEncoderFactory"
-                ) as mock_encoder:
-
-                    # Mock configuration as a dict (not object)
-                    mock_config.return_value = {
-                        "vespa_url": "http://localhost:8080",
-                        "vespa_port": 8080,
-                        "active_video_profile": "video_colpali_smol500_mv_frame",
-                        "video_processing_profiles": {
-                            "video_colpali_smol500_mv_frame": {
-                                "embedding_model": "vidore/colsmol-500m",
-                                "embedding_type": "frame_based",
-                            }
-                        },
-                    }
-
-                    # Mock encoder
-                    mock_encoder.create_encoder.return_value = Mock()
-
-                    # Initialize agent
-                    video_agent = VideoSearchAgent(tenant_id="test_tenant")
-
-                    # Test that the agent can handle enhanced context
-                    assert hasattr(video_agent, "vespa_client")
-                    assert hasattr(video_agent, "query_encoder")
 
     @pytest.mark.ci_fast
     def test_routing_system_components_integration(self):
@@ -197,7 +160,7 @@ class TestCompleteDSPySystem:
         assert exp_config.experiment_name == "test"
 
     @pytest.mark.asyncio
-    async def test_multi_agent_orchestration_simulation(self):
+    async def test_multi_agent_orchestration_simulation(self, telemetry_manager_without_phoenix):
         """Test multi-agent orchestration with mocked agents"""
 
         from cogniverse_agents.routing_agent import RoutingAgent
@@ -213,7 +176,7 @@ class TestCompleteDSPySystem:
                     "detailed_report_agent_url": "http://localhost:8004",
                 }
 
-                routing_agent = RoutingAgent(tenant_id="test_tenant")
+                routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
 
                 # Test orchestration capability detection
                 capabilities = routing_agent._get_routing_capabilities()

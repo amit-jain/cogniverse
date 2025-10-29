@@ -27,6 +27,7 @@ from cogniverse_agents.routing.relationship_extraction_tools import (
 )
 from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_agents.summarizer_agent import SummarizerAgent
+from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
 
 from tests.utils.async_polling import wait_for_vespa_indexing
 
@@ -491,7 +492,12 @@ class TestRealPipelineIntegration:
         _vespa_port = shared_system_vespa["http_port"]
         base_url = shared_system_vespa["base_url"]
         # Initialize all components
-        routing_agent = RoutingAgent(tenant_id="test_tenant")
+        telemetry_config = TelemetryConfig(
+            otlp_endpoint="http://localhost:24317",
+            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
         extractor = RelationshipExtractorTool()
         pipeline = QueryEnhancementPipeline()
 
@@ -664,7 +670,12 @@ class TestRealEndToEndIntegration:
         print(f"🔧 DEBUG: Base URL: {vespa_test_manager.get_base_url()}")
 
         # Initialize all agents
-        routing_agent = RoutingAgent(tenant_id="test_tenant")
+        telemetry_config = TelemetryConfig(
+            otlp_endpoint="http://localhost:24317",
+            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
         summarizer_agent = SummarizerAgent(tenant_id="test_tenant")
 
         # Initialize relationship extractor properly

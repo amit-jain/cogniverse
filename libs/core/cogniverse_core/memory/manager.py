@@ -23,10 +23,9 @@ logger = logging.getLogger(__name__)
 # Register Vespa as a supported vector store provider in Mem0
 def _register_vespa_provider():
     """Register Vespa as a supported vector store provider in Mem0"""
-    from mem0.utils.factory import VectorStoreFactory
-
     # Import vespa_memory_config so it's available in sys.modules
     import src.common.vespa_memory_config  # noqa: F401
+    from mem0.utils.factory import VectorStoreFactory
 
     # Register Vespa config in the provider_configs default dict
     provider_configs = VectorStoreConfig._provider_configs.default

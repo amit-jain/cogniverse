@@ -334,14 +334,14 @@ class TestCrossModalFusionIntegration:
         wait_for_vespa_indexing(delay=5)
         print("✅ Indexing complete")
 
-    def test_cross_modal_fusion_workflow(self, test_vespa_fusion):
+    def test_cross_modal_fusion_workflow(self, test_vespa_fusion, telemetry_manager_without_phoenix):
         """Test multi-agent workflow with cross-modal fusion"""
         print("\n" + "-" * 80)
         print("Test: Cross-Modal Fusion Workflow")
         print("-" * 80)
 
         # Create orchestrator (will use mocked agents)
-        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", enable_workflow_intelligence=False)
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config, enable_workflow_intelligence=False)
 
         # Create mock workflow with completed tasks from different modalities
         print("\n🎭 Creating mock multi-modal workflow...")
@@ -459,13 +459,13 @@ class TestCrossModalFusionIntegration:
 
         print("✅ Cross-modal fusion validated successfully")
 
-    def test_fusion_strategies(self, test_vespa_fusion):
+    def test_fusion_strategies(self, test_vespa_fusion, telemetry_manager_without_phoenix):
         """Test different fusion strategies"""
         print("\n" + "-" * 80)
         print("Test: Fusion Strategies")
         print("-" * 80)
 
-        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", enable_workflow_intelligence=False)
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config, enable_workflow_intelligence=False)
 
         # Create sample task results
         task_results = {
@@ -523,13 +523,13 @@ class TestCrossModalFusionIntegration:
 
         print("\n✅ All fusion strategies validated")
 
-    def test_fusion_quality_metrics(self, test_vespa_fusion):
+    def test_fusion_quality_metrics(self, test_vespa_fusion, telemetry_manager_without_phoenix):
         """Test fusion quality metrics calculation"""
         print("\n" + "-" * 80)
         print("Test: Fusion Quality Metrics")
         print("-" * 80)
 
-        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", enable_workflow_intelligence=False)
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config, enable_workflow_intelligence=False)
 
         # Create diverse task results
         task_results = {

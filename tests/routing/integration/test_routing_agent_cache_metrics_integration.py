@@ -7,11 +7,11 @@ Integration tests for cache and metrics components in RoutingAgent:
 """
 
 import asyncio
-import time
 
 import pytest
 from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
 
 
 @pytest.mark.asyncio
@@ -21,8 +21,17 @@ class TestRoutingAgentCacheMetricsIntegration:
     @pytest.fixture
     async def routing_agent(self):
         """Create routing agent with real components"""
-        agent = RoutingAgent(tenant_id="test-tenant")
+        telemetry_config = TelemetryConfig(
+            otlp_endpoint="http://localhost:24317",
+            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        agent = RoutingAgent(tenant_id="test-tenant", telemetry_config=telemetry_config)
         yield agent
+        # Cleanup cache between tests
+        if agent.cache_manager:
+            agent.cache_manager.invalidate_all()
+            agent.cache_manager.reset_stats()
         # Cleanup telemetry
         agent.telemetry_manager.force_flush(timeout_millis=5000)
         await asyncio.sleep(0.5)
@@ -80,22 +89,22 @@ class TestRoutingAgentCacheMetricsIntegration:
         context = {"tenant_id": "test-cache-miss-hit"}
 
         # First call - cache miss (fresh routing agent has empty cache)
-        start = time.time()
         result1 = await routing_agent.route_query(query, context)
-        first_call_time = time.time() - start
 
-        # Second call - cache hit (should be faster)
-        start = time.time()
+        # Second call - cache hit
         result2 = await routing_agent.route_query(query, context)
-        second_call_time = time.time() - start
 
         # Results should match (except execution_time)
         assert result1.query == result2.query
         assert result1.recommended_agent == result2.recommended_agent
         assert result1.confidence == result2.confidence
 
-        # Cache hit should be faster
-        assert second_call_time < first_call_time
+        # Verify cache hit via stats - check all modalities (query could route to any)
+        total_hits = 0
+        for modality in QueryModality:
+            stats = routing_agent.cache_manager.get_cache_stats(modality)
+            total_hits += stats["hits"]
+        assert total_hits > 0, "Cache should have been hit on second query"
 
     async def test_metrics_track_success_and_failure(self, routing_agent):
         """Test metrics track both successful and failed executions"""

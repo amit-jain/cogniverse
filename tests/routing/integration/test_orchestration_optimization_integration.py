@@ -3,7 +3,7 @@ Integration tests for Phase 7.5: Orchestration Optimization
 
 Tests the complete flow with REAL components (no mocks):
 1. Create real orchestration spans in Phoenix
-2. Query spans with PhoenixOrchestrationEvaluator
+2. Query spans with OrchestrationEvaluator
 3. Store annotations with OrchestrationAnnotationStorage
 4. Process annotations with OrchestrationFeedbackLoop
 5. Trigger unified optimization
@@ -18,11 +18,11 @@ from cogniverse_agents.routing.orchestration_annotation_storage import (
     OrchestrationAnnotation,
     OrchestrationAnnotationStorage,
 )
+from cogniverse_agents.routing.orchestration_evaluator import (
+    OrchestrationEvaluator,
+)
 from cogniverse_agents.routing.orchestration_feedback_loop import (
     OrchestrationFeedbackLoop,
-)
-from cogniverse_agents.routing.phoenix_orchestration_evaluator import (
-    PhoenixOrchestrationEvaluator,
 )
 from cogniverse_agents.routing.unified_optimizer import UnifiedOptimizer
 from cogniverse_agents.workflow_intelligence import (
@@ -52,8 +52,8 @@ class TestOrchestrationOptimizationIntegration:
     async def test_phoenix_evaluator_extracts_workflows_from_spans(
         self, workflow_intelligence
     ):
-        """Test that PhoenixOrchestrationEvaluator extracts workflows from Phoenix spans"""
-        evaluator = PhoenixOrchestrationEvaluator(
+        """Test that OrchestrationEvaluator extracts workflows from Phoenix spans"""
+        evaluator = OrchestrationEvaluator(
             workflow_intelligence=workflow_intelligence,
             tenant_id="test-tenant",
         )
@@ -97,8 +97,8 @@ class TestOrchestrationOptimizationIntegration:
 
         # Patch only Phoenix client, use real WorkflowIntelligence
         with patch.object(
-            evaluator.phoenix_client,
-            "get_spans_dataframe",
+            evaluator.provider.traces,
+            "get_spans",
             return_value=mock_spans_df,
         ):
             result = await evaluator.evaluate_orchestration_spans(lookback_hours=1)
@@ -145,23 +145,22 @@ class TestOrchestrationOptimizationIntegration:
             annotator_id="test-annotator",
         )
 
-        # Patch only Phoenix client log_evaluations, storage logic is real
-        with patch.object(storage.phoenix_client, "log_evaluations") as mock_log_evals:
+        # Patch only provider annotations, storage logic is real
+        with patch.object(storage.provider.annotations, "add_annotation") as mock_add_annotation:
             result = await storage.store_annotation(annotation)
 
         # Verify annotation was stored
         assert result is True
-        mock_log_evals.assert_called_once()
+        mock_add_annotation.assert_called_once()
 
-        # Verify evaluation data structure was correctly constructed
-        call_args = mock_log_evals.call_args[0][0]
-        assert len(call_args) == 1
-        eval_data = call_args[0]
-        assert eval_data["span_id"] == "span-789"
-        assert eval_data["result"]["label"] == "good"
-        assert eval_data["result"]["score"] == 0.8
-        assert eval_data["metadata"]["pattern_is_optimal"] is False
-        assert eval_data["metadata"]["suggested_pattern"] == "sequential"
+        # Verify annotation data was correctly constructed using kwargs
+        call_kwargs = mock_add_annotation.call_args.kwargs
+        assert call_kwargs["span_id"] == "span-789"
+        assert call_kwargs["name"] == "orchestration_quality"
+        assert call_kwargs["label"] == "good"
+        assert call_kwargs["score"] == 0.8
+        assert call_kwargs["metadata"]["pattern_is_optimal"] is False
+        assert call_kwargs["metadata"]["suggested_pattern"] == "sequential"
 
     @pytest.mark.asyncio
     async def test_feedback_loop_processes_annotations_and_triggers_optimization(
@@ -385,8 +384,8 @@ class TestOrchestrationOptimizationIntegration:
         self, workflow_intelligence, routing_optimizer
     ):
         """Test complete end-to-end orchestration optimization flow with REAL components"""
-        # 1. Create PhoenixOrchestrationEvaluator with REAL WorkflowIntelligence
-        evaluator = PhoenixOrchestrationEvaluator(
+        # 1. Create OrchestrationEvaluator with REAL WorkflowIntelligence
+        evaluator = OrchestrationEvaluator(
             workflow_intelligence=workflow_intelligence,
             tenant_id="test-tenant",
         )
@@ -414,8 +413,8 @@ class TestOrchestrationOptimizationIntegration:
 
         # 3. Evaluate spans (REAL WorkflowIntelligence receives workflows)
         with patch.object(
-            evaluator.phoenix_client,
-            "get_spans_dataframe",
+            evaluator.provider.traces,
+            "get_spans",
             return_value=mock_spans_df,
         ):
             eval_result = await evaluator.evaluate_orchestration_spans()

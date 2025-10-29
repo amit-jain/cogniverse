@@ -5,7 +5,7 @@ Implements all store interfaces using Phoenix AsyncClient.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -37,9 +37,11 @@ class PhoenixTraceStore(TraceStore):
         self.http_endpoint = http_endpoint
         self.tenant_id = tenant_id
         self.project_template = project_template
+        logger.info(f"🔧 PhoenixTraceStore initialized with endpoint: {http_endpoint}")
 
     def _get_client(self) -> AsyncClient:
         """Create AsyncClient for current event loop."""
+        logger.info(f"🔍 Creating Phoenix AsyncClient with endpoint: {self.http_endpoint}")
         return AsyncClient(base_url=self.http_endpoint)
 
     async def get_spans(
@@ -78,11 +80,28 @@ class PhoenixTraceStore(TraceStore):
                 logger.debug(f"No spans found for project {project}")
                 return pd.DataFrame()
 
-            # Apply time filters
+            logger.info(f"🔍 Retrieved {len(spans_df)} spans before time filtering (project={project})")
+            if not spans_df.empty:
+                sample_span_time = spans_df.iloc[0].get("start_time")
+                logger.info(f"🔍 Sample span start_time: {sample_span_time} (type: {type(sample_span_time)})")
+
+            # Apply time filters (make naive datetimes timezone-aware for comparison)
             if start_time is not None and "start_time" in spans_df.columns:
+                # Convert naive datetime to UTC for comparison
+                if start_time.tzinfo is None:
+                    start_time = start_time.replace(tzinfo=timezone.utc)
+                logger.info(f"🔍 Filtering by start_time >= {start_time} (type: {type(start_time)})")
+                spans_before_filter = len(spans_df)
                 spans_df = spans_df[spans_df["start_time"] >= start_time]
+                logger.info(f"🔍 After start_time filter: {len(spans_df)} spans (removed {spans_before_filter - len(spans_df)})")
             if end_time is not None and "end_time" in spans_df.columns:
+                # Convert naive datetime to UTC for comparison
+                if end_time.tzinfo is None:
+                    end_time = end_time.replace(tzinfo=timezone.utc)
+                logger.info(f"🔍 Filtering by end_time <= {end_time}")
+                spans_before_filter = len(spans_df)
                 spans_df = spans_df[spans_df["end_time"] <= end_time]
+                logger.info(f"🔍 After end_time filter: {len(spans_df)} spans (removed {spans_before_filter - len(spans_df)})")
 
             # Apply limit
             if len(spans_df) > limit:
@@ -498,9 +517,20 @@ class PhoenixProvider(TelemetryProvider):
         if not tenant_id:
             raise ValueError("tenant_id required in Phoenix provider config")
 
-        # Extract Phoenix endpoints (provider-specific keys)
-        http_endpoint = config.get("http_endpoint", "http://localhost:6006")
-        grpc_endpoint = config.get("grpc_endpoint", "http://localhost:4317")
+        # Extract Phoenix endpoints (provider-specific keys, both required)
+        http_endpoint = config.get("http_endpoint")
+        if not http_endpoint:
+            raise ValueError(
+                f"http_endpoint required in Phoenix provider config. "
+                f"Got config: {config}"
+            )
+
+        grpc_endpoint = config.get("grpc_endpoint")
+        if not grpc_endpoint:
+            raise ValueError(
+                f"grpc_endpoint required in Phoenix provider config. "
+                f"Got config: {config}"
+            )
 
         # Store config
         self._tenant_id = tenant_id
@@ -529,3 +559,52 @@ class PhoenixProvider(TelemetryProvider):
             f"Initialized Phoenix provider for tenant {tenant_id} "
             f"(http={http_endpoint}, grpc={grpc_endpoint})"
         )
+
+    def configure_span_export(
+        self,
+        endpoint: str,
+        project_name: str,
+        use_batch_export: bool = True,
+    ):
+        """
+        Configure OTLP span export using Phoenix.
+
+        Uses phoenix.otel.register() to create TracerProvider with OTLP export.
+
+        Args:
+            endpoint: OTLP gRPC endpoint (e.g., "localhost:4317")
+            project_name: Full project name for span grouping
+            use_batch_export: Use batch processor (True) vs simple/sync (False)
+
+        Returns:
+            TracerProvider configured for Phoenix OTLP export
+
+        Raises:
+            RuntimeError: If Phoenix OTLP registration fails
+        """
+        try:
+            from phoenix.otel import register
+
+            tracer_provider = register(
+                endpoint=endpoint,
+                project_name=project_name,
+                batch=use_batch_export,
+                protocol="grpc",
+                auto_instrument=False,
+                set_global_tracer_provider=False,
+            )
+
+            mode = "BATCH" if use_batch_export else "SYNC"
+            logger.info(
+                f"Configured Phoenix OTLP span export: {project_name} "
+                f"(endpoint={endpoint}, mode={mode})"
+            )
+            return tracer_provider
+
+        except Exception as e:
+            logger.error(
+                f"Failed to configure Phoenix span export for {project_name}: {e}"
+            )
+            raise RuntimeError(
+                f"Phoenix span export configuration failed: {e}"
+            ) from e

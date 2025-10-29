@@ -9,6 +9,7 @@ Tests for the old interface (analyze_and_route, agent_registry, etc.) are skippe
 
 import pytest
 from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_core.telemetry.config import TelemetryConfig
 
 
 @pytest.mark.unit
@@ -40,7 +41,8 @@ class TestRoutingAgentLegacy:
         """Test RoutingAgent initialization"""
         # RoutingAgent now uses DSPy-based approach and doesn't have system_config/agent_registry
         # Test that basic initialization works
-        agent = RoutingAgent(tenant_id="test_tenant")
+        telemetry_config = TelemetryConfig(enabled=False)
+        agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
 
         assert agent.config is not None
         assert hasattr(agent, "routing_module")

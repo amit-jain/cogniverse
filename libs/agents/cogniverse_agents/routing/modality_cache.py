@@ -97,21 +97,52 @@ class ModalityCacheManager:
         Initialize cache manager
 
         Args:
-            cache_size_per_modality: Max cache size per modality
+            cache_size_per_modality: Max cache size (note: single cache now, not per-modality)
         """
-        # Create separate cache for each modality
-        self.caches = {
-            modality: LRUCache(maxsize=cache_size_per_modality)
-            for modality in QueryModality
-        }
+        # Single cache for all queries
+        self.cache = LRUCache(maxsize=cache_size_per_modality * len(QueryModality))
 
-        # Track cache statistics
+        # Track cache statistics per modality
         self.cache_stats = defaultdict(lambda: {"hits": 0, "misses": 0, "evictions": 0})
 
         logger.info(
             f"💾 Initialized ModalityCacheManager "
-            f"(size_per_modality: {cache_size_per_modality})"
+            f"(total_size: {cache_size_per_modality * len(QueryModality)})"
         )
+
+    def get_cached_result_any_modality(
+        self,
+        query: str,
+        ttl_seconds: int = 3600,
+    ) -> Optional[Any]:
+        """
+        Get cached result with direct O(1) lookup
+
+        Args:
+            query: Query string
+            ttl_seconds: Time-to-live in seconds
+
+        Returns:
+            Cached result if found and fresh, None otherwise
+        """
+        cache_key = self._generate_cache_key(query)
+
+        if cache_key in self.cache:
+            cached_entry = self.cache.get(cache_key)
+
+            # Check TTL
+            if time.time() - cached_entry["timestamp"] < ttl_seconds:
+                modality = cached_entry["modality"]
+                self.cache_stats[modality]["hits"] += 1
+                logger.debug(f"✅ Cache HIT: {modality.value} - {query[:50]}...")
+                return cached_entry["result"]
+            else:
+                # Expired
+                logger.debug(f"⏰ Cache EXPIRED: {query[:50]}...")
+
+        # Not found or expired
+        logger.debug(f"❌ Cache MISS: {query[:50]}...")
+        return None
 
     def get_cached_result(
         self,
@@ -122,24 +153,28 @@ class ModalityCacheManager:
         """
         Get cached result if available and fresh
 
+        Note: This method is for compatibility with code that knows the modality.
+        Most code should use get_cached_result_any_modality() instead.
+
         Args:
             query: Query string
-            modality: Query modality
+            modality: Expected query modality (for stats tracking)
             ttl_seconds: Time-to-live in seconds
 
         Returns:
             Cached result if available and fresh, None otherwise
         """
-        cache_key = self._generate_cache_key(query, modality)
+        cache_key = self._generate_cache_key(query)
 
-        if cache_key in self.caches[modality]:
-            cached_entry = self.caches[modality].get(cache_key)
+        if cache_key in self.cache:
+            cached_entry = self.cache.get(cache_key)
 
             # Check TTL
             if time.time() - cached_entry["timestamp"] < ttl_seconds:
-                self.cache_stats[modality]["hits"] += 1
+                actual_modality = cached_entry["modality"]
+                self.cache_stats[actual_modality]["hits"] += 1
 
-                logger.debug(f"✅ Cache HIT: {modality.value} - {query[:50]}...")
+                logger.debug(f"✅ Cache HIT: {actual_modality.value} - {query[:50]}...")
 
                 return cached_entry["result"]
             else:
@@ -159,43 +194,46 @@ class ModalityCacheManager:
         result: Any,
     ):
         """
-        Store result in modality-specific cache
+        Store result in cache with modality
 
         Args:
             query: Query string
             modality: Query modality
             result: Result to cache
         """
-        cache_key = self._generate_cache_key(query, modality)
+        cache_key = self._generate_cache_key(query)
 
         # Check if we're about to evict
-        if len(self.caches[modality]) >= self.caches[modality].maxsize:
-            if cache_key not in self.caches[modality]:
+        if len(self.cache) >= self.cache.maxsize:
+            if cache_key not in self.cache:
                 self.cache_stats[modality]["evictions"] += 1
 
-        self.caches[modality].put(
+        self.cache.put(
             cache_key,
             {
                 "result": result,
+                "modality": modality,
                 "timestamp": time.time(),
             },
         )
 
         logger.debug(f"💾 Cached: {modality.value} - {query[:50]}...")
 
-    def _generate_cache_key(self, query: str, modality: QueryModality) -> str:
+    def _generate_cache_key(self, query: str) -> str:
         """
-        Generate cache key from query and modality
+        Generate cache key from query only
 
         Args:
             query: Query string
-            modality: Query modality
 
         Returns:
             Cache key (hash)
+
+        Note: Modality is determined by which bucket the result is stored in,
+        not part of the cache key. This allows searching across all buckets.
         """
-        # Create deterministic key from query + modality
-        key_string = f"{modality.value}:{query.lower().strip()}"
+        # Create deterministic key from query only
+        key_string = query.lower().strip()
         return hashlib.sha256(key_string.encode()).hexdigest()
 
     def get_cache_stats(
@@ -221,8 +259,8 @@ class ModalityCacheManager:
                 "misses": stats["misses"],
                 "evictions": stats["evictions"],
                 "hit_rate": hit_rate,
-                "cache_size": len(self.caches[modality]),
-                "cache_capacity": self.caches[modality].maxsize,
+                "cache_size": len(self.cache),  # Total cache size
+                "cache_capacity": self.cache.maxsize,
             }
         else:
             # Aggregate stats for all modalities
@@ -238,14 +276,21 @@ class ModalityCacheManager:
         Args:
             modality: Modality to invalidate
         """
-        self.caches[modality].clear()
-        logger.info(f"🗑️ Invalidated cache for {modality.value}")
+        # Remove entries for this modality
+        keys_to_remove = []
+        for key in list(self.cache.cache.keys()):
+            entry = self.cache.cache[key]
+            if entry["modality"] == modality:
+                keys_to_remove.append(key)
+
+        for key in keys_to_remove:
+            del self.cache.cache[key]
+
+        logger.info(f"🗑️ Invalidated {len(keys_to_remove)} cache entries for {modality.value}")
 
     def invalidate_all(self):
         """Invalidate all caches"""
-        for modality in QueryModality:
-            self.caches[modality].clear()
-
+        self.cache.clear()
         logger.info("🗑️ Invalidated all caches")
 
     def reset_stats(self):

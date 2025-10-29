@@ -30,7 +30,7 @@ from cogniverse_agents.approval.interfaces import (
     ReviewDecision,
     ReviewItem,
 )
-from cogniverse_agents.approval.phoenix_storage import ApprovalStorageImpl
+from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
 from cogniverse_core.config.unified_config import (
     BackendConfig,
     DSPyModuleConfig,
@@ -81,10 +81,10 @@ def phoenix_container():
     import os
 
     # Set environment variables BEFORE any TelemetryManager is created
-    original_endpoint = os.environ.get("PHOENIX_COLLECTOR_ENDPOINT")
+    original_endpoint = os.environ.get("OTLP_ENDPOINT")
     original_sync_export = os.environ.get("TELEMETRY_SYNC_EXPORT")
 
-    os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = "http://localhost:24317"
+    os.environ["OTLP_ENDPOINT"] = "http://localhost:24317"
     os.environ["TELEMETRY_SYNC_EXPORT"] = "true"
 
     # Reset TelemetryManager singleton using reset() class method
@@ -209,9 +209,9 @@ def phoenix_container():
 
         # Restore original environment variables
         if original_endpoint:
-            os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = original_endpoint
+            os.environ["OTLP_ENDPOINT"] = original_endpoint
         else:
-            os.environ.pop("PHOENIX_COLLECTOR_ENDPOINT", None)
+            os.environ.pop("OTLP_ENDPOINT", None)
 
         if original_sync_export:
             os.environ["TELEMETRY_SYNC_EXPORT"] = original_sync_export
@@ -274,7 +274,7 @@ def backend_config():
 def telemetry_manager(phoenix_container):
     """TelemetryManager configured for approval tests"""
     # phoenix_container fixture ensures env vars are set and TelemetryManager singleton is reset
-    # Create TelemetryManager which will read PHOENIX_COLLECTOR_ENDPOINT and TELEMETRY_SYNC_EXPORT
+    # Create TelemetryManager which will read OTLP_ENDPOINT and TELEMETRY_SYNC_EXPORT
     from cogniverse_core.telemetry.manager import TelemetryManager
 
     manager = TelemetryManager()
@@ -289,12 +289,12 @@ def telemetry_manager(phoenix_container):
 
 @pytest.fixture
 def approval_storage(phoenix_container, telemetry_manager):
-    """Phoenix approval storage with proper TelemetryManager integration"""
+    """Approval storage with proper TelemetryManager integration"""
     # Depend on phoenix_container to ensure it's running and env vars are set
     # Depend on telemetry_manager to use proper tenant-scoped span creation
     return ApprovalStorageImpl(
-        phoenix_grpc_endpoint="http://localhost:24317",  # gRPC port for span export
-        phoenix_http_endpoint="http://localhost:26006",  # HTTP port for span queries
+        grpc_endpoint="http://localhost:24317",  # gRPC port for span export
+        http_endpoint="http://localhost:26006",  # HTTP port for span queries
         tenant_id="test-tenant1",
         telemetry_manager=telemetry_manager,
     )

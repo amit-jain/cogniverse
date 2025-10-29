@@ -2,7 +2,7 @@
 Unit tests for Phase 7.5: Orchestration Optimization Components
 
 Tests:
-- PhoenixOrchestrationEvaluator
+- OrchestrationEvaluator
 - OrchestrationAnnotationStorage
 - OrchestrationFeedbackLoop
 - UnifiedOptimizer
@@ -12,25 +12,25 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pandas as pd
 import pytest
+from cogniverse_agents.routing.orchestration_evaluator import (
+    OrchestrationEvaluator,
+)
 from cogniverse_agents.routing.orchestration_feedback_loop import (
     OrchestrationFeedbackLoop,
-)
-from cogniverse_agents.routing.phoenix_orchestration_evaluator import (
-    PhoenixOrchestrationEvaluator,
 )
 from cogniverse_agents.routing.unified_optimizer import UnifiedOptimizer
 from cogniverse_agents.workflow_intelligence import WorkflowExecution
 
 
-class TestPhoenixOrchestrationEvaluator:
-    """Test PhoenixOrchestrationEvaluator span extraction logic"""
+class TestOrchestrationEvaluator:
+    """Test OrchestrationEvaluator span extraction logic"""
 
     def setup_method(self):
         """Set up test fixtures"""
         self.mock_workflow_intelligence = MagicMock()
         self.mock_workflow_intelligence.record_execution = AsyncMock()
 
-        self.evaluator = PhoenixOrchestrationEvaluator(
+        self.evaluator = OrchestrationEvaluator(
             workflow_intelligence=self.mock_workflow_intelligence,
             tenant_id="test-tenant",
         )
@@ -130,15 +130,14 @@ class TestPhoenixOrchestrationEvaluator:
     @pytest.mark.asyncio
     async def test_evaluate_orchestration_spans_empty_dataframe(self):
         """Test evaluation with no spans found"""
-        with patch.object(
-            self.evaluator.phoenix_client, "get_spans_dataframe"
-        ) as mock_get_spans:
-            mock_get_spans.return_value = pd.DataFrame()
+        self.evaluator.provider.traces.get_spans = AsyncMock(
+            return_value=pd.DataFrame()
+        )
 
-            result = await self.evaluator.evaluate_orchestration_spans(lookback_hours=1)
+        result = await self.evaluator.evaluate_orchestration_spans(lookback_hours=1)
 
-            assert result["spans_processed"] == 0
-            assert result["workflows_extracted"] == 0
+        assert result["spans_processed"] == 0
+        assert result["workflows_extracted"] == 0
 
     @pytest.mark.asyncio
     async def test_evaluate_orchestration_spans_processes_valid_spans(self):
@@ -163,16 +162,13 @@ class TestPhoenixOrchestrationEvaluator:
             ]
         )
 
-        with patch.object(
-            self.evaluator.phoenix_client, "get_spans_dataframe"
-        ) as mock_get_spans:
-            mock_get_spans.return_value = spans_df
+        self.evaluator.provider.traces.get_spans = AsyncMock(return_value=spans_df)
 
-            result = await self.evaluator.evaluate_orchestration_spans()
+        result = await self.evaluator.evaluate_orchestration_spans()
 
-            assert result["spans_processed"] == 1
-            assert result["workflows_extracted"] == 1
-            self.mock_workflow_intelligence.record_execution.assert_called_once()
+        assert result["spans_processed"] == 1
+        assert result["workflows_extracted"] == 1
+        self.mock_workflow_intelligence.record_execution.assert_called_once()
 
 
 class TestOrchestrationFeedbackLoop:

@@ -10,6 +10,7 @@ Tests the complete orchestration workflow:
 
 import pytest
 from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
 
 
 @pytest.mark.asyncio
@@ -26,7 +27,12 @@ class TestOrchestrationEndToEnd:
             base_url="http://localhost:11434",
             confidence_threshold=0.7,
         )
-        agent = RoutingAgent(tenant_id="test-tenant", config=config)
+        telemetry_config = TelemetryConfig(
+            otlp_endpoint="http://localhost:24317",
+            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        agent = RoutingAgent(tenant_id="test-tenant", config=config, telemetry_config=telemetry_config)
         yield agent
 
     async def test_multi_modal_query_triggers_orchestration(self, routing_agent):
@@ -162,7 +168,12 @@ class TestRoutingDecisions:
             base_url="http://localhost:11434",
             confidence_threshold=0.7,
         )
-        agent = RoutingAgent(tenant_id="test-tenant", config=config)
+        telemetry_config = TelemetryConfig(
+            otlp_endpoint="http://localhost:24317",
+            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        agent = RoutingAgent(tenant_id="test-tenant", config=config, telemetry_config=telemetry_config)
 
         result = await agent.route_query(
             "Find videos and documents about AI",
@@ -181,7 +192,12 @@ class TestRoutingDecisions:
             base_url="http://localhost:11434",
             confidence_threshold=0.7,
         )
-        agent = RoutingAgent(tenant_id="test-tenant", config=config)
+        telemetry_config = TelemetryConfig(
+            otlp_endpoint="http://localhost:24317",
+            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        agent = RoutingAgent(tenant_id="test-tenant", config=config, telemetry_config=telemetry_config)
 
         result = await agent.route_query(
             "Summarize this content",
@@ -200,7 +216,12 @@ class TestRoutingDecisions:
             base_url="http://localhost:11434",
             confidence_threshold=0.7,
         )
-        agent = RoutingAgent(tenant_id="test-tenant", config=config)
+        telemetry_config = TelemetryConfig(
+            otlp_endpoint="http://localhost:24317",
+            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        agent = RoutingAgent(tenant_id="test-tenant", config=config, telemetry_config=telemetry_config)
 
         result = await agent.route_query(
             "Provide detailed analysis of this topic",

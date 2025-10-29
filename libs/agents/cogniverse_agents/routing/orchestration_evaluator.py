@@ -1,31 +1,34 @@
 """
-Phoenix Orchestration Evaluator for Workflow Optimization
+Orchestration Evaluator for Workflow Optimization
 
-Extracts orchestration workflow execution data from Phoenix telemetry spans
+Extracts orchestration workflow execution data from telemetry spans
 and feeds them to WorkflowIntelligence for continuous learning.
 """
 
 import logging
-from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
-import phoenix as px
-from cogniverse_core.telemetry.config import SPAN_NAME_ORCHESTRATION, TelemetryConfig
+from cogniverse_core.telemetry.config import SPAN_NAME_ORCHESTRATION
+from cogniverse_core.telemetry.manager import get_telemetry_manager
 
 from cogniverse_agents.workflow_intelligence import (
     WorkflowExecution,
     WorkflowIntelligence,
 )
 
+if TYPE_CHECKING:
+    from cogniverse_core.telemetry.providers.base import TelemetryProvider
+
 logger = logging.getLogger(__name__)
 
 
-class PhoenixOrchestrationEvaluator:
+class OrchestrationEvaluator:
     """
-    Evaluates Phoenix orchestration spans to extract workflow execution data
+    Evaluates orchestration spans to extract workflow execution data
 
     This class:
-    1. Queries cogniverse.orchestration spans from Phoenix
+    1. Queries cogniverse.orchestration spans from telemetry
     2. Extracts workflow execution metrics (pattern, agents, timing, success)
     3. Computes quality metrics (parallel efficiency, agent performance)
     4. Feeds WorkflowExecution records to WorkflowIntelligence
@@ -40,14 +43,17 @@ class PhoenixOrchestrationEvaluator:
 
         Args:
             workflow_intelligence: Workflow optimizer to feed experiences to
-            tenant_id: Tenant identifier for multi-tenant Phoenix projects
+            tenant_id: Tenant identifier for multi-tenant projects
         """
         self.workflow_intelligence = workflow_intelligence
         self.tenant_id = tenant_id
-        self.telemetry_config = TelemetryConfig.from_env()
 
-        # Initialize Phoenix client
-        self.phoenix_client = px.Client()
+        # Get telemetry manager and use its config (shared singleton config)
+        telemetry_manager = get_telemetry_manager()
+        self.telemetry_config = telemetry_manager.config
+        self.provider: "TelemetryProvider" = telemetry_manager.get_provider(
+            tenant_id=tenant_id
+        )
 
         # Get project name for orchestration spans
         self.project_name = self.telemetry_config.get_project_name(
@@ -59,7 +65,7 @@ class PhoenixOrchestrationEvaluator:
         self._last_evaluation_time = datetime.now()
 
         logger.info(
-            f"🔧 Initialized PhoenixOrchestrationEvaluator for tenant '{tenant_id}' "
+            f"🔧 Initialized OrchestrationEvaluator for tenant '{tenant_id}' "
             f"(project: {self.project_name})"
         )
 
@@ -82,17 +88,19 @@ class PhoenixOrchestrationEvaluator:
         )
 
         # Query cogniverse.orchestration spans
-        end_time = datetime.now()
+        # Use UTC timezone-aware datetime to avoid timezone confusion
+        end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(hours=lookback_hours)
 
         try:
-            spans_df = self.phoenix_client.get_spans_dataframe(
-                project_name=self.project_name,
+            spans_df = await self.provider.traces.get_spans(
+                project=self.project_name,
                 start_time=start_time,
                 end_time=end_time,
+                limit=10000,
             )
         except Exception as e:
-            logger.error(f"❌ Error querying Phoenix spans: {e}")
+            logger.error(f"❌ Error querying telemetry spans: {e}")
             return {
                 "spans_processed": 0,
                 "workflows_extracted": 0,

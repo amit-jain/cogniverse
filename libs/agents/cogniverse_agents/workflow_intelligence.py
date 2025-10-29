@@ -234,11 +234,16 @@ class WorkflowIntelligence:
     def _initialize_persistence(self) -> None:
         """Initialize SQLite persistence for workflow history"""
         try:
-            self.db_connection = sqlite3.connect(
-                "workflow_intelligence.db", check_same_thread=False
-            )
+            from cogniverse_core.common.utils.output_manager import get_output_manager
+
+            # Get output directory from config-based OutputManager
+            output_manager = get_output_manager()
+            db_dir = output_manager.get_path("data")  # databases go in outputs/data/
+            db_path = db_dir / "workflow_intelligence.db"
+
+            self.db_connection = sqlite3.connect(str(db_path), check_same_thread=False)
             self._create_tables()
-            self.logger.info("Workflow intelligence persistence initialized")
+            self.logger.info(f"Workflow intelligence persistence initialized: {db_path}")
 
         except Exception as e:
             self.logger.error(f"Failed to initialize persistence: {e}")
@@ -1131,7 +1136,7 @@ class WorkflowIntelligence:
         """
         Record workflow execution directly from orchestration spans
 
-        This is called by PhoenixOrchestrationEvaluator to feed real
+        This is called by OrchestrationEvaluator to feed real
         orchestration outcomes into the learning system.
         """
         try:
@@ -1205,7 +1210,6 @@ class WorkflowIntelligence:
         from cogniverse_synthetic import (
             SyntheticDataRequest,
             SyntheticDataService,
-            WorkflowExecutionSchema,
         )
 
         self.logger.info(f"🔄 Generating {count} synthetic workflow examples...")

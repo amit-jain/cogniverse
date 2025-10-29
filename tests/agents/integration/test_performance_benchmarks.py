@@ -26,6 +26,7 @@ from cogniverse_agents.routing.relationship_extraction_tools import (
 )
 from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_agents.summarizer_agent import SummarizerAgent
+from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
 
 
 @pytest.mark.integration
@@ -91,7 +92,12 @@ class TestPerformanceBenchmarks:
                 "detailed_report_agent_url": "http://localhost:8004",
             }
 
-            routing_agent = RoutingAgent(tenant_id="test_tenant")
+            telemetry_config = TelemetryConfig(
+                otlp_endpoint="http://localhost:24317",
+                provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+                batch_config=BatchExportConfig(use_sync_export=True),
+            )
+            routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
 
             test_queries = [
                 "Find videos of robots",
@@ -253,7 +259,12 @@ class TestPerformanceBenchmarks:
         print(f"Initial memory usage: {initial_memory:.1f} MB")
 
         # Pre-initialize components to get baseline after model loading
-        routing_agent = RoutingAgent(tenant_id="test_tenant")
+        telemetry_config = TelemetryConfig(
+            otlp_endpoint="http://localhost:24317",
+            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
         extractor = RelationshipExtractorTool()
 
         # Do one warmup operation to load models
@@ -346,7 +357,12 @@ class TestPerformanceBenchmarks:
                 "detailed_report_agent_url": "http://localhost:8004",
             }
 
-            routing_agent = RoutingAgent(tenant_id="test_tenant")
+            telemetry_config = TelemetryConfig(
+                otlp_endpoint="http://localhost:24317",
+                provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+                batch_config=BatchExportConfig(use_sync_export=True),
+            )
+            routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
 
             # Generate concurrent queries
             num_concurrent = 5

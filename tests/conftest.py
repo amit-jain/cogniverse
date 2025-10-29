@@ -2,11 +2,16 @@
 
 import gc
 import os
+import shutil
 import sys
+import tempfile
 import threading
 import time
+from pathlib import Path
 
 import pytest
+
+from tests.utils.async_polling import simulate_processing_delay
 
 # Configure torch and tokenizers to avoid threading issues in pytest
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -139,12 +144,42 @@ def cleanup_vlm_state():
         pass
 
 
+@pytest.fixture(autouse=True, scope="session")
+def test_output_dir():
+    """
+    Configure output directory for test artifacts (logs, databases, etc.).
+
+    Overrides config's output_base_dir to use temporary directory.
+    Automatically cleans up after test session completes.
+    """
+    # Create temp directory for all test artifacts
+    temp_dir = tempfile.mkdtemp(prefix="cogniverse_test_")
+    artifacts_dir = Path(temp_dir)
+
+    # Override config's output_base_dir for tests
+    # OutputManager reads from config.get("output_base_dir", "outputs")
+    os.environ["TEST_OUTPUT_BASE_DIR"] = str(artifacts_dir)
+
+    print(f"\n🗂️  Test output directory: {artifacts_dir}")
+
+    yield artifacts_dir
+
+    # Cleanup: Remove entire test output directory
+    try:
+        shutil.rmtree(artifacts_dir, ignore_errors=True)
+        print(f"\n🧹 Cleaned up test artifacts: {artifacts_dir}")
+    except Exception as e:
+        print(f"\n⚠️  Failed to cleanup {artifacts_dir}: {e}")
+    finally:
+        os.environ.pop("TEST_OUTPUT_BASE_DIR", None)
+
+
 @pytest.fixture(autouse=True, scope="function")
 def cleanup_environment():
     """Clean up environment variables that might pollute tests"""
     # Save current environment
     saved_env = {}
-    env_vars_to_track = ["VESPA_SCHEMA", "MLFLOW_TRACKING_URI", "PHOENIX_COLLECTOR_ENDPOINT"]
+    env_vars_to_track = ["VESPA_SCHEMA", "MLFLOW_TRACKING_URI", "OTLP_ENDPOINT"]
     for var in env_vars_to_track:
         if var in os.environ:
             saved_env[var] = os.environ[var]
@@ -157,3 +192,211 @@ def cleanup_environment():
             os.environ[var] = saved_env[var]
         elif var in os.environ:
             del os.environ[var]
+
+
+@pytest.fixture
+def telemetry_manager_without_phoenix():
+    """
+    Standard telemetry manager fixture for tests that don't need real Phoenix.
+
+    Sets up telemetry with mock endpoints - tests can use real telemetry components
+    without connecting to Phoenix. Use this for unit and integration tests that
+    just need telemetry configured but don't export/query real spans.
+    """
+    import cogniverse_core.telemetry.manager as telemetry_manager_module
+    from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
+    from cogniverse_core.telemetry.manager import TelemetryManager
+    from cogniverse_core.telemetry.registry import get_telemetry_registry
+
+    # Reset TelemetryManager singleton AND clear provider cache
+    TelemetryManager.reset()
+    get_telemetry_registry().clear_cache()
+
+    # Create config with mock endpoints (tests don't actually connect)
+    config = TelemetryConfig(
+        otlp_endpoint="http://localhost:24317",  # gRPC endpoint for span export
+        provider_config={
+            "http_endpoint": "http://localhost:26006",  # HTTP endpoint for queries
+            "grpc_endpoint": "http://localhost:24317",  # gRPC endpoint (same as OTLP)
+        },
+        batch_config=BatchExportConfig(use_sync_export=True),  # Synchronous export for tests
+    )
+
+    # Set as the global singleton
+    manager = TelemetryManager(config=config)
+    telemetry_manager_module._telemetry_manager = manager
+
+    yield manager
+
+    # Cleanup
+    TelemetryManager.reset()
+    get_telemetry_registry().clear_cache()
+
+
+@pytest.fixture(scope="module")
+def phoenix_container():
+    """
+    Start Phoenix Docker container with gRPC support for integration tests.
+
+    Uses non-default ports to avoid conflicts:
+    - HTTP: 16006 (instead of 6006)
+    - gRPC: 14317 (instead of 4317)
+
+    Sets OTLP_ENDPOINT env var for tests and resets TelemetryManager.
+    """
+    import subprocess
+
+    import requests
+    from cogniverse_core.telemetry.manager import TelemetryManager
+
+    original_endpoint = os.environ.get("OTLP_ENDPOINT")
+    original_sync_export = os.environ.get("TELEMETRY_SYNC_EXPORT")
+
+    # Set environment for tests
+    os.environ["OTLP_ENDPOINT"] = "http://localhost:14317"
+    os.environ["TELEMETRY_SYNC_EXPORT"] = "true"
+
+    # Reset TelemetryManager to pick up new env vars
+    TelemetryManager.reset()
+
+    container_name = f"phoenix_test_{int(time.time() * 1000)}"
+
+    try:
+        # Start Phoenix container
+        subprocess.run(
+            [
+                "docker",
+                "run",
+                "-d",
+                "--name",
+                container_name,
+                "-p",
+                "16006:6006",  # HTTP port
+                "-p",
+                "14317:4317",  # gRPC port
+                "-e",
+                "PHOENIX_WORKING_DIR=/phoenix",
+                "arizephoenix/phoenix:latest",
+            ],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+
+        # Wait for Phoenix to be ready
+        max_wait_time = 60
+        poll_interval = 2
+        start_time = time.time()
+        phoenix_ready = False
+
+        while time.time() - start_time < max_wait_time:
+            try:
+                response = requests.get("http://localhost:16006", timeout=2)
+                if response.status_code == 200:
+                    phoenix_ready = True
+                    break
+            except Exception:
+                pass
+            time.sleep(poll_interval)
+
+        if not phoenix_ready:
+            logs_result = subprocess.run(
+                ["docker", "logs", container_name],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            raise RuntimeError(
+                f"Phoenix failed to start after {max_wait_time} seconds. Logs:\n{logs_result.stdout}\n{logs_result.stderr}"
+            )
+
+        yield container_name
+
+    finally:
+        # Cleanup
+        try:
+            subprocess.run(
+                ["docker", "stop", container_name],
+                check=False,
+                capture_output=True,
+                timeout=30,
+            )
+            subprocess.run(
+                ["docker", "rm", container_name],
+                check=False,
+                capture_output=True,
+                timeout=10,
+            )
+        except Exception:
+            try:
+                subprocess.run(
+                    ["docker", "rm", "-f", container_name],
+                    check=False,
+                    capture_output=True,
+                    timeout=10,
+                )
+            except Exception:
+                pass
+
+        # Restore environment
+        if original_endpoint:
+            os.environ["OTLP_ENDPOINT"] = original_endpoint
+        else:
+            os.environ.pop("OTLP_ENDPOINT", None)
+
+        if original_sync_export:
+            os.environ["TELEMETRY_SYNC_EXPORT"] = original_sync_export
+        else:
+            os.environ.pop("TELEMETRY_SYNC_EXPORT", None)
+
+
+@pytest.fixture
+def phoenix_client(phoenix_container):
+    """Phoenix client for querying spans from Docker container"""
+    import phoenix as px
+
+    return px.Client(endpoint="http://localhost:16006")
+
+
+@pytest.fixture
+def telemetry_config_with_phoenix(phoenix_container):
+    """
+    Telemetry config for tests using real Phoenix Docker container.
+
+    Depends on phoenix_container to ensure env vars are set.
+    """
+    from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
+
+    otlp_endpoint = os.getenv("OTLP_ENDPOINT", "localhost:4317")
+    config = TelemetryConfig(
+        otlp_endpoint=otlp_endpoint,
+        provider_config={
+            "http_endpoint": "http://localhost:16006",
+            "grpc_endpoint": "http://localhost:14317",
+        },
+        batch_config=BatchExportConfig(use_sync_export=True),
+    )
+    return config
+
+
+@pytest.fixture
+def telemetry_manager_with_phoenix(telemetry_config_with_phoenix):
+    """
+    Telemetry manager for tests using real Phoenix Docker container.
+
+    Sets up telemetry manager as global singleton for the test.
+    """
+    import cogniverse_core.telemetry.manager as telemetry_manager_module
+    from cogniverse_core.telemetry.manager import TelemetryManager
+    from cogniverse_core.telemetry.registry import get_telemetry_registry
+
+    TelemetryManager.reset()
+    get_telemetry_registry().clear_cache()
+
+    manager = TelemetryManager(config=telemetry_config_with_phoenix)
+    telemetry_manager_module._telemetry_manager = manager
+
+    yield manager
+
+    TelemetryManager.reset()
+    get_telemetry_registry().clear_cache()

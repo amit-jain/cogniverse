@@ -2,6 +2,9 @@
 Pytest configuration for synthetic optimizer integration tests
 """
 
+import subprocess
+
+import dspy
 import pytest
 from cogniverse_core.config.unified_config import (
     AgentMappingRule,
@@ -10,6 +13,32 @@ from cogniverse_core.config.unified_config import (
     OptimizerGenerationConfig,
     SyntheticGeneratorConfig,
 )
+
+
+def is_ollama_available():
+    """Check if Ollama is available"""
+    try:
+        result = subprocess.run(
+            ["ollama", "list"], capture_output=True, text=True, timeout=5
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+@pytest.fixture(autouse=True)
+def dspy_lm():
+    """Configure DSPy with real Ollama LM for integration tests"""
+    if not is_ollama_available():
+        pytest.skip("Ollama not available - required for integration tests")
+
+    lm = dspy.LM(
+        model="ollama/gemma3:4b",
+        api_base="http://localhost:11434",
+    )
+    dspy.configure(lm=lm)
+    yield lm
+    dspy.configure(lm=None)
 
 
 @pytest.fixture

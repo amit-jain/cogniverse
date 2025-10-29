@@ -24,6 +24,7 @@ from cogniverse_agents.dspy_agent_optimizer import (
 from cogniverse_agents.query_analysis_tool_v3 import QueryAnalysisToolV3
 from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_agents.summarizer_agent import SummarizerAgent
+from cogniverse_core.telemetry.config import TelemetryConfig
 
 # Configure logging for tests
 logging.basicConfig(level=logging.INFO)
@@ -155,7 +156,8 @@ class TestRealAgentRoutingIntegration:
              patch.object(RoutingAgent, "_configure_dspy", return_value=None), \
              patch("cogniverse_agents.dspy_a2a_agent_base.FastAPI"), \
              patch("cogniverse_agents.dspy_a2a_agent_base.A2AClient"):
-            routing_agent = RoutingAgent(tenant_id="test_tenant", port=8001, enable_telemetry=False)
+            telemetry_config = TelemetryConfig(enabled=False)
+            routing_agent = RoutingAgent(tenant_id="test_tenant", port=8001, telemetry_config=telemetry_config)
 
         # Test routing decisions for different query types
         test_cases = [
@@ -449,7 +451,8 @@ class TestRealEndToEndWorkflow:
         with patch.object(RoutingAgent, "_configure_dspy", return_value=None), \
              patch("cogniverse_agents.dspy_a2a_agent_base.FastAPI"), \
              patch("cogniverse_agents.dspy_a2a_agent_base.A2AClient"):
-            routing_agent = RoutingAgent(tenant_id="test_tenant", port=8001, enable_telemetry=False)
+            telemetry_config = TelemetryConfig(enabled=False)
+            routing_agent = RoutingAgent(tenant_id="test_tenant", port=8001, telemetry_config=telemetry_config)
             summarizer = SummarizerAgent(tenant_id="test_tenant")
 
             # Test complete workflow

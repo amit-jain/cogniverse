@@ -11,6 +11,8 @@ import time
 
 import pytest
 
+from tests.utils.async_polling import simulate_processing_delay
+
 # Configure torch and tokenizers to avoid threading issues in pytest
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -74,3 +76,36 @@ def cleanup_after_test():
     yield
     # Clean up background threads after each test
     cleanup_background_threads()
+
+
+# Import standardized telemetry and Phoenix fixtures from parent conftest
+# Note: Due to pytest.ini testpaths configuration, we need to import these here
+# rather than relying on parent conftest.py discovery
+import sys
+from pathlib import Path
+
+# Add parent tests directory to path to import from tests/conftest.py
+parent_tests_dir = Path(__file__).parent.parent
+if str(parent_tests_dir) not in sys.path:
+    sys.path.insert(0, str(parent_tests_dir))
+
+# Import fixtures from tests/conftest.py (not root conftest.py)
+# Use absolute import to avoid confusion with root conftest.py
+sys.path.insert(0, str(parent_tests_dir.parent))  # Add project root
+
+# Import Phoenix fixtures from parent tests/conftest.py
+from tests.conftest import (
+    phoenix_client,
+    phoenix_container,
+    telemetry_config_with_phoenix,
+    telemetry_manager_with_phoenix,
+    telemetry_manager_without_phoenix,
+)
+
+__all__ = [
+    "phoenix_client",
+    "phoenix_container",
+    "telemetry_config_with_phoenix",
+    "telemetry_manager_with_phoenix",
+    "telemetry_manager_without_phoenix",
+]

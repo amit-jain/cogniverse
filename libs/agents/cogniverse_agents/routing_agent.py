@@ -21,7 +21,10 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from cogniverse_core.telemetry.config import TelemetryConfig
 
 # DSPy 3.0 imports
 import dspy
@@ -59,7 +62,10 @@ from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementP
 from cogniverse_agents.routing.relationship_extraction_tools import (
     RelationshipExtractorTool,
 )
-from cogniverse_agents.search.multi_modal_reranker import MultiModalReranker
+from cogniverse_agents.search.multi_modal_reranker import (
+    MultiModalReranker,
+    QueryModality,
+)
 
 # A2A protocol imports
 
@@ -177,18 +183,18 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
     def __init__(
         self,
         tenant_id: str,
+        telemetry_config: "TelemetryConfig",
         config: Optional[RoutingConfig] = None,
         port: int = 8001,
-        enable_telemetry: bool = True,
     ):
         """
         Initialize Routing Agent
 
         Args:
-            tenant_id: Tenant identifier (REQUIRED - no default)
+            tenant_id: Tenant identifier (REQUIRED)
+            telemetry_config: Telemetry configuration (REQUIRED)
             config: Routing configuration
             port: A2A server port
-            enable_telemetry: Enable telemetry tracking
 
         Raises:
             ValueError: If tenant_id is empty or None
@@ -198,10 +204,8 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
 
         self.config = config or RoutingConfig()
+        self.telemetry_config = telemetry_config
         self.logger = logging.getLogger(__name__)
-
-        # Set telemetry flag BEFORE initializing production components
-        self.enable_telemetry = enable_telemetry
 
         # Initialize DSPy 3.0 with local SmolLM
         self._configure_dspy()
@@ -391,11 +395,9 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         """Initialize production-ready components from RoutingAgent"""
         try:
             # Initialize telemetry manager
-            if self.enable_telemetry:
-                from cogniverse_core.telemetry.config import TelemetryConfig
+            if self.telemetry_config.enabled:
                 from cogniverse_core.telemetry.manager import TelemetryManager
-                telemetry_config = TelemetryConfig()
-                self.telemetry_manager = TelemetryManager(config=telemetry_config)
+                self.telemetry_manager = TelemetryManager(config=self.telemetry_config)
                 self.logger.info("📊 Telemetry manager initialized")
             else:
                 self.telemetry_manager = None
@@ -526,6 +528,23 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
 
         return capabilities
 
+    def _agent_to_modality(self, agent_name: str) -> QueryModality:
+        """
+        Map agent name to its corresponding modality.
+
+        Uses the routing decision to determine modality, not keywords.
+        """
+        agent_modality_map = {
+            "video_search_agent": QueryModality.VIDEO,
+            "document_agent": QueryModality.DOCUMENT,
+            "document_search_agent": QueryModality.DOCUMENT,
+            "image_search_agent": QueryModality.IMAGE,
+            "audio_search_agent": QueryModality.AUDIO,
+            "summarizer_agent": QueryModality.TEXT,
+            "detailed_report_agent": QueryModality.TEXT,
+        }
+        return agent_modality_map.get(agent_name, QueryModality.TEXT)
+
     async def route_query(
         self,
         query: str,
@@ -549,7 +568,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
             span_context = self.telemetry_manager.span(
                 "cogniverse.routing",
                 tenant_id=user_id or "unknown",
-                service_name=SERVICE_NAME_ORCHESTRATION  # Use orchestration service for routing spans
+                project_name=SERVICE_NAME_ORCHESTRATION  # Use orchestration project for routing spans
             )
         else:
             self.logger.debug("No telemetry manager available, using nullcontext")
@@ -563,14 +582,10 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
             else:
                 self.logger.warning("Span context returned None - no telemetry span created")
             try:
-                # Check cache first (if enabled)
+                # Check cache first by searching all modality buckets (if enabled)
                 if self.cache_manager:
-                    from cogniverse_agents.search.multi_modal_reranker import (
-                        QueryModality,
-                    )
-                    cached_decision = self.cache_manager.get_cached_result(
+                    cached_decision = self.cache_manager.get_cached_result_any_modality(
                         query=query,
-                        modality=QueryModality.TEXT,  # Use TEXT as default for routing
                         ttl_seconds=self.config.cache_ttl_seconds
                     )
                     if cached_decision:
@@ -656,24 +671,21 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
                 # Update statistics
                 self._update_routing_stats(decision)
 
+                # Map recommended agent to modality for caching and metrics
+                agent_modality = self._agent_to_modality(decision.recommended_agent)
+
                 # Cache the decision (if enabled)
                 if self.cache_manager:
-                    from cogniverse_agents.search.multi_modal_reranker import (
-                        QueryModality,
-                    )
                     self.cache_manager.cache_result(
                         query=query,
-                        modality=QueryModality.TEXT,
+                        modality=agent_modality,
                         result=decision
                     )
 
                 # Track metrics (if enabled)
                 if self.metrics_tracker:
-                    from cogniverse_agents.search.multi_modal_reranker import (
-                        QueryModality,
-                    )
                     self.metrics_tracker.record_modality_execution(
-                        modality=QueryModality.TEXT,
+                        modality=agent_modality,
                         latency_ms=(datetime.now() - start_time).total_seconds() * 1000,
                         success=True
                     )

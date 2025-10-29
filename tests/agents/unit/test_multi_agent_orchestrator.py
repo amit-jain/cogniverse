@@ -20,7 +20,7 @@ class TestWorkflowPlannerSignature:
     """Test DSPy signature for workflow planning"""
 
     @pytest.mark.ci_fast
-    def test_workflow_planner_signature_structure(self):
+    def test_workflow_planner_signature_structure(self, telemetry_manager_without_phoenix):
         """Test WorkflowPlannerSignature has correct DSPy structure"""
         signature = WorkflowPlannerSignature
 
@@ -42,7 +42,7 @@ class TestResultAggregatorSignature:
     """Test DSPy signature for result aggregation"""
 
     @pytest.mark.ci_fast
-    def test_result_aggregator_signature_structure(self):
+    def test_result_aggregator_signature_structure(self, telemetry_manager_without_phoenix):
         """Test ResultAggregatorSignature has correct DSPy structure"""
         signature = ResultAggregatorSignature
 
@@ -97,7 +97,7 @@ class TestMultiAgentOrchestrator:
     @patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence")
     @pytest.mark.ci_fast
     def test_orchestrator_initialization_default(
-        self, mock_workflow_intel, mock_a2a, mock_routing
+        self, mock_workflow_intel, mock_a2a, mock_routing, telemetry_manager_without_phoenix
     ):
         """Test MultiAgentOrchestrator initialization with defaults"""
         mock_routing_instance = Mock()
@@ -107,7 +107,7 @@ class TestMultiAgentOrchestrator:
         mock_workflow_intel_instance = Mock()
         mock_workflow_intel.return_value = mock_workflow_intel_instance
 
-        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant")
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
 
         # Check initialization
         assert orchestrator.routing_agent == mock_routing_instance
@@ -129,14 +129,13 @@ class TestMultiAgentOrchestrator:
     @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")
     @pytest.mark.ci_fast
     def test_orchestrator_initialization_custom_config(
-        self, mock_a2a, mock_routing, sample_agents_config
+        self, mock_a2a, mock_routing, sample_agents_config, telemetry_manager_without_phoenix
     ):
         """Test MultiAgentOrchestrator with custom configuration"""
         mock_routing_instance = Mock()
         mock_routing.return_value = mock_routing_instance
 
-        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", 
-            available_agents=sample_agents_config,
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config, available_agents=sample_agents_config,
             max_parallel_tasks=5,
             workflow_timeout_minutes=20,
             enable_workflow_intelligence=False,
@@ -152,9 +151,9 @@ class TestMultiAgentOrchestrator:
     @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")
     @patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence")
     @pytest.mark.ci_fast
-    def test_get_default_agents(self, mock_workflow_intel, mock_a2a, mock_routing):
+    def test_get_default_agents(self, mock_workflow_intel, mock_a2a, mock_routing, telemetry_manager_without_phoenix):
         """Test default agent configuration"""
-        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant")
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
 
         default_agents = orchestrator._get_default_agents()
 
@@ -171,9 +170,9 @@ class TestMultiAgentOrchestrator:
     @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
     @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")
     @patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence")
-    def test_initialize_dspy_modules(self, mock_workflow_intel, mock_a2a, mock_routing):
+    def test_initialize_dspy_modules(self, mock_workflow_intel, mock_a2a, mock_routing, telemetry_manager_without_phoenix):
         """Test DSPy module initialization"""
-        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant")
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
 
         # DSPy modules should be initialized
         assert hasattr(orchestrator, "workflow_planner")
@@ -184,12 +183,12 @@ class TestMultiAgentOrchestrator:
     @patch("cogniverse_agents.multi_agent_orchestrator.create_workflow_intelligence")
     @pytest.mark.asyncio
     async def test_process_complex_query_basic(
-        self, mock_workflow_intel, mock_a2a, mock_routing, mock_routing_agent
+        self, mock_workflow_intel, mock_a2a, mock_routing, mock_routing_agent, telemetry_manager_without_phoenix
     ):
         """Test basic complex query processing"""
         mock_routing.return_value = mock_routing_agent
 
-        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant")
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
 
         # Mock workflow intelligence
         mock_workflow_intel_instance = Mock()
@@ -227,7 +226,7 @@ class TestMultiAgentOrchestratorWorkflowExecution:
     """Test workflow execution functionality"""
 
     @pytest.fixture
-    def orchestrator_with_mocks(self):
+    def orchestrator_with_mocks(self, telemetry_manager_without_phoenix):
         """Create orchestrator with mocked dependencies"""
         with (
             patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent"),
@@ -237,7 +236,7 @@ class TestMultiAgentOrchestratorWorkflowExecution:
             ),
         ):
 
-            orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", enable_workflow_intelligence=False)
+            orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config, enable_workflow_intelligence=False)
             return orchestrator
 
     def test_create_fallback_workflow_plan_structure(self, orchestrator_with_mocks):
@@ -296,10 +295,10 @@ class TestMultiAgentOrchestratorEdgeCases:
     @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
     @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")
     def test_orchestrator_with_disabled_workflow_intelligence(
-        self, mock_a2a, mock_routing
+        self, mock_a2a, mock_routing, telemetry_manager_without_phoenix
     ):
         """Test orchestrator when workflow intelligence is disabled"""
-        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", enable_workflow_intelligence=False)
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config, enable_workflow_intelligence=False)
 
         assert orchestrator.enable_workflow_intelligence is False
         assert orchestrator.workflow_intelligence is None
@@ -307,9 +306,9 @@ class TestMultiAgentOrchestratorEdgeCases:
     @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
     @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")
     @pytest.mark.ci_fast
-    def test_orchestrator_agent_utilization_tracking(self, mock_a2a, mock_routing):
+    def test_orchestrator_agent_utilization_tracking(self, mock_a2a, mock_routing, telemetry_manager_without_phoenix):
         """Test agent utilization statistics"""
-        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", enable_workflow_intelligence=False)
+        orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config, enable_workflow_intelligence=False)
 
         # Test that agent utilization dict is initialized
         stats = orchestrator.orchestration_stats["agent_utilization"]
@@ -322,13 +321,13 @@ class TestCrossModalFusion:
     """Test cross-modal fusion functionality"""
 
     @pytest.fixture
-    def orchestrator(self):
+    def orchestrator(self, telemetry_manager_without_phoenix):
         """Create orchestrator for testing fusion"""
         with (
             patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent"),
             patch("cogniverse_agents.multi_agent_orchestrator.A2AClient"),
         ):
-            return MultiAgentOrchestrator(tenant_id="test_tenant", enable_workflow_intelligence=False)
+            return MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config, enable_workflow_intelligence=False)
 
     @pytest.fixture
     def sample_task_results(self):
@@ -645,7 +644,7 @@ class TestFusionStrategyEnum:
     """Test FusionStrategy enum"""
 
     @pytest.mark.ci_fast
-    def test_fusion_strategy_values(self):
+    def test_fusion_strategy_values(self, telemetry_manager_without_phoenix):
         """Test FusionStrategy enum values"""
         assert FusionStrategy.SCORE_BASED.value == "score"
         assert FusionStrategy.TEMPORAL.value == "temporal"
@@ -654,7 +653,7 @@ class TestFusionStrategyEnum:
         assert FusionStrategy.SIMPLE.value == "simple"
 
     @pytest.mark.ci_fast
-    def test_fusion_strategy_members(self):
+    def test_fusion_strategy_members(self, telemetry_manager_without_phoenix):
         """Test FusionStrategy enum has all expected members"""
         strategies = [s.value for s in FusionStrategy]
         assert "score" in strategies

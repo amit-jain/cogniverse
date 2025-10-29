@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import requests
-
 from cogniverse_core.config.utils import get_config
 
 from .base_provider import ArtifactProvider, ModelProvider, ProviderFactory

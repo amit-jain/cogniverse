@@ -13,8 +13,8 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-import phoenix as px
 import xgboost as xgb
+from cogniverse_core.telemetry.manager import get_telemetry_manager
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
@@ -110,38 +110,45 @@ class ProfilePerformanceOptimizer:
             avg_word_length=np.mean([len(w) for w in words]) if words else 0.0
         )
     
-    def extract_training_data_from_phoenix(
+    async def extract_training_data_from_phoenix(
         self,
-        phoenix_client: px.Client,
+        tenant_id: str,
+        project_name: str,
         start_time=None,
         end_time=None,
         min_samples: int = 10
     ) -> Tuple[np.ndarray, np.ndarray, List[str]]:
         """
-        Extract training data from Phoenix evaluation spans
-        
+        Extract training data from telemetry provider evaluation spans
+
         Args:
-            phoenix_client: Phoenix client
+            tenant_id: Tenant identifier
+            project_name: Project name for span query
             start_time: Start time for span query
             end_time: End time for span query
             min_samples: Minimum samples required
-            
+
         Returns:
             Tuple of (features_array, labels_array, profile_names)
-            
+
         Raises:
             ValueError: If insufficient training data found
         """
-        logger.info("Querying Phoenix for evaluation spans...")
-        
-        # Get spans from Phoenix
-        spans_df = phoenix_client.get_spans_dataframe(
+        logger.info("Querying telemetry provider for evaluation spans...")
+
+        # Get provider from telemetry manager
+        telemetry_manager = get_telemetry_manager()
+        provider = telemetry_manager.get_provider(tenant_id=tenant_id)
+
+        # Get spans from provider
+        spans_df = await provider.traces.get_spans(
+            project=project_name,
             start_time=start_time,
             end_time=end_time
         )
         
         if spans_df is None or spans_df.empty:
-            raise ValueError("No spans found in Phoenix")
+            raise ValueError("No spans found in telemetry backend")
         
         # Filter for search/evaluation spans with profile and quality info
         search_spans = spans_df[

@@ -9,7 +9,7 @@ Tests the complete flow:
 """
 
 from datetime import datetime, timedelta
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pandas as pd
 import pytest
@@ -19,7 +19,7 @@ from cogniverse_agents.routing.annotation_agent import (
     AnnotationPriority,
 )
 from cogniverse_agents.routing.annotation_feedback_loop import AnnotationFeedbackLoop
-from cogniverse_agents.routing.annotation_storage import AnnotationStorage
+from cogniverse_agents.routing.annotation_storage import RoutingAnnotationStorage
 from cogniverse_agents.routing.llm_auto_annotator import (
     AnnotationLabel,
     LLMAutoAnnotator,
@@ -89,18 +89,27 @@ def mock_litellm_response():
 class TestAnnotationAgent:
     """Test AnnotationAgent span identification"""
 
-    @patch("cogniverse_agents.routing.annotation_agent.px.Client")
+    @pytest.mark.asyncio
+    @patch("cogniverse_agents.routing.annotation_agent.get_telemetry_manager")
     @patch("cogniverse_agents.routing.annotation_agent.RoutingEvaluator")
-    def test_identify_spans_needing_annotation(
+    async def test_identify_spans_needing_annotation(
         self,
         mock_evaluator_class,
-        mock_client_class,
+        mock_get_manager,
         mock_phoenix_client,
         mock_routing_evaluator,
     ):
         """Test that AnnotationAgent identifies low-quality spans"""
-        # Setup mocks
-        mock_client_class.return_value = mock_phoenix_client
+        # Setup telemetry manager mock
+        mock_provider = Mock()
+        mock_provider.traces = Mock()
+        mock_provider.traces.get_spans = AsyncMock(return_value=mock_phoenix_client.get_spans_dataframe.return_value)
+
+        mock_manager = Mock()
+        mock_manager.get_provider = Mock(return_value=mock_provider)
+        mock_get_manager.return_value = mock_manager
+
+        # Setup evaluator mock
         mock_evaluator_class.return_value = mock_routing_evaluator
 
         # Initialize agent
@@ -109,7 +118,7 @@ class TestAnnotationAgent:
         )
 
         # Identify spans
-        requests = agent.identify_spans_needing_annotation(lookback_hours=24)
+        requests = await agent.identify_spans_needing_annotation(lookback_hours=24)
 
         # Assertions
         assert len(requests) > 0, "Should find spans needing annotation"
@@ -124,12 +133,13 @@ class TestAnnotationAgent:
             AnnotationPriority.MEDIUM,
         ], "Low confidence should be high/medium priority"
 
-    @patch("cogniverse_agents.routing.annotation_agent.px.Client")
+    @pytest.mark.asyncio
+    @patch("cogniverse_agents.routing.annotation_agent.get_telemetry_manager")
     @patch("cogniverse_agents.routing.annotation_agent.RoutingEvaluator")
-    def test_prioritization(
+    async def test_prioritization(
         self,
         mock_evaluator_class,
-        mock_client_class,
+        mock_get_manager,
         mock_phoenix_client,
         mock_routing_evaluator,
     ):
@@ -138,9 +148,16 @@ class TestAnnotationAgent:
             RoutingOutcome,
         )
 
-        # Setup mocks with different outcomes
-        mock_client_class.return_value = mock_phoenix_client
+        # Setup telemetry manager mock
+        mock_provider = Mock()
+        mock_provider.traces = Mock()
+        mock_provider.traces.get_spans = AsyncMock(return_value=mock_phoenix_client.get_spans_dataframe.return_value)
 
+        mock_manager = Mock()
+        mock_manager.get_provider = Mock(return_value=mock_provider)
+        mock_get_manager.return_value = mock_manager
+
+        # Setup evaluator mock with different outcomes
         def classify_outcome(span_row):
             conf = span_row.get("attributes.routing", {}).get("confidence", 1.0)
             if conf < 0.5:
@@ -154,7 +171,7 @@ class TestAnnotationAgent:
         agent = AnnotationAgent(tenant_id="test", confidence_threshold=0.6)
 
         # Identify spans
-        requests = agent.identify_spans_needing_annotation(lookback_hours=24)
+        requests = await agent.identify_spans_needing_annotation(lookback_hours=24)
 
         # Check prioritization
         if len(requests) > 1:
@@ -252,19 +269,24 @@ class TestLLMAutoAnnotator:
 
 
 class TestAnnotationStorage:
-    """Test annotation storage in Phoenix"""
+    """Test annotation storage with telemetry provider"""
 
-    @patch("cogniverse_agents.routing.annotation_storage.px.Client")
-    def test_store_llm_annotation(self, mock_client_class):
+    @patch("cogniverse_agents.routing.annotation_storage.get_telemetry_manager")
+    async def test_store_llm_annotation(self, mock_get_manager):
         """Test storing LLM annotation"""
         from cogniverse_agents.routing.llm_auto_annotator import AutoAnnotation
 
-        # Setup mock
-        mock_client = Mock()
-        mock_client_class.return_value = mock_client
+        # Setup mock provider
+        mock_provider = Mock()
+        mock_provider.annotations = Mock()
+        mock_provider.annotations.add_annotation = AsyncMock(return_value=True)
+
+        mock_manager = Mock()
+        mock_manager.get_provider = Mock(return_value=mock_provider)
+        mock_get_manager.return_value = mock_manager
 
         # Initialize storage
-        storage = AnnotationStorage(tenant_id="test")
+        storage = RoutingAnnotationStorage(tenant_id="test")
 
         # Create annotation
         annotation = AutoAnnotation(
@@ -277,23 +299,28 @@ class TestAnnotationStorage:
         )
 
         # Store annotation
-        success = storage.store_llm_annotation("span_001", annotation)
+        success = await storage.store_llm_annotation("span_001", annotation)
 
         # Assertions
         assert success is True
 
-    @patch("cogniverse_agents.routing.annotation_storage.px.Client")
-    def test_store_human_annotation(self, mock_client_class):
+    @patch("cogniverse_agents.routing.annotation_storage.get_telemetry_manager")
+    async def test_store_human_annotation(self, mock_get_manager):
         """Test storing human annotation"""
-        # Setup mock
-        mock_client = Mock()
-        mock_client_class.return_value = mock_client
+        # Setup mock provider
+        mock_provider = Mock()
+        mock_provider.annotations = Mock()
+        mock_provider.annotations.add_annotation = AsyncMock(return_value=True)
+
+        mock_manager = Mock()
+        mock_manager.get_provider = Mock(return_value=mock_provider)
+        mock_get_manager.return_value = mock_manager
 
         # Initialize storage
-        storage = AnnotationStorage(tenant_id="test")
+        storage = RoutingAnnotationStorage(tenant_id="test")
 
         # Store annotation
-        success = storage.store_human_annotation(
+        success = await storage.store_human_annotation(
             span_id="span_001",
             label=AnnotationLabel.CORRECT_ROUTING,
             reasoning="Human verified this is correct",
@@ -309,12 +336,12 @@ class TestAnnotationFeedbackLoop:
     """Test feedback loop to optimizer"""
 
     @pytest.mark.asyncio
-    @patch("cogniverse_agents.routing.annotation_feedback_loop.AnnotationStorage")
+    @patch("cogniverse_agents.routing.annotation_feedback_loop.RoutingAnnotationStorage")
     async def test_process_new_annotations(self, mock_storage_class):
         """Test processing annotations and feeding to optimizer"""
         # Setup mock storage
         mock_storage = Mock()
-        mock_storage.query_annotated_spans.return_value = [
+        mock_storage.query_annotated_spans = AsyncMock(return_value=[
             {
                 "span_id": "span_001",
                 "query": "Test query",
@@ -327,13 +354,13 @@ class TestAnnotationFeedbackLoop:
                 "suggested_agent": "web_search",
                 "context": {},
             }
-        ]
+        ])
         mock_storage_class.return_value = mock_storage
 
         # Initialize optimizer
         optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant")
 
-        # Initialize feedback loop
+        # Initialize feedback loop (will use mocked RoutingAnnotationStorage)
         feedback_loop = AnnotationFeedbackLoop(
             optimizer=optimizer,
             tenant_id="test",
@@ -349,12 +376,12 @@ class TestAnnotationFeedbackLoop:
         assert result["experiences_created"] == 1
 
     @pytest.mark.asyncio
-    @patch("cogniverse_agents.routing.annotation_feedback_loop.AnnotationStorage")
+    @patch("cogniverse_agents.routing.annotation_feedback_loop.RoutingAnnotationStorage")
     async def test_annotation_to_experience_conversion(self, mock_storage_class):
         """Test that annotations are correctly converted to experiences"""
         # Setup mock storage
         mock_storage = Mock()
-        mock_storage.query_annotated_spans.return_value = [
+        mock_storage.query_annotated_spans = AsyncMock(return_value=[
             {
                 "span_id": "span_001",
                 "query": "Test query",
@@ -367,13 +394,13 @@ class TestAnnotationFeedbackLoop:
                 "suggested_agent": None,
                 "context": {},
             }
-        ]
+        ])
         mock_storage_class.return_value = mock_storage
 
         # Initialize optimizer
         optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant")
 
-        # Initialize feedback loop
+        # Initialize feedback loop (will use mocked RoutingAnnotationStorage)
         feedback_loop = AnnotationFeedbackLoop(optimizer=optimizer, tenant_id="test")
 
         # Process annotations
@@ -390,34 +417,48 @@ class TestEndToEndAnnotationWorkflow:
     """Integration test for complete annotation workflow"""
 
     @pytest.mark.asyncio
-    @patch("cogniverse_agents.routing.annotation_agent.px.Client")
+    @patch("cogniverse_agents.routing.annotation_agent.get_telemetry_manager")
     @patch("cogniverse_agents.routing.annotation_agent.RoutingEvaluator")
     @patch("cogniverse_agents.routing.llm_auto_annotator.completion")
-    @patch("cogniverse_agents.routing.annotation_storage.px.Client")
-    @patch("cogniverse_agents.routing.annotation_feedback_loop.AnnotationStorage")
+    @patch("cogniverse_agents.routing.annotation_storage.get_telemetry_manager")
+    @patch("cogniverse_agents.routing.annotation_feedback_loop.RoutingAnnotationStorage")
     async def test_complete_workflow(
         self,
         mock_feedback_storage_class,
-        mock_storage_client_class,
+        mock_storage_get_manager,
         mock_completion,
         mock_evaluator_class,
-        mock_agent_client_class,
+        mock_agent_get_manager,
         mock_phoenix_client,
         mock_routing_evaluator,
         mock_litellm_response,
     ):
         """Test complete annotation workflow from identification to optimizer"""
-        # Setup all mocks
-        mock_agent_client_class.return_value = mock_phoenix_client
+        # Setup telemetry manager mocks for annotation agent
+        mock_agent_provider = Mock()
+        mock_agent_provider.traces = Mock()
+        mock_agent_provider.traces.get_spans = AsyncMock(return_value=mock_phoenix_client.get_spans_dataframe.return_value)
+
+        mock_agent_manager = Mock()
+        mock_agent_manager.get_provider = Mock(return_value=mock_agent_provider)
+        mock_agent_get_manager.return_value = mock_agent_manager
+
+        # Setup telemetry manager mocks for annotation storage
+        mock_storage_provider = Mock()
+        mock_storage_provider.annotations = Mock()
+        mock_storage_provider.annotations.add_annotation = AsyncMock(return_value=True)
+
+        mock_storage_manager = Mock()
+        mock_storage_manager.get_provider = Mock(return_value=mock_storage_provider)
+        mock_storage_get_manager.return_value = mock_storage_manager
+
+        # Setup other mocks
         mock_evaluator_class.return_value = mock_routing_evaluator
         mock_completion.return_value = mock_litellm_response
 
-        mock_storage_client = Mock()
-        mock_storage_client_class.return_value = mock_storage_client
-
         # Step 1: Identify spans needing annotation
         agent = AnnotationAgent(tenant_id="test", confidence_threshold=0.6)
-        requests = agent.identify_spans_needing_annotation(lookback_hours=24)
+        requests = await agent.identify_spans_needing_annotation(lookback_hours=24)
 
         assert len(requests) > 0, "Should identify spans needing annotation"
 
@@ -428,14 +469,14 @@ class TestEndToEndAnnotationWorkflow:
         assert len(annotations) > 0, "Should generate LLM annotations"
 
         # Step 3: Store annotations
-        storage = AnnotationStorage(tenant_id="test")
+        storage = RoutingAnnotationStorage(tenant_id="test")
         for annotation in annotations:
-            success = storage.store_llm_annotation(requests[0].span_id, annotation)
+            success = await storage.store_llm_annotation(requests[0].span_id, annotation)
             assert success is True, "Should store annotations"
 
         # Step 4: Feed to optimizer via feedback loop
         mock_feedback_storage = Mock()
-        mock_feedback_storage.query_annotated_spans.return_value = [
+        mock_feedback_storage.query_annotated_spans = AsyncMock(return_value=[
             {
                 "span_id": requests[0].span_id,
                 "query": requests[0].query,
@@ -448,7 +489,7 @@ class TestEndToEndAnnotationWorkflow:
                 "suggested_agent": annotations[0].suggested_correct_agent,
                 "context": {},
             }
-        ]
+        ])
         mock_feedback_storage_class.return_value = mock_feedback_storage
 
         optimizer = AdvancedRoutingOptimizer(tenant_id="test-tenant")

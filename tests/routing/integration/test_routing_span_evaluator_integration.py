@@ -1,5 +1,5 @@
 """
-Integration tests for PhoenixSpanEvaluator
+Integration tests for RoutingSpanEvaluator
 
 Tests the complete flow of:
 1. Generating real routing spans via RoutingAgent
@@ -11,24 +11,205 @@ Tests the complete flow of:
 import asyncio
 import logging
 import os
+import subprocess
+import tempfile
+import time
 
 import phoenix as px
 import pytest
+import requests
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
-from cogniverse_agents.routing.phoenix_span_evaluator import PhoenixSpanEvaluator
-
-# Set synchronous export for integration tests
-os.environ["TELEMETRY_SYNC_EXPORT"] = "true"
+from cogniverse_agents.routing.routing_span_evaluator import RoutingSpanEvaluator
+from cogniverse_core.telemetry.manager import TelemetryManager
 
 logger = logging.getLogger(__name__)
 
 
+@pytest.fixture(scope="module", autouse=True)
+def phoenix_container():
+    """Start Phoenix Docker container on non-default ports for routing span evaluator tests"""
+    import cogniverse_core.telemetry.manager as telemetry_manager_module
+    from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
+    from cogniverse_core.telemetry.registry import get_telemetry_registry
+
+    # Reset TelemetryManager singleton AND clear provider cache
+    TelemetryManager.reset()
+    get_telemetry_registry().clear_cache()
+
+    # Initialize with test Phoenix config BEFORE any tests run
+    telemetry_config = TelemetryConfig(
+        otlp_endpoint="http://localhost:24317",
+        provider_config={
+            "http_endpoint": "http://localhost:26006",
+            "grpc_endpoint": "http://localhost:24317",
+        },
+        batch_config=BatchExportConfig(use_sync_export=True),
+    )
+    telemetry_manager_module._telemetry_manager = TelemetryManager(config=telemetry_config)
+
+    container_name = f"phoenix_routing_span_eval_test_{int(time.time() * 1000)}"
+
+    # Clean up old containers AND data directories
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "-a", "-q", "--filter", "name=phoenix_routing_span_eval_test"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.stdout.strip():
+            old_containers = result.stdout.strip().split("\n")
+            for container_id in old_containers:
+                subprocess.run(
+                    ["docker", "rm", "-f", container_id],
+                    capture_output=True,
+                    timeout=10,
+                )
+            logger.info(f"Cleaned up {len(old_containers)} old Phoenix test containers")
+    except Exception as e:
+        logger.warning(f"Error cleaning up old containers: {e}")
+
+    # Clean up old data directories from previous test runs
+    try:
+        import glob
+        import shutil
+        tmp_dir = tempfile.gettempdir()
+        pattern = os.path.join(tmp_dir, "phoenix_routing_span_eval_*")
+        logger.info(f"🧹 Searching for old Phoenix data directories: {pattern}")
+        old_data_dirs = glob.glob(pattern)
+        logger.info(f"🧹 Found {len(old_data_dirs)} old Phoenix data directories to clean")
+        for old_dir in old_data_dirs:
+            logger.info(f"🧹 Attempting to remove: {old_dir}")
+            try:
+                shutil.rmtree(old_dir)
+                logger.info(f"✅ Successfully cleaned up: {old_dir}")
+            except Exception as e:
+                logger.warning(f"❌ Failed to remove {old_dir}: {e}")
+    except Exception as e:
+        logger.warning(f"❌ Error cleaning up old data directories: {e}")
+
+    try:
+        # Create temporary directory for Phoenix data
+        test_data_dir = os.path.join(
+            tempfile.gettempdir(), f"phoenix_routing_span_eval_{int(time.time())}"
+        )
+        logger.info(f"📁 Creating new Phoenix data directory: {test_data_dir}")
+        os.makedirs(test_data_dir, exist_ok=True)
+        logger.info(f"✅ Created Phoenix data directory: {test_data_dir}")
+
+        # Start Phoenix container
+        result = subprocess.run(
+            [
+                "docker",
+                "run",
+                "-d",
+                "--name",
+                container_name,
+                "-p",
+                "26006:6006",  # HTTP port
+                "-p",
+                "24317:4317",  # gRPC port
+                "-v",
+                f"{test_data_dir}:/phoenix_data",
+                "-e",
+                "PHOENIX_WORKING_DIR=/phoenix_data",
+                "-e",
+                "PHOENIX_SQL_DATABASE_URL=sqlite:////phoenix_data/phoenix.db",
+                "arizephoenix/phoenix:latest",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        logger.info(f"Phoenix container {container_name} started")
+
+        # Wait for Phoenix to be ready
+        max_wait_time = 60
+        poll_interval = 0.5
+        start_time = time.time()
+        phoenix_ready = False
+
+        while time.time() - start_time < max_wait_time:
+            try:
+                response = requests.get("http://localhost:26006", timeout=2)
+                if response.status_code == 200:
+                    phoenix_ready = True
+                    elapsed = time.time() - start_time
+                    logger.info(f"Phoenix ready after {elapsed:.1f} seconds")
+                    break
+            except Exception:
+                pass
+            time.sleep(poll_interval)
+
+        if not phoenix_ready:
+            logs_result = subprocess.run(
+                ["docker", "logs", container_name],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            logger.error(f"Phoenix logs:\n{logs_result.stdout}\n{logs_result.stderr}")
+            raise RuntimeError(f"Phoenix failed to start after {max_wait_time} seconds")
+
+        yield container_name
+
+    finally:
+        # Stop and remove Phoenix container
+        try:
+            subprocess.run(
+                ["docker", "stop", container_name],
+                check=False,
+                capture_output=True,
+                timeout=30,
+            )
+            subprocess.run(
+                ["docker", "rm", container_name],
+                check=False,
+                capture_output=True,
+                timeout=10,
+            )
+            logger.info(f"Phoenix container {container_name} stopped and removed")
+        except Exception as e:
+            logger.warning(f"Error cleaning up Phoenix container: {e}")
+            try:
+                subprocess.run(
+                    ["docker", "rm", "-f", container_name],
+                    check=False,
+                    capture_output=True,
+                    timeout=10,
+                )
+            except Exception:
+                pass
+
+        # Clean up data directory
+        try:
+            import shutil
+            logger.info(f"🧹 Attempting final cleanup of Phoenix data directory: {test_data_dir}")
+            if 'test_data_dir' in locals() and os.path.exists(test_data_dir):
+                shutil.rmtree(test_data_dir)
+                logger.info(f"✅ Cleaned up Phoenix data directory: {test_data_dir}")
+            else:
+                logger.info("📭 No data directory to clean up (doesn't exist or not in locals)")
+        except Exception as e:
+            logger.warning(f"❌ Error cleaning up data directory: {e}")
+
+
+
 @pytest.fixture
-async def routing_agent_with_spans():
+async def routing_agent_with_spans(phoenix_container):
     """Create routing agent and generate real routing spans"""
     from cogniverse_agents.routing_agent import RoutingAgent
+    from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
 
-    agent = RoutingAgent(tenant_id="test-tenant")
+    telemetry_config = TelemetryConfig(
+        otlp_endpoint="http://localhost:24317",
+        provider_config={
+            "http_endpoint": "http://localhost:26006",
+            "grpc_endpoint": "http://localhost:24317",
+        },
+        batch_config=BatchExportConfig(use_sync_export=True),
+    )
+    agent = RoutingAgent(tenant_id="test-tenant", telemetry_config=telemetry_config)
 
     # Generate real routing spans by processing test queries
     test_queries = [
@@ -70,12 +251,13 @@ def optimizer():
 
 @pytest.fixture(scope="function")
 def span_evaluator(optimizer):
-    """Create PhoenixSpanEvaluator for testing - fresh for each test"""
-    return PhoenixSpanEvaluator(optimizer=optimizer, tenant_id="test-tenant")
+    """Create RoutingSpanEvaluator for testing - fresh for each test"""
+    # Telemetry manager already initialized by phoenix_container fixture
+    return RoutingSpanEvaluator(optimizer=optimizer, tenant_id="test-tenant")
 
 
-class TestPhoenixSpanEvaluatorIntegration:
-    """Integration tests for PhoenixSpanEvaluator"""
+class TestRoutingSpanEvaluatorIntegration:
+    """Integration tests for RoutingSpanEvaluator"""
 
     @pytest.mark.asyncio
     async def test_query_real_routing_spans(
@@ -88,7 +270,7 @@ class TestPhoenixSpanEvaluatorIntegration:
         # Query spans from Phoenix
         logger.info(f"📊 Querying spans from project: {span_evaluator.project_name}")
 
-        phoenix_client = px.Client()
+        phoenix_client = px.Client(endpoint="http://localhost:26006")
         spans_df = phoenix_client.get_spans_dataframe(
             project_name=span_evaluator.project_name
         )
@@ -130,9 +312,20 @@ class TestPhoenixSpanEvaluatorIntegration:
         import tempfile
 
         from cogniverse_agents.routing_agent import RoutingAgent
+        from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
+
+        # Create telemetry config
+        telemetry_config = TelemetryConfig(
+            otlp_endpoint="http://localhost:24317",
+            provider_config={
+                "http_endpoint": "http://localhost:26006",
+                "grpc_endpoint": "http://localhost:24317",
+            },
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
 
         # Create fresh routing agent and generate unique spans
-        agent = RoutingAgent(tenant_id="test-tenant")
+        agent = RoutingAgent(tenant_id="test-tenant", telemetry_config=telemetry_config)
 
         # Use unique queries to avoid span ID collisions with other tests
         unique_queries = [
@@ -170,7 +363,7 @@ class TestPhoenixSpanEvaluatorIntegration:
             ), f"Expected empty optimizer, got {initial_count} experiences"
 
             # Create span evaluator with our optimizer
-            evaluator = PhoenixSpanEvaluator(optimizer=optimizer, tenant_id="test-tenant")
+            evaluator = RoutingSpanEvaluator(optimizer=optimizer, tenant_id="test-tenant")
 
             # Evaluate routing spans
             logger.info(f"📊 Evaluating spans from project: {evaluator.project_name}")
@@ -269,9 +462,20 @@ class TestPhoenixSpanEvaluatorIntegration:
     async def test_end_to_end_evaluation_workflow(self, optimizer):
         """Test complete end-to-end workflow from span generation to experience creation"""
         from cogniverse_agents.routing_agent import RoutingAgent
+        from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
 
-        # 1. Create fresh routing agent
-        agent = RoutingAgent(tenant_id="test-tenant")
+        # 1. Create telemetry config
+        telemetry_config = TelemetryConfig(
+            otlp_endpoint="http://localhost:24317",
+            provider_config={
+                "http_endpoint": "http://localhost:26006",
+                "grpc_endpoint": "http://localhost:24317",
+            },
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+
+        # 2. Create fresh routing agent
+        agent = RoutingAgent(tenant_id="test-tenant", telemetry_config=telemetry_config)
 
         # 2. Process a single query
         query = "show me basketball dunks"
@@ -284,7 +488,7 @@ class TestPhoenixSpanEvaluatorIntegration:
         await asyncio.sleep(2)
 
         # 4. Create span evaluator
-        evaluator = PhoenixSpanEvaluator(optimizer=optimizer, tenant_id="test-tenant")
+        evaluator = RoutingSpanEvaluator(optimizer=optimizer, tenant_id="test-tenant")
 
         # 5. Evaluate spans
         results = await evaluator.evaluate_routing_spans(lookback_hours=1)
@@ -322,7 +526,7 @@ class TestPhoenixSpanEvaluatorIntegration:
         _ = routing_agent_with_spans
 
         # Query Phoenix directly to inspect span structure
-        phoenix_client = px.Client()
+        phoenix_client = px.Client(endpoint="http://localhost:26006")
         spans_df = phoenix_client.get_spans_dataframe(
             project_name=span_evaluator.project_name
         )

@@ -16,8 +16,14 @@ class TestModalitySpanCollector:
 
     @pytest.fixture
     def collector(self):
-        """Create collector instance with mocked Phoenix client"""
-        with patch("cogniverse_agents.routing.modality_span_collector.px.Client"):
+        """Create collector instance with mocked telemetry provider"""
+        with patch("cogniverse_agents.routing.modality_span_collector.get_telemetry_manager") as mock_manager:
+            # Mock provider
+            mock_provider = MagicMock()
+            mock_manager.return_value.get_provider.return_value = mock_provider
+            mock_manager.return_value.config.get_project_name.return_value = "test-project"
+            mock_manager.return_value.config.provider_config = {}
+
             collector = ModalitySpanCollector(tenant_id="test-tenant")
             return collector
 
@@ -137,8 +143,9 @@ class TestModalitySpanCollector:
     @pytest.mark.asyncio
     async def test_collect_spans_by_modality_empty(self, collector):
         """Test collecting spans when none found"""
-        # Mock Phoenix client to return empty dataframe
-        collector.phoenix_client.get_spans_dataframe = MagicMock(
+        # Mock provider traces to return empty dataframe
+        from unittest.mock import AsyncMock
+        collector.provider.traces.get_spans = AsyncMock(
             return_value=pd.DataFrame()
         )
 
@@ -185,7 +192,8 @@ class TestModalitySpanCollector:
             ]
         )
 
-        collector.phoenix_client.get_spans_dataframe = MagicMock(return_value=spans_df)
+        from unittest.mock import AsyncMock
+        collector.provider.traces.get_spans = AsyncMock(return_value=spans_df)
 
         result = await collector.collect_spans_by_modality(lookback_hours=1)
 
@@ -222,7 +230,8 @@ class TestModalitySpanCollector:
             ]
         )
 
-        collector.phoenix_client.get_spans_dataframe = MagicMock(return_value=spans_df)
+        from unittest.mock import AsyncMock
+        collector.provider.traces.get_spans = AsyncMock(return_value=spans_df)
 
         result = await collector.collect_spans_by_modality(
             lookback_hours=1, min_confidence=0.7
@@ -251,7 +260,8 @@ class TestModalitySpanCollector:
             ]
         )
 
-        collector.phoenix_client.get_spans_dataframe = MagicMock(return_value=spans_df)
+        from unittest.mock import AsyncMock
+        collector.provider.traces.get_spans = AsyncMock(return_value=spans_df)
 
         result = await collector.collect_spans_by_modality(lookback_hours=1)
 
@@ -287,7 +297,8 @@ class TestModalitySpanCollector:
             ]
         )
 
-        collector.phoenix_client.get_spans_dataframe = MagicMock(return_value=spans_df)
+        from unittest.mock import AsyncMock
+        collector.provider.traces.get_spans = AsyncMock(return_value=spans_df)
 
         stats = await collector.get_modality_statistics(lookback_hours=1)
 

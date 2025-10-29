@@ -1,7 +1,7 @@
 """
 Routing-specific evaluator for analyzing routing decisions.
 
-This evaluator processes Phoenix spans containing routing decisions and calculates
+This evaluator processes telemetry spans containing routing decisions and calculates
 metrics specific to routing quality, separate from search or generation quality.
 """
 
@@ -10,10 +10,12 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import pandas as pd
-import phoenix as px
+
+if TYPE_CHECKING:
+    from cogniverse_core.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
 
@@ -44,29 +46,24 @@ class RoutingEvaluator:
     """
     Evaluate routing decisions separately from search quality.
 
-    Processes Phoenix spans with cogniverse.routing child spans to calculate
+    Processes telemetry spans with cogniverse.routing child spans to calculate
     routing-specific metrics like accuracy, confidence calibration, and latency.
     """
 
     def __init__(
         self,
-        phoenix_client: Optional[px.Client] = None,
+        provider: "TelemetryProvider",
         project_name: str = "cogniverse-default-routing-optimization",
     ):
         """
         Initialize routing evaluator.
 
         Args:
-            phoenix_client: Phoenix client for querying spans. If None, creates new client for routing project.
-            project_name: Phoenix project name for routing optimization (default: cogniverse-default-routing-optimization)
+            provider: Telemetry provider for querying spans
+            project_name: Project name for routing optimization (default: cogniverse-default-routing-optimization)
         """
-        # Create client for specific routing optimization project
-        if phoenix_client is None:
-            self.client = px.Client(endpoint="http://localhost:6006")
-            self.project_name = project_name
-        else:
-            self.client = phoenix_client
-            self.project_name = project_name
+        self.provider = provider
+        self.project_name = project_name
         self.logger = logging.getLogger(__name__)
 
     def evaluate_routing_decision(
@@ -322,14 +319,14 @@ class RoutingEvaluator:
 
         return precision, recall, f1
 
-    def query_routing_spans(
+    async def query_routing_spans(
         self,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
         """
-        Query Phoenix for routing spans within a time range from the routing optimization project.
+        Query telemetry provider for routing spans within a time range from the routing optimization project.
 
         Args:
             start_time: Start of time range (None for no limit)
@@ -340,13 +337,15 @@ class RoutingEvaluator:
             List of routing span dictionaries
 
         Raises:
-            RuntimeError: If Phoenix query fails
+            RuntimeError: If telemetry query fails
         """
         try:
             # Query spans from the specific routing optimization project
-            # Use Phoenix's get_spans_dataframe with project_name parameter
-            spans_df = self.client.get_spans_dataframe(
-                project_name=self.project_name, start_time=start_time, end_time=end_time
+            spans_df = await self.provider.traces.get_spans(
+                project=self.project_name,
+                start_time=start_time,
+                end_time=end_time,
+                limit=limit
             )
 
             if spans_df is None or spans_df.empty:
@@ -365,11 +364,11 @@ class RoutingEvaluator:
             if limit:
                 routing_spans_df = routing_spans_df.head(limit)
 
-            # Convert DataFrame to list of dicts - keep Phoenix's flattened format
+            # Convert DataFrame to list of dicts
             # evaluate_routing_decision() will handle both flattened and nested formats
             return routing_spans_df.to_dict("records")
 
         except Exception as e:
             raise RuntimeError(
-                f"Failed to query routing spans from Phoenix: {e}"
+                f"Failed to query routing spans from telemetry provider: {e}"
             ) from e

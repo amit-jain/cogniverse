@@ -10,13 +10,13 @@ import logging
 import os
 from datetime import datetime, timedelta
 
-import phoenix as px
 import pytest
 from cogniverse_core.evaluation.evaluators.routing_evaluator import (
     RoutingEvaluator,
     RoutingMetrics,
     RoutingOutcome,
 )
+from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
 
 logger = logging.getLogger(__name__)
 
@@ -29,17 +29,19 @@ class TestRoutingEvaluatorIntegration:
     """Integration tests with real Phoenix infrastructure"""
 
     @pytest.fixture
-    def phoenix_client(self):
-        """Create Phoenix client for integration tests"""
-        client = px.Client()
-        return client
+    def telemetry_provider(self):
+        """Create telemetry provider for integration tests"""
+        from cogniverse_core.telemetry.manager import get_telemetry_manager
+
+        telemetry_manager = get_telemetry_manager()
+        return telemetry_manager.get_provider(tenant_id="test-tenant")
 
     @pytest.fixture
-    def routing_evaluator(self, phoenix_client):
-        """Create RoutingEvaluator with real Phoenix client"""
+    def routing_evaluator(self, telemetry_provider):
+        """Create RoutingEvaluator with real telemetry provider"""
         # Use the project name that spans are actually created in
         return RoutingEvaluator(
-            phoenix_client=phoenix_client,
+            provider=telemetry_provider,
             project_name="cogniverse-test-tenant-video-search"
         )
 
@@ -52,7 +54,12 @@ class TestRoutingEvaluatorIntegration:
 
         async def _generate_spans():
             # Initialize routing agent with telemetry enabled
-            agent = RoutingAgent(tenant_id="test-tenant", enable_telemetry=True)
+            telemetry_config = TelemetryConfig(
+                otlp_endpoint="http://localhost:24317",
+                provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+                batch_config=BatchExportConfig(use_sync_export=True),
+            )
+            agent = RoutingAgent(tenant_id="test-tenant", telemetry_config=telemetry_config)
 
             # Generate some real routing spans by processing test queries
             test_queries = [
@@ -325,9 +332,18 @@ class TestRoutingEvaluatorIntegration:
 class TestRoutingEvaluatorWithMockPhoenixData:
     """Integration test with controlled Phoenix-like data"""
 
-    def test_evaluate_realistic_span_structure(self):
+    @pytest.fixture
+    def mock_provider(self):
+        """Create mock provider for testing"""
+        from unittest.mock import MagicMock
+
+        provider = MagicMock()
+        provider.traces = MagicMock()
+        return provider
+
+    def test_evaluate_realistic_span_structure(self, mock_provider):
         """Test with span structure that matches actual Phoenix output"""
-        evaluator = RoutingEvaluator()
+        evaluator = RoutingEvaluator(provider=mock_provider)
 
         # Realistic span structure matching Phoenix output
         realistic_spans = [

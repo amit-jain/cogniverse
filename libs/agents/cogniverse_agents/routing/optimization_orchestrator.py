@@ -2,10 +2,10 @@
 Optimization Orchestrator for Complete Routing Optimization Integration
 
 This orchestrator manages the complete end-to-end optimization flow:
-1. PhoenixSpanEvaluator: Extracts routing experiences from telemetry
+1. RoutingSpanEvaluator: Extracts routing experiences from telemetry
 2. AnnotationAgent: Identifies low-quality spans needing review
 3. LLMAutoAnnotator: Generates initial annotations
-4. AnnotationStorage: Stores annotations in Phoenix
+4. RoutingAnnotationStorage: Stores annotations in telemetry backend
 5. AnnotationFeedbackLoop: Feeds annotations to optimizer
 6. AdvancedRoutingOptimizer: Optimizes routing decisions
 
@@ -20,9 +20,9 @@ from typing import Any, Dict
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 from cogniverse_agents.routing.annotation_agent import AnnotationAgent
 from cogniverse_agents.routing.annotation_feedback_loop import AnnotationFeedbackLoop
-from cogniverse_agents.routing.annotation_storage import AnnotationStorage
+from cogniverse_agents.routing.annotation_storage import RoutingAnnotationStorage
 from cogniverse_agents.routing.llm_auto_annotator import LLMAutoAnnotator
-from cogniverse_agents.routing.phoenix_span_evaluator import PhoenixSpanEvaluator
+from cogniverse_agents.routing.routing_span_evaluator import RoutingSpanEvaluator
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ class OptimizationOrchestrator:
         self.optimizer = AdvancedRoutingOptimizer(tenant_id=tenant_id)
 
         # Span evaluation component
-        self.span_evaluator = PhoenixSpanEvaluator(
+        self.span_evaluator = RoutingSpanEvaluator(
             optimizer=self.optimizer, tenant_id=tenant_id
         )
 
@@ -85,7 +85,7 @@ class OptimizationOrchestrator:
             max_annotations_per_run=100,
         )
         self.llm_annotator = LLMAutoAnnotator()
-        self.annotation_storage = AnnotationStorage(tenant_id=tenant_id)
+        self.annotation_storage = RoutingAnnotationStorage(tenant_id=tenant_id)
 
         # Feedback loop
         self.feedback_loop = AnnotationFeedbackLoop(
@@ -182,7 +182,7 @@ class OptimizationOrchestrator:
         while True:
             try:
                 # Step 1: Identify spans needing annotation
-                annotation_requests = (
+                annotation_requests = await (
                     self.annotation_agent.identify_spans_needing_annotation(
                         lookback_hours=24
                     )
@@ -206,7 +206,7 @@ class OptimizationOrchestrator:
 
                     # Step 3: Store annotations
                     for i, annotation in enumerate(annotations):
-                        success = self.annotation_storage.store_llm_annotation(
+                        success = await self.annotation_storage.store_llm_annotation(
                             span_id=annotation_requests[i].span_id,
                             annotation=annotation,
                         )
@@ -236,7 +236,7 @@ class OptimizationOrchestrator:
             # Get annotation count from last 7 days
             end_time = datetime.now()
             start_time = end_time - timedelta(days=7)
-            annotated_spans = self.annotation_storage.query_annotated_spans(
+            annotated_spans = await self.annotation_storage.query_annotated_spans(
                 start_time=start_time, end_time=end_time, only_human_reviewed=False
             )
 
@@ -354,7 +354,7 @@ class OptimizationOrchestrator:
         self.metrics["experiences_created"] += span_result.get("experiences_created", 0)
 
         # 2. Identify spans for annotation
-        annotation_requests = self.annotation_agent.identify_spans_needing_annotation(
+        annotation_requests = await self.annotation_agent.identify_spans_needing_annotation(
             lookback_hours=24
         )
         results["annotation_requests"] = len(annotation_requests)
@@ -367,7 +367,7 @@ class OptimizationOrchestrator:
             try:
                 annotations = self.llm_annotator.batch_annotate(annotation_requests[:5])
                 for i, annotation in enumerate(annotations):
-                    success = self.annotation_storage.store_llm_annotation(
+                    success = await self.annotation_storage.store_llm_annotation(
                         span_id=annotation_requests[i].span_id, annotation=annotation
                     )
                     if success:

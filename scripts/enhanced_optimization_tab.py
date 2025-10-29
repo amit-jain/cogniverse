@@ -1378,19 +1378,22 @@ def _render_metrics_dashboard_tab():
     try:
         from datetime import timedelta
 
-        import phoenix as px
         from cogniverse_core.evaluation.evaluators.routing_evaluator import (
             RoutingEvaluator,
         )
+        from cogniverse_core.telemetry.manager import get_telemetry_manager
 
-        phoenix_client = px.Client(endpoint="http://localhost:6006")
+        # Get telemetry provider
+        telemetry_manager = get_telemetry_manager()
+        provider = telemetry_manager.get_provider(tenant_id="default")
 
         # Calculate time range
         end_time = datetime.now()
         start_time = end_time - timedelta(days=lookback_days)
 
-        # Get spans from Phoenix
-        spans_df = phoenix_client.get_spans_dataframe(
+        # Get spans from provider
+        spans_df = await provider.traces.get_spans(
+            project="cogniverse-default",
             start_time=start_time,
             end_time=end_time
         )
@@ -1402,7 +1405,7 @@ def _render_metrics_dashboard_tab():
         # Calculate routing metrics
         st.subheader("📊 Routing Optimization Metrics")
 
-        routing_evaluator = RoutingEvaluator(phoenix_client=phoenix_client)
+        routing_evaluator = RoutingEvaluator(provider=provider)
         routing_spans = routing_evaluator.query_routing_spans(
             start_time=start_time,
             end_time=end_time,
