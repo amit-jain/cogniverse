@@ -20,9 +20,8 @@ from datetime import datetime
 
 import dspy
 import httpx
-import phoenix as px
 import pytest
-import requests
+from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
 from cogniverse_agents.approval.human_approval_agent import HumanApprovalAgent
 from cogniverse_agents.approval.interfaces import (
     ApprovalBatch,
@@ -30,7 +29,6 @@ from cogniverse_agents.approval.interfaces import (
     ReviewDecision,
     ReviewItem,
 )
-from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
 from cogniverse_core.config.unified_config import (
     BackendConfig,
     DSPyModuleConfig,
@@ -75,9 +73,9 @@ skip_if_no_openai = pytest.mark.skipif(
 )
 
 
-@pytest.fixture(scope="function", autouse=True)
+@pytest.fixture(scope="module", autouse=True)
 def phoenix_container():
-    """Start Phoenix Docker container on non-default ports for each test"""
+    """Start Phoenix Docker container on non-default ports for synthetic approval tests"""
     import os
 
     # Set environment variables BEFORE any TelemetryManager is created
@@ -148,25 +146,16 @@ def phoenix_container():
         )
         logger.info(f"Phoenix container {container_name} started")
 
-        # Wait for Phoenix to be ready
-        max_wait_time = 60
-        poll_interval = 0.5
-        start_time = time.time()
-        phoenix_ready = False
+        # Wait for Phoenix to be ready using standardized utility
+        from tests.utils.async_polling import PollingTimeoutError, wait_for_http_ready
 
-        while time.time() - start_time < max_wait_time:
-            try:
-                response = requests.get("http://localhost:26006", timeout=2)
-                if response.status_code == 200:
-                    phoenix_ready = True
-                    elapsed = time.time() - start_time
-                    logger.info(f"Phoenix ready after {elapsed:.1f} seconds")
-                    break
-            except Exception:
-                pass
-            time.sleep(poll_interval)
-
-        if not phoenix_ready:
+        try:
+            wait_for_http_ready(
+                url="http://localhost:26006",
+                timeout=60,
+                description="Phoenix HTTP endpoint",
+            )
+        except PollingTimeoutError:
             logs_result = subprocess.run(
                 ["docker", "logs", container_name],
                 capture_output=True,
@@ -174,7 +163,7 @@ def phoenix_container():
                 timeout=5,
             )
             logger.error(f"Phoenix logs:\n{logs_result.stdout}\n{logs_result.stderr}")
-            raise RuntimeError(f"Phoenix failed to start after {max_wait_time} seconds")
+            raise RuntimeError("Phoenix failed to start within timeout")
 
         yield container_name
 
@@ -220,9 +209,9 @@ def phoenix_container():
 
 
 @pytest.fixture
-def phoenix_client():
-    """Phoenix client for querying approval data"""
-    return px.Client(endpoint="http://localhost:26006")
+def telemetry_provider(telemetry_manager):
+    """Telemetry provider for querying approval data via abstraction"""
+    return telemetry_manager.get_provider(tenant_id="test-tenant1")
 
 
 @pytest.fixture(params=["ollama"])
@@ -336,7 +325,7 @@ class TestSyntheticApprovalIntegration:
 
     @pytest.mark.asyncio
     async def test_end_to_end_approval_workflow(
-        self, synthetic_service, approval_agent, approval_storage, phoenix_client
+        self, synthetic_service, approval_agent, approval_storage, telemetry_provider
     ):
         """Test complete workflow: generate -> review -> approve/reject -> regenerate"""
 
@@ -552,7 +541,7 @@ class TestSyntheticApprovalIntegration:
         logger.info(f"Approval rate: {approval_rate:.2%}")
 
     @pytest.mark.asyncio
-    async def test_phoenix_storage_integration(self, approval_storage, phoenix_client):
+    async def test_phoenix_storage_integration(self, approval_storage, telemetry_provider):
         """Test that approval data is correctly stored and retrievable from Phoenix"""
 
         # Create and save a batch
@@ -601,7 +590,7 @@ class TestSyntheticServiceIntegration:
 
     @pytest.mark.asyncio
     async def test_service_with_phoenix_telemetry(
-        self, synthetic_service, phoenix_container, phoenix_client
+        self, synthetic_service, phoenix_container, telemetry_provider
     ):
         """Test that synthetic generation produces Phoenix traces"""
 

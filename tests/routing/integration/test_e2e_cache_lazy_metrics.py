@@ -16,7 +16,6 @@ import subprocess
 import tempfile
 import time
 
-import phoenix as px
 import pytest
 import requests
 from cogniverse_agents.routing.lazy_executor import LazyModalityExecutor
@@ -235,20 +234,22 @@ class TestProductionRoutingRealInfrastructure:
         success = routing_agent.telemetry_manager.force_flush(timeout_millis=10000)
         logger.info(f"📊 Telemetry flush result: {success}")
 
-        # If Phoenix is running, try to verify spans
+        # If telemetry provider is available, try to verify spans
         try:
-            phoenix_client = px.Client()
+            provider = routing_agent.telemetry_manager.get_provider(
+                tenant_id=context["tenant_id"]
+            )
             project_name = routing_agent.telemetry_manager.config.get_project_name(
                 context["tenant_id"], "cogniverse-routing"
             )
             logger.info(f"📊 Testing with project: {project_name}")
 
-            # Wait for Phoenix to process
+            # Wait for telemetry to process
             await asyncio.sleep(3)
 
-            # Query Phoenix for spans
-            spans_df = phoenix_client.get_spans_dataframe(project_name=project_name)
-            logger.info(f"📊 Total spans in Phoenix: {len(spans_df)}")
+            # Query telemetry for spans
+            spans_df = await provider.traces.get_spans(project=project_name)
+            logger.info(f"📊 Total spans in telemetry: {len(spans_df)}")
 
             if len(spans_df) > 0:
                 routing_spans = spans_df[spans_df["name"] == "cogniverse.routing"]
@@ -260,12 +261,12 @@ class TestProductionRoutingRealInfrastructure:
                     logger.info(f"✅ Span attributes: {list(attributes.keys())[:10]}")
             else:
                 logger.warning(
-                    "⚠️ No spans found in Phoenix (may need more time to sync)"
+                    "⚠️ No spans found in telemetry (may need more time to sync)"
                 )
 
         except Exception as e:
-            logger.warning(f"⚠️ Phoenix verification failed: {e}")
-            # Phoenix not available - test routing result only
+            logger.warning(f"⚠️ Telemetry verification failed: {e}")
+            # Telemetry not available - test routing result only
             pass
 
     async def test_parallel_execution_with_real_agents(

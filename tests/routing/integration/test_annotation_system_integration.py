@@ -20,7 +20,6 @@ import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 
-import phoenix as px
 import pytest
 import requests
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
@@ -188,9 +187,9 @@ def phoenix_container():
 
 
 @pytest.fixture
-def phoenix_client(phoenix_container):
-    """Phoenix client for querying spans (depends on phoenix_container)"""
-    return px.Client(endpoint="http://localhost:26006")
+def telemetry_provider(test_tenant_id, telemetry_manager):
+    """Telemetry provider for querying spans via abstraction"""
+    return telemetry_manager.get_provider(tenant_id=test_tenant_id)
 
 
 @pytest.fixture
@@ -232,7 +231,7 @@ class TestAnnotationSystemIntegration:
 
     @pytest.mark.asyncio
     async def test_complete_annotation_workflow_with_real_phoenix(
-        self, phoenix_client, test_tenant_id, telemetry_manager
+        self, telemetry_provider, test_tenant_id, telemetry_manager
     ):
         """
         Test complete annotation workflow end-to-end with real Phoenix
@@ -301,8 +300,8 @@ class TestAnnotationSystemIntegration:
         end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(minutes=5)
 
-        spans_df = phoenix_client.get_spans_dataframe(
-            project_name=project_name, start_time=start_time, end_time=end_time
+        spans_df = await telemetry_provider.traces.get_spans(
+            project=project_name, start_time=start_time, end_time=end_time
         )
 
         assert not spans_df.empty, "No spans found in Phoenix"
@@ -475,7 +474,7 @@ class TestAnnotationSystemIntegration:
 
     @pytest.mark.asyncio
     async def test_annotation_storage_persistence(
-        self, phoenix_client, test_tenant_id, telemetry_manager
+        self, telemetry_provider, test_tenant_id, telemetry_manager
     ):
         """
         Test that annotations are actually persisted and retrievable from Phoenix
@@ -532,8 +531,8 @@ class TestAnnotationSystemIntegration:
         )
 
         # Verify the span exists
-        spans_df = phoenix_client.get_spans_dataframe(
-            project_name=project_name,
+        spans_df = await telemetry_provider.traces.get_spans(
+            project=project_name,
             start_time=datetime.now(timezone.utc) - timedelta(minutes=5),
             end_time=datetime.now(timezone.utc),
         )
@@ -546,7 +545,7 @@ class TestAnnotationSystemIntegration:
 
     @pytest.mark.asyncio
     async def test_annotation_agent_with_real_data(
-        self, phoenix_client, test_tenant_id, telemetry_manager
+        self, telemetry_provider, test_tenant_id, telemetry_manager
     ):
         """
         Test AnnotationAgent against real Phoenix data
@@ -613,7 +612,7 @@ class TestAnnotationSystemIntegration:
 
     @pytest.mark.asyncio
     async def test_feedback_loop_end_to_end(
-        self, phoenix_client, test_tenant_id, telemetry_manager
+        self, telemetry_provider, test_tenant_id, telemetry_manager
     ):
         """
         Test complete feedback loop: span -> annotation -> storage -> optimizer

@@ -12,9 +12,8 @@ import logging
 import os
 import subprocess
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
-import phoenix as px
 import pytest
 import requests
 from cogniverse_agents.routing.base import SearchModality
@@ -167,9 +166,10 @@ def phoenix_container():
 
 
 @pytest.fixture
-def phoenix_client():
-    """Phoenix client for querying spans on non-default port"""
-    return px.Client(endpoint="http://localhost:16006")
+def telemetry_provider(test_tenant_id, telemetry_manager, phoenix_container):
+    """Telemetry provider for querying spans via abstraction"""
+    # Depend on phoenix_container to ensure Phoenix is running
+    return telemetry_manager.get_provider(tenant_id=test_tenant_id)
 
 
 @pytest.fixture
@@ -242,7 +242,7 @@ class TestMultiModalRoutingIntegration:
         router,
         telemetry_manager,
         test_tenant_id,
-        phoenix_client,
+        telemetry_provider,
         project_name,
     ):
         """Test routing of audio-focused queries"""
@@ -254,7 +254,7 @@ class TestMultiModalRoutingIntegration:
             "get audio recordings of lectures",
         ]
 
-        start_time = datetime.now()
+        start_time = datetime.now(timezone.utc)
 
         for query in audio_queries:
             logger.info(f"Processing audio query: {query}")
@@ -288,21 +288,21 @@ class TestMultiModalRoutingIntegration:
         telemetry_manager.force_flush(timeout_millis=5000)
         wait_for_vespa_indexing(delay=2)
 
-        # Verify spans in Phoenix
-        end_time = datetime.now()
-        spans_df = phoenix_client.get_spans_dataframe(
-            project_name=project_name,
+        # Verify spans via telemetry provider
+        end_time = datetime.now(timezone.utc)
+        spans_df = await telemetry_provider.traces.get_spans(
+            project=project_name,
             start_time=start_time - timedelta(seconds=10),
             end_time=end_time,
         )
 
-        assert not spans_df.empty, "No spans found in Phoenix"
+        assert not spans_df.empty, f"No spans found in telemetry for project {project_name}"
         routing_spans = spans_df[spans_df["name"] == SPAN_NAME_ROUTING]
         assert (
             len(routing_spans) >= 3
         ), f"Expected 3 routing spans, got {len(routing_spans)}"
 
-        logger.info(f"✅ Found {len(routing_spans)} audio routing spans in Phoenix")
+        logger.info(f"✅ Found {len(routing_spans)} audio routing spans in telemetry")
 
     @pytest.mark.asyncio
     async def test_image_query_routing(
@@ -310,7 +310,7 @@ class TestMultiModalRoutingIntegration:
         router,
         telemetry_manager,
         test_tenant_id,
-        phoenix_client,
+        telemetry_provider,
         project_name,
     ):
         """Test routing of image-focused queries"""
@@ -322,7 +322,7 @@ class TestMultiModalRoutingIntegration:
             "get charts showing market trends",
         ]
 
-        start_time = datetime.now()
+        start_time = datetime.now(timezone.utc)
 
         for query in image_queries:
             logger.info(f"Processing image query: {query}")
@@ -355,9 +355,9 @@ class TestMultiModalRoutingIntegration:
         wait_for_vespa_indexing(delay=2)
 
         # Verify spans in Phoenix
-        end_time = datetime.now()
-        spans_df = phoenix_client.get_spans_dataframe(
-            project_name=project_name,
+        end_time = datetime.now(timezone.utc)
+        spans_df = await telemetry_provider.traces.get_spans(
+            project=project_name,
             start_time=start_time - timedelta(seconds=10),
             end_time=end_time,
         )
@@ -366,7 +366,7 @@ class TestMultiModalRoutingIntegration:
         routing_spans = spans_df[spans_df["name"] == SPAN_NAME_ROUTING]
         assert len(routing_spans) >= 3
 
-        logger.info(f"✅ Found {len(routing_spans)} image routing spans in Phoenix")
+        logger.info(f"✅ Found {len(routing_spans)} image routing spans in telemetry")
 
     @pytest.mark.asyncio
     async def test_document_query_routing(
@@ -374,7 +374,7 @@ class TestMultiModalRoutingIntegration:
         router,
         telemetry_manager,
         test_tenant_id,
-        phoenix_client,
+        telemetry_provider,
         project_name,
     ):
         """Test routing of document-focused queries"""
@@ -386,7 +386,7 @@ class TestMultiModalRoutingIntegration:
             "get PowerPoint presentations on marketing",
         ]
 
-        start_time = datetime.now()
+        start_time = datetime.now(timezone.utc)
 
         for query in document_queries:
             logger.info(f"Processing document query: {query}")
@@ -419,9 +419,9 @@ class TestMultiModalRoutingIntegration:
         wait_for_vespa_indexing(delay=2)
 
         # Verify spans in Phoenix
-        end_time = datetime.now()
-        spans_df = phoenix_client.get_spans_dataframe(
-            project_name=project_name,
+        end_time = datetime.now(timezone.utc)
+        spans_df = await telemetry_provider.traces.get_spans(
+            project=project_name,
             start_time=start_time - timedelta(seconds=10),
             end_time=end_time,
         )
@@ -430,7 +430,7 @@ class TestMultiModalRoutingIntegration:
         routing_spans = spans_df[spans_df["name"] == SPAN_NAME_ROUTING]
         assert len(routing_spans) >= 3
 
-        logger.info(f"✅ Found {len(routing_spans)} document routing spans in Phoenix")
+        logger.info(f"✅ Found {len(routing_spans)} document routing spans in telemetry")
 
     @pytest.mark.asyncio
     async def test_multi_modal_query_routing(
@@ -438,7 +438,7 @@ class TestMultiModalRoutingIntegration:
         router,
         telemetry_manager,
         test_tenant_id,
-        phoenix_client,
+        telemetry_provider,
         project_name,
     ):
         """Test routing of queries with multiple modalities"""
@@ -450,7 +450,7 @@ class TestMultiModalRoutingIntegration:
             "get music tracks, photos, and video clips of nature",
         ]
 
-        start_time = datetime.now()
+        start_time = datetime.now(timezone.utc)
 
         for query in multi_modal_queries:
             logger.info(f"Processing multi-modal query: {query}")
@@ -487,9 +487,9 @@ class TestMultiModalRoutingIntegration:
         wait_for_vespa_indexing(delay=2)
 
         # Verify spans in Phoenix
-        end_time = datetime.now()
-        spans_df = phoenix_client.get_spans_dataframe(
-            project_name=project_name,
+        end_time = datetime.now(timezone.utc)
+        spans_df = await telemetry_provider.traces.get_spans(
+            project=project_name,
             start_time=start_time - timedelta(seconds=10),
             end_time=end_time,
         )
@@ -499,7 +499,7 @@ class TestMultiModalRoutingIntegration:
         assert len(routing_spans) >= 3
 
         logger.info(
-            f"✅ Found {len(routing_spans)} multi-modal routing spans in Phoenix"
+            f"✅ Found {len(routing_spans)} multi-modal routing spans in telemetry"
         )
 
     @pytest.mark.asyncio
@@ -508,7 +508,7 @@ class TestMultiModalRoutingIntegration:
         router,
         telemetry_manager,
         test_tenant_id,
-        phoenix_client,
+        telemetry_provider,
         project_name,
     ):
         """Test backward compatibility with existing video/text queries"""
@@ -520,7 +520,7 @@ class TestMultiModalRoutingIntegration:
             ("search for both videos and articles", SearchModality.BOTH),
         ]
 
-        start_time = datetime.now()
+        start_time = datetime.now(timezone.utc)
 
         for query, expected_modality in legacy_queries:
             logger.info(f"Processing legacy query: {query}")
@@ -554,9 +554,9 @@ class TestMultiModalRoutingIntegration:
         wait_for_vespa_indexing(delay=2)
 
         # Verify spans in Phoenix
-        end_time = datetime.now()
-        spans_df = phoenix_client.get_spans_dataframe(
-            project_name=project_name,
+        end_time = datetime.now(timezone.utc)
+        spans_df = await telemetry_provider.traces.get_spans(
+            project=project_name,
             start_time=start_time - timedelta(seconds=10),
             end_time=end_time,
         )
@@ -575,7 +575,7 @@ class TestMultiModalRoutingIntegration:
         router,
         telemetry_manager,
         test_tenant_id,
-        phoenix_client,
+        telemetry_provider,
         project_name,
     ):
         """Test that modality metadata is properly stored in Phoenix"""
@@ -583,7 +583,7 @@ class TestMultiModalRoutingIntegration:
 
         test_query = "find podcasts, images, and PDFs about AI"
 
-        start_time = datetime.now()
+        start_time = datetime.now(timezone.utc)
 
         decision = await router.route(test_query)
 
@@ -610,9 +610,9 @@ class TestMultiModalRoutingIntegration:
         wait_for_vespa_indexing(delay=2)
 
         # Verify spans in Phoenix
-        end_time = datetime.now()
-        spans_df = phoenix_client.get_spans_dataframe(
-            project_name=project_name,
+        end_time = datetime.now(timezone.utc)
+        spans_df = await telemetry_provider.traces.get_spans(
+            project=project_name,
             start_time=start_time - timedelta(seconds=10),
             end_time=end_time,
         )

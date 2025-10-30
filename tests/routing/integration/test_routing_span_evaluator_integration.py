@@ -15,7 +15,6 @@ import subprocess
 import tempfile
 import time
 
-import phoenix as px
 import pytest
 import requests
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
@@ -267,12 +266,14 @@ class TestRoutingSpanEvaluatorIntegration:
         # Trigger fixture to generate spans
         _ = routing_agent_with_spans
 
-        # Query spans from Phoenix
+        # Query spans via telemetry provider
         logger.info(f"📊 Querying spans from project: {span_evaluator.project_name}")
 
-        phoenix_client = px.Client(endpoint="http://localhost:26006")
-        spans_df = phoenix_client.get_spans_dataframe(
-            project_name=span_evaluator.project_name
+        from cogniverse_core.telemetry.manager import get_telemetry_manager
+        telemetry_manager = get_telemetry_manager()
+        provider = telemetry_manager.get_provider(tenant_id="test-tenant")
+        spans_df = await provider.traces.get_spans(
+            project=span_evaluator.project_name
         )
 
         logger.info(f"📊 Total spans in project: {len(spans_df)}")
@@ -525,10 +526,12 @@ class TestRoutingSpanEvaluatorIntegration:
         # Trigger fixture to generate spans
         _ = routing_agent_with_spans
 
-        # Query Phoenix directly to inspect span structure
-        phoenix_client = px.Client(endpoint="http://localhost:26006")
-        spans_df = phoenix_client.get_spans_dataframe(
-            project_name=span_evaluator.project_name
+        # Query telemetry directly to inspect span structure
+        from cogniverse_core.telemetry.manager import get_telemetry_manager
+        telemetry_manager = get_telemetry_manager()
+        provider = telemetry_manager.get_provider(tenant_id="test-tenant")
+        spans_df = await provider.traces.get_spans(
+            project=span_evaluator.project_name
         )
 
         routing_spans = spans_df[spans_df["name"] == "cogniverse.routing"]

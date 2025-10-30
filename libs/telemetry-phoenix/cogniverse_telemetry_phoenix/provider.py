@@ -72,40 +72,21 @@ class PhoenixTraceStore(TraceStore):
         """
         try:
             client = self._get_client()
+
+            # Convert naive datetimes to UTC before passing to Phoenix API
+            # This ensures consistent behavior regardless of whether callers pass naive or aware datetimes
+            if start_time is not None and start_time.tzinfo is None:
+                start_time = start_time.replace(tzinfo=timezone.utc)
+            if end_time is not None and end_time.tzinfo is None:
+                end_time = end_time.replace(tzinfo=timezone.utc)
+
+            # Pass time filters directly to Phoenix API for efficient server-side filtering
             spans_df = await client.spans.get_spans_dataframe(
-                project_identifier=project
+                project_identifier=project,
+                start_time=start_time,
+                end_time=end_time,
+                limit=limit,
             )
-
-            if spans_df.empty:
-                logger.debug(f"No spans found for project {project}")
-                return pd.DataFrame()
-
-            logger.info(f"🔍 Retrieved {len(spans_df)} spans before time filtering (project={project})")
-            if not spans_df.empty:
-                sample_span_time = spans_df.iloc[0].get("start_time")
-                logger.info(f"🔍 Sample span start_time: {sample_span_time} (type: {type(sample_span_time)})")
-
-            # Apply time filters (make naive datetimes timezone-aware for comparison)
-            if start_time is not None and "start_time" in spans_df.columns:
-                # Convert naive datetime to UTC for comparison
-                if start_time.tzinfo is None:
-                    start_time = start_time.replace(tzinfo=timezone.utc)
-                logger.info(f"🔍 Filtering by start_time >= {start_time} (type: {type(start_time)})")
-                spans_before_filter = len(spans_df)
-                spans_df = spans_df[spans_df["start_time"] >= start_time]
-                logger.info(f"🔍 After start_time filter: {len(spans_df)} spans (removed {spans_before_filter - len(spans_df)})")
-            if end_time is not None and "end_time" in spans_df.columns:
-                # Convert naive datetime to UTC for comparison
-                if end_time.tzinfo is None:
-                    end_time = end_time.replace(tzinfo=timezone.utc)
-                logger.info(f"🔍 Filtering by end_time <= {end_time}")
-                spans_before_filter = len(spans_df)
-                spans_df = spans_df[spans_df["end_time"] <= end_time]
-                logger.info(f"🔍 After end_time filter: {len(spans_df)} spans (removed {spans_before_filter - len(spans_df)})")
-
-            # Apply limit
-            if len(spans_df) > limit:
-                spans_df = spans_df.head(limit)
 
             logger.debug(f"Retrieved {len(spans_df)} spans from project {project}")
             return spans_df
