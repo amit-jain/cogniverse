@@ -21,8 +21,8 @@ from pathlib import Path
 # Add parent to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import phoenix as px
 from cogniverse_core.config.config_manager import get_config_manager
+from cogniverse_core.telemetry.manager import get_telemetry_manager
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -41,13 +41,15 @@ class AutoOptimizationTrigger:
     def __init__(
         self,
         tenant_id: str,
-        module: str,
-        phoenix_endpoint: str = "http://localhost:6006"
+        module: str
     ):
         self.tenant_id = tenant_id
         self.module = module
-        self.phoenix_endpoint = phoenix_endpoint
         self.config_manager = get_config_manager()
+
+        # Get telemetry provider for trace queries
+        telemetry_manager = get_telemetry_manager()
+        self.provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
     def check_auto_optimization_enabled(self) -> tuple[bool, dict]:
         """
@@ -73,9 +75,9 @@ class AutoOptimizationTrigger:
             logger.error(f"Failed to get routing config: {e}")
             return False, {}
 
-    def check_trace_count(self, min_samples: int, lookback_hours: int = 24) -> tuple[bool, int]:
+    async def check_trace_count(self, min_samples: int, lookback_hours: int = 24) -> tuple[bool, int]:
         """
-        Check if enough Phoenix traces have been collected
+        Check if enough traces have been collected
 
         Args:
             min_samples: Minimum traces required
@@ -85,18 +87,16 @@ class AutoOptimizationTrigger:
             Tuple of (sufficient, actual_count)
         """
         try:
-            phoenix_client = px.Client(endpoint=self.phoenix_endpoint)
-
             # Calculate time window
             end_time = datetime.now()
             start_time = end_time - timedelta(hours=lookback_hours)
 
-            # Query spans
-            project_name = f"{self.tenant_id}-cogniverse-routing"
-            spans_df = phoenix_client.get_spans_dataframe(
-                project_name=project_name,
+            # Query spans using provider abstraction
+            project_name = f"cogniverse-{self.tenant_id}-cogniverse.routing"
+            spans_df = await self.provider.traces.get_spans(
                 start_time=start_time,
-                end_time=end_time
+                end_time=end_time,
+                project_name=project_name
             )
 
             if spans_df is None or spans_df.empty:
@@ -107,14 +107,14 @@ class AutoOptimizationTrigger:
             sufficient = count >= min_samples
 
             logger.info(
-                f"Phoenix traces: {count} found (need {min_samples}), "
+                f"Traces: {count} found (need {min_samples}), "
                 f"sufficient={sufficient}"
             )
 
             return sufficient, count
 
         except Exception as e:
-            logger.error(f"Failed to check Phoenix traces: {e}")
+            logger.error(f"Failed to check traces: {e}")
             return False, 0
 
     def check_last_optimization_time(self, interval_seconds: int) -> tuple[bool, str]:
@@ -218,7 +218,7 @@ class AutoOptimizationTrigger:
             logger.error(f"❌ Failed to trigger auto-optimization: {e}")
             return False
 
-    def run(self) -> int:
+    async def run(self) -> int:
         """
         Main entry point - check conditions and trigger if needed
 
@@ -230,7 +230,6 @@ class AutoOptimizationTrigger:
         logger.info("=" * 80)
         logger.info(f"Tenant: {self.tenant_id}")
         logger.info(f"Module: {self.module}")
-        logger.info(f"Phoenix: {self.phoenix_endpoint}")
         logger.info("=" * 80)
 
         # Check if auto-optimization is enabled
@@ -248,7 +247,7 @@ class AutoOptimizationTrigger:
             return 1
 
         # Check if enough traces have been collected
-        sufficient_traces, trace_count = self.check_trace_count(
+        sufficient_traces, trace_count = await self.check_trace_count(
             config["min_samples"]
         )
         if not sufficient_traces:
@@ -270,8 +269,8 @@ class AutoOptimizationTrigger:
             return 2
 
 
-def main():
-    """CLI entry point"""
+async def async_main():
+    """Async CLI entry point"""
     parser = argparse.ArgumentParser(
         description="Auto-optimization trigger - checks conditions and runs optimization"
     )
@@ -286,21 +285,22 @@ def main():
         choices=["modality", "cross_modal", "routing", "workflow", "unified"],
         help="Module to optimize"
     )
-    parser.add_argument(
-        "--phoenix-endpoint",
-        default="http://localhost:6006",
-        help="Phoenix endpoint"
-    )
 
     args = parser.parse_args()
 
     trigger = AutoOptimizationTrigger(
         tenant_id=args.tenant_id,
-        module=args.module,
-        phoenix_endpoint=args.phoenix_endpoint
+        module=args.module
     )
 
-    exit_code = trigger.run()
+    exit_code = await trigger.run()
+    return exit_code
+
+
+def main():
+    """Sync wrapper for CLI entry point"""
+    import asyncio
+    exit_code = asyncio.run(async_main())
     sys.exit(exit_code)
 
 

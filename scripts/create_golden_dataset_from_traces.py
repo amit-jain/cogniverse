@@ -20,7 +20,7 @@ import pandas as pd
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-import phoenix as px
+from cogniverse_core.telemetry.manager import get_telemetry_manager
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -31,56 +31,64 @@ class GoldenDatasetGenerator:
     Generates golden dataset from low-scoring traces
     """
     
-    def __init__(self, 
+    def __init__(self,
+                 tenant_id: str = "default",
                  hours_back: int = 48,
                  min_occurrences: int = 2,
                  score_threshold: float = 0.5,
                  top_n_queries: int = 20):
         """
         Initialize the generator
-        
+
         Args:
+            tenant_id: Tenant identifier
             hours_back: How many hours back to analyze
             min_occurrences: Minimum times a query must appear
             score_threshold: Maximum avg score to be considered "low-scoring"
             top_n_queries: Number of queries to include in dataset
         """
+        self.tenant_id = tenant_id
         self.hours_back = hours_back
         self.min_occurrences = min_occurrences
         self.score_threshold = score_threshold
         self.top_n_queries = top_n_queries
-        self.client = px.Client()
+
+        # Get telemetry provider for trace queries
+        telemetry_manager = get_telemetry_manager()
+        self.provider = telemetry_manager.get_provider(tenant_id=tenant_id)
     
-    def fetch_traces_with_evaluations(self) -> pd.DataFrame:
+    async def fetch_traces_with_evaluations(self) -> pd.DataFrame:
         """
-        Fetch traces with evaluation scores from Phoenix
-        
+        Fetch traces with evaluation scores
+
         Returns:
             DataFrame with traces and their evaluations
         """
         logger.info(f"Fetching traces from last {self.hours_back} hours...")
-        
+
         # Calculate time range
         end_time = datetime.now()
         start_time = end_time - timedelta(hours=self.hours_back)
-        
+
         try:
-            # Get spans from Phoenix
-            spans_df = self.client.get_spans_dataframe(
+            # Get spans using provider abstraction
+            project_name = f"cogniverse-{self.tenant_id}"
+            spans_df = await self.provider.traces.get_spans(
                 start_time=start_time,
-                end_time=end_time
+                end_time=end_time,
+                project_name=project_name
             )
-            
+
             if spans_df is None or spans_df.empty:
                 logger.warning("No spans found in the specified time range")
                 return pd.DataFrame()
-            
+
             logger.info(f"Retrieved {len(spans_df)} spans")
-            
+
             # Get evaluations
             try:
-                evaluations_df = self.client.get_evaluations_dataframe()
-                
+                evaluations_df = await self.provider.evaluations.get_evaluations()
+
                 if evaluations_df is not None and not evaluations_df.empty:
                     # Merge spans with evaluations
                     merged_df = pd.merge(
@@ -98,7 +106,7 @@ class GoldenDatasetGenerator:
             except Exception as e:
                 logger.warning(f"Could not fetch evaluations: {e}")
                 return spans_df
-                
+
         except Exception as e:
             logger.error(f"Failed to fetch traces: {e}")
             return pd.DataFrame()
@@ -129,7 +137,7 @@ class GoldenDatasetGenerator:
                 if isinstance(input_data, str):
                     try:
                         input_data = json.loads(input_data)
-                    except:
+                    except (json.JSONDecodeError, TypeError):
                         continue
                 
                 query = input_data.get("query", "")
@@ -150,7 +158,7 @@ class GoldenDatasetGenerator:
                 if isinstance(output_data, str):
                     try:
                         output_data = json.loads(output_data)
-                    except:
+                    except (json.JSONDecodeError, TypeError):
                         pass
                 
                 if isinstance(output_data, dict):
@@ -176,7 +184,7 @@ class GoldenDatasetGenerator:
                 if isinstance(attrs, str):
                     try:
                         attrs = json.loads(attrs)
-                    except:
+                    except (json.JSONDecodeError, TypeError):
                         attrs = {}
                 
                 if attrs.get("profile"):
@@ -378,46 +386,52 @@ class GoldenDatasetGenerator:
         report.append("\n" + "=" * 60)
         return "\n".join(report)
     
-    def run(self) -> Tuple[Dict[str, Dict], str]:
+    async def run(self) -> Tuple[Dict[str, Dict], str]:
         """
         Run the complete golden dataset generation process
-        
+
         Returns:
             Tuple of (golden_dataset, report)
         """
         # Fetch traces
-        traces_df = self.fetch_traces_with_evaluations()
+        traces_df = await self.fetch_traces_with_evaluations()
         if traces_df.empty:
             logger.warning("No traces found")
             return {}, "No traces found to analyze"
-        
+
         # Analyze performance
         logger.info("Analyzing query performance...")
         query_stats = self.analyze_query_performance(traces_df)
         logger.info(f"Analyzed {len(query_stats)} unique queries")
-        
+
         # Identify challenging queries
         logger.info("Identifying challenging queries...")
         challenging = self.identify_challenging_queries(query_stats)
         logger.info(f"Found {len(challenging)} challenging queries")
-        
+
         # Create golden dataset
         logger.info("Creating golden dataset...")
         golden_dataset = self.create_golden_dataset(challenging)
-        
+
         # Generate report
         report = self.generate_report(golden_dataset)
-        
+
         return golden_dataset, report
 
 
-def main():
+async def async_main():
+    """Async CLI entry point"""
     parser = argparse.ArgumentParser(
         description="Generate golden dataset from low-scoring traces"
     )
     parser.add_argument(
-        "--hours", 
-        type=int, 
+        "--tenant-id",
+        default="default",
+        help="Tenant identifier (default: default)"
+    )
+    parser.add_argument(
+        "--hours",
+        type=int,
         default=48,
         help="Hours back to analyze (default: 48)"
     )
@@ -454,33 +468,34 @@ def main():
         action="store_true",
         help="Don't save files, just print report"
     )
-    
+
     args = parser.parse_args()
-    
+
     # Create generator
     generator = GoldenDatasetGenerator(
+        tenant_id=args.tenant_id,
         hours_back=args.hours,
         min_occurrences=args.min_occurrences,
         score_threshold=args.score_threshold,
         top_n_queries=args.top_n
     )
-    
+
     # Run generation
-    dataset, report = generator.run()
-    
+    dataset, report = await generator.run()
+
     # Print report
     print(report)
-    
+
     if dataset and not args.dry_run:
         # Save dataset
         output_path = Path(args.output) if args.output else None
         json_path = generator.save_golden_dataset(dataset, output_path)
         print(f"\n✅ Saved JSON dataset to: {json_path}")
-        
+
         if args.csv:
             csv_path = generator.save_as_csv(dataset)
             print(f"✅ Saved CSV dataset to: {csv_path}")
-        
+
         # Update golden dataset in code if desired
         print("\n📝 To use this dataset in experiments:")
         print("  1. Copy the dataset to src/evaluation/evaluators/golden_dataset.py")
@@ -490,8 +505,14 @@ def main():
         print("  - Increasing --hours to analyze more data")
         print("  - Decreasing --min-occurrences")
         print("  - Increasing --score-threshold")
-    
+
     return 0 if dataset else 1
+
+
+def main():
+    """Sync wrapper for CLI entry point"""
+    import asyncio
+    return asyncio.run(async_main())
 
 
 if __name__ == "__main__":

@@ -181,10 +181,11 @@ class OrchestrationAnnotationStorage:
             List of annotated span data with annotations
         """
         try:
-            # Query Phoenix for spans with orchestration_quality evaluations
-            spans_df = self.phoenix_client.get_spans_dataframe(
+            # Query telemetry provider for spans with orchestration_quality evaluations
+            spans_df = await self.provider.traces.get_spans(
                 start_time=start_time,
                 end_time=end_time,
+                project_name=self.project_name,
             )
 
             # Filter for orchestration spans with evaluations
@@ -192,7 +193,7 @@ class OrchestrationAnnotationStorage:
 
             for _, span_row in spans_df.iterrows():
                 # Check if span has orchestration_quality evaluation
-                evaluations = self._get_span_evaluations(span_row)
+                evaluations = await self._get_span_evaluations(span_row)
 
                 if not evaluations:
                     continue
@@ -229,7 +230,7 @@ class OrchestrationAnnotationStorage:
             logger.error(f"❌ Error querying annotated spans: {e}")
             return []
 
-    def _get_span_evaluations(self, span_row) -> List[Dict]:
+    async def _get_span_evaluations(self, span_row) -> List[Dict]:
         """
         Extract evaluations for a span
 
@@ -241,8 +242,8 @@ class OrchestrationAnnotationStorage:
             if not span_id:
                 return []
 
-            # Get evaluations for this span from Phoenix client
-            evals_df = self.phoenix_client.get_evaluations(span_ids=[span_id])
+            # Get evaluations for this span from provider
+            evals_df = await self.provider.evaluations.get_evaluations(span_ids=[span_id])
 
             if evals_df.empty:
                 return []

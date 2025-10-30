@@ -50,7 +50,7 @@ class TestOrchestrationOptimizationIntegration:
 
     @pytest.mark.asyncio
     async def test_phoenix_evaluator_extracts_workflows_from_spans(
-        self, workflow_intelligence
+        self, workflow_intelligence, telemetry_manager_without_phoenix
     ):
         """Test that OrchestrationEvaluator extracts workflows from Phoenix spans"""
         evaluator = OrchestrationEvaluator(
@@ -124,7 +124,7 @@ class TestOrchestrationOptimizationIntegration:
         assert failed_workflow.error_details == "Agent timeout"
 
     @pytest.mark.asyncio
-    async def test_annotation_storage_stores_and_retrieves_annotations(self):
+    async def test_annotation_storage_stores_and_retrieves_annotations(self, telemetry_manager_without_phoenix):
         """Test that OrchestrationAnnotationStorage stores and retrieves annotations"""
         storage = OrchestrationAnnotationStorage(tenant_id="test-tenant")
 
@@ -164,7 +164,7 @@ class TestOrchestrationOptimizationIntegration:
 
     @pytest.mark.asyncio
     async def test_feedback_loop_processes_annotations_and_triggers_optimization(
-        self, workflow_intelligence
+        self, workflow_intelligence, telemetry_manager_without_phoenix
     ):
         """Test that OrchestrationFeedbackLoop processes annotations and triggers optimization"""
         feedback_loop = OrchestrationFeedbackLoop(
@@ -381,7 +381,7 @@ class TestOrchestrationOptimizationIntegration:
 
     @pytest.mark.asyncio
     async def test_end_to_end_orchestration_optimization_flow(
-        self, workflow_intelligence, routing_optimizer
+        self, workflow_intelligence, routing_optimizer, telemetry_manager_without_phoenix
     ):
         """Test complete end-to-end orchestration optimization flow with REAL components"""
         # 1. Create OrchestrationEvaluator with REAL WorkflowIntelligence

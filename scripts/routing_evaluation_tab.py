@@ -38,6 +38,23 @@ from cogniverse_core.telemetry.config import SERVICE_NAME_ORCHESTRATION
 logger = logging.getLogger(__name__)
 
 
+def run_async_in_streamlit(coro):
+    """Helper to run async operations in Streamlit"""
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, coro)
+                return future.result()
+        else:
+            return asyncio.run(coro)
+    except RuntimeError:
+        return asyncio.run(coro)
+
+
 def render_routing_evaluation_tab():
     """Render the routing evaluation tab with metrics and visualizations"""
     st.subheader("🎯 Routing Evaluation Dashboard")
@@ -67,18 +84,28 @@ def render_routing_evaluation_tab():
         st.error(f"❌ Failed to initialize RoutingEvaluator: {e}")
         return
 
-    # Check if Phoenix is available
+    # Check telemetry provider connectivity
     try:
-        import httpx
-        phoenix_response = httpx.get("http://localhost:6006", timeout=2)
-        phoenix_available = phoenix_response.status_code in [200, 404]  # 404 is OK, means Phoenix is up
-    except Exception:
-        phoenix_available = False
+        # Test provider connectivity by attempting to fetch spans
+        async def check_provider():
+            try:
+                await provider.traces.get_spans(
+                    start_time=datetime.now() - timedelta(minutes=1),
+                    end_time=datetime.now(),
+                    project_name=project_name,
+                    limit=1
+                )
+                return True
+            except Exception:
+                return False
 
-    if not phoenix_available:
-        st.warning("⚠️ Phoenix is not running on http://localhost:6006")
-        st.info("💡 Start Phoenix with: `import phoenix as px; px.launch_app()`")
-        st.info("Or use: `uv run python -c \"import phoenix as px; px.launch_app()\"`")
+        provider_available = run_async_in_streamlit(check_provider())
+    except Exception:
+        provider_available = False
+
+    if not provider_available:
+        st.warning("⚠️ Telemetry provider is not available")
+        st.info("Check your telemetry configuration and ensure the provider is running")
         return
 
     # Time range for query
@@ -86,9 +113,9 @@ def render_routing_evaluation_tab():
     start_time = end_time - timedelta(hours=lookback_hours)
 
     # Fetch and evaluate routing spans
-    with st.spinner("Fetching routing spans from Phoenix..."):
+    with st.spinner("Fetching routing spans from telemetry..."):
         try:
-            # Query routing spans from Phoenix
+            # Query routing spans from telemetry
             routing_spans = evaluator.query_routing_spans(
                 start_time=start_time, end_time=end_time, limit=1000
             )
@@ -97,7 +124,7 @@ def render_routing_evaluation_tab():
             if not routing_spans:
                 st.warning(
                     f"📭 No routing decisions found in the last {lookback_hours} hours. "
-                    "Make sure the routing agent has been processing requests and Phoenix is capturing traces."
+                    "Make sure the routing agent has been processing requests and telemetry is capturing traces."
                 )
                 return
 
@@ -223,11 +250,13 @@ def _render_confidence_analysis(evaluator, start_time, end_time):
 
     # Get detailed span data for confidence analysis
     try:
-        import phoenix as px
-        client = px.Client()
-        spans_df = client.get_spans_dataframe(
-            project_name=evaluator.project_name, start_time=start_time, end_time=end_time
-        )
+        # Fetch spans using provider abstraction (async call)
+        async def fetch_spans():
+            return await evaluator.provider.traces.get_spans(
+                project_name=evaluator.project_name, start_time=start_time, end_time=end_time
+            )
+
+        spans_df = run_async_in_streamlit(fetch_spans())
 
         if spans_df.empty:
             st.info("No span data available for confidence analysis.")
@@ -333,11 +362,13 @@ def _render_temporal_analysis(evaluator, start_time, end_time):
     st.subheader("📅 Temporal Analysis")
 
     try:
-        import phoenix as px
-        client = px.Client()
-        spans_df = client.get_spans_dataframe(
-            project_name=evaluator.project_name, start_time=start_time, end_time=end_time
-        )
+        # Fetch spans using provider abstraction (async call)
+        async def fetch_spans():
+            return await evaluator.provider.traces.get_spans(
+                project_name=evaluator.project_name, start_time=start_time, end_time=end_time
+            )
+
+        spans_df = run_async_in_streamlit(fetch_spans())
 
         if spans_df.empty:
             st.info("No span data available for temporal analysis.")

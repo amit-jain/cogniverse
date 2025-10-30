@@ -10,7 +10,6 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import phoenix as px
 import streamlit as st
 
 # Add project root to path
@@ -21,6 +20,7 @@ from cogniverse_agents.routing.orchestration_annotation_storage import (
     OrchestrationAnnotation,
     OrchestrationAnnotationStorage,
 )
+from cogniverse_core.telemetry.manager import get_telemetry_manager
 
 
 def run_async_in_streamlit(coro):
@@ -64,17 +64,24 @@ def render_orchestration_annotation_tab():
         max_workflows = st.slider("Max workflows to show", 5, 50, 20)
 
     if st.button("🔄 Refresh Workflows"):
-        with st.spinner("Fetching orchestration spans from Phoenix..."):
+        with st.spinner("Fetching orchestration spans..."):
             try:
-                phoenix_client = px.Client()
+                # Get telemetry provider
+                telemetry_manager = get_telemetry_manager()
+                provider = telemetry_manager.get_provider(tenant_id=tenant_id)
+
                 end_time = datetime.now()
                 start_time = end_time - timedelta(hours=lookback_hours)
 
-                spans_df = phoenix_client.get_spans_dataframe(
-                    project_name=f"{tenant_id}-cogniverse-orchestration",
-                    start_time=start_time,
-                    end_time=end_time,
-                )
+                # Fetch spans using provider abstraction (async call)
+                async def fetch_spans():
+                    return await provider.traces.get_spans(
+                        project_name=f"cogniverse-{tenant_id}-cogniverse.orchestration",
+                        start_time=start_time,
+                        end_time=end_time,
+                    )
+
+                spans_df = run_async_in_streamlit(fetch_spans())
 
                 if spans_df.empty:
                     st.warning(

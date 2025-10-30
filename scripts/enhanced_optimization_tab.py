@@ -25,6 +25,22 @@ import streamlit as st
 logger = logging.getLogger(__name__)
 
 
+def run_async_in_streamlit(coro):
+    """Helper to run async operations in Streamlit"""
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, coro)
+                return future.result()
+        else:
+            return asyncio.run(coro)
+    except RuntimeError:
+        return asyncio.run(coro)
+
+
 def render_enhanced_optimization_tab():
     """Render the enhanced optimization tab with all optimization workflows"""
     st.header("🔧 Optimization Framework")
@@ -180,23 +196,30 @@ def _render_search_annotation_tab():
                 ["Thumbs Up/Down", "Star Rating (1-5)", "Relevance Score (0-1)"]
             )
 
-    # Fetch search spans from Phoenix
+    # Fetch search spans
     if st.button("🔍 Fetch Search Results", key="fetch_search_results"):
-        with st.spinner("Fetching search results from Phoenix..."):
+        with st.spinner("Fetching search results..."):
             try:
-                import phoenix as px
+                from cogniverse_core.telemetry.manager import get_telemetry_manager
 
-                client = px.Client()
+                # Get telemetry provider
+                telemetry_manager = get_telemetry_manager()
+                provider = telemetry_manager.get_provider(tenant_id=tenant_id)
+
                 project_name = f"cogniverse-{tenant_id}-search"
 
                 end_time = datetime.now()
                 start_time = end_time - timedelta(hours=lookback_hours)
 
-                spans_df = client.get_spans_dataframe(
-                    project_name=project_name,
-                    start_time=start_time,
-                    end_time=end_time
-                )
+                # Fetch spans using provider abstraction
+                async def fetch_spans():
+                    return await provider.traces.get_spans(
+                        project_name=project_name,
+                        start_time=start_time,
+                        end_time=end_time
+                    )
+
+                spans_df = run_async_in_streamlit(fetch_spans())
 
                 # Filter for search spans
                 search_spans = spans_df[spans_df["name"].str.contains("search", case=False)]
@@ -327,32 +350,36 @@ def _save_search_annotation(
     notes: str,
     tenant_id: str
 ):
-    """Save search result annotation to Phoenix"""
+    """Save search result annotation via telemetry provider"""
     try:
-        import phoenix as px
-        from phoenix.trace import SpanEvaluations
+        from cogniverse_core.telemetry.manager import get_telemetry_manager
 
-        client = px.Client()
+        # Get telemetry provider
+        telemetry_manager = get_telemetry_manager()
+        provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
-        # Create evaluation dataframe
-        eval_data = {
-            "context.span_id": [span_id],
-            "label": ["positive" if rating >= 0.6 else "negative" if rating <= 0.4 else "neutral"],
-            "score": [rating],
-            "explanation": [notes or "User annotation"],
-            "annotation_type": [annotation_type],
-            "annotator": ["human"],
-            "timestamp": [datetime.now().isoformat()]
+        # Create annotation
+        label = "positive" if rating >= 0.6 else "negative" if rating <= 0.4 else "neutral"
+
+        annotation_data = {
+            "label": label,
+            "score": rating,
+            "explanation": notes or "User annotation",
+            "annotation_type": annotation_type,
+            "annotator": "human",
+            "timestamp": datetime.now().isoformat()
         }
 
-        eval_df = pd.DataFrame(eval_data)
+        # Save annotation using provider
+        async def save_annotation():
+            await provider.annotations.add_annotation(
+                span_id=span_id,
+                name="search_quality_annotation",
+                annotator_kind="HUMAN",
+                result=annotation_data
+            )
 
-        # Log evaluation
-        span_evals = SpanEvaluations(
-            eval_name="search_quality_annotation",
-            dataframe=eval_df
-        )
-        client.log_evaluations(span_evals)
+        run_async_in_streamlit(save_annotation())
 
         # Update session state
         if "annotation_count" not in st.session_state:
@@ -369,7 +396,7 @@ def _save_search_annotation(
 def _render_golden_dataset_tab():
     """Render golden dataset builder from annotations"""
     st.subheader("📚 Golden Dataset Builder")
-    st.markdown("Build ground truth datasets from Phoenix annotations")
+    st.markdown("Build ground truth datasets from telemetry annotations")
 
     # Configuration
     col1, col2, col3 = st.columns(3)
@@ -384,11 +411,11 @@ def _render_golden_dataset_tab():
     if st.button("🏗️ Build Golden Dataset", type="primary"):
         with st.spinner("Building golden dataset from annotations..."):
             try:
-                golden_dataset = _build_golden_dataset_from_phoenix(
+                golden_dataset = run_async_in_streamlit(_build_golden_dataset_from_phoenix(
                     tenant_id=tenant_id,
                     min_rating=min_rating,
                     lookback_days=lookback_days
-                )
+                ))
 
                 st.session_state["golden_dataset"] = golden_dataset
                 st.session_state["golden_dataset_size"] = len(golden_dataset)
@@ -435,22 +462,25 @@ def _render_golden_dataset_tab():
                 )
 
 
-def _build_golden_dataset_from_phoenix(
+async def _build_golden_dataset_from_phoenix(
     tenant_id: str,
     min_rating: float,
     lookback_days: int
 ) -> Dict:
-    """Build golden dataset from Phoenix annotations"""
-    import phoenix as px
+    """Build golden dataset from annotated spans"""
+    from cogniverse_core.telemetry.manager import get_telemetry_manager
 
-    client = px.Client()
+    # Get telemetry provider
+    telemetry_manager = get_telemetry_manager()
+    provider = telemetry_manager.get_provider(tenant_id=tenant_id)
+
     project_name = f"cogniverse-{tenant_id}-search"
 
     # Query annotated spans
     end_time = datetime.now()
     start_time = end_time - timedelta(days=lookback_days)
 
-    spans_df = client.get_spans_dataframe(
+    spans_df = await provider.traces.get_spans(
         project_name=project_name,
         start_time=start_time,
         end_time=end_time
@@ -778,7 +808,7 @@ def _render_routing_optimization_tab():
     # Golden dataset selection when synthetic data is disabled
     if not use_synthetic:
         st.markdown("### 📚 Golden Dataset Selection")
-        st.info("Using golden evaluation dataset from Phoenix (harvested from traces)")
+        st.info("Using golden evaluation dataset from telemetry (harvested from traces)")
 
         # Query Phoenix for available datasets
         try:
@@ -829,9 +859,9 @@ def _render_routing_optimization_tab():
                     # Create dataset options with descriptions
                     dataset_options = [d['name'] for d in datasets]
                     selected_dataset_name = st.selectbox(
-                        "Select Phoenix Dataset",
+                        "Select Telemetry Dataset",
                         options=dataset_options,
-                        help="Datasets stored in Phoenix"
+                        help="Datasets stored in telemetry system"
                     )
                     dataset_name = selected_dataset_name
 
@@ -844,9 +874,9 @@ def _render_routing_optimization_tab():
                             st.caption(f"_{selected_dataset['description']}_")
                         st.caption(f"Created: {selected_dataset['created_at'][:10] if selected_dataset['created_at'] else 'N/A'}")
             else:
-                st.warning("No datasets found in Phoenix. Upload a CSV to create a dataset or use the Golden Dataset tab.")
+                st.warning("No datasets found in telemetry. Upload a CSV to create a dataset or use the Golden Dataset tab.")
 
-                # Option to upload CSV and create Phoenix dataset
+                # Option to upload CSV and create telemetry dataset
                 col1, col2 = st.columns([3, 1])
                 with col1:
                     uploaded_file = st.file_uploader(
@@ -860,12 +890,12 @@ def _render_routing_optimization_tab():
                             "Dataset Name",
                             value="",
                             placeholder="e.g., my_eval_dataset",
-                            help="Name for the Phoenix dataset"
+                            help="Name for the telemetry dataset"
                         )
 
                 if uploaded_file and dataset_name:
-                    if st.button("📤 Upload to Phoenix"):
-                        with st.spinner("Creating Phoenix dataset..."):
+                    if st.button("📤 Upload Dataset"):
+                        with st.spinner("Creating telemetry dataset..."):
                             try:
                                 import tempfile
 
@@ -892,11 +922,11 @@ def _render_routing_optimization_tab():
                                 import os
                                 os.unlink(tmp_path)
 
-                                st.success(f"✅ Created Phoenix dataset '{dataset_name}' with ID: {dataset_id}")
+                                st.success(f"✅ Created telemetry dataset '{dataset_name}' with ID: {dataset_id}")
                                 st.info("Refresh the page to see the new dataset in the dropdown")
 
                             except Exception as e:
-                                st.error(f"Failed to create Phoenix dataset: {e}")
+                                st.error(f"Failed to create telemetry dataset: {e}")
                                 import traceback
                                 st.code(traceback.format_exc())
                 else:
@@ -905,16 +935,16 @@ def _render_routing_optimization_tab():
         except Exception as e:
             # Show clean error message for connection issues
             if "Connection refused" in str(e) or "ConnectionError" in str(type(e).__name__):
-                st.warning("⚠️ Phoenix is not running")
+                st.warning("⚠️ Telemetry provider is not running")
             else:
-                st.warning(f"⚠️ Could not fetch Phoenix datasets: {type(e).__name__}")
-            st.info("Start Phoenix with `px.launch_app()` or upload CSV manually")
+                st.warning(f"⚠️ Could not fetch telemetry datasets: {type(e).__name__}")
+            st.info("Check telemetry configuration or upload CSV manually")
 
             # Fallback: manual dataset name entry
             dataset_name = st.text_input(
                 "Dataset Name (manual)",
                 value="",
-                placeholder="Enter Phoenix dataset name",
+                placeholder="Enter telemetry dataset name",
                 help="Enter dataset name manually if you know it exists"
             )
 
@@ -1096,39 +1126,63 @@ def _render_reranking_optimization_tab():
 def _render_profile_selection_tab():
     """Render profile selection optimization with real Phoenix data"""
     st.subheader("📈 Profile Selection Optimization")
-    st.markdown("Learn which processing profile works best for different query types from Phoenix data")
+    st.markdown("Learn which processing profile works best for different query types from telemetry data")
 
-    # Check Phoenix availability first
+    tenant_id = st.text_input("Tenant ID", value="default", key="profile_opt_tenant_id")
+
+    # Check telemetry provider availability
     try:
-        import httpx
-        phoenix_response = httpx.get("http://localhost:6006", timeout=2)
-        phoenix_available = phoenix_response.status_code in [200, 404]
-    except Exception:
-        phoenix_available = False
+        from cogniverse_core.telemetry.manager import get_telemetry_manager
+        telemetry_manager = get_telemetry_manager()
+        provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
-    if not phoenix_available:
-        st.warning("⚠️ Phoenix is not running on http://localhost:6006")
-        st.info("Start Phoenix with: `import phoenix as px; px.launch_app()`")
+        # Test provider connectivity
+        async def check_provider():
+            try:
+                # Try to fetch spans with small limit to test connectivity
+                await provider.traces.get_spans(
+                    start_time=datetime.now() - timedelta(minutes=1),
+                    end_time=datetime.now(),
+                    project_name=f"cogniverse-{tenant_id}",
+                    limit=1
+                )
+                return True
+            except Exception:
+                return False
+
+        provider_available = run_async_in_streamlit(check_provider())
+    except Exception:
+        provider_available = False
+
+    if not provider_available:
+        st.warning("⚠️ Telemetry provider is not available")
+        st.info("Check your telemetry configuration and ensure the provider is running")
         return
 
-    # Query Phoenix for profile performance data
+    # Query for profile performance data
     try:
         from datetime import timedelta
 
-        import phoenix as px
+        from cogniverse_core.telemetry.manager import get_telemetry_manager
 
-        phoenix_client = px.Client(endpoint="http://localhost:6006")
+        # Get telemetry provider
+        tenant_id = st.text_input("Tenant ID", value="default", key="profile_tenant_id")
+        telemetry_manager = get_telemetry_manager()
+        provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
         # Time range
         lookback_days = st.slider("Lookback (days)", 1, 90, 30)
         end_time = datetime.now()
         start_time = end_time - timedelta(days=lookback_days)
 
-        # Get search spans from Phoenix
-        spans_df = phoenix_client.get_spans_dataframe(
-            start_time=start_time,
-            end_time=end_time
-        )
+        # Get search spans using provider abstraction
+        async def fetch_spans():
+            return await provider.traces.get_spans(
+                start_time=start_time,
+                end_time=end_time
+            )
+
+        spans_df = run_async_in_streamlit(fetch_spans())
 
         if spans_df is None or spans_df.empty:
             st.warning(f"No spans found in the last {lookback_days} days. Run searches first.")
@@ -1161,7 +1215,7 @@ def _render_profile_selection_tab():
                 st.write(f"**{col}:**")
                 st.bar_chart(profile_counts)
         else:
-            st.info("No profile information found in span attributes. Profile data needs to be logged to Phoenix.")
+            st.info("No profile information found in span attributes. Profile data needs to be logged to telemetry.")
 
         st.markdown("---")
 
@@ -1225,8 +1279,8 @@ def _render_profile_selection_tab():
 
         if train_button:
             if not profile_cols or not quality_cols:
-                st.error("Cannot train: Need both profile information and quality metrics in Phoenix spans")
-                st.info("Make sure search operations log profile names and evaluation results to Phoenix")
+                st.error("Cannot train: Need both profile information and quality metrics in telemetry spans")
+                st.info("Make sure search operations log profile names and evaluation results to telemetry")
             else:
                 with st.spinner("Training profile selection model..."):
                     try:
@@ -1239,13 +1293,17 @@ def _render_profile_selection_tab():
                         # Initialize optimizer
                         optimizer = ProfilePerformanceOptimizer()
 
-                        # Extract training data from Phoenix
-                        X, y, profile_names = optimizer.extract_training_data_from_phoenix(
-                            phoenix_client=phoenix_client,
-                            start_time=start_time,
-                            end_time=end_time,
-                            min_samples=10
-                        )
+                        # Extract training data using provider abstraction
+                        async def extract_data():
+                            return await optimizer.extract_training_data_from_phoenix(
+                                tenant_id=tenant_id,
+                                project_name=f"cogniverse-{tenant_id}",
+                                start_time=start_time,
+                                end_time=end_time,
+                                min_samples=10
+                            )
+
+                        X, y, profile_names = run_async_in_streamlit(extract_data())
 
                         st.info(f"Extracted {len(X)} training samples with {X.shape[1]} features")
                         st.info(f"Found {len(profile_names)} profiles: {', '.join(profile_names)}")
@@ -1291,7 +1349,7 @@ def _render_profile_selection_tab():
 
                     except ValueError as e:
                         st.error(f"Training failed: {e}")
-                        st.info("Make sure Phoenix spans contain query text, profile names, and quality metrics")
+                        st.info("Make sure telemetry spans contain query text, profile names, and quality metrics")
                     except ImportError as e:
                         st.error(f"Missing required library: {e}")
                         st.info("Install with: uv pip install xgboost scikit-learn")
@@ -1340,26 +1398,42 @@ def _render_profile_selection_tab():
 
     except Exception as e:
         st.error(f"Error fetching profile data: {e}")
-        st.info("Make sure Phoenix is running at http://localhost:6006")
-        st.info("Start Phoenix with: `import phoenix as px; px.launch_app()`")
+        st.info("Check telemetry provider configuration and connectivity")
 
 
 def _render_metrics_dashboard_tab():
     """Render unified optimization metrics dashboard with actual optimization metrics"""
     st.subheader("📉 Optimization Metrics Dashboard")
-    st.markdown("Track routing accuracy, search quality, and optimization improvements from Phoenix")
+    st.markdown("Track routing accuracy, search quality, and optimization improvements from telemetry")
 
-    # Check Phoenix availability first
+    tenant_id = st.text_input("Tenant ID", value="default", key="metrics_tenant_id")
+
+    # Check telemetry provider availability
     try:
-        import httpx
-        phoenix_response = httpx.get("http://localhost:6006", timeout=2)
-        phoenix_available = phoenix_response.status_code in [200, 404]
-    except Exception:
-        phoenix_available = False
+        from cogniverse_core.telemetry.manager import get_telemetry_manager
+        telemetry_manager = get_telemetry_manager()
+        provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
-    if not phoenix_available:
-        st.warning("⚠️ Phoenix is not running on http://localhost:6006")
-        st.info("Start Phoenix with: `import phoenix as px; px.launch_app()`")
+        # Test provider connectivity
+        async def check_provider():
+            try:
+                await provider.traces.get_spans(
+                    start_time=datetime.now() - timedelta(minutes=1),
+                    end_time=datetime.now(),
+                    project_name=f"cogniverse-{tenant_id}",
+                    limit=1
+                )
+                return True
+            except Exception:
+                return False
+
+        provider_available = run_async_in_streamlit(check_provider())
+    except Exception:
+        provider_available = False
+
+    if not provider_available:
+        st.warning("⚠️ Telemetry provider is not available")
+        st.info("Check your telemetry configuration and ensure the provider is running")
         return
 
     # Time range selector
@@ -1449,7 +1523,7 @@ def _render_metrics_dashboard_tab():
                     hide_index=True
                 )
         else:
-            st.info("No routing spans found. Routing metrics require cogniverse.routing spans in Phoenix.")
+            st.info("No routing spans found. Routing metrics require cogniverse.routing spans in telemetry.")
 
         st.markdown("---")
 
@@ -1510,8 +1584,7 @@ def _render_metrics_dashboard_tab():
 
     except Exception as e:
         st.error(f"Error fetching optimization metrics: {e}")
-        st.info("Make sure Phoenix is running at http://localhost:6006")
-        st.info("Start Phoenix with: `import phoenix as px; px.launch_app()`")
+        st.info("Check telemetry provider configuration and connectivity")
 
 
 def _render_inline_approval_interface():
@@ -1679,15 +1752,9 @@ def _render_inline_review_item(item, idx: int):
 
 def _handle_inline_approval(item, idx: int):
     """Handle inline approval"""
-    from cogniverse_agents.approval import ApprovalStatus, ReviewDecision
+    from cogniverse_agents.approval import ApprovalStatus
 
     try:
-        decision = ReviewDecision(
-            item_id=item.item_id,
-            approved=True,
-            reviewer=st.session_state.get("user_email", "unknown"),
-        )
-
         # Update item status
         item.status = ApprovalStatus.APPROVED
         import pandas as pd
@@ -1785,7 +1852,7 @@ def _process_approval_workflow(result: Dict, confidence_threshold: float):
         batch_id = f"synthetic_{result['optimizer']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
         # Create mock batch (in production, would call agent.process_batch() asynchronously)
-        from cogniverse_agents.approval import ReviewItem, ApprovalBatch, ApprovalStatus
+        from cogniverse_agents.approval import ApprovalBatch, ApprovalStatus, ReviewItem
 
         review_items = []
         for i, item_data in enumerate(result['data']):
