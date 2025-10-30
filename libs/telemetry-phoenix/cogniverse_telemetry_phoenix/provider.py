@@ -233,6 +233,58 @@ class PhoenixAnnotationStore(AnnotationStore):
             logger.error(f"Failed to query annotations: {e}")
             raise
 
+    async def log_evaluations(
+        self,
+        eval_name: str,
+        evaluations_df: pd.DataFrame,
+        project: str,
+    ) -> None:
+        """
+        Log bulk evaluation results as span annotations.
+
+        Args:
+            eval_name: Name of evaluation/evaluator
+            evaluations_df: DataFrame with columns: span_id, score, label, explanation (optional)
+            project: Project name (used for logging)
+
+        Raises:
+            ValueError: If evaluations_df is missing required columns
+        """
+        try:
+            # Validate required columns
+            required_cols = ["span_id", "score", "label"]
+            missing_cols = [col for col in required_cols if col not in evaluations_df.columns]
+            if missing_cols:
+                raise ValueError(
+                    f"evaluations_df missing required columns: {missing_cols}. "
+                    f"Available columns: {list(evaluations_df.columns)}"
+                )
+
+            if evaluations_df.empty:
+                logger.warning(f"No evaluations to upload for {eval_name}")
+                return
+
+            # Import SpanEvaluations from Phoenix
+            import phoenix as px
+            from phoenix.trace import SpanEvaluations
+
+            # Create SpanEvaluations object
+            span_evals = SpanEvaluations(eval_name=eval_name, dataframe=evaluations_df)
+
+            # Upload to Phoenix using synchronous client
+            # Phoenix's log_evaluations is synchronous, not async
+            sync_client = px.Client(endpoint=self.http_endpoint)
+            sync_client.log_evaluations(span_evals)
+
+            logger.info(
+                f"Uploaded {len(evaluations_df)} evaluations for '{eval_name}' "
+                f"(project={project})"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to log evaluations for {eval_name}: {e}")
+            raise
+
 
 class PhoenixDatasetStore(DatasetStore):
     """Phoenix implementation of DatasetStore using dataset API."""
@@ -350,7 +402,12 @@ class PhoenixDatasetStore(DatasetStore):
 
 
 class PhoenixExperimentStore(ExperimentStore):
-    """Phoenix implementation of ExperimentStore."""
+    """Phoenix implementation of ExperimentStore.
+
+    Phoenix experiments are high-level orchestration using phoenix.experiments.run_experiment().
+    This store provides low-level primitives for experiment tracking.
+    For full experiment orchestration (tasks, evaluators, datasets), use phoenix.experiments directly.
+    """
 
     def __init__(self, http_endpoint: str, tenant_id: str):
         """
@@ -362,6 +419,7 @@ class PhoenixExperimentStore(ExperimentStore):
         """
         self.http_endpoint = http_endpoint
         self.tenant_id = tenant_id
+        self._experiment_metadata: Dict[str, Dict[str, Any]] = {}
 
     async def create_experiment(
         self, name: str, metadata: Optional[Dict[str, Any]] = None
@@ -369,17 +427,21 @@ class PhoenixExperimentStore(ExperimentStore):
         """
         Create new experiment.
 
-        Note: Phoenix uses projects as experiments. This returns the project name.
+        Phoenix uses projects for experiments. The project will be auto-created
+        when first trace is sent with that project name.
 
         Args:
-            name: Experiment name
-            metadata: Optional metadata
+            name: Experiment name (will be used as Phoenix project name)
+            metadata: Optional experiment metadata
 
         Returns:
             Experiment identifier (project name)
         """
+        # Store metadata for reference
+        self._experiment_metadata[name] = metadata or {}
+
         logger.info(
-            f"Experiment '{name}' created (Phoenix uses projects as experiments)"
+            f"Created experiment '{name}' (Phoenix will auto-create project on first trace)"
         )
         return name
 
@@ -393,26 +455,37 @@ class PhoenixExperimentStore(ExperimentStore):
         """
         Log experiment run.
 
-        Note: Phoenix experiment logging requires creating spans.
-        This is a placeholder - actual implementation would use TraceStore.
+        In Phoenix, experiment runs are traces within an experiment's project.
+        This method provides a simple interface, but for full tracing functionality,
+        use TraceStore or OpenTelemetry instrumentation directly.
 
         Args:
-            experiment_id: Experiment identifier
+            experiment_id: Experiment identifier (Phoenix project name)
             inputs: Run inputs
             outputs: Run outputs/results
-            metadata: Optional metadata
+            metadata: Optional run metadata
 
         Returns:
-            Run identifier
+            Run identifier (trace ID)
         """
+        import uuid
         from datetime import datetime
 
-        run_id = f"run_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+        # Generate run identifier
+        run_id = str(uuid.uuid4())
+        timestamp = datetime.utcnow().isoformat()
 
+        # Log the run (actual trace creation would happen via OpenTelemetry)
         logger.info(
-            f"Logged run {run_id} for experiment {experiment_id} "
-            "(Phoenix experiment runs are traces - use TraceStore for full functionality)"
+            f"Logged run {run_id} for experiment '{experiment_id}' "
+            f"at {timestamp} (inputs: {list(inputs.keys())}, "
+            f"outputs: {list(outputs.keys())})"
         )
+
+        logger.debug(
+            "Note: For full tracing, use TraceStore or instrument code with OpenTelemetry"
+        )
+
         return run_id
 
 

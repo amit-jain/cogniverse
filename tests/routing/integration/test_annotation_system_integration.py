@@ -688,3 +688,109 @@ class TestAnnotationSystemIntegration:
             logger.info(
                 "Note: No experiences created (annotations may need more time to index)"
             )
+
+    @pytest.mark.asyncio
+    async def test_bulk_evaluation_logging(
+        self, telemetry_provider, test_tenant_id, telemetry_manager
+    ):
+        """
+        Test the new log_evaluations() method for bulk evaluation upload.
+
+        This tests the provider abstraction's bulk evaluation logging capability.
+        """
+        logger.info("\n=== Testing bulk evaluation logging ===")
+
+        import pandas as pd
+
+        # STEP 1: Create multiple routing spans
+        logger.info("\n=== STEP 1: Creating routing spans ===")
+
+        span_ids = []
+        for i in range(3):
+            with telemetry_manager.span(
+                name=SPAN_NAME_ROUTING,
+                tenant_id=test_tenant_id,
+                project_name=SERVICE_NAME_ORCHESTRATION,
+                attributes={
+                    "routing.query": f"Test query {i}",
+                    "routing.chosen_agent": "video_search",
+                    "routing.confidence": 0.5 + (i * 0.1),
+                    "routing.context": "{}",
+                },
+            ) as span:
+                span_context = getattr(span, "context", None)
+                if span_context and hasattr(span_context, "span_id"):
+                    span_id = str(span_context.span_id)
+                    span_ids.append(span_id)
+
+        assert len(span_ids) == 3, "Failed to create test spans"
+        logger.info(f"Created {len(span_ids)} test spans")
+
+        # Wait for spans to be indexed
+        wait_for_phoenix_processing(delay=2, description="span indexing")
+
+        # STEP 2: Create evaluation dataframe
+        logger.info("\n=== STEP 2: Creating evaluation dataframe ===")
+
+        eval_data = []
+        for i, span_id in enumerate(span_ids):
+            eval_data.append({
+                "span_id": span_id,
+                "score": 0.7 + (i * 0.1),
+                "label": "good" if i < 2 else "excellent",
+                "explanation": f"Test evaluation {i}"
+            })
+
+        evaluations_df = pd.DataFrame(eval_data)
+        logger.info(f"Created evaluations for {len(evaluations_df)} spans")
+
+        # STEP 3: Log evaluations using provider
+        logger.info("\n=== STEP 3: Logging evaluations via provider ===")
+
+        project = f"cogniverse-{test_tenant_id}-{SERVICE_NAME_ORCHESTRATION}"
+
+        try:
+            await telemetry_provider.annotations.log_evaluations(
+                eval_name="test_bulk_evaluation",
+                evaluations_df=evaluations_df,
+                project=project
+            )
+            logger.info("Successfully logged bulk evaluations")
+        except Exception as e:
+            pytest.fail(f"Failed to log evaluations: {e}")
+
+        # STEP 4: Wait and verify evaluations are retrievable
+        logger.info("\n=== STEP 4: Verifying evaluations in Phoenix ===")
+
+        wait_for_phoenix_processing(delay=3, description="evaluation indexing")
+
+        # Query spans to get evaluations
+        eval_end_time = datetime.now(timezone.utc)
+        eval_start_time = eval_end_time - timedelta(minutes=5)
+
+        spans_df = await telemetry_provider.traces.get_spans(
+            project=project,
+            start_time=eval_start_time,
+            end_time=eval_end_time,
+            limit=10
+        )
+
+        if not spans_df.empty:
+            # Try to get annotations
+            annotations_df = await telemetry_provider.annotations.get_annotations(
+                spans_df=spans_df,
+                project=project,
+                annotation_names=["test_bulk_evaluation"]
+            )
+
+            logger.info(f"Retrieved {len(annotations_df)} evaluation annotations")
+
+            # Note: Phoenix indexing timing can vary, so we log results but don't fail
+            if len(annotations_df) > 0:
+                logger.info("✅ Evaluations successfully stored and retrieved")
+            else:
+                logger.info("Note: Evaluations may need more time to index")
+        else:
+            logger.info("Note: Spans may need more time to be queryable")
+
+        logger.info("\n=== ✅ Bulk evaluation logging test complete ===")

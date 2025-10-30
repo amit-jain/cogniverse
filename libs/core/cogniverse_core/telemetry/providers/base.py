@@ -123,6 +123,33 @@ class AnnotationStore(ABC):
         """
         pass
 
+    @abstractmethod
+    async def log_evaluations(
+        self,
+        eval_name: str,
+        evaluations_df: pd.DataFrame,
+        project: str,
+    ) -> None:
+        """
+        Log bulk evaluation results as span annotations.
+
+        This is a batch operation for uploading evaluation results for multiple spans.
+        Evaluations are stored as annotations with the evaluator name.
+
+        Args:
+            eval_name: Name of evaluation/evaluator (e.g., "relevance", "diversity", "golden_dataset")
+            evaluations_df: DataFrame with evaluation results, must contain columns:
+                - span_id: Span identifier to annotate
+                - score: Evaluation score (typically 0.0-1.0)
+                - label: Evaluation label (e.g., "good", "poor", "pass", "fail")
+                - explanation: Optional explanation text (if not present, will use label)
+            project: Project/namespace identifier
+
+        Raises:
+            ValueError: If evaluations_df is missing required columns
+        """
+        pass
+
 
 class DatasetStore(ABC):
     """

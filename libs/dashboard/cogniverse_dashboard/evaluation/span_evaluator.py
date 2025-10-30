@@ -5,13 +5,12 @@ This module evaluates existing spans using both reference-free and golden datase
 """
 
 import logging
-from datetime import datetime, timedelta
-from typing import Any
+from datetime import datetime, timedelta, timezone
+from typing import Any, Optional
 
 import pandas as pd
-import phoenix as px
-from httpx import Client as HTTPClient
-from phoenix.trace import SpanEvaluations
+from cogniverse_core.telemetry.manager import TelemetryManager
+from cogniverse_core.telemetry.providers.base import TelemetryProvider
 
 from .evaluators.golden_dataset import (
     GoldenDatasetEvaluator,
@@ -24,12 +23,33 @@ logger = logging.getLogger(__name__)
 
 class SpanEvaluator:
     """
-    Evaluates existing spans in Phoenix using various evaluators
+    Evaluates existing spans using various evaluators.
+
+    Uses telemetry provider abstraction for backend-agnostic span querying and evaluation logging.
     """
 
-    def __init__(self):
-        self.client = px.Client()
-        self.http_client = HTTPClient(base_url="http://localhost:6006")
+    def __init__(
+        self,
+        provider: Optional[TelemetryProvider] = None,
+        tenant_id: Optional[str] = None,
+        project_name: Optional[str] = None
+    ):
+        """
+        Initialize span evaluator.
+
+        Args:
+            provider: Telemetry provider (if None, uses TelemetryManager's provider)
+            tenant_id: Tenant identifier for querying spans
+            project_name: Project name for span queries
+        """
+        # Get provider from TelemetryManager if not provided
+        if provider is None:
+            telemetry_manager = TelemetryManager()
+            provider = telemetry_manager.provider
+
+        self.provider = provider
+        self.tenant_id = tenant_id or "default"
+        self.project_name = project_name
 
         # Initialize evaluators
         self.reference_free_evaluators = create_reference_free_evaluators()
@@ -37,31 +57,42 @@ class SpanEvaluator:
             create_low_scoring_golden_dataset()
         )
 
-    def get_recent_spans(
+    async def get_recent_spans(
         self,
         hours: int = 6,
         operation_name: str | None = "search_service.search",
         limit: int = 1000,
+        project: Optional[str] = None,
     ) -> pd.DataFrame:
         """
-        Retrieve recent spans from Phoenix
+        Retrieve recent spans from telemetry backend.
 
         Args:
             hours: Number of hours to look back
             operation_name: Filter by operation name
             limit: Maximum number of spans to retrieve
+            project: Project name (uses instance project_name if not provided)
 
         Returns:
             DataFrame with span information
         """
         try:
-            # Use Phoenix client to get spans
-            end_time = datetime.now()
+            # Use telemetry provider to get spans
+            end_time = datetime.now(timezone.utc)
             start_time = end_time - timedelta(hours=hours)
 
-            # Get spans dataframe from Phoenix
-            spans_df = self.client.get_spans_dataframe(
-                start_time=start_time, end_time=end_time
+            # Determine project name
+            project_to_query = project or self.project_name
+            if not project_to_query:
+                # Build default project name from tenant
+                project_to_query = f"cogniverse-{self.tenant_id}"
+
+            # Get spans dataframe from telemetry provider
+            spans_df = await self.provider.traces.get_spans(
+                project=project_to_query,
+                start_time=start_time,
+                end_time=end_time,
+                limit=limit
             )
 
             if spans_df is None or spans_df.empty:
@@ -270,25 +301,39 @@ class SpanEvaluator:
 
         return evaluation_results
 
-    def upload_evaluations_to_phoenix(self, evaluations: dict[str, pd.DataFrame]):
+    async def upload_evaluations_to_backend(
+        self,
+        evaluations: dict[str, pd.DataFrame],
+        project: Optional[str] = None
+    ):
         """
-        Upload evaluation results to Phoenix as SpanEvaluations
+        Upload evaluation results to telemetry backend.
 
         Args:
             evaluations: Dictionary mapping evaluator name to results DataFrame
+            project: Project name (uses instance project_name if not provided)
         """
+        # Determine project name
+        project_to_use = project or self.project_name
+        if not project_to_use:
+            project_to_use = f"cogniverse-{self.tenant_id}"
+
         for eval_name, eval_df in evaluations.items():
             if eval_df.empty:
                 logger.warning(f"No evaluations to upload for {eval_name}")
                 continue
 
             try:
-                # Create SpanEvaluations object
-                span_evals = SpanEvaluations(eval_name=eval_name, dataframe=eval_df)
-
-                # Upload to Phoenix
-                self.client.log_evaluations(span_evals)
-                logger.info(f"Uploaded {len(eval_df)} evaluations for {eval_name}")
+                # Upload to telemetry backend using provider abstraction
+                await self.provider.annotations.log_evaluations(
+                    eval_name=eval_name,
+                    evaluations_df=eval_df,
+                    project=project_to_use
+                )
+                logger.info(
+                    f"Uploaded {len(eval_df)} evaluations for '{eval_name}' "
+                    f"(project={project_to_use})"
+                )
 
             except Exception as e:
                 logger.error(f"Failed to upload evaluations for {eval_name}: {e}")
@@ -298,16 +343,18 @@ class SpanEvaluator:
         hours: int = 6,
         operation_name: str | None = "search_service.search",
         evaluator_names: list[str] | None = None,
-        upload_to_phoenix: bool = True,
+        upload_to_backend: bool = True,
+        project: Optional[str] = None,
     ) -> dict[str, Any]:
         """
-        Run complete evaluation pipeline on recent spans
+        Run complete evaluation pipeline on recent spans.
 
         Args:
             hours: Number of hours to look back for spans
             operation_name: Filter by operation name
             evaluator_names: List of evaluators to use
-            upload_to_phoenix: Whether to upload results to Phoenix
+            upload_to_backend: Whether to upload results to telemetry backend
+            project: Project name (uses instance project_name if not provided)
 
         Returns:
             Summary of evaluation results
@@ -315,7 +362,7 @@ class SpanEvaluator:
         logger.info(f"Starting span evaluation pipeline for last {hours} hours")
 
         # Get recent spans
-        spans_df = self.get_recent_spans(hours, operation_name)
+        spans_df = await self.get_recent_spans(hours, operation_name, project=project)
         logger.info(f"Retrieved {len(spans_df)} spans")
 
         if spans_df.empty:
@@ -324,9 +371,9 @@ class SpanEvaluator:
         # Run evaluations
         evaluations = await self.evaluate_spans(spans_df, evaluator_names)
 
-        # Upload to Phoenix if requested
-        if upload_to_phoenix:
-            self.upload_evaluations_to_phoenix(evaluations)
+        # Upload to telemetry backend if requested
+        if upload_to_backend:
+            await self.upload_evaluations_to_backend(evaluations, project=project)
 
         # Generate summary
         summary = {
