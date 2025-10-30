@@ -549,7 +549,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         self,
         query: str,
         context: Optional[str] = None,
-        user_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
         require_orchestration: Optional[bool] = None,
     ) -> RoutingDecision:
         """
@@ -560,15 +560,20 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         self._routing_stats["total_queries"] += 1
         start_time = datetime.now()
 
+        # Enforce mandatory tenant_id for telemetry isolation
+        if not tenant_id:
+            raise ValueError(
+                "tenant_id is required for routing operations. "
+                "Tenant isolation is mandatory - cannot default to 'unknown'."
+            )
+
         # Create telemetry span context manager if available
         span_context = None
         if hasattr(self, 'telemetry_manager') and self.telemetry_manager:
-            from cogniverse_core.telemetry.config import SERVICE_NAME_ORCHESTRATION
-            self.logger.info(f"Creating telemetry span for user_id: {user_id or 'unknown'}")
+            self.logger.info(f"Creating telemetry span for tenant: {tenant_id}")
             span_context = self.telemetry_manager.span(
                 "cogniverse.routing",
-                tenant_id=user_id or "unknown",
-                project_name=SERVICE_NAME_ORCHESTRATION  # Use orchestration project for routing spans
+                tenant_id=tenant_id
             )
         else:
             self.logger.debug("No telemetry manager available, using nullcontext")
@@ -593,7 +598,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
                         return cached_decision
 
                 # Add contextual analysis (if enabled)
-                if self.contextual_analyzer and user_id:
+                if self.contextual_analyzer and tenant_id:
                     contextual_insights = self.contextual_analyzer.get_contextual_hints(
                         current_query=query
                     )
@@ -660,7 +665,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
                         "baseline_routing_result": baseline_routing_result,
                         "optimized_routing_result": optimized_routing_result,
                         "grpo_applied": optimized_routing_result is not None,
-                        "user_id": user_id,
+                        "tenant_id": tenant_id,
                         "needs_orchestration": needs_orchestration,
                         "orchestration_signals": self._get_orchestration_signals(
                             query, entities, relationships
@@ -691,7 +696,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
                     )
 
                 # Update contextual analyzer (if enabled)
-                if self.contextual_analyzer and user_id:
+                if self.contextual_analyzer and tenant_id:
                     self.contextual_analyzer.update_context(
                         query=query,
                         detected_modalities=[decision.recommended_agent],
@@ -1148,9 +1153,9 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         """Process A2A input with DSPy routing logic"""
         query = dspy_input.get("query", "")
         context = dspy_input.get("context")
-        user_id = dspy_input.get("user_id")
+        tenant_id = dspy_input.get("tenant_id") or dspy_input.get("user_id")  # Support both names
 
-        routing_decision = await self.route_query(query, context, user_id)
+        routing_decision = await self.route_query(query, context, tenant_id)
 
         return {
             "agent": routing_decision.recommended_agent,
@@ -1343,7 +1348,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
 
         try:
             decision = await self.route_query(
-                query=query, context=context, user_id=user_id
+                query=query, context=context, tenant_id=user_id
             )
 
             return decision

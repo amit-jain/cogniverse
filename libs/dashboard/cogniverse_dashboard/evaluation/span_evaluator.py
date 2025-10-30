@@ -42,13 +42,15 @@ class SpanEvaluator:
             tenant_id: Tenant identifier for querying spans
             project_name: Project name for span queries
         """
+        # Store tenant_id first (needed for provider lookup)
+        self.tenant_id = tenant_id or "default"
+
         # Get provider from TelemetryManager if not provided
         if provider is None:
             telemetry_manager = TelemetryManager()
-            provider = telemetry_manager.provider
+            provider = telemetry_manager.get_provider(tenant_id=self.tenant_id)
 
         self.provider = provider
-        self.tenant_id = tenant_id or "default"
         self.project_name = project_name
 
         # Initialize evaluators

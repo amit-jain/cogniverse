@@ -220,7 +220,7 @@ async def routing_agent_with_spans(phoenix_container):
 
     logger.info("🔄 Generating routing spans...")
     for query, expected_agent in test_queries:
-        result = await agent.route_query(query, user_id="test-tenant")
+        result = await agent.route_query(query, tenant_id="test-tenant")
         # result is a RoutingDecision object
         agent_name = result.recommended_agent if result else 'unknown'
         logger.info(
@@ -338,7 +338,7 @@ class TestRoutingSpanEvaluatorIntegration:
 
         logger.info("🔄 Generating unique routing spans for optimizer test...")
         for query, _ in unique_queries:
-            result = await agent.route_query(query, user_id="test-tenant")
+            result = await agent.route_query(query, tenant_id="test-tenant")
             agent_name = result.recommended_agent if result else 'unknown'
             logger.info(
                 f"✅ Processed query: '{query}', agent: {agent_name}"
@@ -481,7 +481,7 @@ class TestRoutingSpanEvaluatorIntegration:
         # 2. Process a single query
         query = "show me basketball dunks"
         logger.info(f"🔄 Processing query: '{query}'")
-        result = await agent.route_query(query, user_id="test-tenant")
+        result = await agent.route_query(query, tenant_id="test-tenant")
         logger.info(f"✅ Result: {result}")
 
         # 3. Flush telemetry

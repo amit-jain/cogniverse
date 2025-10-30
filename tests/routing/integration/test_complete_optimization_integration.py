@@ -24,7 +24,6 @@ from datetime import datetime, timedelta
 import pytest
 from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
 from cogniverse_core.telemetry.config import (
-    SERVICE_NAME_ORCHESTRATION,
     SPAN_NAME_ROUTING,
 )
 
@@ -42,9 +41,7 @@ def test_tenant_id():
 @pytest.fixture
 def project_name(test_tenant_id, telemetry_config_with_phoenix):
     """Get Phoenix project name for test tenant"""
-    return telemetry_config_with_phoenix.get_project_name(
-        test_tenant_id, service=SERVICE_NAME_ORCHESTRATION
-    )
+    return telemetry_config_with_phoenix.get_project_name(test_tenant_id)
 
 
 class TestCompleteOptimizationIntegration:
@@ -103,7 +100,6 @@ class TestCompleteOptimizationIntegration:
             with telemetry_manager_with_phoenix.span(
                 name=SPAN_NAME_ROUTING,
                 tenant_id=test_tenant_id,
-                project_name=SERVICE_NAME_ORCHESTRATION,
                 attributes={
                     "routing.query": query,
                     "routing.chosen_agent": agent,
@@ -247,7 +243,6 @@ class TestCompleteOptimizationIntegration:
             with telemetry_manager_with_phoenix.span(
                 name=SPAN_NAME_ROUTING,
                 tenant_id=test_tenant_id,
-                project_name=SERVICE_NAME_ORCHESTRATION,
                 attributes={
                     "routing.query": query,
                     "routing.chosen_agent": agent,
@@ -349,7 +344,6 @@ class TestCompleteOptimizationIntegration:
             with telemetry_manager_with_phoenix.span(
                 name=SPAN_NAME_ROUTING,
                 tenant_id=test_tenant_id,
-                project_name=SERVICE_NAME_ORCHESTRATION,
                 attributes={
                     "routing.query": query,
                     "routing.chosen_agent": agent,
@@ -451,7 +445,6 @@ class TestCompleteOptimizationIntegration:
             with telemetry_manager_with_phoenix.span(
                 name=SPAN_NAME_ROUTING,
                 tenant_id=test_tenant_id,
-                project_name=SERVICE_NAME_ORCHESTRATION,
                 attributes={
                     "routing.query": f"Test {i}",
                     "routing.chosen_agent": "video_search",

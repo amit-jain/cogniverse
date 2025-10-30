@@ -19,7 +19,6 @@ import requests
 from cogniverse_agents.routing.base import SearchModality
 from cogniverse_agents.routing.router import ComprehensiveRouter
 from cogniverse_core.telemetry.config import (
-    SERVICE_NAME_ORCHESTRATION,
     SPAN_NAME_ROUTING,
     BatchExportConfig,
     TelemetryConfig,
@@ -211,9 +210,7 @@ def telemetry_manager(test_tenant_id, telemetry_config, phoenix_container):
 @pytest.fixture
 def project_name(test_tenant_id, telemetry_config):
     """Get Phoenix project name for test tenant"""
-    return telemetry_config.get_project_name(
-        test_tenant_id, service=SERVICE_NAME_ORCHESTRATION
-    )
+    return telemetry_config.get_project_name(test_tenant_id)
 
 
 @pytest.fixture
@@ -266,7 +263,6 @@ class TestMultiModalRoutingIntegration:
             with telemetry_manager.span(
                 name=SPAN_NAME_ROUTING,
                 tenant_id=test_tenant_id,
-                project_name=SERVICE_NAME_ORCHESTRATION,
                 attributes={
                     "routing.query": query,
                     "routing.chosen_agent": "audio_search",
@@ -332,7 +328,6 @@ class TestMultiModalRoutingIntegration:
             with telemetry_manager.span(
                 name=SPAN_NAME_ROUTING,
                 tenant_id=test_tenant_id,
-                project_name=SERVICE_NAME_ORCHESTRATION,
                 attributes={
                     "routing.query": query,
                     "routing.chosen_agent": "image_search",
@@ -396,7 +391,6 @@ class TestMultiModalRoutingIntegration:
             with telemetry_manager.span(
                 name=SPAN_NAME_ROUTING,
                 tenant_id=test_tenant_id,
-                project_name=SERVICE_NAME_ORCHESTRATION,
                 attributes={
                     "routing.query": query,
                     "routing.chosen_agent": "document_search",
@@ -460,7 +454,6 @@ class TestMultiModalRoutingIntegration:
             with telemetry_manager.span(
                 name=SPAN_NAME_ROUTING,
                 tenant_id=test_tenant_id,
-                project_name=SERVICE_NAME_ORCHESTRATION,
                 attributes={
                     "routing.query": query,
                     "routing.chosen_agent": "multi_search",
@@ -534,7 +527,6 @@ class TestMultiModalRoutingIntegration:
             with telemetry_manager.span(
                 name=SPAN_NAME_ROUTING,
                 tenant_id=test_tenant_id,
-                project_name=SERVICE_NAME_ORCHESTRATION,
                 attributes={
                     "routing.query": query,
                     "routing.chosen_agent": "legacy_search",
@@ -590,7 +582,6 @@ class TestMultiModalRoutingIntegration:
         with telemetry_manager.span(
             name=SPAN_NAME_ROUTING,
             tenant_id=test_tenant_id,
-            project_name=SERVICE_NAME_ORCHESTRATION,
             attributes={
                 "routing.query": test_query,
                 "routing.chosen_agent": "multi_search",

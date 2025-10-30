@@ -77,7 +77,9 @@ class TelemetryManager:
 
         Args:
             tenant_id: Tenant identifier for project isolation
-            project_name: Optional project name (e.g., "search", "synthetic_data", "routing")
+            project_name: Optional service name for management operations
+                         (e.g., "experiments", "synthetic_data", "system")
+                         If None, uses tenant-only project (user operations)
 
         Returns:
             Tracer instance or None if telemetry disabled/failed
@@ -92,8 +94,8 @@ class TelemetryManager:
         if not self.config.enabled:
             return None
 
-        project_name = project_name or self.config.service_name
-        cache_key = f"{tenant_id}:{project_name}"
+        full_project_name = self.config.get_project_name(tenant_id, project_name)
+        cache_key = f"{tenant_id}:{full_project_name}"
 
         # Check cache first
         with self._lock:
@@ -111,7 +113,7 @@ class TelemetryManager:
                     )
 
                 tracer_provider = self._tenant_providers[tenant_id]
-                tracer = tracer_provider.get_tracer(project_name)
+                tracer = tracer_provider.get_tracer(full_project_name)
 
                 # Cache with LRU eviction
                 self._tenant_tracers[cache_key] = tracer
@@ -193,18 +195,20 @@ class TelemetryManager:
         Args:
             name: Span name
             tenant_id: Tenant identifier
-            project_name: Optional project name (e.g., "search", "synthetic_data", "routing")
+            project_name: Optional service name for management operations
+                         (e.g., "experiments", "synthetic_data", "system")
+                         If None, uses tenant-only project for user operations
             attributes: Optional span attributes
 
         Usage:
-            # Search project span
+            # User operation (search, routing, etc.) - unified tenant project
             tenant_id = context.get("tenant_id", config.default_tenant_id)
-            with telemetry.span("search", tenant_id=tenant_id, project_name="search") as span:
+            with telemetry.span("search", tenant_id=tenant_id) as span:
                 span.set_attribute("query", "test")
 
-            # Routing project span
-            with telemetry.span("cogniverse.routing", tenant_id=tenant_id, project_name="routing") as span:
-                span.set_attribute("routing.chosen_agent", "video_search")
+            # Management operation - separate project
+            with telemetry.span("evaluate", tenant_id=tenant_id, project_name="experiments") as span:
+                span.set_attribute("experiment.name", "test_experiment")
         """
         # Enforce mandatory tenant_id - no non-tenant tracers allowed
         if not tenant_id:
@@ -251,10 +255,8 @@ class TelemetryManager:
         if not self.config.enabled:
             return None
 
-        # Determine project key and name (default to service_name if not provided)
-        project_name = project_name or self.config.service_name
-        cache_key = f"{tenant_id}:{project_name}"
-        project_suffix = project_name
+        full_project_name = self.config.get_project_name(tenant_id, project_name)
+        cache_key = f"{tenant_id}:{full_project_name}"
 
         # Check cache first
         with self._lock:
@@ -266,16 +268,16 @@ class TelemetryManager:
 
             # Create tracer provider for project if needed
             try:
-                provider_key = f"{tenant_id}:{project_suffix}"
+                provider_key = f"{tenant_id}:{full_project_name}"
                 if provider_key not in self._tenant_providers:
                     self._tenant_providers[provider_key] = (
                         self._create_tenant_provider_for_project(
-                            tenant_id, project_suffix
+                            tenant_id, project_name
                         )
                     )
 
                 tracer_provider = self._tenant_providers[provider_key]
-                tracer = tracer_provider.get_tracer(project_suffix)
+                tracer = tracer_provider.get_tracer(full_project_name)
 
                 # Cache with LRU eviction
                 self._tenant_tracers[cache_key] = tracer

@@ -73,7 +73,8 @@ class TelemetryConfig:
     provider_config: Dict[str, Any] = field(default_factory=dict)
 
     # Multi-tenant settings
-    tenant_project_template: str = "cogniverse-{tenant_id}-{service}"
+    tenant_project_template: str = "cogniverse-{tenant_id}"
+    tenant_service_template: str = "cogniverse-{tenant_id}-{service}"
     default_tenant_id: str = "default"
     max_cached_tenants: int = 100  # LRU cache size
     tenant_cache_ttl_seconds: int = 3600  # 1 hour
@@ -91,9 +92,15 @@ class TelemetryConfig:
     extra_resource_attributes: Dict[str, str] = field(default_factory=dict)
 
     def get_project_name(self, tenant_id: str, service: Optional[str] = None) -> str:
-        """Generate project name for a tenant."""
-        service = service or self.service_name
-        return self.tenant_project_template.format(tenant_id=tenant_id, service=service)
+        """
+        Generate project name for a tenant.
+
+        User operations: cogniverse-{tenant_id}
+        Management operations: cogniverse-{tenant_id}-{service}
+        """
+        if service:
+            return self.tenant_service_template.format(tenant_id=tenant_id, service=service)
+        return self.tenant_project_template.format(tenant_id=tenant_id)
 
     def should_instrument_level(self, component: str) -> bool:
         """Check if a component should be instrumented based on level."""

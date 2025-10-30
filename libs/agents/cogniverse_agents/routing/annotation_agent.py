@@ -15,10 +15,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import pandas as pd
-from cogniverse_core.telemetry.config import (
-    SERVICE_NAME_ORCHESTRATION,
-    SPAN_NAME_ROUTING,
-)
+from cogniverse_core.telemetry.config import SPAN_NAME_ROUTING
 from cogniverse_core.telemetry.manager import get_telemetry_manager
 from cogniverse_dashboard.evaluation.evaluators.routing_evaluator import (
     RoutingEvaluator,
@@ -105,14 +102,12 @@ class AnnotationAgent:
         telemetry_manager = get_telemetry_manager()
         self.telemetry_config = telemetry_manager.config
 
-        # Get project name for routing orchestration
-        self.project_name = self.telemetry_config.get_project_name(
-            tenant_id, service=SERVICE_NAME_ORCHESTRATION
-        )
+        # Get project name for unified tenant project (routing operations)
+        self.project_name = self.telemetry_config.get_project_name(tenant_id)
 
-        # Get telemetry provider for querying spans (pass project_name for config)
+        # Get telemetry provider for querying spans
         self.provider: "TelemetryProvider" = telemetry_manager.get_provider(
-            tenant_id=tenant_id, project_name=SERVICE_NAME_ORCHESTRATION
+            tenant_id=tenant_id
         )
 
         # Initialize evaluator for outcome classification (using provider, not Phoenix)

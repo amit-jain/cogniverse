@@ -54,7 +54,7 @@ async def generate_routing_spans(env_config: dict):
 
     for query in test_queries:
         try:
-            result = await agent.route_query(query, user_id="test-tenant")
+            result = await agent.route_query(query, tenant_id="test-tenant")
             logger.info(f"Processed query: '{query}', agent: {result.recommended_agent}")
         except Exception as e:
             logger.warning(f"Query '{query}' failed: {e}")
@@ -93,17 +93,16 @@ class TestRoutingEvaluatorIntegration:
         manager = TelemetryManager(config=config)
         telemetry_manager_module._telemetry_manager = manager
 
-        # Register orchestration project for RoutingAgent
+        # Register unified tenant project for RoutingAgent
         manager.register_project(
             tenant_id="test-tenant",
-            project_name="cogniverse.orchestration",
+            project_name=None,  # Use default unified tenant project
             http_endpoint="http://localhost:26006",
             grpc_endpoint="localhost:24317"
         )
 
         yield manager.get_provider(
-            tenant_id="test-tenant",
-            project_name="cogniverse.orchestration"
+            tenant_id="test-tenant"
         )
 
         # Cleanup
@@ -113,11 +112,11 @@ class TestRoutingEvaluatorIntegration:
     @pytest.fixture
     def routing_evaluator(self, telemetry_provider):
         """Create RoutingEvaluator with real telemetry provider"""
-        # Use the project name that RoutingAgent actually creates spans in
-        # RoutingAgent uses SERVICE_NAME_ORCHESTRATION = "cogniverse.orchestration"
+        # Use the unified tenant project name that RoutingAgent creates spans in
+        # All routing operations use: cogniverse-{tenant} (no service suffix)
         return RoutingEvaluator(
             provider=telemetry_provider,
-            project_name="cogniverse-test-tenant-cogniverse.orchestration"
+            project_name="cogniverse-test-tenant"
         )
 
     @pytest.fixture
@@ -174,11 +173,11 @@ class TestRoutingEvaluatorIntegration:
                     logger.info("DEBUG: NO attributes.openinference column")
 
         # Query routing spans directly from Phoenix with the correct project name
-        # RoutingAgent creates spans in: cogniverse-test-tenant-cogniverse.orchestration
+        # RoutingAgent creates spans in: cogniverse-test-tenant
         client = routing_evaluator.provider.client
 
         # Get spans from the orchestration project
-        all_project_spans = client.get_spans_dataframe(project_name="cogniverse-test-tenant-cogniverse.orchestration")
+        all_project_spans = client.get_spans_dataframe(project_name="cogniverse-test-tenant")
 
         # Filter for routing spans
         spans = []
@@ -188,7 +187,7 @@ class TestRoutingEvaluatorIntegration:
                 spans = routing_df.to_dict(orient='records')
 
         # Should have spans now
-        assert len(spans) > 0, f"No routing spans found in project 'cogniverse-test-tenant-cogniverse.orchestration'. Total spans in project: {len(all_project_spans) if all_project_spans is not None else 0}"
+        assert len(spans) > 0, f"No routing spans found in project 'cogniverse-test-tenant'. Total spans in project: {len(all_project_spans) if all_project_spans is not None else 0}"
 
         # Verify proper span structure
         for span in spans:

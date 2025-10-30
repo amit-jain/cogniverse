@@ -10,10 +10,7 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from cogniverse_core.telemetry.config import (
-    SERVICE_NAME_ORCHESTRATION,
-    SPAN_NAME_ROUTING,
-)
+from cogniverse_core.telemetry.config import SPAN_NAME_ROUTING
 from cogniverse_core.telemetry.manager import get_telemetry_manager
 from cogniverse_dashboard.evaluation.span_evaluator import SpanEvaluator
 from opentelemetry.trace import Span as ReadableSpan
@@ -54,13 +51,11 @@ class RoutingSpanEvaluator:
             tenant_id=tenant_id
         )
 
-        # Get the project name where routing spans are stored
-        # Routing spans are created with SERVICE_NAME_ORCHESTRATION
+        # Get the unified tenant project name where routing spans are stored
+        # All user operations (request, routing, search, orchestration) use the same project
         # This ensures parent (cogniverse.request) and child (cogniverse.routing) spans
         # are in the same project, maintaining proper span hierarchy
-        self.project_name = self.telemetry_config.get_project_name(
-            tenant_id, service=SERVICE_NAME_ORCHESTRATION
-        )
+        self.project_name = self.telemetry_config.get_project_name(tenant_id)
 
         logger.info(
             f"🔧 Initialized RoutingSpanEvaluator for tenant '{tenant_id}' "

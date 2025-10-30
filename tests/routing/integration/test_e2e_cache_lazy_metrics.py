@@ -223,7 +223,7 @@ class TestProductionRoutingRealInfrastructure:
         context = {"tenant_id": "test-tenant-prod"}
 
         logger.info(f"🔄 Executing routing query: {query}")
-        result = await routing_agent.route_query(query, user_id=context["tenant_id"])
+        result = await routing_agent.route_query(query, tenant_id=context["tenant_id"])
 
         # result is a RoutingDecision object
         logger.info(f"✅ Routing result: {result.recommended_agent if result else 'unknown'}")
@@ -544,17 +544,16 @@ class TestProductionRoutingRealInfrastructure:
         ]
 
         for query in queries:
-            await routing_agent.route_query(query, user_id=tenant_id)
+            await routing_agent.route_query(query, tenant_id=tenant_id)
 
         # Flush spans to telemetry backend
         routing_agent.telemetry_manager.force_flush(timeout_millis=10000)
         await asyncio.sleep(2)
 
         # Get the project name used for span export
-        # Note: routing_agent uses SERVICE_NAME_ORCHESTRATION for its spans
-        from cogniverse_core.telemetry.config import SERVICE_NAME_ORCHESTRATION
+        # Note: routing operations use unified tenant project
         project_name = routing_agent.telemetry_manager.config.get_project_name(
-            tenant_id, SERVICE_NAME_ORCHESTRATION
+            tenant_id
         )
         logger.info(f"📊 Testing with project: {project_name}")
 

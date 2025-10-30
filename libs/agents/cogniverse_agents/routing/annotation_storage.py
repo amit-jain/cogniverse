@@ -10,7 +10,6 @@ import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Dict, List, Optional
 
-from cogniverse_core.telemetry.config import SERVICE_NAME_ORCHESTRATION
 from cogniverse_core.telemetry.manager import get_telemetry_manager
 
 from cogniverse_agents.routing.llm_auto_annotator import AnnotationLabel, AutoAnnotation
@@ -48,14 +47,12 @@ class RoutingAnnotationStorage:
         telemetry_manager = get_telemetry_manager()
         self.telemetry_config = telemetry_manager.config
 
-        # Get project name for routing annotations
-        self.project_name = self.telemetry_config.get_project_name(
-            tenant_id, service=SERVICE_NAME_ORCHESTRATION
-        )
+        # Get unified tenant project name for routing annotations
+        self.project_name = self.telemetry_config.get_project_name(tenant_id)
 
-        # Get telemetry provider for annotations (pass project_name for config)
+        # Get telemetry provider for annotations
         self.provider: "TelemetryProvider" = telemetry_manager.get_provider(
-            tenant_id=tenant_id, project_name=SERVICE_NAME_ORCHESTRATION
+            tenant_id=tenant_id
         )
 
         logger.info(

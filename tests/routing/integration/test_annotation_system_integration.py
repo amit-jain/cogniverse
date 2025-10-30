@@ -34,7 +34,6 @@ from cogniverse_agents.routing.llm_auto_annotator import (
     LLMAutoAnnotator,
 )
 from cogniverse_core.telemetry.config import (
-    SERVICE_NAME_ORCHESTRATION,
     SPAN_NAME_ROUTING,
     TelemetryConfig,
 )
@@ -268,7 +267,6 @@ class TestAnnotationSystemIntegration:
             with telemetry_manager.span(
                 name=SPAN_NAME_ROUTING,
                 tenant_id=test_tenant_id,
-                project_name=SERVICE_NAME_ORCHESTRATION,
                 attributes={
                     "routing.query": query,
                     "routing.chosen_agent": agent,
@@ -293,9 +291,7 @@ class TestAnnotationSystemIntegration:
         logger.info("\n=== STEP 2: Verifying spans in Phoenix ===")
 
         config = TelemetryConfig.from_env()
-        project_name = config.get_project_name(
-            test_tenant_id, SERVICE_NAME_ORCHESTRATION
-        )
+        project_name = config.get_project_name(test_tenant_id)
 
         end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(minutes=5)
@@ -485,7 +481,6 @@ class TestAnnotationSystemIntegration:
         with telemetry_manager.span(
             name=SPAN_NAME_ROUTING,
             tenant_id=test_tenant_id,
-            project_name=SERVICE_NAME_ORCHESTRATION,
             attributes={
                 "routing.query": "Test persistence query",
                 "routing.chosen_agent": "video_search",
@@ -526,9 +521,7 @@ class TestAnnotationSystemIntegration:
 
         # Try to retrieve
         config = TelemetryConfig.from_env()
-        project_name = config.get_project_name(
-            test_tenant_id, SERVICE_NAME_ORCHESTRATION
-        )
+        project_name = config.get_project_name(test_tenant_id)
 
         # Verify the span exists
         spans_df = await telemetry_provider.traces.get_spans(
@@ -563,7 +556,6 @@ class TestAnnotationSystemIntegration:
             with telemetry_manager.span(
                 name=SPAN_NAME_ROUTING,
                 tenant_id=test_tenant_id,
-                project_name=SERVICE_NAME_ORCHESTRATION,
                 attributes={
                     "routing.query": query,
                     "routing.chosen_agent": agent,
@@ -623,7 +615,6 @@ class TestAnnotationSystemIntegration:
         with telemetry_manager.span(
             name=SPAN_NAME_ROUTING,
             tenant_id=test_tenant_id,
-            project_name=SERVICE_NAME_ORCHESTRATION,
             attributes={
                 "routing.query": "Feedback loop test query",
                 "routing.chosen_agent": "video_search",
@@ -710,7 +701,6 @@ class TestAnnotationSystemIntegration:
             with telemetry_manager.span(
                 name=SPAN_NAME_ROUTING,
                 tenant_id=test_tenant_id,
-                project_name=SERVICE_NAME_ORCHESTRATION,
                 attributes={
                     "routing.query": f"Test query {i}",
                     "routing.chosen_agent": "video_search",
@@ -747,7 +737,7 @@ class TestAnnotationSystemIntegration:
         # STEP 3: Log evaluations using provider
         logger.info("\n=== STEP 3: Logging evaluations via provider ===")
 
-        project = f"cogniverse-{test_tenant_id}-{SERVICE_NAME_ORCHESTRATION}"
+        project = f"cogniverse-{test_tenant_id}"
 
         try:
             await telemetry_provider.annotations.log_evaluations(
