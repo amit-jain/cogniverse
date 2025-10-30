@@ -185,7 +185,6 @@ class TestBatchSolver:
     @pytest.mark.asyncio
     async def test_trace_loader_empty_result(self, mock_phoenix_client):
         """Test handling empty trace results."""
-        import pandas as pd
 
         # Mock data returned via storage = pd.DataFrame()
 

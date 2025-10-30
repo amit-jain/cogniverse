@@ -503,8 +503,8 @@ class PhoenixProvider(TelemetryProvider):
 
         Expected config keys:
             - tenant_id: Tenant identifier (required)
-            - http_endpoint: Phoenix HTTP API endpoint (default: http://localhost:6006)
-            - grpc_endpoint: Phoenix gRPC OTLP endpoint (optional, for span export)
+            - http_endpoint: Phoenix HTTP API endpoint (required)
+            - grpc_endpoint: Phoenix gRPC OTLP endpoint (required)
 
         Args:
             config: Configuration dictionary
@@ -517,7 +517,7 @@ class PhoenixProvider(TelemetryProvider):
         if not tenant_id:
             raise ValueError("tenant_id required in Phoenix provider config")
 
-        # Extract Phoenix endpoints (provider-specific keys, both required)
+        # Extract HTTP endpoint (required for queries)
         http_endpoint = config.get("http_endpoint")
         if not http_endpoint:
             raise ValueError(
@@ -525,6 +525,7 @@ class PhoenixProvider(TelemetryProvider):
                 f"Got config: {config}"
             )
 
+        # Extract gRPC endpoint (required for span export)
         grpc_endpoint = config.get("grpc_endpoint")
         if not grpc_endpoint:
             raise ValueError(
@@ -608,3 +609,18 @@ class PhoenixProvider(TelemetryProvider):
             raise RuntimeError(
                 f"Phoenix span export configuration failed: {e}"
             ) from e
+
+    @property
+    def client(self):
+        """
+        Get synchronous Phoenix client for analytics/monitoring.
+
+        Returns:
+            Phoenix Client instance
+        """
+        import phoenix as px
+
+        if not self._http_endpoint:
+            raise RuntimeError("PhoenixProvider not initialized - call initialize() first")
+
+        return px.Client(endpoint=self._http_endpoint)

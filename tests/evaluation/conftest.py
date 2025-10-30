@@ -15,18 +15,85 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-# Import Phoenix test server fixtures for integration tests
-try:
-    from .fixtures.phoenix_test_server import phoenix_client, phoenix_test_server
-except ImportError:
-    # If Phoenix is not available, provide skip fixtures
-    @pytest.fixture(scope="session")
-    def phoenix_test_server():
-        pytest.fail("Phoenix not available - install and start Phoenix server")
+# Standardized Phoenix Docker container fixture for integration tests
+@pytest.fixture(scope="function")
+def phoenix_test_server():
+    """Start Phoenix Docker container for integration tests."""
+    import os
+    import subprocess
+    import tempfile
+    import time
 
-    @pytest.fixture
-    def phoenix_client():
-        pytest.fail("Phoenix not available - install and start Phoenix server")
+    from cogniverse_core.telemetry.manager import TelemetryManager
+
+    container_name = f"phoenix_eval_test_{int(time.time() * 1000)}"
+
+    # Clean up old containers
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "-a", "-q", "--filter", "name=phoenix_eval_test"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.stdout.strip():
+            old_containers = result.stdout.strip().split("\n")
+            for container_id in old_containers:
+                subprocess.run(["docker", "rm", "-f", container_id], capture_output=True, timeout=10)
+    except Exception:
+        pass
+
+    try:
+        # Create temporary directory for Phoenix data
+        test_data_dir = os.path.join(tempfile.gettempdir(), f"phoenix_test_{int(time.time())}")
+        os.makedirs(test_data_dir, exist_ok=True)
+
+        # Start Phoenix container
+        subprocess.run(
+            [
+                "docker", "run", "-d",
+                "--name", container_name,
+                "-p", "26006:6006",  # HTTP port
+                "-p", "24317:4317",  # gRPC port
+                "-v", f"{test_data_dir}:/phoenix_data",
+                "-e", "PHOENIX_WORKING_DIR=/phoenix_data",
+                "-e", "PHOENIX_SQL_DATABASE_URL=sqlite:////phoenix_data/phoenix.db",
+                "arizephoenix/phoenix:latest",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        # Wait for Phoenix to be ready
+        import requests
+        for _ in range(60):
+            try:
+                response = requests.get("http://localhost:26006", timeout=1)
+                if response.status_code == 200:
+                    break
+            except Exception:
+                pass
+            time.sleep(0.5)
+
+        # Create server object
+        class PhoenixServer:
+            base_url = "http://localhost:26006"
+            port = 26006
+
+        yield PhoenixServer()
+
+    finally:
+        # Cleanup
+        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+        TelemetryManager.reset()
+
+
+@pytest.fixture
+def phoenix_client(phoenix_test_server):
+    """Get Phoenix client connected to test server."""
+    import phoenix as px
+    return px.Client(endpoint=phoenix_test_server.base_url)
 
 
 @pytest.fixture
@@ -291,7 +358,6 @@ def mock_provider_for_unit_tests(request):
             mock_provider = MagicMock()
 
             # Mock Phoenix evaluator base class
-            from unittest.mock import Mock
 
             class MockPhoenixEvaluator:
                 """Mock Phoenix evaluator base"""

@@ -1,6 +1,6 @@
 """
-Production-level integration tests for Phoenix storage.
-These tests verify actual Phoenix integration, not mocks.
+Integration tests for telemetry storage.
+Tests verify actual backend integration with a running telemetry provider.
 """
 
 import threading
@@ -8,7 +8,6 @@ import time
 from datetime import datetime, timedelta
 
 import pandas as pd
-import phoenix as px
 import pytest
 from cogniverse_core.evaluation.data.storage import (
     ConnectionConfig,
@@ -16,37 +15,36 @@ from cogniverse_core.evaluation.data.storage import (
     TelemetryStorage,
 )
 
-from tests.utils.async_polling import wait_for_phoenix_processing
+from tests.utils.async_polling import wait_for_telemetry_processing
 
 
 @pytest.mark.integration
-@pytest.mark.phoenix
-class TestPhoenixProductionIntegration:
-    """Integration tests with real Phoenix instance."""
-
-    @pytest.fixture(scope="class")
-    def phoenix_required(self):
-        """Verify Phoenix is running."""
-        try:
-            client = px.Client()
-            # Try to connect
-            _ = client.get_spans_dataframe(limit=1)
-            return True
-        except Exception:
-            pass
+class TestTelemetryStorageIntegration:
+    """Integration tests for telemetry storage with real backend."""
 
     @pytest.fixture
-    def storage(self, phoenix_required):
-        """Create production storage instance."""
-        config = ConnectionConfig(enable_health_checks=False)  # Disable for tests
+    def storage(self, phoenix_test_server):
+        """Create storage instance with test telemetry backend."""
+        config = ConnectionConfig(
+            http_endpoint="http://localhost:26006",
+            otlp_endpoint="localhost:24317",
+            enable_health_checks=False
+        )
         storage = TelemetryStorage(config)
         yield storage
         storage.shutdown()
 
     @pytest.mark.integration
-    def test_connection_lifecycle(self, phoenix_required):
+    def test_connection_lifecycle(self, phoenix_test_server):
         """Test connection establishment and shutdown."""
-        config = ConnectionConfig(enable_health_checks=False)
+        # Extract host:port from base_url for OTLP endpoint
+        #import urllib.parse
+
+        config = ConnectionConfig(
+            http_endpoint="http://localhost:26006",
+            otlp_endpoint="localhost:24317",
+            enable_health_checks=False
+        )
 
         # Test initialization
         storage = TelemetryStorage(config)
@@ -81,7 +79,7 @@ class TestPhoenixProductionIntegration:
         assert "integration_test" in experiment_id
 
         # Give Phoenix time to process
-        wait_for_phoenix_processing(delay=1, description="Phoenix processing")
+        wait_for_telemetry_processing(delay=1, description="telemetry processing")
 
         # Verify metrics were updated
         metrics = storage.get_metrics()
@@ -150,10 +148,15 @@ class TestPhoenixProductionIntegration:
         assert all(r is not None for r in results)
 
     @pytest.mark.integration
-    def test_health_check_recovery(self, phoenix_required):
+    def test_health_check_recovery(self, phoenix_test_server):
         """Test health check and auto-recovery."""
+        #import urllib.parse
+
         config = ConnectionConfig(
-            enable_health_checks=True, health_check_interval_seconds=0.5
+            http_endpoint="http://localhost:26006",
+            otlp_endpoint="localhost:24317",
+            enable_health_checks=True,
+            health_check_interval_seconds=0.5
         )
 
         storage = TelemetryStorage(config)
@@ -162,19 +165,19 @@ class TestPhoenixProductionIntegration:
             # Verify initial connection
             assert storage.connection_state == ConnectionState.CONNECTED
 
-            # Simulate disconnection by breaking the client
-            original_client = storage.client
-            storage.client = None
+            # Simulate disconnection by breaking the provider
+            original_provider = storage.provider
+            storage.provider = None
             storage.connection_state = ConnectionState.DISCONNECTED
 
             # Wait for health check to detect and recover
-            wait_for_phoenix_processing(delay=1.0, description="Phoenix processing")
+            wait_for_telemetry_processing(delay=1.0, description="telemetry processing")
 
-            # Restore client for health check
-            storage.client = original_client
+            # Restore provider for health check
+            storage.provider = original_provider
 
             # Wait for recovery
-            wait_for_phoenix_processing(delay=1.0, description="Phoenix processing")
+            wait_for_telemetry_processing(delay=1.0, description="telemetry processing")
 
             # Should have attempted reconnection
             # Note: Actual reconnection depends on Phoenix availability
@@ -247,7 +250,7 @@ class TestPhoenixProductionIntegration:
             )
 
         # Give time for export
-        wait_for_phoenix_processing(delay=2, description="Phoenix processing")
+        wait_for_telemetry_processing(delay=2, description="telemetry processing")
 
         # Check metrics
         metrics = storage.get_metrics()
@@ -265,9 +268,15 @@ class TestPhoenixProductionIntegration:
             assert metrics["avg_latency_ms"] > 0
 
     @pytest.mark.integration
-    def test_context_manager_cleanup(self, phoenix_required):
+    def test_context_manager_cleanup(self, phoenix_test_server):
         """Test context manager properly cleans up resources."""
-        config = ConnectionConfig(enable_health_checks=False)
+        #import urllib.parse
+
+        config = ConnectionConfig(
+            http_endpoint="http://localhost:26006",
+            otlp_endpoint="localhost:24317",
+            enable_health_checks=False
+        )
 
         with TelemetryStorage(config) as storage:
             # Use storage
@@ -282,4 +291,4 @@ class TestPhoenixProductionIntegration:
 
         # After context, should be disconnected
         assert storage.connection_state == ConnectionState.DISCONNECTED
-        assert storage.client is None
+        assert storage.provider is None

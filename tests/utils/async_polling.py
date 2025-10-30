@@ -339,14 +339,14 @@ def wait_for_vespa_indexing(
     return True
 
 
-def wait_for_phoenix_processing(
+def wait_for_telemetry_processing(
     delay: float = 2.0,
-    description: str = "Phoenix span processing",
+    description: str = "telemetry span processing",
 ) -> bool:
     """
-    Wait for Phoenix telemetry to process spans.
+    Wait for telemetry backend to process spans.
 
-    Phoenix processes spans asynchronously, so we need to wait for them
+    Telemetry backends process spans asynchronously, so we need to wait for them
     to be available for queries.
 
     Args:
@@ -359,6 +359,10 @@ def wait_for_phoenix_processing(
     logger.debug(f"Waiting {delay}s for {description}")
     time.sleep(delay)
     return True
+
+
+# Backwards compatibility alias
+wait_for_phoenix_processing = wait_for_telemetry_processing
 
 
 def wait_for_cache_expiration(

@@ -54,7 +54,8 @@ class PhoenixTestServer:
         for i in range(max_retries):
             try:
                 # Try to connect to Phoenix
-                _ = px.Client  # noqa: F841(endpoint=self.base_url)
+                client = px.Client(endpoint=self.base_url)
+                _ = client.get_spans_dataframe(limit=1)
                 # If successful, server is ready
                 break
             except Exception:
@@ -63,7 +64,7 @@ class PhoenixTestServer:
                     raise RuntimeError(
                         f"Phoenix server failed to start on port {self.port}"
                     ) from None
-                wait_for_phoenix_processing(delay=1, description="Phoenix processing")
+                wait_for_phoenix_processing(delay=1, description="Phoenix server startup")
 
         return self
 

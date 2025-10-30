@@ -24,83 +24,125 @@ logger = logging.getLogger(__name__)
 os.environ["TELEMETRY_SYNC_EXPORT"] = "true"
 
 
+async def generate_routing_spans(env_config: dict):
+    """Helper to generate routing spans by running RoutingAgent queries"""
+    import time
+
+    from cogniverse_agents.routing_agent import RoutingAgent, RoutingConfig
+
+    # Create routing config
+    routing_config = RoutingConfig(
+        model_name="ollama/gemma3:4b",
+        base_url="http://localhost:11434",
+        api_key="dummy",
+        confidence_threshold=0.7,
+    )
+
+    # Create routing agent
+    agent = RoutingAgent(
+        tenant_id=env_config["tenant_id"],
+        config=routing_config,
+        telemetry_config=env_config["telemetry_config"]
+    )
+
+    # Process test queries to generate routing spans
+    test_queries = [
+        "show me videos of basketball",
+        "summarize the game highlights",
+        "detailed analysis of the match",
+    ]
+
+    for query in test_queries:
+        try:
+            result = await agent.route_query(query, user_id="test-tenant")
+            logger.info(f"Processed query: '{query}', agent: {result.recommended_agent}")
+        except Exception as e:
+            logger.warning(f"Query '{query}' failed: {e}")
+
+    # Force flush telemetry spans
+    if hasattr(agent, 'telemetry_manager') and agent.telemetry_manager is not None:
+        agent.telemetry_manager.force_flush(timeout_millis=10000)
+
+    # Give Phoenix time to process
+    time.sleep(2)
+
+
 @pytest.mark.integration
 class TestRoutingEvaluatorIntegration:
     """Integration tests with real Phoenix infrastructure"""
 
     @pytest.fixture
-    def telemetry_provider(self):
+    def telemetry_provider(self, phoenix_test_server):
         """Create telemetry provider for integration tests"""
-        from cogniverse_core.telemetry.manager import get_telemetry_manager
+        import cogniverse_core.telemetry.manager as telemetry_manager_module
+        from cogniverse_core.telemetry.manager import TelemetryManager
+        from cogniverse_core.telemetry.registry import get_telemetry_registry
 
-        telemetry_manager = get_telemetry_manager()
-        return telemetry_manager.get_provider(tenant_id="test-tenant")
+        # Reset TelemetryManager singleton AND clear provider cache
+        TelemetryManager.reset()
+        get_telemetry_registry().clear_cache()
+
+        # Create config matching the Phoenix container endpoints
+        config = TelemetryConfig(
+            otlp_endpoint="http://localhost:24317",
+            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+
+        # Set as the global singleton (key pattern from routing tests)
+        manager = TelemetryManager(config=config)
+        telemetry_manager_module._telemetry_manager = manager
+
+        # Register orchestration project for RoutingAgent
+        manager.register_project(
+            tenant_id="test-tenant",
+            project_name="cogniverse.orchestration",
+            http_endpoint="http://localhost:26006",
+            grpc_endpoint="localhost:24317"
+        )
+
+        yield manager.get_provider(
+            tenant_id="test-tenant",
+            project_name="cogniverse.orchestration"
+        )
+
+        # Cleanup
+        TelemetryManager.reset()
+        get_telemetry_registry().clear_cache()
 
     @pytest.fixture
     def routing_evaluator(self, telemetry_provider):
         """Create RoutingEvaluator with real telemetry provider"""
-        # Use the project name that spans are actually created in
+        # Use the project name that RoutingAgent actually creates spans in
+        # RoutingAgent uses SERVICE_NAME_ORCHESTRATION = "cogniverse.orchestration"
         return RoutingEvaluator(
             provider=telemetry_provider,
-            project_name="cogniverse-test-tenant-video-search"
+            project_name="cogniverse-test-tenant-cogniverse.orchestration"
         )
 
     @pytest.fixture
-    def routing_agent_with_spans(self):
-        """Create routing agent and generate real spans"""
-        import asyncio
+    def setup_routing_environment(self, phoenix_test_server):
+        """Set up environment for routing agent tests
 
-        from cogniverse_agents.routing_agent import RoutingAgent
-
-        async def _generate_spans():
-            # Initialize routing agent with telemetry enabled
-            telemetry_config = TelemetryConfig(
+        Just provide config - RoutingAgent will initialize its own TelemetryManager.
+        """
+        return {
+            "telemetry_config": TelemetryConfig(
                 otlp_endpoint="http://localhost:24317",
                 provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
                 batch_config=BatchExportConfig(use_sync_export=True),
-            )
-            agent = RoutingAgent(tenant_id="test-tenant", telemetry_config=telemetry_config)
-
-            # Generate some real routing spans by processing test queries
-            test_queries = [
-                "show me videos of basketball",
-                "summarize the game highlights",
-                "detailed analysis of the match",
-            ]
-
-            for query in test_queries:
-                try:
-                    # Pass a proper user_id/tenant_id to avoid "unknown"
-                    result = await agent.route_query(query, user_id="test-tenant")
-                    logger.info(f"Processed query: '{query}', agent: {result.recommended_agent}")
-                except Exception as e:
-                    # Some queries might fail, that's okay for testing
-                    logger.warning(f"Query '{query}' failed: {e}")
-
-            # Force flush telemetry spans
-            if hasattr(agent, 'telemetry_manager'):
-                success = agent.telemetry_manager.force_flush(timeout_millis=10000)
-                if not success:
-                    logger.error("Failed to flush telemetry spans")
-                else:
-                    logger.info("Successfully flushed all telemetry spans")
-
-            # Give Phoenix time to process flushed spans
-            await asyncio.sleep(2)
-
-            return agent
-
-        # Run the async function synchronously
-        return asyncio.run(_generate_spans())
+            ),
+            "tenant_id": "test-tenant"
+        }
 
     @pytest.mark.asyncio
-    async def test_query_real_routing_spans(self, routing_evaluator, routing_agent_with_spans):
+    async def test_query_real_routing_spans(self, routing_evaluator, setup_routing_environment):
         """Test querying actual routing spans from Phoenix"""
-        # Generate spans (routing_agent_with_spans fixture already generates them)
-        # No need to await, the fixture handles span generation
+        # Generate routing spans
+        await generate_routing_spans(setup_routing_environment)
 
         # Debug: Query ALL spans to see what we have
-        client = routing_evaluator.client
+        client = routing_evaluator.provider.client
         all_spans = client.get_spans_dataframe()
         if all_spans is not None and not all_spans.empty:
             logger.info(f"DEBUG: Found {len(all_spans)} total spans")
@@ -132,11 +174,11 @@ class TestRoutingEvaluatorIntegration:
                     logger.info("DEBUG: NO attributes.openinference column")
 
         # Query routing spans directly from Phoenix with the correct project name
-        # The spans are created in project: cogniverse-unknown-video-search
-        client = routing_evaluator.client
+        # RoutingAgent creates spans in: cogniverse-test-tenant-cogniverse.orchestration
+        client = routing_evaluator.provider.client
 
-        # Get spans from the specific project (now with test-tenant)
-        all_project_spans = client.get_spans_dataframe(project_name="cogniverse-test-tenant-video-search")
+        # Get spans from the orchestration project
+        all_project_spans = client.get_spans_dataframe(project_name="cogniverse-test-tenant-cogniverse.orchestration")
 
         # Filter for routing spans
         spans = []
@@ -146,7 +188,7 @@ class TestRoutingEvaluatorIntegration:
                 spans = routing_df.to_dict(orient='records')
 
         # Should have spans now
-        assert len(spans) > 0, f"No routing spans found in project 'cogniverse-test-tenant-video-search'. Total spans in project: {len(all_project_spans) if all_project_spans is not None else 0}"
+        assert len(spans) > 0, f"No routing spans found in project 'cogniverse-test-tenant-cogniverse.orchestration'. Total spans in project: {len(all_project_spans) if all_project_spans is not None else 0}"
 
         # Verify proper span structure
         for span in spans:
@@ -162,12 +204,13 @@ class TestRoutingEvaluatorIntegration:
             assert has_routing_attrs, f"Span missing routing attributes. Available keys: {span_keys[:20]}"
 
     @pytest.mark.asyncio
-    async def test_evaluate_real_routing_decisions(self, routing_evaluator, routing_agent_with_spans):
+    async def test_evaluate_real_routing_decisions(self, routing_evaluator, setup_routing_environment):
         """Test evaluating actual routing decisions from Phoenix"""
-        # Generate spans (routing_agent_with_spans fixture already generates them)
+        # Generate routing spans
+        await generate_routing_spans(setup_routing_environment)
 
         # Query recent spans
-        spans = routing_evaluator.query_routing_spans(limit=20)
+        spans = await routing_evaluator.query_routing_spans(limit=20)
 
         assert len(spans) > 0, "No routing spans found after generating them"
 
@@ -201,12 +244,13 @@ class TestRoutingEvaluatorIntegration:
         assert valid_evaluations > 0, "No valid spans were evaluated"
 
     @pytest.mark.asyncio
-    async def test_calculate_metrics_from_real_spans(self, routing_evaluator, routing_agent_with_spans):
+    async def test_calculate_metrics_from_real_spans(self, routing_evaluator, setup_routing_environment):
         """Test calculating metrics from actual Phoenix spans"""
-        # Generate spans (routing_agent_with_spans fixture already generates them)
+        # Generate routing spans
+        await generate_routing_spans(setup_routing_environment)
 
         # Query recent spans
-        spans = routing_evaluator.query_routing_spans(limit=50)
+        spans = await routing_evaluator.query_routing_spans(limit=50)
 
         assert len(spans) > 0, "No routing spans found after generating them"
 
@@ -256,13 +300,14 @@ class TestRoutingEvaluatorIntegration:
         for agent, prec in metrics.per_agent_precision.items():
             print(f"  {agent}: {prec:.2%}")
 
-    def test_query_with_time_range(self, routing_evaluator):
+    @pytest.mark.asyncio
+    async def test_query_with_time_range(self, routing_evaluator):
         """Test querying spans with time range filters"""
         # Query spans from last 24 hours
         end_time = datetime.now()
         start_time = end_time - timedelta(days=1)
 
-        spans = routing_evaluator.query_routing_spans(
+        spans = await routing_evaluator.query_routing_spans(
             start_time=start_time,
             end_time=end_time,
             limit=100
@@ -281,12 +326,13 @@ class TestRoutingEvaluatorIntegration:
                     # Note: Timezone handling might vary, so we're lenient here
 
     @pytest.mark.asyncio
-    async def test_end_to_end_evaluation_workflow(self, routing_evaluator, routing_agent_with_spans):
+    async def test_end_to_end_evaluation_workflow(self, routing_evaluator, setup_routing_environment):
         """Test complete evaluation workflow from query to metrics"""
-        # Step 1: Generate spans (routing_agent_with_spans fixture already generates them)
+        # Step 1: Generate routing spans
+        await generate_routing_spans(setup_routing_environment)
 
         # Step 2: Query spans
-        spans = routing_evaluator.query_routing_spans(limit=30)
+        spans = await routing_evaluator.query_routing_spans(limit=30)
 
         assert len(spans) > 0, "No routing spans available for end-to-end test"
 

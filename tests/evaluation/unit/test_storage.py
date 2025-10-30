@@ -23,7 +23,8 @@ class TestConnectionConfig:
     def test_default_config(self):
         """Test default configuration values."""
         config = ConnectionConfig()
-        assert config.phoenix_url == "http://localhost:6006"
+        assert config.http_endpoint == "http://localhost:6006"
+        assert config.otlp_endpoint == "localhost:4317"
         assert config.max_retries == 3
         assert config.retry_delay_seconds == 1.0
         assert config.enable_health_checks is True
@@ -32,9 +33,13 @@ class TestConnectionConfig:
     def test_custom_config(self):
         """Test custom configuration."""
         config = ConnectionConfig(
-            phoenix_url="http://custom:8080", max_retries=5, enable_health_checks=False
+            http_endpoint="http://custom:8080",
+            otlp_endpoint="custom:4317",
+            max_retries=5,
+            enable_health_checks=False
         )
-        assert config.phoenix_url == "http://custom:8080"
+        assert config.http_endpoint == "http://custom:8080"
+        assert config.otlp_endpoint == "custom:4317"
         assert config.max_retries == 5
         assert config.enable_health_checks is False
 
