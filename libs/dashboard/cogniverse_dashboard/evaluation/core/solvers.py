@@ -8,7 +8,6 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import numpy as np
-import phoenix as px
 from inspect_ai.model import ModelOutput
 from inspect_ai.solver import Solver, solver
 
@@ -184,7 +183,11 @@ def create_batch_solver(
 
     async def solve(state, generate):
         """Load and evaluate existing traces with ground truth extraction."""
-        phoenix_client = px.Client()
+        from cogniverse_core.telemetry.manager import TelemetryManager
+
+        telemetry_manager = TelemetryManager()
+        provider = telemetry_manager.provider
+        project = config.get("project", "cogniverse-default")
 
         # Get ground truth strategy
         from .ground_truth import get_ground_truth_strategy
@@ -204,13 +207,13 @@ def create_batch_solver(
             except Exception as e:
                 logger.warning(f"Could not initialize backend for ground truth: {e}")
 
-        # Get traces
+        # Get traces using provider
         if trace_ids:
             logger.info(f"Loading {len(trace_ids)} specific traces")
-            # Phoenix doesn't have get_traces_by_ids, use spans instead
-            df = phoenix_client.get_spans_dataframe(
-                filter_condition=f"trace_id IN {trace_ids}"
-            )
+            # Get all spans and filter by trace_id
+            df = await provider.traces.get_spans(project=project, limit=len(trace_ids) * 10)
+            if not df.empty and "trace_id" in df.columns:
+                df = df[df["trace_id"].isin(trace_ids)]
         else:
             # Get recent traces
             hours_back = config.get("hours_back", 24)
@@ -219,7 +222,11 @@ def create_batch_solver(
             logger.info(f"Loading traces from last {hours_back} hours (limit: {limit})")
 
             start_time = datetime.now() - timedelta(hours=hours_back)
-            df = phoenix_client.get_spans_dataframe(start_time=start_time, limit=limit)
+            df = await provider.traces.get_spans(
+                project=project,
+                start_time=start_time,
+                limit=limit
+            )
 
         if df.empty:
             logger.warning("No traces found")
@@ -304,7 +311,11 @@ def create_live_solver(config: dict[str, Any] | None = None) -> Solver:
 
     async def solve(state, generate):
         """Monitor and evaluate live traces."""
-        phoenix_client = px.Client()
+        from cogniverse_core.telemetry.manager import TelemetryManager
+
+        telemetry_manager = TelemetryManager()
+        provider = telemetry_manager.provider
+        project = config.get("project", "cogniverse-default")
 
         poll_interval = config.get("poll_interval", 10)
         max_iterations = config.get("max_iterations", 10)
@@ -316,7 +327,11 @@ def create_live_solver(config: dict[str, Any] | None = None) -> Solver:
 
         for iteration in range(max_iterations):
             # Get new traces since last check
-            df = phoenix_client.get_spans_dataframe(start_time=last_check, limit=100)
+            df = await provider.traces.get_spans(
+                project=project,
+                start_time=last_check,
+                limit=100
+            )
 
             if not df.empty:
                 logger.info(f"Found {len(df)} new traces")

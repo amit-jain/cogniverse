@@ -565,24 +565,35 @@ class DatasetGroundTruthStrategy(GroundTruthStrategy):
             }
 
         try:
-            # Connect to Phoenix or other dataset store
-            import phoenix as px
+            # Connect to telemetry provider dataset store
+            from cogniverse_core.telemetry.manager import TelemetryManager
 
             try:
-                client = px.Client()
-                dataset = client.get_dataset(dataset_name)
+                telemetry_manager = TelemetryManager()
+                provider = telemetry_manager.provider
 
-                # Find matching query in dataset
-                for example in dataset.examples:
-                    if example.input.get("query") == query:
-                        # Found matching query
-                        expected_items = example.output.get("expected_items", [])
+                # Get dataset as DataFrame from provider
+                dataset_df = await provider.datasets.get_dataset(dataset_name)
+
+                # Search for matching query in dataset
+                # Assume dataset has 'query' column and 'expected_items' or similar columns
+                if not dataset_df.empty and "query" in dataset_df.columns:
+                    matching_rows = dataset_df[dataset_df["query"] == query]
+
+                    if not matching_rows.empty:
+                        row = matching_rows.iloc[0]
 
                         # Try multiple field names for compatibility
-                        if not expected_items:
-                            expected_items = example.output.get("expected_videos", [])
-                        if not expected_items:
-                            expected_items = example.output.get("ground_truth", [])
+                        expected_items = []
+                        for field in ["expected_items", "expected_videos", "ground_truth"]:
+                            if field in row and row[field]:
+                                value = row[field]
+                                # Handle string lists (e.g., "v1,v2,v3")
+                                if isinstance(value, str):
+                                    expected_items = [x.strip() for x in value.split(",") if x.strip()]
+                                elif isinstance(value, list):
+                                    expected_items = value
+                                break
 
                         return {
                             "expected_items": expected_items,
@@ -607,7 +618,7 @@ class DatasetGroundTruthStrategy(GroundTruthStrategy):
                 }
 
             except Exception as e:
-                logger.warning(f"Failed to load from Phoenix dataset: {e}")
+                logger.warning(f"Failed to load from dataset: {e}")
 
                 # Try loading from local file as fallback
                 import json

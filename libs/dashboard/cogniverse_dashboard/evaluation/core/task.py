@@ -6,7 +6,6 @@ import logging
 from datetime import datetime
 from typing import Any
 
-import phoenix as px
 from inspect_ai import Task, eval
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.model import GenerateConfig
@@ -14,7 +13,7 @@ from inspect_ai.model import GenerateConfig
 logger = logging.getLogger(__name__)
 
 
-def evaluation_task(
+async def evaluation_task(
     mode: str,
     dataset_name: str,
     profiles: list[str] | None = None,
@@ -53,27 +52,36 @@ def evaluation_task(
     if mode == "experiment" and not (profiles and strategies):
         raise ValueError("profiles and strategies required for experiment mode")
 
-    # Load dataset from Phoenix
-    phoenix_client = px.Client()
-    phoenix_dataset = phoenix_client.get_dataset(name=dataset_name)
+    from cogniverse_core.telemetry.manager import TelemetryManager
 
-    if not phoenix_dataset:
-        raise ValueError(f"Dataset '{dataset_name}' not found in Phoenix")
+    telemetry_manager = TelemetryManager()
+    provider = telemetry_manager.provider
 
-    # Convert Phoenix dataset to Inspect AI dataset
+    dataset_df = await provider.datasets.get_dataset(dataset_name)
+
+    if dataset_df.empty:
+        raise ValueError(f"Dataset '{dataset_name}' not found or empty")
+
     samples = []
-    for example in phoenix_dataset.examples:
-        # Extract query and expected results
-        query = example.input.get("query", "")
-        expected_videos = example.output.get("expected_videos", [])
+    for idx, row in dataset_df.iterrows():
+        query = row.get("query", "")
 
-        # Create Inspect AI sample
+        expected_videos = []
+        for field in ["expected_videos", "expected_items", "expected_video_ids"]:
+            if field in row and row[field]:
+                value = row[field]
+                if isinstance(value, str):
+                    expected_videos = [x.strip() for x in value.split(",") if x.strip()]
+                elif isinstance(value, list):
+                    expected_videos = value
+                break
+
         sample = Sample(
             input=query,
-            target=expected_videos,  # Ground truth for reference-based metrics
+            target=expected_videos,
             metadata={
-                "example_id": example.id,
-                "category": example.input.get("category", "general"),
+                "example_id": str(idx),
+                "category": row.get("category", "general"),
             },
         )
         samples.append(sample)
@@ -138,7 +146,7 @@ def evaluation_task(
     )
 
 
-def run_evaluation(
+async def run_evaluation(
     mode: str,
     dataset_name: str,
     profiles: list[str] | None = None,
@@ -183,7 +191,7 @@ def run_evaluation(
         )
 
     # Use Inspect AI with its own logging system
-    task = evaluation_task(
+    task = await evaluation_task(
         mode=mode,
         dataset_name=dataset_name,
         profiles=profiles,
