@@ -1,20 +1,23 @@
 """
-Phoenix Analytics and Visualization
+Analytics and Visualization for telemetry traces/spans
 
-This module provides analytics and visualization capabilities for Phoenix traces/spans,
+This module provides analytics and visualization capabilities for traces/spans,
 including request statistics, response time analysis, and outlier detection.
+
+Uses telemetry provider abstraction for backend-agnostic trace querying.
 """
 
 import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
-import phoenix as px
 import plotly.graph_objects as go
+from cogniverse_core.telemetry.manager import TelemetryManager
+from cogniverse_core.telemetry.providers.base import TelemetryProvider
 from plotly.subplots import make_subplots
 
 logger = logging.getLogger(__name__)
@@ -36,14 +39,30 @@ class TraceMetrics:
 
 
 class PhoenixAnalytics:
-    """Analytics engine for Phoenix traces and spans"""
+    """Analytics engine for telemetry traces and spans"""
 
-    def __init__(self, phoenix_url: str = "http://localhost:6006"):
-        self.phoenix_url = phoenix_url
-        self.client = px.Client()
+    def __init__(
+        self,
+        provider: Optional[TelemetryProvider] = None,
+        project: str = "cogniverse-default"
+    ):
+        """
+        Initialize analytics engine.
+
+        Args:
+            provider: Telemetry provider (if None, uses TelemetryManager's provider)
+            project: Project name for trace queries
+        """
+        # Get provider from TelemetryManager if not provided
+        if provider is None:
+            telemetry_manager = TelemetryManager()
+            provider = telemetry_manager.provider
+
+        self.provider = provider
+        self.project = project
         self._cache = {}
 
-    def get_traces(
+    async def get_traces(
         self,
         start_time: datetime | None = None,
         end_time: datetime | None = None,
@@ -51,7 +70,7 @@ class PhoenixAnalytics:
         limit: int = 10000,
     ) -> list[TraceMetrics]:
         """
-        Fetch traces from Phoenix with optional filters
+        Fetch traces from telemetry backend with optional filters
 
         Args:
             start_time: Start of time range
@@ -62,21 +81,13 @@ class PhoenixAnalytics:
         Returns:
             List of TraceMetrics objects
         """
-        # Build filter
-        filter_dict = {}
-        if start_time:
-            filter_dict["timestamp"] = {"$gte": start_time.isoformat()}
-        if end_time:
-            if "timestamp" not in filter_dict:
-                filter_dict["timestamp"] = {}
-            filter_dict["timestamp"]["$lte"] = end_time.isoformat()
-        if operation_filter:
-            filter_dict["name"] = operation_filter
-
-        # Fetch spans using the new Phoenix API
+        # Fetch spans using telemetry provider
         try:
-            spans_df = self.client.get_spans_dataframe(
-                start_time=start_time, end_time=end_time, limit=limit
+            spans_df = await self.provider.traces.get_spans(
+                project=self.project,
+                start_time=start_time,
+                end_time=end_time,
+                limit=limit
             )
         except Exception as e:
             logger.error(f"Failed to fetch spans: {e}")

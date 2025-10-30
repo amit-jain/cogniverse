@@ -1,5 +1,8 @@
 """
-Real-time monitoring and metrics collection with Arize Phoenix
+Real-time monitoring and metrics collection
+
+Uses telemetry provider abstraction for backend-agnostic trace logging.
+Phoenix-specific features (launch_app, session management) are kept for backward compatibility.
 """
 
 import logging
@@ -8,10 +11,11 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
-import phoenix as px
 from cogniverse_core.common.utils.async_polling import wait_for_retry_backoff
+from cogniverse_core.telemetry.manager import TelemetryManager
+from cogniverse_core.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +65,32 @@ class MetricWindow:
 class RetrievalMonitor:
     """Real-time monitoring of retrieval performance"""
 
-    def __init__(self, alert_thresholds: AlertThresholds | None = None):
+    def __init__(
+        self,
+        alert_thresholds: AlertThresholds | None = None,
+        provider: Optional[TelemetryProvider] = None,
+        project: str = "cogniverse-default",
+        enable_phoenix_ui: bool = False
+    ):
+        """
+        Initialize retrieval monitor.
+
+        Args:
+            alert_thresholds: Alert thresholds for monitoring
+            provider: Telemetry provider (if None, uses TelemetryManager's provider)
+            project: Project name for trace logging
+            enable_phoenix_ui: Whether to launch Phoenix UI (Phoenix-specific feature)
+        """
         self.alert_thresholds = alert_thresholds or AlertThresholds()
+
+        # Get provider from TelemetryManager if not provided
+        if provider is None:
+            telemetry_manager = TelemetryManager()
+            provider = telemetry_manager.provider
+
+        self.provider = provider
+        self.project = project
+        self.enable_phoenix_ui = enable_phoenix_ui
         self.phoenix_session = None
 
         # Metric windows for different profiles
@@ -82,13 +110,17 @@ class RetrievalMonitor:
         self.stop_monitoring = threading.Event()
 
     def start(self):
-        """Start monitoring and Phoenix session"""
-        # Launch Phoenix if not already running
-        if self.phoenix_session is None:
-            self.phoenix_session = px.launch_app()
-            logger.info(
-                f"Phoenix launched at: {self.phoenix_session.url if hasattr(self.phoenix_session, 'url') else 'localhost'}"
-            )
+        """Start monitoring and optionally Phoenix UI"""
+        # Launch Phoenix UI if enabled (Phoenix-specific feature)
+        if self.enable_phoenix_ui and self.phoenix_session is None:
+            try:
+                import phoenix as px
+                self.phoenix_session = px.launch_app()
+                logger.info(
+                    f"Phoenix UI launched at: {self.phoenix_session.url if hasattr(self.phoenix_session, 'url') else 'localhost'}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to launch Phoenix UI: {e}")
 
         # Start monitoring thread
         self.stop_monitoring.clear()
@@ -161,7 +193,7 @@ class RetrievalMonitor:
         if "mrr" in event:
             self.mrr_windows[profile_key].add(event["mrr"])
 
-        # Buffer event for Phoenix logging
+        # Buffer event for metrics aggregation and logging
         with self.buffer_lock:
             self.metrics_buffer.append(
                 {
@@ -176,21 +208,8 @@ class RetrievalMonitor:
                 }
             )
 
-        # Log to Phoenix trace
-        try:
-            px.log_trace(
-                name="retrieval",
-                inputs={"query": event.get("query", "")},
-                outputs={"results": event.get("results", [])},
-                metadata={
-                    "profile": profile,
-                    "strategy": strategy,
-                    "latency_ms": event.get("latency_ms", 0),
-                    "mrr": event.get("mrr", 0),
-                },
-            )
-        except Exception as e:
-            logger.warning(f"Failed to log to Phoenix: {e}")
+        # Note: Individual trace logging is handled by the application's telemetry instrumentation
+        # This monitor focuses on aggregated metrics and alerting
 
     def _process_metrics_buffer(self):
         """Process buffered metrics"""
@@ -336,11 +355,25 @@ class RetrievalMonitor:
 
         return summary
 
-    def export_traces(self, output_path: str):
-        """Export collected traces to file"""
+    async def export_traces(self, output_path: str, start_time: datetime | None = None, end_time: datetime | None = None):
+        """
+        Export collected traces to file.
+
+        Args:
+            output_path: Path to save traces
+            start_time: Optional start time filter
+            end_time: Optional end time filter
+        """
         try:
-            traces = px.Client().get_trace_dataset()
-            traces.save(output_path)
-            logger.info(f"Exported traces to {output_path}")
+            # Get spans from provider
+            spans_df = await self.provider.traces.get_spans(
+                project=self.project,
+                start_time=start_time,
+                end_time=end_time
+            )
+
+            # Save to file
+            spans_df.to_csv(output_path, index=False)
+            logger.info(f"Exported {len(spans_df)} traces to {output_path}")
         except Exception as e:
             logger.error(f"Failed to export traces: {e}")
