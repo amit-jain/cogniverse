@@ -4,15 +4,16 @@ Dataset management utility
 """
 
 import argparse
+import asyncio
 import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.evaluation.dataset_manager import DatasetManager
+from cogniverse_dashboard.evaluation.dataset_manager import DatasetManager
 
 
-def main():
+async def main():
     parser = argparse.ArgumentParser(description="Manage evaluation datasets")
     parser.add_argument("--list", action="store_true", help="List all datasets")
     parser.add_argument("--create", help="Create dataset with name")
@@ -28,16 +29,16 @@ def main():
             print("\nRegistered datasets:")
             for ds in datasets:
                 print(f"\nName: {ds['name']}")
-                print(f"  Phoenix ID: {ds['phoenix_id']}")
+                print(f"  Dataset ID: {ds['dataset_id']}")
                 print(f"  Created: {ds['created_at']}")
                 print(f"  Examples: {ds['num_examples']}")
                 if ds['description']:
                     print(f"  Description: {ds['description']}")
         else:
             print("\nNo datasets registered yet")
-            
+
     elif args.create and args.csv:
-        dataset_id = dm.get_or_create_dataset(
+        dataset_id = await dm.get_or_create_dataset(
             name=args.create,
             csv_path=args.csv,
             description=f"Created from {args.csv}"
@@ -56,4 +57,4 @@ def main():
         parser.print_help()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

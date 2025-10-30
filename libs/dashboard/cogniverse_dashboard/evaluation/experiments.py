@@ -1,17 +1,21 @@
 """
 Phoenix Experiments Final Version - with proper project separation and scoring
+
+Note: This file uses Phoenix's high-level experiment framework (phoenix.experiments.run_experiment)
+which is application-level orchestration. The dataset operations use telemetry provider abstraction.
 """
 
 import logging
 import os
 from collections.abc import Callable
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 import opentelemetry.trace as trace
 import pandas as pd
-import phoenix as px
 from cogniverse_core.config.utils import get_config
+from cogniverse_core.telemetry.manager import TelemetryManager
+from cogniverse_core.telemetry.providers.base import TelemetryProvider
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -28,7 +32,10 @@ logger = logging.getLogger(__name__)
 
 class PhoenixExperimentRunner:
     """
-    Final experiment runner with proper project separation and scoring
+    Experiment runner with Phoenix's experiment framework.
+
+    Uses telemetry provider abstraction for dataset operations while keeping
+    Phoenix's high-level run_experiment() for orchestration.
     """
 
     def __init__(
@@ -39,9 +46,10 @@ class PhoenixExperimentRunner:
         evaluator_name: str = "visual_judge",
         llm_model: str = None,
         llm_base_url: str = None,
+        provider: Optional[TelemetryProvider] = None,
     ):
         """
-        Initialize with separate project for experiments
+        Initialize experiment runner.
 
         Args:
             experiment_project_name: Phoenix project name for experiments
@@ -50,8 +58,14 @@ class PhoenixExperimentRunner:
             evaluator_name: Name of evaluator config from config.json
             llm_model: Deprecated - use evaluator_name
             llm_base_url: Deprecated - use config.json
+            provider: Telemetry provider (if None, uses TelemetryManager's provider)
         """
-        self.client = px.Client()
+        # Get provider from TelemetryManager if not provided
+        if provider is None:
+            telemetry_manager = TelemetryManager()
+            provider = telemetry_manager.provider
+
+        self.provider = provider
         self.config = get_config()
         self.experiment_project = experiment_project_name
         self.enable_quality_evaluators = enable_quality_evaluators
@@ -68,10 +82,15 @@ class PhoenixExperimentRunner:
         # Set up tracing for experiments project
         self._setup_experiment_tracing()
 
-        # Initialize dataset manager
+        # Initialize dataset manager (uses provider for storage)
         from .dataset_manager import DatasetManager
 
-        self.dataset_manager = DatasetManager()
+        self.dataset_manager = DatasetManager(provider=self.provider)
+
+        # Phoenix client for getting Dataset objects needed by run_experiment()
+        # Note: run_experiment() requires Phoenix-specific Dataset objects
+        import phoenix as px
+        self._phoenix_client = px.Client()
 
     def _setup_experiment_tracing(self):
         """Set up OpenTelemetry tracing for experiments project"""
@@ -92,7 +111,7 @@ class PhoenixExperimentRunner:
         set_tracer_provider(provider)
         logger.info("Set up base tracer provider for experiments")
 
-    def create_experiment_dataset(
+    async def create_experiment_dataset(
         self,
         dataset_name: str | None = None,
         csv_path: str | None = None,
@@ -115,14 +134,15 @@ class PhoenixExperimentRunner:
         if dataset_name:
             # Check if CSV path provided
             if csv_path:
-                dataset_id = self.dataset_manager.get_or_create_dataset(
+                dataset_id = await self.dataset_manager.get_or_create_dataset(
                     name=dataset_name, csv_path=csv_path, force_new=force_new
                 )
             else:
                 # Try to get existing dataset
                 dataset_info = self.dataset_manager.get_dataset_info(dataset_name)
                 if dataset_info and not force_new:
-                    dataset_id = dataset_info["phoenix_id"]
+                    # Support both old (phoenix_id) and new (backend_id) registry formats
+                    dataset_id = dataset_info.get("backend_id") or dataset_info.get("phoenix_id")
                 else:
                     # Create from queries or default queries
                     if queries is None:
@@ -144,12 +164,14 @@ class PhoenixExperimentRunner:
                         )
                     df = pd.DataFrame(df_data)
 
-                    dataset_id = self.dataset_manager.get_or_create_dataset(
+                    dataset_id = await self.dataset_manager.get_or_create_dataset(
                         name=dataset_name, dataframe=df, force_new=force_new
                     )
 
-            # Get dataset from Phoenix
-            dataset = self.client.get_dataset(id=dataset_id)
+            # Get Phoenix Dataset object for run_experiment()
+            # Dataset is stored via provider (through DatasetManager) but run_experiment()
+            # requires Phoenix-specific Dataset objects
+            dataset = self._phoenix_client.get_dataset(id=dataset_id)
             return dataset
 
         # Legacy behavior - create temporary dataset
@@ -200,8 +222,9 @@ class PhoenixExperimentRunner:
 
         df = pd.DataFrame(df_data)
 
-        # Upload to Phoenix
-        dataset = self.client.upload_dataset(
+        # Create temporary Phoenix Dataset for run_experiment()
+        # Note: This is legacy behavior for temporary datasets
+        dataset = self._phoenix_client.upload_dataset(
             dataset_name=f"video_retrieval_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
             dataframe=df,
             input_keys=["query"],

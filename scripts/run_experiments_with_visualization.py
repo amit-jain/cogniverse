@@ -184,7 +184,7 @@ def create_visualization_tables(experiments: List[Dict], include_quality_metrics
     }
 
 
-def main(args=None):
+async def main(args=None):
     """Run experiments with visualization"""
     
     # Get experiment configurations with args
@@ -240,7 +240,7 @@ def main(args=None):
         
         # Create or get dataset
         print("Preparing experiment dataset...")
-        dataset = runner.create_experiment_dataset(
+        dataset = await runner.create_experiment_dataset(
             dataset_name=args.dataset_name if args else None,
             csv_path=args.csv_path if args else None,
             force_new=args.force_new if args else False
@@ -423,6 +423,7 @@ if __name__ == "__main__":
     parser.add_argument("--llm-base-url", default=None,
                        help="Override LLM base URL (deprecated - use config.json instead)")
     args = parser.parse_args()
-    
+
     # Pass args to main
-    main(args)
+    import asyncio
+    asyncio.run(main(args))

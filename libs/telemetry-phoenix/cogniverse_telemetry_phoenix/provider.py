@@ -313,20 +313,42 @@ class PhoenixDatasetStore(DatasetStore):
         Args:
             name: Dataset name
             data: DataFrame with dataset records
-            metadata: Optional metadata
+            metadata: Optional metadata with Phoenix-specific keys:
+                - description: Dataset description
+                - input_keys: List of input column names
+                - output_keys: List of output/expected column names
+                - metadata_keys: List of metadata column names
 
         Returns:
             Dataset identifier (name in Phoenix's case)
         """
         try:
-            client = self._get_client()
-            await client.upload_dataset(
+            # Extract Phoenix-specific metadata
+            metadata = metadata or {}
+            input_keys = metadata.get("input_keys", [])
+            output_keys = metadata.get("output_keys", [])
+            metadata_keys = metadata.get("metadata_keys", [])
+            description = metadata.get("description", "")
+
+            # Use Phoenix synchronous client for upload_dataset
+            # AsyncClient doesn't support all upload_dataset parameters yet
+            import phoenix as px
+
+            sync_client = px.Client(endpoint=self.http_endpoint)
+            dataset = sync_client.upload_dataset(
                 dataset_name=name,
                 dataframe=data,
+                input_keys=input_keys if input_keys else None,
+                output_keys=output_keys if output_keys else None,
+                metadata_keys=metadata_keys if metadata_keys else None,
+                dataset_description=description if description else None,
             )
 
-            logger.info(f"Created dataset '{name}' with {len(data)} records")
-            return name
+            logger.info(
+                f"Created dataset '{name}' with {len(data)} records "
+                f"(inputs={input_keys}, outputs={output_keys})"
+            )
+            return dataset.id
 
         except Exception as e:
             logger.error(f"Failed to create dataset '{name}': {e}")
