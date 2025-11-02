@@ -515,6 +515,59 @@ class ConfigManager:
         )
         return merged_profile
 
+    def list_backend_profiles(
+        self, tenant_id: str = "default", service: str = "backend"
+    ) -> Dict[str, BackendProfileConfig]:
+        """
+        List all backend profiles for a tenant.
+
+        Args:
+            tenant_id: Tenant identifier
+            service: Service name
+
+        Returns:
+            Dictionary mapping profile names to BackendProfileConfig instances
+        """
+        backend_config = self.get_backend_config(tenant_id=tenant_id, service=service)
+        return backend_config.profiles
+
+    def delete_backend_profile(
+        self, profile_name: str, tenant_id: str = "default", service: str = "backend"
+    ) -> bool:
+        """
+        Delete a backend profile for a tenant.
+
+        Args:
+            profile_name: Name of profile to delete
+            tenant_id: Tenant identifier
+            service: Service name
+
+        Returns:
+            True if profile was deleted, False if profile didn't exist
+
+        Example:
+            manager.delete_backend_profile("custom_profile", tenant_id="acme")
+        """
+        backend_config = self.get_backend_config(tenant_id=tenant_id, service=service)
+
+        # Check if profile exists
+        if profile_name not in backend_config.profiles:
+            logger.warning(
+                f"Profile '{profile_name}' not found for {tenant_id}:{service}"
+            )
+            return False
+
+        # Remove profile
+        del backend_config.profiles[profile_name]
+
+        # Save updated config
+        self.set_backend_config(backend_config, tenant_id=tenant_id, service=service)
+
+        logger.info(
+            f"Deleted backend profile '{profile_name}' from {tenant_id}:{service}"
+        )
+        return True
+
     # ========== Generic Configuration Access ==========
 
     def get_config_value(
