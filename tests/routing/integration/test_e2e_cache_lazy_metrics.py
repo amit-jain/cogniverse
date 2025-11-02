@@ -345,7 +345,7 @@ class TestProductionRoutingRealInfrastructure:
         assert cached is None, "Cache should be empty initially"
 
         # First execution
-        result1 = await routing_agent.route_query(query, context)
+        result1 = await routing_agent.route_query(query, context, tenant_id=context.get("tenant_id"))
         logger.info(f"✅ First execution: {result1.recommended_agent if result1 else 'unknown'}")
 
         # Cache the result
@@ -372,7 +372,7 @@ class TestProductionRoutingRealInfrastructure:
         ):
             """Execute routing for specific modality"""
             # Use real routing agent to determine results
-            result = await routing_agent.route_query(query, context)
+            result = await routing_agent.route_query(query, context, tenant_id=context.get("tenant_id"))
 
             # Simulate modality-specific results
             return {
@@ -473,7 +473,7 @@ class TestProductionRoutingRealInfrastructure:
                 # Execute real routing
                 start = time.time()
                 try:
-                    result = await routing_agent.route_query(query)
+                    result = await routing_agent.route_query(query, tenant_id="test-concurrent")
                     latency_ms = (time.time() - start) * 1000
 
                     # Track metrics
@@ -590,7 +590,7 @@ class TestProductionRoutingRealInfrastructure:
         modality = QueryModality.DOCUMENT
 
         # Execute query
-        result = await routing_agent.route_query(query)
+        result = await routing_agent.route_query(query, tenant_id="test-cache-ttl")
         logger.info(f"✅ First execution: {result.recommended_agent if result else 'unknown'}")
 
         # Cache with short TTL (1 second)
@@ -621,7 +621,7 @@ class TestProductionRoutingRealInfrastructure:
             query: str, modality: QueryModality, context: dict
         ):
             execution_order.append(modality)
-            result = await routing_agent.route_query(query, context)
+            result = await routing_agent.route_query(query, context, tenant_id=context.get("tenant_id", "test-cost"))
             # Return low confidence to force all executions
             return {
                 "results": [],

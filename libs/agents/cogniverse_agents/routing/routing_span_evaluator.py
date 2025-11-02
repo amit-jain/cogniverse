@@ -40,7 +40,7 @@ class RoutingSpanEvaluator:
         self.tenant_id = tenant_id
 
         # Initialize SpanEvaluator for reading existing spans
-        self.span_evaluator = SpanEvaluator()
+        self.span_evaluator = SpanEvaluator(tenant_id=self.tenant_id)
         self._last_evaluation_time = datetime.now()
         self._processed_span_ids = set()
 
