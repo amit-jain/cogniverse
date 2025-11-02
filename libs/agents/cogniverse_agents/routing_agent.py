@@ -1153,7 +1153,8 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         """Process A2A input with DSPy routing logic"""
         query = dspy_input.get("query", "")
         context = dspy_input.get("context")
-        tenant_id = dspy_input.get("tenant_id") or dspy_input.get("user_id")  # Support both names
+        # Backward compatibility: Accept both tenant_id (preferred) and user_id (legacy)
+        tenant_id = dspy_input.get("tenant_id") or dspy_input.get("user_id")
 
         routing_decision = await self.route_query(query, context, tenant_id)
 
@@ -1194,7 +1195,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
                 "input_schema": {
                     "query": "string",
                     "context": "string (optional)",
-                    "user_id": "string (optional)",
+                    "tenant_id": "string (optional)",
                 },
                 "output_schema": {
                     "recommended_agent": "string",
@@ -1321,7 +1322,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         enable_relationship_extraction: bool = True,
         enable_query_enhancement: bool = True,
         context: Optional[str] = None,
-        user_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> RoutingDecision:
         """
         Analyze query and route with relationship extraction and enhancement
@@ -1334,7 +1335,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
             enable_relationship_extraction: Whether to extract relationships
             enable_query_enhancement: Whether to enhance the query
             context: Optional context information
-            user_id: Optional user identifier
+            tenant_id: Tenant identifier for multi-tenancy isolation
 
         Returns:
             Routing decision with relationship context
@@ -1348,7 +1349,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
 
         try:
             decision = await self.route_query(
-                query=query, context=context, tenant_id=user_id
+                query=query, context=context, tenant_id=tenant_id
             )
 
             return decision

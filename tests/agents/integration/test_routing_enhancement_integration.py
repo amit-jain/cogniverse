@@ -113,6 +113,7 @@ class TestRoutingToEnhancedSearchIntegration:
                         query="robots playing soccer",
                         enable_relationship_extraction=True,
                         enable_query_enhancement=True,
+                        tenant_id="test_tenant",
                     )
                 )
 
