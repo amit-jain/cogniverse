@@ -20,21 +20,24 @@ class TestDynamicConfigIntegration:
         return TestClient(app)
 
     @pytest.fixture
-    def fresh_agent(self):
+    def fresh_agent(self, tmp_path):
         """Create fresh TextAnalysisAgent instance with clean config"""
         from cogniverse_core.config.manager import ConfigManager
         from fastapi import FastAPI
 
-        # Reset ConfigManager to ensure clean state
-        ConfigManager._instance = None
-        ConfigManager._db_path = None
+        # Create temporary ConfigManager instance
+        temp_db = tmp_path / "test_config.db"
+        config_manager = ConfigManager(db_path=temp_db)
 
         fresh_app = FastAPI()
         with patch("dspy.LM"):
-            agent = TextAnalysisAgent(tenant_id="test_tenant")
+            agent = TextAnalysisAgent(
+                tenant_id="test_tenant", config_manager=config_manager
+            )
 
             # Reset to default PREDICT module for consistent tests
             from cogniverse_core.config.agent_config import DSPyModuleType, ModuleConfig
+
             default_module_config = ModuleConfig(
                 module_type=DSPyModuleType.PREDICT,
                 signature="TextAnalysisSignature",
@@ -43,7 +46,9 @@ class TestDynamicConfigIntegration:
             )
             agent.update_module_config(default_module_config)
 
-            agent.setup_config_endpoints(fresh_app, tenant_id=agent.tenant_id)
+            agent.setup_config_endpoints(
+                fresh_app, config_manager=config_manager, tenant_id=agent.tenant_id
+            )
         return agent, fresh_app
 
     def test_agent_initialization_with_dynamic_dspy(self, fresh_agent):

@@ -5,7 +5,6 @@ Tests backend profile CRUD operations and schema deployment.
 """
 
 import json
-import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -69,13 +68,10 @@ class TestProfileAPICRUD:
     def test_client(self, temp_schema_dir: Path, tmp_path: Path):
         """Create test client for profile API with properly configured test instances."""
         from cogniverse_core.config.manager import ConfigManager
-        from cogniverse_core.validation.profile_validator import ProfileValidator
-        from cogniverse_runtime.routers import admin
 
-        # Reset singletons first
-        ConfigManager._instance = None
-        ConfigManager._db_path = None
+        # Reset registries
         from cogniverse_core.registries.backend_registry import BackendRegistry
+        from cogniverse_runtime.routers import admin
         BackendRegistry._instance = None
         from cogniverse_core.registries.schema_registry import SchemaRegistry
         SchemaRegistry._instance = None
@@ -93,14 +89,9 @@ class TestProfileAPICRUD:
         )
         config_manager.set_system_config(system_config)
 
-        # Create ProfileValidator with temp schema directory
-        profile_validator = ProfileValidator(
-            config_manager=config_manager, schema_templates_dir=temp_schema_dir
-        )
-
-        # Reset and set global instances in admin router
-        admin._config_manager = config_manager
-        admin._profile_validator = profile_validator
+        # Set ConfigManager and schema directory for admin router using new DI API
+        admin.set_config_manager(config_manager)
+        admin.set_profile_validator_schema_dir(temp_schema_dir)
 
         try:
             # Import app and create client
@@ -111,7 +102,7 @@ class TestProfileAPICRUD:
         finally:
             # Reset globals after test
             admin._config_manager = None
-            admin._profile_validator = None
+            admin._profile_validator_schema_dir_override = None
             BackendRegistry._instance = None
 
     def test_create_profile_minimal(self, test_client: TestClient):
@@ -511,12 +502,7 @@ class TestProfileAPISchemaDeployment:
 
         from cogniverse_core.config.manager import ConfigManager
         from cogniverse_core.registries.backend_registry import BackendRegistry
-        from cogniverse_core.validation.profile_validator import ProfileValidator
         from cogniverse_runtime.routers import admin
-
-        # Reset module-level globals in admin router
-        admin._config_manager = None
-        admin._profile_validator = None
 
         wait_for_vespa_indexing(delay=1, description="Vespa startup")
 
@@ -607,17 +593,6 @@ class TestProfileAPISchemaDeployment:
                 print(f"[FIXTURE DEBUG] Database cleanup failed: {e}")
 
         # Reset singletons AFTER cleanup
-        # CRITICAL: Reset BOTH ConfigManager classes (there are two!)
-        # config.manager.ConfigManager (used by SchemaRegistry)
-        from cogniverse_core.config.manager import ConfigManager as OldConfigManager
-        OldConfigManager._instance = None
-        if hasattr(OldConfigManager, '_db_path'):
-            OldConfigManager._db_path = None
-
-        # config.config_manager.ConfigManager (used by tests)
-        ConfigManager._instance = None
-        ConfigManager._db_path = None
-
         BackendRegistry._instance = None
 
         # Clear TenantSchemaManager cache before resetting singleton
@@ -689,15 +664,9 @@ class TestProfileAPISchemaDeployment:
         )
         config_manager.set_system_config(system_config_already)
 
-        # Create ProfileValidator pointing to our test schema directory
-        profile_validator = ProfileValidator(
-            config_manager=config_manager,
-            schema_templates_dir=schema_dir
-        )
-
-        # Set global instances in admin router
-        admin._config_manager = config_manager
-        admin._profile_validator = profile_validator
+        # Set ConfigManager and schema directory for admin router using new DI API
+        admin.set_config_manager(config_manager)
+        admin.set_profile_validator_schema_dir(schema_dir)
 
         try:
             from cogniverse_runtime.main import app
@@ -707,8 +676,9 @@ class TestProfileAPISchemaDeployment:
         finally:
             # Reset globals after test
             admin._config_manager = None
-            admin._profile_validator = None
+            admin._profile_validator_schema_dir_override = None
             BackendRegistry._instance = None
+            BackendRegistry._backend_instances.clear()
             TenantSchemaManager._instance = None
             SchemaRegistry._instance = None
 
@@ -862,8 +832,9 @@ class TestProfileAPISchemaDeployment:
         print(f"Tenant schema name: {tenant_schema_name}")
 
         # Step 2: Verify schema exists in Vespa
+        from cogniverse_runtime.routers import admin
         backend_registry = BackendRegistry.get_instance()
-        vespa_backend_obj = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id)
+        vespa_backend_obj = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id, config_manager=admin._config_manager)
         assert vespa_backend_obj is not None
 
         schema_exists = vespa_backend_obj.schema_exists(
@@ -941,7 +912,7 @@ class TestProfileAPISchemaDeployment:
 
         try:
             # Get VespaBackend instance for this tenant
-            backend = BackendRegistry.get_ingestion_backend("vespa", tenant_id)
+            backend = BackendRegistry.get_ingestion_backend("vespa", tenant_id, config_manager=admin._config_manager)
 
             # Create test document with embedding
             test_doc = Document(

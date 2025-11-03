@@ -24,10 +24,20 @@ class VespaSchemaManager:
     Supports both native .sd files and JSON schema definitions.
     """
     
-    def __init__(self, vespa_endpoint: str = None, vespa_port: int = None):
-        config = get_config()
-        self.vespa_endpoint = vespa_endpoint or f"{config['vespa_url']}:{config['vespa_port']}"
-        self.vespa_port = vespa_port or 19071  # Default deployment port
+    def __init__(self, vespa_endpoint: str = None, vespa_port: int = None, config_manager=None):
+        if vespa_endpoint and vespa_port:
+            # If both are provided, use them directly without needing config
+            self.vespa_endpoint = vespa_endpoint
+            self.vespa_port = vespa_port
+        elif config_manager:
+            # Use ConfigManager to get config
+            config = get_config(config_manager=config_manager)
+            self.vespa_endpoint = vespa_endpoint or f"{config['vespa_url']}:{config['vespa_port']}"
+            self.vespa_port = vespa_port or 19071  # Default deployment port
+        else:
+            # Neither provided - use defaults
+            self.vespa_endpoint = vespa_endpoint or "http://localhost:8080"
+            self.vespa_port = vespa_port or 19071
         self._logger = logging.getLogger(self.__class__.__name__)
     
     def read_sd_file(self, sd_file_path: str) -> str:

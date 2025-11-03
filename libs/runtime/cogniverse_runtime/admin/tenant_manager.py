@@ -57,13 +57,24 @@ app = FastAPI(
 
 # Backend for metadata storage and schema management
 backend: Optional[Backend] = None
+_config_manager = None  # For test injection
+
+
+def set_config_manager(config_manager):
+    """Set ConfigManager for this module (for tests)"""
+    global _config_manager
+    _config_manager = config_manager
 
 
 def get_backend() -> Backend:
     """Get or create backend for metadata operations"""
     global backend
     if backend is None:
-        config = get_config()
+        # Use injected ConfigManager (from tests) or create new one
+        from cogniverse_core.config.manager import ConfigManager
+        config_manager = _config_manager if _config_manager is not None else ConfigManager()
+
+        config = get_config(config_manager=config_manager)
         backend_type = config.get("backend_type", "vespa")
         registry = get_backend_registry()
 
@@ -78,7 +89,7 @@ def get_backend() -> Backend:
         # We'll pass tenant_id explicitly when needed for schema operations
         try:
             backend = registry.get_ingestion_backend(
-                backend_type, tenant_id="system", config=backend_config
+                backend_type, tenant_id="system", config=backend_config, config_manager=config_manager
             )
         except Exception as e:
             logger.error(f"Failed to get backend: {e}")

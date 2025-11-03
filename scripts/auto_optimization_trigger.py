@@ -21,7 +21,7 @@ from pathlib import Path
 # Add parent to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from cogniverse_core.config.manager import get_config_manager
+from cogniverse_core.config.manager import ConfigManager
 from cogniverse_core.telemetry.manager import get_telemetry_manager
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -45,7 +45,7 @@ class AutoOptimizationTrigger:
     ):
         self.tenant_id = tenant_id
         self.module = module
-        self.config_manager = get_config_manager()
+        self.config_manager = ConfigManager()
 
         # Get telemetry provider for trace queries
         telemetry_manager = get_telemetry_manager()

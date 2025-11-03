@@ -10,6 +10,7 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
+from cogniverse_core.common.config_store_interface import ConfigScope
 from cogniverse_core.config.agent_config import (
     AgentConfig,
     DSPyModuleType,
@@ -17,8 +18,7 @@ from cogniverse_core.config.agent_config import (
     OptimizerConfig,
     OptimizerType,
 )
-from cogniverse_core.config.manager import get_config_manager
-from cogniverse_core.common.config_store_interface import ConfigScope
+from cogniverse_core.config.manager import ConfigManager
 from cogniverse_core.config.unified_config import (
     RoutingConfigUnified,
     SystemConfig,
@@ -32,7 +32,7 @@ def render_config_management_tab():
 
     # Initialize ConfigManager
     if "config_manager" not in st.session_state:
-        st.session_state.config_manager = get_config_manager()
+        st.session_state.config_manager = ConfigManager()
 
     manager = st.session_state.config_manager
 

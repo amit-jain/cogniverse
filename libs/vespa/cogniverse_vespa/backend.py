@@ -30,14 +30,22 @@ logger = logging.getLogger(__name__)
 class VespaBackend(Backend):
     """
     Vespa backend implementation supporting both ingestion and search.
-    
+
     This class wraps the existing Vespa implementations and provides
     a unified interface compatible with the backend registry.
     """
-    
-    def __init__(self):
-        """Initialize Vespa backend."""
+
+    def __init__(self, config_manager):
+        """
+        Initialize Vespa backend.
+
+        Args:
+            config_manager: ConfigManager instance for fetching config (REQUIRED)
+        """
+        if config_manager is None:
+            raise ValueError("config_manager is required for VespaBackend initialization")
         super().__init__("vespa")
+        self._config_manager_instance = config_manager
         self._vespa_search_backend: Optional[VespaSearchBackend] = None
         # Store multiple ingestion clients, one per schema
         self._vespa_ingestion_clients: Dict[str, VespaPyClient] = {}
@@ -88,13 +96,13 @@ class VespaBackend(Backend):
         self._port = merged_config.get("port", 8080)
 
         if not self._url and self._tenant_id:
-            # Fetch from ConfigManager
-            from cogniverse_core.config.manager import get_config_manager
-            config_manager = get_config_manager()
-            system_config = config_manager.get_system_config(self._tenant_id)
+            # Fetch from ConfigManager (always available since it's required in __init__)
+            system_config = self._config_manager_instance.get_system_config(self._tenant_id)
             self._url = system_config.vespa_url
             self._port = system_config.vespa_port
-            logger.info(f"Fetched Vespa config from ConfigManager for tenant '{self._tenant_id}': {self._url}:{self._port}")
+            logger.info(
+                f"Fetched Vespa config from ConfigManager for tenant '{self._tenant_id}': {self._url}:{self._port}"
+            )
 
         # Mark as ingestion backend if schema_name is provided
         if "schema_name" in config:

@@ -39,22 +39,6 @@ class ConfigManager:
     - Persistent (SQLite storage)
     """
 
-    _instance = None
-    _db_path = None
-
-    def __new__(cls, db_path: Optional[Path] = None, *args, **kwargs):
-        """Singleton pattern with db_path tracking"""
-        # If db_path changed, reset singleton
-        if db_path is not None and db_path != cls._db_path:
-            cls._instance = None
-            cls._db_path = db_path
-
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-
-        return cls._instance
-
     def __init__(
         self,
         db_path: Optional[Path] = None,
@@ -69,9 +53,6 @@ class ConfigManager:
             cache_size: LRU cache size (number of configs per tenant)
             store: Optional ConfigStore implementation (defaults to SQLiteConfigStore)
         """
-        if self._initialized:
-            return
-
         # Use provided store or create SQLiteConfigStore
         if store is not None:
             self.store = store
@@ -79,18 +60,10 @@ class ConfigManager:
             self.store = SQLiteConfigStore(db_path)
 
         self.cache_size = cache_size
-        self._initialized = True
 
         logger.info(
             f"ConfigManager initialized with {type(self.store).__name__}, cache size: {cache_size}"
         )
-
-    @classmethod
-    def get_instance(cls) -> "ConfigManager":
-        """Get the singleton ConfigManager instance."""
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
 
     # ========== System Configuration ==========
 
@@ -858,9 +831,3 @@ class ConfigManager:
             Dictionary with statistics
         """
         return self.store.get_stats()
-
-
-# Singleton accessor
-def get_config_manager() -> ConfigManager:
-    """Get singleton ConfigManager instance"""
-    return ConfigManager()

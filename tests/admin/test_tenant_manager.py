@@ -32,41 +32,46 @@ class TestTenantManagerAPI:
         manager.cleanup()
 
     @pytest.fixture
-    def test_client(self, vespa_backend):
+    def test_client(self, vespa_backend, tmp_path):
         """Create test client for tenant manager API"""
-        from unittest.mock import patch
+        from cogniverse_core.config.manager import ConfigManager
+        from cogniverse_core.config.unified_config import SystemConfig
 
         # VespaTestManager already deployed metadata schemas with video schemas
         # Just wait a moment for Vespa to be fully ready
         wait_for_vespa_indexing(delay=1, description="Vespa startup")
 
-        # Mock config to return correct Vespa URL/port
-        mock_config = {
-            "vespa_url": "http://localhost",
-            "vespa_port": vespa_backend.http_port,
-            "vespa_config_port": vespa_backend.config_port,
-        }
+        # Create ConfigManager with test config
+        temp_db = tmp_path / "test_tenant_config.db"
+        config_manager = ConfigManager(db_path=temp_db)
 
-        # Import app and reset global client
+        # Set system config with correct Vespa port
+        system_config = SystemConfig(
+            tenant_id="system",
+            vespa_url="http://localhost",
+            vespa_port=vespa_backend.http_port,
+        )
+        config_manager.set_system_config(system_config)
+
+        # Import app and reset globals
         from cogniverse_runtime.admin import tenant_manager
         from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
 
-        tenant_manager.vespa_client = None  # Reset global client
-        tenant_manager.schema_manager = None  # Reset schema manager
+        tenant_manager.backend = None  # Reset backend
+        tenant_manager.set_config_manager(config_manager)  # Inject ConfigManager
+
         # Reset tenant schema manager singleton
         if TenantSchemaManager._instance is not None:
             TenantSchemaManager._instance._initialized = False
         TenantSchemaManager._instance = None
 
-        # Patch get_config to return our mock config - keep active during test
-        config_patcher = patch('cogniverse_runtime.admin.tenant_manager.get_config', return_value=mock_config)
-        config_patcher.start()
-
         try:
             client = TestClient(tenant_manager.app)
             yield client
         finally:
-            config_patcher.stop()
+            # Reset globals
+            tenant_manager.backend = None
+            tenant_manager._config_manager = None
 
     @pytest.mark.ci_fast
     def test_health_check(self):

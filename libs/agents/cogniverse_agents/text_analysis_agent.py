@@ -18,7 +18,7 @@ from cogniverse_core.config.agent_config import (
     DSPyModuleType,
     ModuleConfig,
 )
-from cogniverse_core.config.manager import get_config_manager
+from cogniverse_core.config.manager import ConfigManager
 from cogniverse_core.config.utils import get_config
 from fastapi import FastAPI
 
@@ -45,12 +45,13 @@ class TextAnalysisAgent(
     Supports dynamic reconfiguration of modules and optimizers via REST API.
     """
 
-    def __init__(self, tenant_id: str):
+    def __init__(self, tenant_id: str, config_manager: ConfigManager):
         """
         Initialize text analysis agent with dynamic configuration.
 
         Args:
             tenant_id: Tenant identifier (REQUIRED - no default)
+            config_manager: ConfigManager instance for persistence
 
         Raises:
             ValueError: If tenant_id is empty or None
@@ -60,8 +61,8 @@ class TextAnalysisAgent(
         TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
 
         logger.info(f"Initializing TextAnalysisAgent for tenant: {tenant_id}...")
-        self.system_config = get_config()
-        config_manager = get_config_manager()
+        self.config_manager = config_manager
+        self.system_config = get_config(tenant_id=tenant_id, config_manager=config_manager)
 
         # Try to load persisted agent config from ConfigManager
         self.config = config_manager.get_agent_config(
@@ -107,7 +108,7 @@ class TextAnalysisAgent(
             )
 
             # Persist default config
-            config_manager.set_agent_config(
+            self.config_manager.set_agent_config(
                 tenant_id=tenant_id,
                 agent_name="text_analysis_agent",
                 agent_config=self.config,
@@ -168,6 +169,20 @@ app = FastAPI(
 
 # Per-tenant agent instances cache
 _agent_instances: Dict[str, TextAnalysisAgent] = {}
+_config_manager: ConfigManager = None
+
+
+def set_config_manager(config_manager: ConfigManager) -> None:
+    """
+    Set the ConfigManager instance for this module.
+
+    Must be called during application startup before handling requests.
+
+    Args:
+        config_manager: ConfigManager instance to use
+    """
+    global _config_manager
+    _config_manager = config_manager
 
 
 def get_agent(tenant_id: str) -> TextAnalysisAgent:
@@ -182,13 +197,21 @@ def get_agent(tenant_id: str) -> TextAnalysisAgent:
 
     Raises:
         ValueError: If tenant_id is empty or None
+        RuntimeError: If ConfigManager not initialized
     """
     if not tenant_id:
         raise ValueError("tenant_id is required - no default tenant")
 
+    if _config_manager is None:
+        raise RuntimeError(
+            "ConfigManager not initialized. Call set_config_manager() during app startup."
+        )
+
     if tenant_id not in _agent_instances:
         logger.info(f"Creating new TextAnalysisAgent for tenant: {tenant_id}")
-        _agent_instances[tenant_id] = TextAnalysisAgent(tenant_id=tenant_id)
+        _agent_instances[tenant_id] = TextAnalysisAgent(
+            tenant_id=tenant_id, config_manager=_config_manager
+        )
     return _agent_instances[tenant_id]
 
 

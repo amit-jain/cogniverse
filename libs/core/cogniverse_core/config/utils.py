@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 
-from cogniverse_core.config.manager import get_config_manager
+from cogniverse_core.config.manager import ConfigManager
 from cogniverse_core.config.unified_config import BackendConfig
 
 logger = logging.getLogger(__name__)
@@ -22,9 +22,18 @@ class ConfigUtils:
     Provides convenient .get() interface while using ConfigManager backend.
     """
 
-    def __init__(self, tenant_id: str = "default"):
+    def __init__(self, tenant_id: str = "default", config_manager: ConfigManager = None):
+        """
+        Initialize ConfigUtils.
+
+        Args:
+            tenant_id: Tenant identifier
+            config_manager: ConfigManager instance (REQUIRED)
+        """
+        if config_manager is None:
+            raise ValueError("config_manager is required for ConfigUtils initialization")
         self.tenant_id = tenant_id
-        self._config_manager = get_config_manager()
+        self._config_manager = config_manager
         self._system_config = None
         self._routing_config = None
         self._telemetry_config = None
@@ -249,17 +258,20 @@ class ConfigUtils:
         return default
 
 
-def get_config(tenant_id: str = "default") -> ConfigUtils:
+def get_config(
+    tenant_id: str = "default", config_manager: ConfigManager = None
+) -> ConfigUtils:
     """
     Get config utility wrapper for dict-like access.
 
     Args:
         tenant_id: Tenant identifier
+        config_manager: Optional ConfigManager instance
 
     Returns:
         ConfigUtils instance that delegates to ConfigManager
     """
-    return ConfigUtils(tenant_id)
+    return ConfigUtils(tenant_id, config_manager=config_manager)
 
 
 def get_config_value(key: str, default: Any = None, tenant_id: str = "default") -> Any:

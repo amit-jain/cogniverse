@@ -84,7 +84,7 @@ class BackendRegistry:
 
     @classmethod
     def get_ingestion_backend(
-        cls, name: str, tenant_id: str, config: Optional[Dict[str, Any]] = None
+        cls, name: str, tenant_id: str, config: Optional[Dict[str, Any]] = None, config_manager=None
     ) -> IngestionBackend:
         """
         Get a tenant-specific ingestion backend instance.
@@ -93,12 +93,13 @@ class BackendRegistry:
             name: Backend name
             tenant_id: Tenant identifier (REQUIRED - no default)
             config: Optional configuration for initialization
+            config_manager: ConfigManager instance for dependency injection (REQUIRED)
 
         Returns:
             Initialized IngestionBackend instance
 
         Raises:
-            ValueError: If backend not found or tenant_id not provided
+            ValueError: If backend not found, tenant_id not provided, or config_manager not provided
 
         Note:
             Backend instances are cached per tenant for isolation.
@@ -106,6 +107,9 @@ class BackendRegistry:
         """
         if not tenant_id:
             raise ValueError("tenant_id is required - no default tenant")
+
+        if config_manager is None:
+            raise ValueError("config_manager is required for backend initialization")
 
         # Cache key includes tenant_id for isolation
         if name in cls._full_backends:
@@ -129,9 +133,9 @@ class BackendRegistry:
                 f"Available backends: {available}"
             )
 
-        # Create and initialize instance
+        # Create and initialize instance (config_manager is guaranteed to be non-None)
         backend_class = cls._ingestion_backends[name]
-        instance = backend_class()
+        instance = backend_class(config_manager=config_manager)
 
         # Build backend config - merge top-level keys with backend section
         # Start with tenant_id, then add all top-level config keys

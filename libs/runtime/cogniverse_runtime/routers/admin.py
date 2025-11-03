@@ -7,11 +7,11 @@ import logging
 from datetime import datetime
 from typing import Any, Dict
 
-from cogniverse_core.config.manager import get_config_manager
+from cogniverse_core.config.manager import ConfigManager
 from cogniverse_core.config.unified_config import BackendProfileConfig
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.validation.profile_validator import ProfileValidator
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from cogniverse_runtime.admin.profile_models import (
     ProfileCreateRequest,
@@ -30,26 +30,67 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Initialize ConfigManager and ProfileValidator globally
-_config_manager = None
-_profile_validator = None
+# Module-level ConfigManager instance for dependency injection
+_config_manager: ConfigManager = None
+_profile_validator_schema_dir_override = None  # For test overrides
 
 
-def get_config_manager_instance():
-    """Get or create ConfigManager instance."""
+def set_config_manager(config_manager: ConfigManager) -> None:
+    """
+    Set the ConfigManager instance for this router.
+
+    Must be called during application startup before handling requests.
+
+    Args:
+        config_manager: ConfigManager instance to use
+    """
     global _config_manager
+    _config_manager = config_manager
+
+
+def set_profile_validator_schema_dir(schema_dir) -> None:
+    """
+    Set schema directory override for ProfileValidator (for tests).
+
+    Args:
+        schema_dir: Path to schema templates directory
+    """
+    global _profile_validator_schema_dir_override
+    _profile_validator_schema_dir_override = schema_dir
+
+
+def get_config_manager_dependency() -> ConfigManager:
+    """
+    FastAPI dependency for ConfigManager.
+
+    Returns:
+        ConfigManager instance
+
+    Raises:
+        RuntimeError: If ConfigManager not initialized via set_config_manager()
+    """
     if _config_manager is None:
-        _config_manager = get_config_manager()
+        raise RuntimeError(
+            "ConfigManager not initialized. Call set_config_manager() during app startup."
+        )
     return _config_manager
 
 
-def get_profile_validator_instance():
-    """Get or create ProfileValidator instance."""
-    global _profile_validator
-    if _profile_validator is None:
-        config_manager = get_config_manager_instance()
-        _profile_validator = ProfileValidator(config_manager)
-    return _profile_validator
+def get_profile_validator_dependency(
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
+) -> ProfileValidator:
+    """
+    FastAPI dependency for ProfileValidator.
+
+    Args:
+        config_manager: ConfigManager instance (injected)
+
+    Returns:
+        ProfileValidator instance
+    """
+    return ProfileValidator(
+        config_manager, schema_templates_dir=_profile_validator_schema_dir_override
+    )
 
 
 # Tenant management endpoints removed - use standalone tenant_manager app
@@ -57,11 +98,15 @@ def get_profile_validator_instance():
 
 
 @router.get("/system/stats")
-async def get_system_stats(tenant_id: str, backend: str) -> Dict[str, Any]:
+async def get_system_stats(
+    tenant_id: str,
+    backend: str,
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
+) -> Dict[str, Any]:
     """Get system statistics."""
     try:
         backend_registry = BackendRegistry.get_instance()
-        backend_instance = backend_registry.get_ingestion_backend(backend, tenant_id=tenant_id)
+        backend_instance = backend_registry.get_ingestion_backend(backend, tenant_id=tenant_id, config_manager=config_manager)
         if not backend_instance:
             raise HTTPException(
                 status_code=400, detail=f"Backend '{backend}' not found"
@@ -91,7 +136,11 @@ async def get_system_stats(tenant_id: str, backend: str) -> Dict[str, Any]:
 
 
 @router.post("/profiles", response_model=ProfileCreateResponse, status_code=201)
-async def create_profile(request: ProfileCreateRequest) -> ProfileCreateResponse:
+async def create_profile(
+    request: ProfileCreateRequest,
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
+    validator: ProfileValidator = Depends(get_profile_validator_dependency),
+) -> ProfileCreateResponse:
     """
     Create a new backend profile.
 
@@ -100,6 +149,8 @@ async def create_profile(request: ProfileCreateRequest) -> ProfileCreateResponse
 
     Args:
         request: Profile creation request
+        config_manager: ConfigManager instance (injected)
+        validator: ProfileValidator instance (injected)
 
     Returns:
         Profile creation response with deployment status
@@ -110,8 +161,6 @@ async def create_profile(request: ProfileCreateRequest) -> ProfileCreateResponse
         HTTPException 500: Creation or deployment failed
     """
     try:
-        config_manager = get_config_manager_instance()
-        validator = get_profile_validator_instance()
 
         # Create BackendProfileConfig from request
         profile = BackendProfileConfig(
@@ -153,7 +202,7 @@ async def create_profile(request: ProfileCreateRequest) -> ProfileCreateResponse
             try:
                 backend_registry = BackendRegistry.get_instance()
                 backend = backend_registry.get_ingestion_backend(
-                    "vespa", tenant_id=request.tenant_id
+                    "vespa", tenant_id=request.tenant_id, config_manager=config_manager
                 )
 
                 if backend:
@@ -194,12 +243,16 @@ async def create_profile(request: ProfileCreateRequest) -> ProfileCreateResponse
 
 
 @router.get("/profiles", response_model=ProfileListResponse)
-async def list_profiles(tenant_id: str) -> ProfileListResponse:
+async def list_profiles(
+    tenant_id: str,
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
+) -> ProfileListResponse:
     """
     List all backend profiles for a tenant.
 
     Args:
         tenant_id: Tenant identifier (query parameter)
+        config_manager: ConfigManager instance (injected)
 
     Returns:
         List of profile summaries
@@ -208,7 +261,6 @@ async def list_profiles(tenant_id: str) -> ProfileListResponse:
         HTTPException 500: List operation failed
     """
     try:
-        config_manager = get_config_manager_instance()
 
         # Get all profiles for tenant
         profiles = config_manager.list_backend_profiles(
@@ -223,7 +275,7 @@ async def list_profiles(tenant_id: str) -> ProfileListResponse:
             # Check if schema is deployed
             schema_deployed = False
             try:
-                backend = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id)
+                backend = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id, config_manager=config_manager)
                 if backend:
                     schema_deployed = backend.schema_exists(
                         schema_name=profile.schema_name, tenant_id=tenant_id
@@ -255,13 +307,18 @@ async def list_profiles(tenant_id: str) -> ProfileListResponse:
 
 
 @router.get("/profiles/{profile_name}", response_model=ProfileDetail)
-async def get_profile(profile_name: str, tenant_id: str) -> ProfileDetail:
+async def get_profile(
+    profile_name: str,
+    tenant_id: str,
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
+) -> ProfileDetail:
     """
     Get a specific backend profile.
 
     Args:
         profile_name: Profile name (path parameter)
         tenant_id: Tenant identifier (query parameter)
+        config_manager: ConfigManager instance (injected)
 
     Returns:
         Detailed profile information
@@ -271,7 +328,6 @@ async def get_profile(profile_name: str, tenant_id: str) -> ProfileDetail:
         HTTPException 500: Get operation failed
     """
     try:
-        config_manager = get_config_manager_instance()
 
         # Get profile
         profile = config_manager.get_backend_profile(
@@ -290,7 +346,7 @@ async def get_profile(profile_name: str, tenant_id: str) -> ProfileDetail:
 
         try:
             backend_registry = BackendRegistry.get_instance()
-            backend = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id)
+            backend = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id, config_manager=config_manager)
             if backend:
                 schema_deployed = backend.schema_exists(
                     schema_name=profile.schema_name, tenant_id=tenant_id
@@ -329,7 +385,10 @@ async def get_profile(profile_name: str, tenant_id: str) -> ProfileDetail:
 
 @router.put("/profiles/{profile_name}", response_model=ProfileUpdateResponse)
 async def update_profile(
-    profile_name: str, request: ProfileUpdateRequest
+    profile_name: str,
+    request: ProfileUpdateRequest,
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
+    validator: ProfileValidator = Depends(get_profile_validator_dependency),
 ) -> ProfileUpdateResponse:
     """
     Update a backend profile.
@@ -340,6 +399,8 @@ async def update_profile(
     Args:
         profile_name: Profile name (path parameter)
         request: Update request with fields to change
+        config_manager: ConfigManager instance (injected)
+        validator: ProfileValidator instance (injected)
 
     Returns:
         Update response with updated fields
@@ -350,8 +411,6 @@ async def update_profile(
         HTTPException 500: Update operation failed
     """
     try:
-        config_manager = get_config_manager_instance()
-        validator = get_profile_validator_instance()
 
         # Get existing profile
         profile = config_manager.get_backend_profile(
@@ -427,7 +486,10 @@ async def update_profile(
 
 @router.delete("/profiles/{profile_name}", response_model=ProfileDeleteResponse)
 async def delete_profile(
-    profile_name: str, tenant_id: str, delete_schema: bool = False
+    profile_name: str,
+    tenant_id: str,
+    delete_schema: bool = False,
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
 ) -> ProfileDeleteResponse:
     """
     Delete a backend profile.
@@ -438,6 +500,7 @@ async def delete_profile(
         profile_name: Profile name (path parameter)
         tenant_id: Tenant identifier (query parameter)
         delete_schema: Whether to also delete the schema (query parameter, default: false)
+        config_manager: ConfigManager instance (injected)
 
     Returns:
         Deletion confirmation
@@ -448,7 +511,6 @@ async def delete_profile(
         HTTPException 500: Deletion failed
     """
     try:
-        config_manager = get_config_manager_instance()
 
         # Check if profile exists
         profile = config_manager.get_backend_profile(
@@ -486,7 +548,7 @@ async def delete_profile(
             # Delete schema
             try:
                 backend_registry = BackendRegistry.get_instance()
-                backend = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id)
+                backend = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id, config_manager=config_manager)
                 if backend:
                     deleted_schemas = backend.delete_schema(
                         schema_name=profile.schema_name, tenant_id=tenant_id
@@ -524,7 +586,9 @@ async def delete_profile(
     "/profiles/{profile_name}/deploy", response_model=SchemaDeploymentResponse
 )
 async def deploy_profile_schema(
-    profile_name: str, request: SchemaDeploymentRequest
+    profile_name: str,
+    request: SchemaDeploymentRequest,
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
 ) -> SchemaDeploymentResponse:
     """
     Deploy schema for a backend profile.
@@ -534,6 +598,7 @@ async def deploy_profile_schema(
     Args:
         profile_name: Profile name (path parameter)
         request: Deployment request
+        config_manager: ConfigManager instance (injected)
 
     Returns:
         Deployment status
@@ -543,7 +608,6 @@ async def deploy_profile_schema(
         HTTPException 500: Deployment failed
     """
     try:
-        config_manager = get_config_manager_instance()
 
         # Get profile
         profile = config_manager.get_backend_profile(
@@ -560,7 +624,7 @@ async def deploy_profile_schema(
 
         # Check if schema already deployed (unless force=True)
         backend_registry = BackendRegistry.get_instance()
-        backend = backend_registry.get_ingestion_backend("vespa", tenant_id=request.tenant_id)
+        backend = backend_registry.get_ingestion_backend("vespa", tenant_id=request.tenant_id, config_manager=config_manager)
 
         if not backend:
             raise HTTPException(

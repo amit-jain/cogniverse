@@ -14,7 +14,7 @@ from cogniverse_core.config.agent_config import (
     OptimizerConfig,
     OptimizerType,
 )
-from cogniverse_core.config.manager import get_config_manager
+from cogniverse_core.config.manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -77,15 +77,19 @@ class ConfigAPIMixin:
                 self.setup_config_endpoints(app)
     """
 
-    def setup_config_endpoints(self, app, tenant_id: str = "default"):
+    def setup_config_endpoints(
+        self, app, config_manager: ConfigManager, tenant_id: str = "default"
+    ):
         """
         Setup configuration API endpoints on FastAPI app.
 
         Args:
             app: FastAPI application instance
+            config_manager: ConfigManager instance for persistence
             tenant_id: Tenant identifier for config persistence
         """
         self._config_tenant_id = tenant_id
+        self._config_manager = config_manager
 
         @app.get("/config")
         async def get_config():
@@ -143,9 +147,8 @@ class ConfigAPIMixin:
                 self.update_module_config(new_config)
 
                 # Persist to ConfigManager
-                config_manager = get_config_manager()
                 effective_tenant_id = tenant_id or self._config_tenant_id
-                config_manager.set_agent_config(
+                self._config_manager.set_agent_config(
                     tenant_id=effective_tenant_id,
                     agent_name=self.agent_config.agent_name,
                     agent_config=self.agent_config,
@@ -209,9 +212,8 @@ class ConfigAPIMixin:
                 self.update_optimizer_config(new_config)
 
                 # Persist to ConfigManager
-                config_manager = get_config_manager()
                 effective_tenant_id = tenant_id or self._config_tenant_id
-                config_manager.set_agent_config(
+                self._config_manager.set_agent_config(
                     tenant_id=effective_tenant_id,
                     agent_name=self.agent_config.agent_name,
                     agent_config=self.agent_config,
@@ -253,9 +255,8 @@ class ConfigAPIMixin:
                 self._configure_dspy_lm(self.agent_config)
 
                 # Persist to ConfigManager
-                config_manager = get_config_manager()
                 effective_tenant_id = tenant_id or self._config_tenant_id
-                config_manager.set_agent_config(
+                self._config_manager.set_agent_config(
                     tenant_id=effective_tenant_id,
                     agent_name=self.agent_config.agent_name,
                     agent_config=self.agent_config,
