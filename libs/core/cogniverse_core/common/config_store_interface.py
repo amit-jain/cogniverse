@@ -19,6 +19,8 @@ class ConfigScope(Enum):
     AGENT = "agent"
     ROUTING = "routing"
     TELEMETRY = "telemetry"
+    BACKEND = "backend"
+    SCHEMA = "schema"
 
 
 @dataclass

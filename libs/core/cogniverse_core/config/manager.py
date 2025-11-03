@@ -741,6 +741,7 @@ class ConfigManager:
                 service="schema_registry",
                 config_key=config_key,
             )
+            logger.info(f"[SCHEMA_DEPLOYED] Query: {tenant_id}:{base_schema_name} -> Found: {entry is not None}")
 
             if entry is None:
                 return False

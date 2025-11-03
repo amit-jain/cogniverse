@@ -254,6 +254,7 @@ class SQLiteConfigStore(ConfigStore):
                 )
 
             row = cursor.fetchone()
+
             if not row:
                 return None
 

@@ -12,6 +12,7 @@ from cogniverse_core.common.config_store_interface import ConfigScope, ConfigSto
 from cogniverse_core.config.agent_config import AgentConfig
 from cogniverse_core.config.unified_config import (
     AgentConfigUnified,
+    BackendProfileConfig,
     RoutingConfigUnified,
     SystemConfig,
     TelemetryConfigUnified,
@@ -457,6 +458,160 @@ class ConfigManager:
         logger.info(f"Exported configs for {tenant_id} to {output_path}")
 
     # ========== Statistics ==========
+
+    # ========== Backend Profile Management ==========
+
+    def add_backend_profile(
+        self, profile: "BackendProfileConfig", tenant_id: str, service: str = "backend"
+    ) -> None:
+        """
+        Add a backend profile.
+
+        Args:
+            profile: BackendProfileConfig instance
+            tenant_id: Tenant identifier
+            service: Service name (default: "backend")
+        """
+        from cogniverse_core.common.config_store_interface import ConfigScope
+
+        self.store.set_config(
+            tenant_id=tenant_id,
+            scope=ConfigScope.BACKEND,
+            service=service,
+            config_key=profile.profile_name,
+            config_value=profile.to_dict(),
+        )
+        logger.info(f"Added backend profile '{profile.profile_name}' for tenant '{tenant_id}'")
+
+    def get_backend_profile(
+        self, profile_name: str, tenant_id: str, service: str = "backend"
+    ) -> Optional["BackendProfileConfig"]:
+        """
+        Get a backend profile.
+
+        Args:
+            profile_name: Profile name
+            tenant_id: Tenant identifier
+            service: Service name (default: "backend")
+
+        Returns:
+            BackendProfileConfig or None if not found
+        """
+        from cogniverse_core.common.config_store_interface import ConfigScope
+        from cogniverse_core.config.unified_config import BackendProfileConfig
+
+        entry = self.store.get_config(
+            tenant_id=tenant_id,
+            scope=ConfigScope.BACKEND,
+            service=service,
+            config_key=profile_name,
+        )
+
+        if entry is None:
+            return None
+
+        return BackendProfileConfig.from_dict(profile_name, entry.config_value)
+
+    def list_backend_profiles(
+        self, tenant_id: str, service: str = "backend"
+    ) -> Dict[str, "BackendProfileConfig"]:
+        """
+        List all backend profiles for a tenant.
+
+        Args:
+            tenant_id: Tenant identifier
+            service: Service name (default: "backend")
+
+        Returns:
+            Dictionary mapping profile names to BackendProfileConfig instances
+        """
+        from cogniverse_core.common.config_store_interface import ConfigScope
+        from cogniverse_core.config.unified_config import BackendProfileConfig
+
+        # Use store directly to list all backend profiles for this service
+        entries = self.store.list_configs(
+            tenant_id=tenant_id, scope=ConfigScope.BACKEND
+        )
+
+        profiles = {}
+        for entry in entries:
+            # Filter by service
+            if entry.service == service:
+                profile_name = entry.config_key
+                profiles[profile_name] = BackendProfileConfig.from_dict(
+                    profile_name, entry.config_value
+                )
+
+        return profiles
+
+    def update_backend_profile(
+        self,
+        profile_name: str,
+        overrides: Dict[str, Any],
+        base_tenant_id: str,
+        target_tenant_id: str,
+        service: str = "backend",
+    ) -> None:
+        """
+        Update specific fields of an existing backend profile.
+
+        Args:
+            profile_name: Name of profile to update
+            overrides: Dictionary of fields to update
+            base_tenant_id: Tenant to get base profile from
+            target_tenant_id: Tenant to save updated profile to
+            service: Service name (default: "backend")
+        """
+        from cogniverse_core.common.config_store_interface import ConfigScope
+
+        # Get existing profile
+        existing = self.get_backend_profile(profile_name, base_tenant_id, service)
+        if existing is None:
+            raise ValueError(f"Profile '{profile_name}' not found for tenant '{base_tenant_id}'")
+
+        # Create updated profile by merging overrides
+        updated_dict = existing.to_dict()
+        updated_dict.update(overrides)
+
+        # Save updated profile
+        self.store.set_config(
+            tenant_id=target_tenant_id,
+            scope=ConfigScope.BACKEND,
+            service=service,
+            config_key=profile_name,
+            config_value=updated_dict,
+        )
+        logger.info(f"Updated backend profile '{profile_name}' for tenant '{target_tenant_id}'")
+
+    def delete_backend_profile(
+        self, profile_name: str, tenant_id: str, service: str = "backend"
+    ) -> bool:
+        """
+        Delete a backend profile.
+
+        Args:
+            profile_name: Profile name
+            tenant_id: Tenant identifier
+            service: Service name (default: "backend")
+
+        Returns:
+            True if deleted, False if not found
+        """
+        from cogniverse_core.common.config_store_interface import ConfigScope
+
+        # Check if exists
+        existing = self.get_backend_profile(profile_name, tenant_id, service)
+        if existing is None:
+            return False
+
+        self.store.delete_config(
+            tenant_id=tenant_id,
+            scope=ConfigScope.BACKEND,
+            service=service,
+            config_key=profile_name,
+        )
+        logger.info(f"Deleted backend profile '{profile_name}' for tenant '{tenant_id}'")
+        return True
 
     def get_stats(self) -> Dict[str, Any]:
         """

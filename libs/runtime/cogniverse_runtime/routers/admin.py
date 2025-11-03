@@ -57,11 +57,11 @@ def get_profile_validator_instance():
 
 
 @router.get("/system/stats")
-async def get_system_stats(backend: str = "vespa") -> Dict[str, Any]:
+async def get_system_stats(tenant_id: str, backend: str) -> Dict[str, Any]:
     """Get system statistics."""
     try:
         backend_registry = BackendRegistry.get_instance()
-        backend_instance = backend_registry.get_backend(backend)
+        backend_instance = backend_registry.get_ingestion_backend(backend, tenant_id=tenant_id)
         if not backend_instance:
             raise HTTPException(
                 status_code=400, detail=f"Backend '{backend}' not found"
@@ -152,7 +152,7 @@ async def create_profile(request: ProfileCreateRequest) -> ProfileCreateResponse
         if request.deploy_schema:
             try:
                 backend_registry = BackendRegistry.get_instance()
-                backend = backend_registry.get_backend(
+                backend = backend_registry.get_ingestion_backend(
                     "vespa", tenant_id=request.tenant_id
                 )
 
@@ -194,7 +194,7 @@ async def create_profile(request: ProfileCreateRequest) -> ProfileCreateResponse
 
 
 @router.get("/profiles", response_model=ProfileListResponse)
-async def list_profiles(tenant_id: str = "default") -> ProfileListResponse:
+async def list_profiles(tenant_id: str) -> ProfileListResponse:
     """
     List all backend profiles for a tenant.
 
@@ -223,7 +223,7 @@ async def list_profiles(tenant_id: str = "default") -> ProfileListResponse:
             # Check if schema is deployed
             schema_deployed = False
             try:
-                backend = backend_registry.get_backend("vespa", tenant_id=tenant_id)
+                backend = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id)
                 if backend:
                     schema_deployed = backend.schema_exists(
                         schema_name=profile.schema_name, tenant_id=tenant_id
@@ -255,7 +255,7 @@ async def list_profiles(tenant_id: str = "default") -> ProfileListResponse:
 
 
 @router.get("/profiles/{profile_name}", response_model=ProfileDetail)
-async def get_profile(profile_name: str, tenant_id: str = "default") -> ProfileDetail:
+async def get_profile(profile_name: str, tenant_id: str) -> ProfileDetail:
     """
     Get a specific backend profile.
 
@@ -290,7 +290,7 @@ async def get_profile(profile_name: str, tenant_id: str = "default") -> ProfileD
 
         try:
             backend_registry = BackendRegistry.get_instance()
-            backend = backend_registry.get_backend("vespa", tenant_id=tenant_id)
+            backend = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id)
             if backend:
                 schema_deployed = backend.schema_exists(
                     schema_name=profile.schema_name, tenant_id=tenant_id
@@ -427,7 +427,7 @@ async def update_profile(
 
 @router.delete("/profiles/{profile_name}", response_model=ProfileDeleteResponse)
 async def delete_profile(
-    profile_name: str, tenant_id: str = "default", delete_schema: bool = False
+    profile_name: str, tenant_id: str, delete_schema: bool = False
 ) -> ProfileDeleteResponse:
     """
     Delete a backend profile.
@@ -486,7 +486,7 @@ async def delete_profile(
             # Delete schema
             try:
                 backend_registry = BackendRegistry.get_instance()
-                backend = backend_registry.get_backend("vespa", tenant_id=tenant_id)
+                backend = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id)
                 if backend:
                     deleted_schemas = backend.delete_schema(
                         schema_name=profile.schema_name, tenant_id=tenant_id
@@ -560,7 +560,7 @@ async def deploy_profile_schema(
 
         # Check if schema already deployed (unless force=True)
         backend_registry = BackendRegistry.get_instance()
-        backend = backend_registry.get_backend("vespa", tenant_id=request.tenant_id)
+        backend = backend_registry.get_ingestion_backend("vespa", tenant_id=request.tenant_id)
 
         if not backend:
             raise HTTPException(
@@ -629,5 +629,7 @@ async def deploy_profile_schema(
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
         logger.error(f"Failed to deploy schema: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))

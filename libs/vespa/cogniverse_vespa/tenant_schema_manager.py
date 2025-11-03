@@ -80,13 +80,19 @@ class TenantSchemaManager:
     _instance: Optional["TenantSchemaManager"] = None
     _lock = threading.Lock()
 
-    def __new__(cls, vespa_url: str = "http://localhost", vespa_port: int = 8080):
+    def __new__(
+        cls,
+        vespa_url: str = "http://localhost",
+        vespa_port: int = 8080,
+        schema_templates_dir: Optional[Path] = None,
+    ):
         """
         Singleton pattern - returns same instance for all calls.
 
         Args:
             vespa_url: Vespa endpoint URL (used only on first instantiation)
             vespa_port: Vespa config server port (used only on first instantiation)
+            schema_templates_dir: Optional schema templates directory (used only on first instantiation)
         """
         if cls._instance is None:
             with cls._lock:
@@ -99,13 +105,19 @@ class TenantSchemaManager:
                     )
         return cls._instance
 
-    def __init__(self, vespa_url: str = "http://localhost", vespa_port: int = 8080):
+    def __init__(
+        self,
+        vespa_url: str = "http://localhost",
+        vespa_port: int = 8080,
+        schema_templates_dir: Optional[Path] = None,
+    ):
         """
         Initialize tenant schema manager.
 
         Args:
             vespa_url: Vespa endpoint URL
             vespa_port: Vespa port number
+            schema_templates_dir: Optional directory for schema templates (defaults to configs/schemas)
         """
         if self._initialized:
             return
@@ -122,7 +134,11 @@ class TenantSchemaManager:
         self.parser = JsonSchemaParser()
 
         # Base schema templates directory
-        self.schema_templates_dir = Path("configs/schemas")
+        self.schema_templates_dir = (
+            schema_templates_dir
+            if schema_templates_dir is not None
+            else Path("configs/schemas")
+        )
 
         # Cache of deployed tenant schemas (tenant_id -> Set[base_schema_name])
         self._deployed_schemas: Dict[str, Set[str]] = {}
@@ -204,8 +220,18 @@ class TenantSchemaManager:
             tenant_schema_name = self.get_tenant_schema_name(
                 tenant_id, base_schema_name
             )
+
+            # Check SchemaRegistry first (authoritative source)
+            if self.schema_registry.schema_exists(tenant_id, base_schema_name):
+                logger.info(f"Schema {base_schema_name} for tenant {tenant_id} already in registry")
+                self._cache_deployed_schema(tenant_id, base_schema_name)
+                return True
+
+            # Fallback: Check if schema exists in Vespa (e.g., deployed outside this system)
             if self._schema_exists_in_vespa(tenant_schema_name):
-                logger.info(f"Schema {tenant_schema_name} already exists in Vespa")
+                logger.info(f"Schema {tenant_schema_name} exists in Vespa but not in registry - skipping deployment")
+                # DON'T register it - let only explicit deployments register schemas
+                # This prevents test pollution where schemas from previous tests get auto-registered
                 self._cache_deployed_schema(tenant_id, base_schema_name)
                 return True
 
@@ -565,18 +591,24 @@ class TenantSchemaManager:
 
     def _schema_exists_in_vespa(self, schema_name: str) -> bool:
         """
-        Check if schema exists in Vespa by querying the schema API.
+        Check if schema exists in Vespa by querying the application status API.
         """
         try:
             import requests
-            # Try to query the schema - if it exists, Vespa will return it
+            # Query the application/v2 API to get deployed schemas
+            # This is the reliable way to check schema existence
             response = requests.get(
-                f"{self.vespa_url}:{self.vespa_port}/document/v1/{schema_name}/{schema_name}/docid/",
+                f"{self.vespa_url}:{self.vespa_port}/ApplicationStatus",
                 timeout=5
             )
-            # If schema exists, we'll get either 200 (docs exist) or 404 (schema exists but no docs)
-            # If schema doesn't exist, we'll get 400 or other error
-            return response.status_code in [200, 404]
+            if response.status_code == 200:
+                app_status = response.json()
+                # Check if schema_name is in the list of deployed schemas
+                if "application" in app_status and "schemas" in app_status["application"]:
+                    deployed_schemas = app_status["application"]["schemas"]
+                    logger.info(f"Vespa deployed schemas: {deployed_schemas}, checking for: {schema_name}")
+                    return schema_name in deployed_schemas
+            return False
         except Exception as e:
             logger.debug(f"Schema existence check failed for {schema_name}: {e}")
             return False
@@ -683,7 +715,9 @@ class TenantSchemaManager:
 
 
 def get_tenant_schema_manager(
-    vespa_url: str = "http://localhost", vespa_port: int = 8080
+    vespa_url: str = "http://localhost",
+    vespa_port: int = 8080,
+    schema_templates_dir: Optional[Path] = None,
 ) -> TenantSchemaManager:
     """
     Get tenant schema manager instance for specific Vespa endpoint.
@@ -694,9 +728,10 @@ def get_tenant_schema_manager(
     Args:
         vespa_url: Vespa endpoint URL
         vespa_port: Vespa port number
+        schema_templates_dir: Optional directory for schema templates (defaults to configs/schemas)
 
     Returns:
         TenantSchemaManager singleton instance for this endpoint
     """
     # Simply instantiate - __new__() handles per-endpoint singleton logic
-    return TenantSchemaManager(vespa_url, vespa_port)
+    return TenantSchemaManager(vespa_url, vespa_port, schema_templates_dir)

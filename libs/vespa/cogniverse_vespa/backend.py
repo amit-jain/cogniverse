@@ -83,8 +83,18 @@ class VespaBackend(Backend):
         self.use_async_ingestion = merged_config.get("use_async_ingestion", False) and ASYNC_AVAILABLE
 
         # Store connection details needed for creating clients
+        # If not provided in config, fetch from ConfigManager
         self._url = merged_config.get("url")
         self._port = merged_config.get("port", 8080)
+
+        if not self._url and self._tenant_id:
+            # Fetch from ConfigManager
+            from cogniverse_core.config.config_manager import get_config_manager
+            config_manager = get_config_manager()
+            system_config = config_manager.get_system_config(self._tenant_id)
+            self._url = system_config.vespa_url
+            self._port = system_config.vespa_port
+            logger.info(f"Fetched Vespa config from ConfigManager for tenant '{self._tenant_id}': {self._url}:{self._port}")
 
         # Mark as ingestion backend if schema_name is provided
         if "schema_name" in config:
@@ -92,11 +102,10 @@ class VespaBackend(Backend):
             # Don't create client yet - will create per-schema on demand
 
         # Initialize schema manager for schema operations
-        # Use merged_config which has flattened structure
-        url = merged_config.get("url")
+        url = self._url
         if not url:
-            raise ValueError("url is required in configuration")
-        port = merged_config.get("port", 8080)
+            raise ValueError("url is required in configuration or ConfigManager")
+        port = self._port
 
         # Get config port (for schema deployment/management)
         config_port = merged_config.get("config_port")
@@ -109,9 +118,13 @@ class VespaBackend(Backend):
             vespa_port=config_port
         )
 
+        # Get schema_templates_dir from config if provided (for testing)
+        schema_templates_dir = merged_config.get("schema_templates_dir")
+
         self.tenant_schema_manager = TenantSchemaManager(
             vespa_url=url,
-            vespa_port=config_port
+            vespa_port=config_port,
+            schema_templates_dir=schema_templates_dir
         )
 
         # Backend is initialized with all profiles available
@@ -591,12 +604,10 @@ class VespaBackend(Backend):
             return self.validate_schema(schema_name)
 
         try:
-            # Check if tenant schema exists (simplified implementation)
-            # Assumes schema exists if we can generate the name successfully
-            self.tenant_schema_manager.get_tenant_schema_name(
+            # Check if schema exists in SchemaRegistry
+            return self.tenant_schema_manager.schema_registry.schema_exists(
                 effective_tenant_id, schema_name
             )
-            return True
         except Exception as e:
             logger.error(
                 f"Failed to check schema existence for '{schema_name}' tenant '{effective_tenant_id}': {e}"
@@ -833,6 +844,23 @@ class VespaBackend(Backend):
 
         # Basic health check
         return self.schema_manager is not None
+
+    def get_embedding_requirements(self, schema_name: str) -> Dict[str, Any]:
+        """
+        Get embedding requirements for a specific schema.
+
+        Args:
+            schema_name: Name of schema to get requirements for
+
+        Returns:
+            Dict containing embedding requirements (needs_float, needs_binary, field names)
+        """
+        # Ensure search backend is initialized
+        if not self._vespa_search_backend:
+            self._initialize_search_backend()
+
+        # Delegate to VespaSearchBackend which has the full implementation
+        return self._vespa_search_backend.get_embedding_requirements(schema_name)
 
 
 # Self-registration when module is imported
