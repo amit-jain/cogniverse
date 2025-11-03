@@ -33,7 +33,10 @@ from cogniverse_core.registries.backend_registry import (
 
 class MockIngestionBackend(IngestionBackend):
     """Mock ingestion backend for testing."""
-    
+
+    def __init__(self, config_manager=None):
+        self.config_manager = config_manager
+
     def initialize(self, config: Dict[str, Any]) -> None:
         self.config = config
         self.initialized = True
@@ -111,9 +114,10 @@ class MockSearchBackend(SearchBackend):
 
 class MockFullBackend(Backend):
     """Mock full backend for testing."""
-    
-    def __init__(self):
+
+    def __init__(self, config_manager=None):
         super().__init__("mock_full")
+        self.config_manager = config_manager
         self.documents = {}
     
     def _initialize_backend(self, config: Dict[str, Any]) -> None:
@@ -231,6 +235,11 @@ class TestBackendRegistry(unittest.TestCase):
         """Set up test fixtures."""
         # Get fresh registry and clear any existing registrations
         self.registry = BackendRegistry()
+        # Create config_manager for tests
+        from cogniverse_core.config.manager import ConfigManager
+        import tempfile
+        self.temp_dir = tempfile.mkdtemp()
+        self.config_manager = ConfigManager(db_path=Path(self.temp_dir) / "test_config.db")
         # Save current registry state to restore in tearDown
         self._saved_ingestion = BackendRegistry._ingestion_backends.copy()
         self._saved_search = BackendRegistry._search_backends.copy()
@@ -249,6 +258,9 @@ class TestBackendRegistry(unittest.TestCase):
         BackendRegistry._search_backends = self._saved_search
         BackendRegistry._full_backends = self._saved_full
         BackendRegistry._backend_instances = self._saved_instances
+        # Cleanup temp directory
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
     
     def test_register_ingestion_backend(self):
         """Test registering an ingestion backend."""
@@ -284,7 +296,7 @@ class TestBackendRegistry(unittest.TestCase):
         self.registry.register_ingestion("test_ingestion", MockIngestionBackend)
 
         config = {"test_config": "value"}
-        backend = self.registry.get_ingestion_backend("test_ingestion", "test_tenant", config)
+        backend = self.registry.get_ingestion_backend("test_ingestion", "test_tenant", config, config_manager=self.config_manager)
 
         self.assertIsInstance(backend, MockIngestionBackend)
         # Config should have tenant_id injected by registry
@@ -338,7 +350,7 @@ class TestBackendRegistry(unittest.TestCase):
         self.registry.register_backend("test_full", MockFullBackend)
 
         # Get backend instance - note: same instance for ingestion and search due to caching
-        backend = self.registry.get_ingestion_backend("test_full", "test_tenant", {})
+        backend = self.registry.get_ingestion_backend("test_full", "test_tenant", {}, config_manager=self.config_manager)
 
         # Test ingestion
         doc = Document(
@@ -427,7 +439,19 @@ class TestBackendRegistry(unittest.TestCase):
 
 class TestBackendIntegration(unittest.TestCase):
     """Integration tests for backend system."""
-    
+
+    def setUp(self):
+        """Set up test fixtures."""
+        from cogniverse_core.config.manager import ConfigManager
+        import tempfile
+        self.temp_dir = tempfile.mkdtemp()
+        self.config_manager = ConfigManager(db_path=Path(self.temp_dir) / "test_config.db")
+
+    def tearDown(self):
+        """Clean up test fixtures."""
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
     def test_full_workflow(self):
         """Test complete workflow with backend registry."""
         # Clear any previous registrations
@@ -438,7 +462,7 @@ class TestBackendIntegration(unittest.TestCase):
         register_backend("workflow_test", MockFullBackend)
 
         # Get backend instance
-        backend = registry.get_ingestion_backend("workflow_test", "test_tenant", {"test": True})
+        backend = registry.get_ingestion_backend("workflow_test", "test_tenant", {"test": True}, config_manager=self.config_manager)
 
         # Ingest documents
         docs = [

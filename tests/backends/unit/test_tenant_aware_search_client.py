@@ -24,7 +24,7 @@ class TestTenantAwareSearchClientInitialization:
         mock_manager_func.return_value = mock_manager
 
         client = TenantAwareVespaSearchClient(
-            tenant_id="acme", base_schema_name="video_colpali"
+            tenant_id="acme", base_schema_name="video_colpali", config_manager=MagicMock()
         )
 
         assert client.tenant_id == "acme"
@@ -35,13 +35,13 @@ class TestTenantAwareSearchClientInitialization:
     def test_initialization_requires_tenant_id(self, mock_manager_func):
         """Test that tenant_id is required"""
         with pytest.raises(ValueError, match="tenant_id is required"):
-            TenantAwareVespaSearchClient(tenant_id="", base_schema_name="video_colpali")
+            TenantAwareVespaSearchClient(tenant_id="", base_schema_name="video_colpali", config_manager=MagicMock())
 
     @patch("cogniverse_vespa.tenant_aware_search_client.get_tenant_schema_manager")
     def test_initialization_requires_base_schema_name(self, mock_manager_func):
         """Test that base_schema_name is required"""
         with pytest.raises(ValueError, match="base_schema_name is required"):
-            TenantAwareVespaSearchClient(tenant_id="acme", base_schema_name="")
+            TenantAwareVespaSearchClient(tenant_id="acme", base_schema_name="", config_manager=MagicMock())
 
     @patch("cogniverse_vespa.tenant_aware_search_client.get_tenant_schema_manager")
     @patch("cogniverse_vespa.tenant_aware_search_client.VespaVideoSearchClient")
@@ -55,7 +55,7 @@ class TestTenantAwareSearchClientInitialization:
         mock_manager_func.return_value = mock_manager
 
         client = TenantAwareVespaSearchClient(
-            tenant_id="acme", base_schema_name="video_colpali_smol500_mv_frame"
+            tenant_id="acme", base_schema_name="video_colpali_smol500_mv_frame", config_manager=MagicMock()
         )
 
         # Verify schema manager was called correctly
@@ -74,7 +74,7 @@ class TestTenantAwareSearchClientInitialization:
         mock_manager_func.return_value = mock_manager
 
         _client = TenantAwareVespaSearchClient(
-            tenant_id="acme", base_schema_name="video_colpali", auto_create_schema=True
+            tenant_id="acme", base_schema_name="video_colpali", config_manager=MagicMock(), auto_create_schema=True
         )
 
         # Verify lazy schema creation was called
@@ -91,7 +91,7 @@ class TestTenantAwareSearchClientInitialization:
         mock_manager_func.return_value = mock_manager
 
         _client = TenantAwareVespaSearchClient(
-            tenant_id="acme", base_schema_name="video_colpali", auto_create_schema=False
+            tenant_id="acme", base_schema_name="video_colpali", config_manager=MagicMock(), auto_create_schema=False
         )
 
         # Verify lazy schema creation was NOT called
@@ -115,7 +115,7 @@ class TestTenantAwareSearchClientSearchMethods:
         mock_client_class.return_value = mock_vespa_client
 
         client = TenantAwareVespaSearchClient(
-            tenant_id="acme", base_schema_name="video_colpali"
+            tenant_id="acme", base_schema_name="video_colpali", config_manager=MagicMock()
         )
 
         # Perform search
@@ -151,7 +151,7 @@ class TestTenantAwareSearchClientSearchMethods:
         mock_client_class.return_value = mock_vespa_client
 
         client = TenantAwareVespaSearchClient(
-            tenant_id="acme", base_schema_name="video_colpali"
+            tenant_id="acme", base_schema_name="video_colpali", config_manager=MagicMock()
         )
 
         # Perform hybrid search
@@ -182,7 +182,7 @@ class TestTenantAwareSearchClientSearchMethods:
         mock_client_class.return_value = mock_vespa_client
 
         client = TenantAwareVespaSearchClient(
-            tenant_id="acme", base_schema_name="video_colpali"
+            tenant_id="acme", base_schema_name="video_colpali", config_manager=MagicMock()
         )
 
         embeddings = np.random.rand(10, 128)
@@ -210,7 +210,7 @@ class TestTenantAwareSearchClientUtilityMethods:
         mock_client_class.return_value = mock_vespa_client
 
         client = TenantAwareVespaSearchClient(
-            tenant_id="acme", base_schema_name="video_colpali"
+            tenant_id="acme", base_schema_name="video_colpali", config_manager=MagicMock()
         )
 
         result = client.health_check()
@@ -231,7 +231,7 @@ class TestTenantAwareSearchClientUtilityMethods:
         mock_client_class.return_value = mock_vespa_client
 
         client = TenantAwareVespaSearchClient(
-            tenant_id="acme", base_schema_name="video_colpali", vespa_port=8080
+            tenant_id="acme", base_schema_name="video_colpali", config_manager=MagicMock(), backend_port=8080
         )
 
         info = client.get_tenant_info()
@@ -239,7 +239,7 @@ class TestTenantAwareSearchClientUtilityMethods:
         assert info["tenant_id"] == "acme"
         assert info["base_schema_name"] == "video_colpali"
         assert info["tenant_schema_name"] == "video_colpali_acme"
-        assert info["vespa_port"] == "8080"
+        assert info["backend_port"] == "8080"
 
     @patch("cogniverse_vespa.tenant_aware_search_client.get_tenant_schema_manager")
     @patch("cogniverse_vespa.tenant_aware_search_client.VespaVideoSearchClient")
@@ -255,7 +255,7 @@ class TestTenantAwareSearchClientUtilityMethods:
         mock_client_class.return_value = mock_vespa_client
 
         client = TenantAwareVespaSearchClient(
-            tenant_id="acme", base_schema_name="video_colpali"
+            tenant_id="acme", base_schema_name="video_colpali", config_manager=MagicMock()
         )
 
         strategies = client.get_available_strategies()
@@ -276,7 +276,7 @@ class TestTenantAwareSearchClientUtilityMethods:
         mock_client_class.return_value = mock_vespa_client
 
         client = TenantAwareVespaSearchClient(
-            tenant_id="acme", base_schema_name="video_colpali"
+            tenant_id="acme", base_schema_name="video_colpali", config_manager=MagicMock()
         )
 
         repr_str = repr(client)
@@ -308,12 +308,12 @@ class TestTenantAwareSearchClientMultipleTenants:
 
         # Create client for tenant A
         client_a = TenantAwareVespaSearchClient(
-            tenant_id="acme", base_schema_name="video_colpali"
+            tenant_id="acme", base_schema_name="video_colpali", config_manager=MagicMock()
         )
 
         # Create client for tenant B
         client_b = TenantAwareVespaSearchClient(
-            tenant_id="startup", base_schema_name="video_colpali"
+            tenant_id="startup", base_schema_name="video_colpali", config_manager=MagicMock()
         )
 
         # Verify different schema names

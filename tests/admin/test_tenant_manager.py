@@ -48,8 +48,8 @@ class TestTenantManagerAPI:
         # Set system config with correct Vespa port
         system_config = SystemConfig(
             tenant_id="system",
-            vespa_url="http://localhost",
-            vespa_port=vespa_backend.http_port,
+            backend_url="http://localhost",
+            backend_port=vespa_backend.http_port,
         )
         config_manager.set_system_config(system_config)
 

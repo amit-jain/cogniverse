@@ -6,16 +6,13 @@ Centralizes all output file handling to prevent pollution of the main directory
 from pathlib import Path
 from typing import Optional
 
-from cogniverse_core.config.utils import get_config
-
 
 class OutputManager:
     """Manages output directories for different components"""
 
     def __init__(self, base_dir: Optional[str] = None):
         """Initialize output manager with base directory"""
-        config = get_config()
-        self.base_dir = Path(base_dir or config.get("output_base_dir", "outputs"))
+        self.base_dir = Path(base_dir or "outputs")
         self.base_dir.mkdir(exist_ok=True)
 
         # Define subdirectories for different components

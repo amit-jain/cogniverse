@@ -64,10 +64,10 @@ class VespaPyClient:
             raise ValueError("schema_name is required in config")
         # For tenant-scoped schemas, use base_schema_name for loading schema file
         self.base_schema_name = config.get("base_schema_name", self.schema_name)
-        self.vespa_url = config.get("vespa_url")
-        if not self.vespa_url:
-            raise ValueError("vespa_url is required in config")
-        self.vespa_port = config.get("vespa_port", 8080)
+        self.backend_url = config.get("url")
+        if not self.backend_url:
+            raise ValueError("url is required in config")
+        self.vespa_port = config.get("port", 8080)
 
         self.logger = logger or logging.getLogger(self.__class__.__name__)
 
@@ -76,7 +76,7 @@ class VespaPyClient:
         self.logger.warning(f"   Schema name: {self.schema_name}")
         self.logger.warning(f"   Base schema name: {self.base_schema_name}")
         self.logger.warning(f"   Instance ID: {id(self)}")
-        self.logger.warning(f"   Vespa URL: {self.vespa_url}:{self.vespa_port}")
+        self.logger.warning(f"   Vespa URL: {self.backend_url}:{self.vespa_port}")
 
         self.app = None
         self._connected = False
@@ -152,7 +152,7 @@ class VespaPyClient:
             
             # Create Vespa application instance
             self.app = Vespa(
-                url=self.vespa_url,
+                url=self.backend_url,
                 port=self.vespa_port
             )
             
@@ -160,7 +160,7 @@ class VespaPyClient:
             health = self.app.get_application_status()
             if health:
                 self._connected = True
-                self.logger.info(f"Connected to Vespa at {self.vespa_url}:{self.vespa_port}")
+                self.logger.info(f"Connected to Vespa at {self.backend_url}:{self.vespa_port}")
                 return True
             else:
                 self.logger.error("Failed to connect to Vespa - health check failed")

@@ -26,7 +26,7 @@ def memory_manager(shared_memory_vespa):
     # auto_create_schema=False since schema was already deployed by shared_memory_vespa fixture
     manager.initialize(
         vespa_host="localhost",
-        vespa_port=shared_memory_vespa["http_port"],
+        backend_port=shared_memory_vespa["http_port"],
         vespa_config_port=shared_memory_vespa["config_port"],
         base_schema_name="agent_memories",
         llm_model="llama3.2",
@@ -402,7 +402,7 @@ class TestMem0MemoryAwareMixinIntegration:
             agent_name="mixin_test_agent",
             tenant_id="test_tenant",
             vespa_host="http://localhost",
-            vespa_port=shared_memory_vespa["http_port"],
+            backend_port=shared_memory_vespa["http_port"],
             vespa_config_port=shared_memory_vespa["config_port"],
         )
         assert success is True

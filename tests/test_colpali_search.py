@@ -241,7 +241,7 @@ def test_float_float_search(output_format="table", save_results=False, monkeypat
     from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
     
     # Initialize search client
-    search_client = VespaVideoSearchClient(vespa_url=vespa_url, vespa_port=vespa_port)
+    search_client = VespaVideoSearchClient(backend_url=vespa_url, backend_port=vespa_port)
     
     # Prepare search params - NO text query for pure visual search
     search_params = {
@@ -356,7 +356,7 @@ def test_hybrid_float_bm25(output_format="table", save_results=False, monkeypatc
     from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
     
     # Initialize search client
-    search_client = VespaVideoSearchClient(vespa_url=vespa_url, vespa_port=vespa_port)
+    search_client = VespaVideoSearchClient(backend_url=vespa_url, backend_port=vespa_port)
     
     # Prepare search params
     search_params = {

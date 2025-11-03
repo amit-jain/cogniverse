@@ -289,8 +289,8 @@ class VespaSearchBackend(SearchBackend):
         """
         # If config provided, extract from it (new approach)
         if config is not None:
-            self.vespa_url = config.get("url") or config.get("vespa_url", "http://localhost")
-            self.vespa_port = config.get("port") or config.get("vespa_port", 8080)
+            self.backend_url = config.get("url", "http://localhost")
+            self.vespa_port = config.get("port", 8080)
             # tenant_id is REQUIRED - no fallback allowed
             self.tenant_id = config.get("tenant_id")
             if not self.tenant_id:
@@ -304,7 +304,7 @@ class VespaSearchBackend(SearchBackend):
             self.query_encoder = query_encoder or config.get("query_encoder")
         else:
             # Legacy initialization with individual parameters
-            self.vespa_url = vespa_url
+            self.backend_url = vespa_url
             self.vespa_port = vespa_port
             self.schema_name = schema_name
             self.profile = profile
@@ -313,7 +313,7 @@ class VespaSearchBackend(SearchBackend):
             self.default_profiles = {}
         
         # Combine URL and port
-        full_url = f"{self.vespa_url}:{self.vespa_port}"
+        full_url = f"{self.backend_url}:{self.vespa_port}"
 
         # Initialize output manager
         self.output_manager = OutputManager()
@@ -326,7 +326,7 @@ class VespaSearchBackend(SearchBackend):
             )
         else:
             self.pool = None
-            self.vespa = Vespa(url=self.vespa_url, port=self.vespa_port)
+            self.vespa = Vespa(url=self.backend_url, port=self.vespa_port)
         
         # Setup retry configuration
         self.retry_config = retry_config or RetryConfig(
@@ -352,11 +352,11 @@ class VespaSearchBackend(SearchBackend):
         Called by backend registry after instantiation.
 
         Args:
-            config: Configuration with keys vespa_url, vespa_port, schema_name, profile, tenant_id
+            config: Configuration with keys url, port, schema_name, profile, tenant_id
         """
         # Extract config values
-        self.vespa_url = config.get("vespa_url", "http://localhost")
-        self.vespa_port = config.get("vespa_port", 8080)
+        self.backend_url = config.get("url", "http://localhost")
+        self.vespa_port = config.get("port", 8080)
         base_schema_name = config.get("schema_name")
         tenant_id = config.get("tenant_id")
         self.profile = config.get("profile")  # Changed from "active_video_profile" to "profile"
@@ -364,15 +364,17 @@ class VespaSearchBackend(SearchBackend):
 
         # Transform schema name to tenant-scoped format if tenant_id provided
         if tenant_id and base_schema_name:
+            from cogniverse_vespa.config import calculate_config_port
             from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
-            tenant_manager = TenantSchemaManager(self.vespa_url, self.vespa_port)
+            config_port = calculate_config_port(self.vespa_port)
+            tenant_manager = TenantSchemaManager(self.backend_url, config_port, self.vespa_port)
             self.schema_name = tenant_manager.get_tenant_schema_name(tenant_id, base_schema_name)
             logger.info(f"Transformed schema name: {base_schema_name} → {self.schema_name} (tenant: {tenant_id})")
         else:
             self.schema_name = base_schema_name
 
         # Combine URL and port
-        full_url = f"{self.vespa_url}:{self.vespa_port}"
+        full_url = f"{self.backend_url}:{self.vespa_port}"
 
         # Initialize output manager
         self.output_manager = OutputManager()
@@ -677,8 +679,10 @@ class VespaSearchBackend(SearchBackend):
                 f"Profile '{profile_name}' cannot be used without tenant isolation."
             )
 
+        from cogniverse_vespa.config import calculate_config_port
         from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
-        tenant_manager = TenantSchemaManager(self.vespa_url, self.vespa_port)
+        config_port = calculate_config_port(self.vespa_port)
+        tenant_manager = TenantSchemaManager(self.backend_url, config_port, self.vespa_port)
         schema_name = tenant_manager.get_tenant_schema_name(self.tenant_id, base_schema_name)
         logger.info(f"[{correlation_id}] Applied tenant scoping: {base_schema_name} → {schema_name}")
 
@@ -1135,7 +1139,7 @@ class VespaSearchBackend(SearchBackend):
         
         # Use visit API for bulk export
         namespace = "video"  # Default namespace for video schemas
-        visit_url = f"{self.vespa_url}:{self.vespa_port}/document/v1/{namespace}/{schema or self.schema_name}/docid"
+        visit_url = f"{self.backend_url}:{self.vespa_port}/document/v1/{namespace}/{schema or self.schema_name}/docid"
         
         try:
             import requests

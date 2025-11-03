@@ -7,7 +7,7 @@ Uses mocks to test logic in isolation.
 
 import json
 from pathlib import Path
-from unittest.mock import Mock, mock_open, patch
+from unittest.mock import MagicMock, Mock, mock_open, patch
 
 import pytest
 from cogniverse_vespa.tenant_schema_manager import (
@@ -22,14 +22,14 @@ class TestSchemaNameRouting:
 
     def test_schema_name_routing_basic(self):
         """Test basic schema name routing"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
 
         result = manager.get_tenant_schema_name("acme", "video_colpali_smol500_mv_frame")
         assert result == "video_colpali_smol500_mv_frame_acme"
 
     def test_schema_name_routing_multiple_tenants(self):
         """Test schema name routing for different tenants"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
 
         assert manager.get_tenant_schema_name("acme", "video_colpali") == "video_colpali_acme"
         assert manager.get_tenant_schema_name("startup", "video_colpali") == "video_colpali_startup"
@@ -37,7 +37,7 @@ class TestSchemaNameRouting:
 
     def test_schema_name_routing_different_schemas(self):
         """Test schema name routing for different base schemas"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
 
         assert (
             manager.get_tenant_schema_name("acme", "video_colpali_smol500_mv_frame")
@@ -50,21 +50,21 @@ class TestSchemaNameRouting:
 
     def test_tenant_id_validation_empty(self):
         """Test that empty tenant_id raises ValueError"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
 
         with pytest.raises(ValueError, match="tenant_id cannot be empty"):
             manager.get_tenant_schema_name("", "video_colpali")
 
     def test_tenant_id_validation_type(self):
         """Test that non-string tenant_id raises ValueError"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
 
         with pytest.raises(ValueError, match="tenant_id must be string"):
             manager.get_tenant_schema_name(123, "video_colpali")
 
     def test_tenant_id_validation_invalid_chars(self):
         """Test that invalid characters in tenant_id raise ValueError"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
 
         # Hyphens and colons are now allowed for org:tenant format
         # Only test truly invalid characters
@@ -76,21 +76,21 @@ class TestSchemaNameRouting:
 
     def test_tenant_id_validation_valid_underscore(self):
         """Test that underscores are allowed in tenant_id"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
 
         result = manager.get_tenant_schema_name("acme_corp", "video_colpali")
         assert result == "video_colpali_acme_corp"
 
     def test_schema_name_validation_empty(self):
         """Test that empty schema_name raises ValueError"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
 
         with pytest.raises(ValueError, match="schema_name cannot be empty"):
             manager.get_tenant_schema_name("acme", "")
 
     def test_schema_name_validation_type(self):
         """Test that non-string schema_name raises ValueError"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
 
         with pytest.raises(ValueError, match="schema_name must be string"):
             manager.get_tenant_schema_name("acme", None)
@@ -101,7 +101,7 @@ class TestSchemaTemplateLoading:
 
     def test_load_base_schema_success(self):
         """Test successful loading of base schema JSON"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
 
         # Mock file reading
         mock_schema = {
@@ -119,7 +119,7 @@ class TestSchemaTemplateLoading:
 
     def test_load_base_schema_not_found(self):
         """Test that missing base schema raises SchemaNotFoundException"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
 
         with patch("pathlib.Path.exists", return_value=False), patch.object(
             manager, "list_available_base_schemas", return_value=["schema1", "schema2"]
@@ -129,7 +129,7 @@ class TestSchemaTemplateLoading:
 
     def test_transform_schema_for_tenant(self):
         """Test schema transformation includes tenant suffix"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
 
         base_schema = {
             "name": "video_colpali",
@@ -143,7 +143,7 @@ class TestSchemaTemplateLoading:
 
     def test_transform_schema_preserves_fields(self):
         """Test that schema transformation preserves all other fields"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
 
         base_schema = {
             "name": "video_colpali",
@@ -173,7 +173,7 @@ class TestSchemaTemplateLoading:
 
     def test_list_available_base_schemas(self):
         """Test listing available base schema templates"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
 
         # Mock glob to return fake schema files
         mock_files = [
@@ -193,7 +193,7 @@ class TestSchemaTemplateLoading:
 
     def test_list_available_base_schemas_empty_dir(self):
         """Test listing schemas when directory doesn't exist"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
 
         with patch("pathlib.Path.exists", return_value=False):
             result = manager.list_available_base_schemas()
@@ -206,7 +206,7 @@ class TestSchemaCaching:
 
     def test_cache_deployed_schema(self):
         """Test that deployed schemas are cached"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
         manager.clear_cache()
 
         manager._cache_deployed_schema("acme", "video_colpali")
@@ -216,7 +216,7 @@ class TestSchemaCaching:
 
     def test_cache_multiple_schemas_same_tenant(self):
         """Test caching multiple schemas for same tenant"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
         manager.clear_cache()
 
         manager._cache_deployed_schema("acme", "video_colpali")
@@ -228,7 +228,7 @@ class TestSchemaCaching:
 
     def test_cache_multiple_tenants(self):
         """Test caching schemas for multiple tenants"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
         manager.clear_cache()
 
         manager._cache_deployed_schema("acme", "video_colpali")
@@ -240,7 +240,7 @@ class TestSchemaCaching:
 
     def test_list_tenant_schemas(self):
         """Test listing all schemas for a tenant"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
         manager.clear_cache()
 
         manager._cache_deployed_schema("acme", "video_colpali")
@@ -254,7 +254,7 @@ class TestSchemaCaching:
 
     def test_list_tenant_schemas_empty(self):
         """Test listing schemas for tenant with none deployed"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
         manager.clear_cache()
 
         result = manager.list_tenant_schemas("nonexistent")
@@ -263,7 +263,7 @@ class TestSchemaCaching:
 
     def test_get_cache_stats(self):
         """Test cache statistics"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
         manager.clear_cache()
 
         manager._cache_deployed_schema("acme", "video_colpali")
@@ -280,7 +280,7 @@ class TestSchemaCaching:
 
     def test_clear_cache(self):
         """Test clearing the cache"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
 
         manager._cache_deployed_schema("acme", "video_colpali")
         assert len(manager._deployed_schemas) > 0
@@ -294,7 +294,7 @@ class TestSchemaDeployment:
 
     def test_deploy_tenant_schema_success(self):
         """Test successful tenant schema deployment"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
         manager.clear_cache()
 
         # Mock all the internal methods that do actual work
@@ -317,7 +317,7 @@ class TestSchemaDeployment:
 
     def test_ensure_tenant_schema_exists_deploys_if_needed(self):
         """Test ensure_tenant_schema_exists deploys schema if not cached and not in registry"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
         manager.clear_cache()
 
         base_schema = {"name": "video_colpali", "document": {"name": "video_colpali"}}
@@ -335,7 +335,7 @@ class TestSchemaDeployment:
 
     def test_ensure_tenant_schema_exists_skips_if_cached(self):
         """Test ensure_tenant_schema_exists skips deployment if already cached"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
         manager.clear_cache()
 
         # Pre-cache schema
@@ -354,20 +354,32 @@ class TestSchemaValidation:
     """Test schema validation"""
 
     def test_validate_tenant_schema_exists(self):
-        """Test validation when schema exists"""
-        manager = TenantSchemaManager()
+        """Test validation when schema exists (backend query succeeds)"""
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
+        mock_config_manager = Mock()
 
-        with patch.object(manager, "_schema_exists_in_vespa", return_value=True):
-            result = manager.validate_tenant_schema("acme", "video_colpali")
+        # Mock backend.search to succeed (schema exists)
+        with patch("cogniverse_core.registries.backend_registry.get_backend_registry") as mock_registry:
+            mock_backend = Mock()
+            mock_backend.search.return_value = {"results": []}  # Empty results but query succeeds
+            mock_registry.return_value.get_search_backend.return_value = mock_backend
+
+            result = manager.validate_tenant_schema("acme", "video_colpali", mock_config_manager)
 
         assert result is True
 
     def test_validate_tenant_schema_not_exists(self):
-        """Test validation when schema doesn't exist"""
-        manager = TenantSchemaManager()
+        """Test validation when schema doesn't exist (backend query fails)"""
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
+        mock_config_manager = Mock()
 
-        with patch.object(manager, "_schema_exists_in_vespa", return_value=False):
-            result = manager.validate_tenant_schema("acme", "video_colpali")
+        # Mock backend.search to raise exception (schema doesn't exist)
+        with patch("cogniverse_core.registries.backend_registry.get_backend_registry") as mock_registry:
+            mock_backend = Mock()
+            mock_backend.search.side_effect = Exception("Schema not found")
+            mock_registry.return_value.get_search_backend.return_value = mock_backend
+
+            result = manager.validate_tenant_schema("acme", "video_colpali", mock_config_manager)
 
         assert result is False
 
@@ -376,16 +388,16 @@ class TestSingletonPattern:
     """Test singleton behavior"""
 
     def test_singleton_returns_same_instance(self):
-        """Test that TenantSchemaManager is a singleton"""
-        manager1 = TenantSchemaManager()
-        manager2 = TenantSchemaManager()
+        """Test that TenantSchemaManager returns same instance for same parameters"""
+        manager1 = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
+        manager2 = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
 
         assert manager1 is manager2
 
     def test_get_tenant_schema_manager_returns_singleton(self):
-        """Test helper function returns singleton"""
-        manager1 = get_tenant_schema_manager()
-        manager2 = get_tenant_schema_manager()
+        """Test helper function returns singleton for same parameters"""
+        manager1 = get_tenant_schema_manager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
+        manager2 = get_tenant_schema_manager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
 
         assert manager1 is manager2
 
@@ -395,7 +407,7 @@ class TestDeleteSchemas:
 
     def test_delete_tenant_schemas_removes_from_cache(self):
         """Test that deleting schemas removes them from cache"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
         manager.clear_cache()
 
         manager._cache_deployed_schema("acme", "video_colpali")
@@ -408,7 +420,7 @@ class TestDeleteSchemas:
 
     def test_delete_tenant_schemas_nonexistent_tenant(self):
         """Test deleting schemas for tenant with none deployed"""
-        manager = TenantSchemaManager()
+        manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080, config_manager=MagicMock())
         manager.clear_cache()
 
         deleted = manager.delete_tenant_schemas("nonexistent")

@@ -22,7 +22,7 @@ class ConfigUtils:
     Provides convenient .get() interface while using ConfigManager backend.
     """
 
-    def __init__(self, tenant_id: str = "default", config_manager: ConfigManager = None):
+    def __init__(self, tenant_id: str, config_manager: ConfigManager):
         """
         Initialize ConfigUtils.
 
@@ -203,8 +203,10 @@ class ConfigUtils:
             "routing_agent_port": lambda: 8001,  # Hardcoded default
             "text_analysis_port": lambda: 8005,  # Hardcoded default
             "search_backend": lambda: self._system_config.search_backend,
-            "vespa_url": lambda: self._system_config.vespa_url,
-            "vespa_port": lambda: self._system_config.vespa_port,
+            "backend_url": lambda: self._system_config.backend_url,
+            "backend_port": lambda: self._system_config.backend_port,
+            "url": lambda: self._system_config.backend_url,  # Alias for backend dict access
+            "port": lambda: self._system_config.backend_port,  # Alias for backend dict access
             "elasticsearch_url": lambda: self._system_config.elasticsearch_url,
             "llm_model": lambda: self._system_config.llm_model,
             "local_llm_model": lambda: self._system_config.llm_model,  # Alias
@@ -257,9 +259,47 @@ class ConfigUtils:
         )
         return default
 
+    def keys(self):
+        """Return all available config keys (dict-like interface)"""
+        self._ensure_system_config()
+        self._ensure_routing_config()
+        self._ensure_telemetry_config()
+        self._ensure_backend_config()
+        self._load_json_config()
+
+        # Collect all available keys
+        all_keys = set()
+
+        # Add system keys
+        all_keys.update([
+            "backend",
+            "routing_agent_url", "video_agent_url", "text_agent_url",
+            "summarizer_agent_url", "text_analysis_agent_url", "detailed_report_agent_url",
+            "composing_agent_port", "routing_agent_port", "text_analysis_port",
+            "search_backend", "backend_url", "backend_port", "url", "port",
+            "elasticsearch_url", "llm_model", "local_llm_model",
+            "base_url", "llm_api_key", "phoenix_url", "phoenix_collector_endpoint",
+            "environment", "llm"
+        ])
+
+        # Add routing keys
+        all_keys.update(["routing_mode", "enable_caching", "cache_ttl_seconds"])
+
+        # Add telemetry keys
+        all_keys.update(["telemetry_enabled", "telemetry_level"])
+
+        # Add JSON config keys
+        all_keys.update(self._json_config.keys())
+
+        return list(all_keys)
+
+    def __contains__(self, key):
+        """Support 'in' operator (dict-like interface)"""
+        return key in self.keys()
+
 
 def get_config(
-    tenant_id: str = "default", config_manager: ConfigManager = None
+    tenant_id: str, config_manager: ConfigManager
 ) -> ConfigUtils:
     """
     Get config utility wrapper for dict-like access.

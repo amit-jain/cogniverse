@@ -84,8 +84,8 @@ class TestProfileAPICRUD:
         from cogniverse_core.config.unified_config import SystemConfig
         system_config = SystemConfig(
             tenant_id="test_tenant",
-            vespa_url="http://nonexistent",
-            vespa_port=9999,
+            backend_url="http://nonexistent",
+            backend_port=9999,
         )
         config_manager.set_system_config(system_config)
 
@@ -595,24 +595,17 @@ class TestProfileAPISchemaDeployment:
         # Reset singletons AFTER cleanup
         BackendRegistry._instance = None
 
-        # Clear TenantSchemaManager cache before resetting singleton
-        from cogniverse_vespa.tenant_schema_manager import (
-            TenantSchemaManager,
-            get_tenant_schema_manager,
-        )
-        try:
-            tsm = get_tenant_schema_manager()
-            tsm.clear_cache()
-        except Exception:
-            pass  # Singleton might not exist yet
+        # Reset TenantSchemaManager singleton
+        from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
         TenantSchemaManager._instance = None
 
         # CRITICAL: Pre-create TenantSchemaManager with test schema directory
         # This ensures the singleton is created with the right schema_templates_dir
         # before any backend tries to create it
         _ = TenantSchemaManager(
-            vespa_url="http://localhost",
-            vespa_port=vespa_backend.config_port,
+            backend_url="http://localhost",
+            backend_port=vespa_backend.config_port,
+            http_port=vespa_backend.http_port,
             schema_templates_dir=schema_dir
         )
         print(f"[FIXTURE DEBUG] Pre-created TenantSchemaManager with schema_templates_dir={schema_dir}")
@@ -643,24 +636,24 @@ class TestProfileAPISchemaDeployment:
         # Config for deploy_tenant
         system_config = SystemConfig(
             tenant_id="deploy_tenant",
-            vespa_url="http://localhost",
-            vespa_port=actual_vespa_port,
+            backend_url="http://localhost",
+            backend_port=actual_vespa_port,
         )
         config_manager.set_system_config(system_config)
 
         # Config for e2e_tenant (used by test_end_to_end)
         system_config_e2e = SystemConfig(
             tenant_id="e2e_tenant",
-            vespa_url="http://localhost",
-            vespa_port=actual_vespa_port,
+            backend_url="http://localhost",
+            backend_port=actual_vespa_port,
         )
         config_manager.set_system_config(system_config_e2e)
 
         # Config for already_deployed_tenant (used by test_deploy_schema_already_deployed)
         system_config_already = SystemConfig(
             tenant_id="already_deployed_tenant",
-            vespa_url="http://localhost",
-            vespa_port=actual_vespa_port,
+            backend_url="http://localhost",
+            backend_port=actual_vespa_port,
         )
         config_manager.set_system_config(system_config_already)
 

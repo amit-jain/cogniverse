@@ -51,9 +51,10 @@ class MockSearchBackend(SearchBackend):
 class MockIngestionBackend(IngestionBackend):
     """Mock ingestion backend for testing"""
 
-    def __init__(self):
+    def __init__(self, config_manager=None):
         self.initialized = False
         self.config = None
+        self.config_manager = config_manager
 
     def initialize(self, config: dict):
         self.initialized = True
@@ -80,6 +81,12 @@ class MockIngestionBackend(IngestionBackend):
 
 class TestBackendRegistryTenantIsolation:
     """Test tenant-scoped backend caching"""
+
+    @pytest.fixture
+    def config_manager(self, tmp_path):
+        """Create a config_manager for testing"""
+        from cogniverse_core.config.manager import ConfigManager
+        return ConfigManager(db_path=tmp_path / "test_config.db")
 
     def setup_method(self):
         """Save original backends and clear instances before each test"""
@@ -217,24 +224,25 @@ class TestBackendRegistryTenantIsolation:
 
         assert len(registry._backend_instances) == 0
 
-    def test_ingestion_backend_tenant_isolation(self):
+    def test_ingestion_backend_tenant_isolation(self, config_manager):
         """Test tenant isolation for ingestion backends"""
         registry = get_backend_registry()
         registry.register_ingestion("mock", MockIngestionBackend)
 
         # Get ingestion backends for two tenants
-        backend_a = registry.get_ingestion_backend("mock", tenant_id="tenant_a")
-        backend_b = registry.get_ingestion_backend("mock", tenant_id="tenant_b")
+        backend_a = registry.get_ingestion_backend("mock", tenant_id="tenant_a", config_manager=config_manager)
+        backend_b = registry.get_ingestion_backend("mock", tenant_id="tenant_b", config_manager=config_manager)
 
         # Should be different instances
         assert backend_a is not backend_b
 
-    def test_full_backend_tenant_isolation(self):
+    def test_full_backend_tenant_isolation(self, config_manager):
         """Test tenant isolation for full backends (both search and ingestion)"""
 
         class MockFullBackend(SearchBackend, IngestionBackend):
-            def __init__(self):
+            def __init__(self, config_manager=None):
                 self.initialized = False
+                self.config_manager = config_manager
 
             def initialize(self, config: dict):
                 self.initialized = True
@@ -288,7 +296,7 @@ class TestBackendRegistryTenantIsolation:
         search_a = registry.get_search_backend("mock_full", tenant_id="tenant_a")
 
         # Get as ingestion backend for tenant A (should be same instance)
-        ingest_a = registry.get_ingestion_backend("mock_full", tenant_id="tenant_a")
+        ingest_a = registry.get_ingestion_backend("mock_full", tenant_id="tenant_a", config_manager=config_manager)
 
         # Should be the same instance for same tenant
         assert search_a is ingest_a

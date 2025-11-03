@@ -98,8 +98,8 @@ class VespaBackend(Backend):
         if not self._url and self._tenant_id:
             # Fetch from ConfigManager (always available since it's required in __init__)
             system_config = self._config_manager_instance.get_system_config(self._tenant_id)
-            self._url = system_config.vespa_url
-            self._port = system_config.vespa_port
+            self._url = system_config.backend_url
+            self._port = system_config.backend_port
             logger.info(
                 f"Fetched Vespa config from ConfigManager for tenant '{self._tenant_id}': {self._url}:{self._port}"
             )
@@ -123,15 +123,18 @@ class VespaBackend(Backend):
 
         self.schema_manager = VespaSchemaManager(
             vespa_endpoint=f"{url}:{port}",
-            vespa_port=config_port
+            vespa_port=config_port,
+            config_manager=self._config_manager_instance
         )
 
         # Get schema_templates_dir from config if provided (for testing)
         schema_templates_dir = merged_config.get("schema_templates_dir")
 
         self.tenant_schema_manager = TenantSchemaManager(
-            vespa_url=url,
-            vespa_port=config_port,
+            backend_url=url,
+            backend_port=config_port,
+            http_port=port,
+            config_manager=self._config_manager_instance,
             schema_templates_dir=schema_templates_dir
         )
 
@@ -193,8 +196,8 @@ class VespaBackend(Backend):
             client_config = {
                 "schema_name": target_schema_name,  # Use tenant-scoped name for Vespa
                 "base_schema_name": schema_name,  # Base schema name for loading schema file
-                "vespa_url": self._url,
-                "vespa_port": self._port,
+                "url": self._url,
+                "port": self._port,
                 "profile_config": profile_config  # Pass only the specific profile config
             }
 

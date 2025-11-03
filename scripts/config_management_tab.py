@@ -137,7 +137,7 @@ def render_system_config_ui(manager, tenant_id: str):
             )
 
         with col2:
-            vespa_url = st.text_input("Vespa URL", value=system_config.vespa_url)
+            vespa_url = st.text_input("Vespa URL", value=system_config.backend_url)
 
         with col3:
             vespa_port = st.number_input(

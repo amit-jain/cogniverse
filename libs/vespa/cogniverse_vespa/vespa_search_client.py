@@ -203,7 +203,7 @@ class VespaVideoSearchClient:
             raise ValueError("No schema_name found in VESPA_SCHEMA env var or config")
         
         self.logger = logging.getLogger(__name__)
-        self.vespa_url = vespa_url
+        self.backend_url = vespa_url
         self.vespa_port = vespa_port
         
         # Initialize query encoder based on schema

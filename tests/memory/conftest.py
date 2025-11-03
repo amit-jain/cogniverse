@@ -189,7 +189,7 @@ def deploy_memory_schema_for_tests(
 
     # Deploy via VespaSchemaManager
     schema_manager = VespaSchemaManager(
-        vespa_endpoint=vespa_url, vespa_port=vespa_config_port
+        vespa_endpoint=vespa_url, backend_port=vespa_config_port
     )
     schema_manager._deploy_package(app_package)
 
@@ -308,7 +308,7 @@ def shared_memory_vespa():
         tenant_schema_name = deploy_memory_schema_for_tests(
             tenant_id="test_tenant",
             base_schema_name="agent_memories",
-            vespa_url="http://localhost",
+            backend_url="http://localhost",
             vespa_config_port=MEMORY_VESPA_CONFIG_PORT,
         )
         print("✅ Schema deployment completed")

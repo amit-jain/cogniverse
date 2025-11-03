@@ -326,7 +326,9 @@ class TestConfigUtilsBackendConfig:
         # Change to temp directory so configs/config.json can be found
         monkeypatch.chdir(tmp_path)
 
-        config_utils = ConfigUtils(tenant_id="default")
+        from cogniverse_core.config.manager import ConfigManager
+        config_manager = ConfigManager()
+        config_utils = ConfigUtils(tenant_id="default", config_manager=config_manager)
         backend = config_utils.get("backend")
 
         assert backend is not None
@@ -349,7 +351,7 @@ class TestConfigUtilsBackendConfig:
         config_manager.add_backend_profile(tenant_profile, tenant_id="acme")
 
         # Get merged config for acme tenant
-        config_utils = ConfigUtils(tenant_id="acme")
+        config_utils = ConfigUtils(tenant_id="acme", config_manager=config_manager)
         backend = config_utils.get("backend")
 
         # Should have both system and tenant profiles
@@ -371,7 +373,7 @@ class TestConfigUtilsBackendConfig:
         )
         config_manager.add_backend_profile(overridden_profile, tenant_id="acme")
 
-        config_utils = ConfigUtils(tenant_id="acme")
+        config_utils = ConfigUtils(tenant_id="acme", config_manager=config_manager)
         backend = config_utils.get("backend")
 
         # Tenant profile should win

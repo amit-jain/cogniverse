@@ -43,8 +43,8 @@ class SystemConfig:
 
     # Search backend configuration
     search_backend: str = "vespa"
-    vespa_url: str = "http://localhost"
-    vespa_port: int = 8080
+    backend_url: str = "http://localhost"
+    backend_port: int = 8080
     elasticsearch_url: Optional[str] = None
 
     # LLM configuration
@@ -74,8 +74,8 @@ class SystemConfig:
             "text_analysis_agent_url": self.text_analysis_agent_url,
             "ingestion_api_url": self.ingestion_api_url,
             "search_backend": self.search_backend,
-            "vespa_url": self.vespa_url,
-            "vespa_port": self.vespa_port,
+            "backend_url": self.backend_url,
+            "backend_port": self.backend_port,
             "elasticsearch_url": self.elasticsearch_url,
             "llm_model": self.llm_model,
             "base_url": self.base_url,
@@ -103,8 +103,8 @@ class SystemConfig:
             ),
             ingestion_api_url=data.get("ingestion_api_url", "http://localhost:8000"),
             search_backend=data.get("search_backend", "vespa"),
-            vespa_url=data.get("vespa_url", "http://localhost"),
-            vespa_port=data.get("vespa_port", 8080),
+            backend_url=data.get("backend_url") or data.get("backend", {}).get("url"),
+            backend_port=data.get("backend_port") or data.get("backend", {}).get("port"),
             elasticsearch_url=data.get("elasticsearch_url"),
             llm_model=data.get("llm_model", "gpt-4"),
             base_url=data.get("base_url", "http://localhost:11434"),

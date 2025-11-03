@@ -84,9 +84,9 @@ class PipelineConfig:
     search_backend: str = "byaldi"  # "byaldi" or "vespa"
 
     @classmethod
-    def from_config(cls) -> "PipelineConfig":
+    def from_config(cls, tenant_id: str, config_manager) -> "PipelineConfig":
         """Load pipeline config from main config file"""
-        config = get_config()
+        config = get_config(tenant_id=tenant_id, config_manager=config_manager)
         pipeline_config = config.get("pipeline_config", {})
 
         # Get output directory from OutputManager
@@ -156,6 +156,7 @@ class VideoIngestionPipeline:
         tenant_id: str,
         config: PipelineConfig | None = None,
         app_config: dict[str, Any] | None = None,
+        config_manager=None,
         schema_name: str | None = None,
         debug_mode: bool = False,
     ):
@@ -166,6 +167,7 @@ class VideoIngestionPipeline:
             tenant_id: Tenant identifier (REQUIRED - no default)
             config: Pipeline configuration
             app_config: Application configuration
+            config_manager: ConfigManager instance (required if app_config not provided)
             schema_name: Schema/profile name
             debug_mode: Enable debug logging
 
@@ -176,8 +178,20 @@ class VideoIngestionPipeline:
             raise ValueError("tenant_id is required - no default tenant")
 
         self.tenant_id = tenant_id
-        self.config = config or PipelineConfig.from_config()
-        self.app_config = app_config or get_config()
+
+        if config is None:
+            if config_manager is None:
+                raise ValueError("config_manager is required when config is not provided")
+            self.config = PipelineConfig.from_config(tenant_id=tenant_id, config_manager=config_manager)
+        else:
+            self.config = config
+
+        if app_config is None:
+            if config_manager is None:
+                raise ValueError("config_manager is required when app_config is not provided")
+            self.app_config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+        else:
+            self.app_config = app_config
         self.schema_name = schema_name
         self.debug_mode = (
             debug_mode or os.environ.get("DEBUG_PIPELINE", "").lower() == "true"

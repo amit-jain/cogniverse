@@ -153,24 +153,29 @@ class TestVespaBackendIngestion:
 
     @pytest.mark.slow
     @pytest.mark.asyncio
-    async def test_lightweight_vespa_ingestion(self, vespa_backend, vespa_test_videos):
+    async def test_lightweight_vespa_ingestion(self, vespa_backend, vespa_test_videos, tmp_path):
         """Test lightweight ingestion to Vespa (no heavy models)."""
         # Test with basic frame extraction only
         from cogniverse_runtime.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
         )
+        from cogniverse_core.config.manager import ConfigManager
 
-        config = PipelineConfig.from_config()
+        config_manager = ConfigManager(db_path=tmp_path / "test_config.db")
+        config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
-        config.vespa_url = "http://localhost"
-        config.vespa_port = vespa_backend.http_port
         config.transcribe_audio = False
         config.generate_descriptions = False
         config.max_frames_per_video = 1
 
-        pipeline = VideoIngestionPipeline(tenant_id="test_tenant", config=config)
+        pipeline = VideoIngestionPipeline(
+            tenant_id="test_tenant",
+            config=config,
+            config_manager=config_manager,
+            schema_name="video_colpali_smol500_mv_frame"
+        )
 
         # Process just one video
         result = await pipeline.process_video_async(vespa_test_videos[0])
@@ -182,22 +187,26 @@ class TestVespaBackendIngestion:
     @pytest.mark.requires_colpali
     @skip_heavy_models_in_ci
     @pytest.mark.asyncio
-    async def test_colpali_vespa_ingestion(self, vespa_backend, vespa_test_videos):
+    async def test_colpali_vespa_ingestion(self, vespa_backend, vespa_test_videos, tmp_path):
         """Test ColPali model ingestion to Vespa (local only)."""
         from cogniverse_runtime.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
         )
 
-        config = PipelineConfig.from_config()
+        from cogniverse_core.config.manager import ConfigManager
+        config_manager = ConfigManager(db_path=tmp_path / "test_config.db")
+        config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
-        config.vespa_url = "http://localhost"
-        config.vespa_port = vespa_backend.http_port
-        config.active_video_profile = "video_colpali_smol500_mv_frame"
         config.max_frames_per_video = 2
 
-        pipeline = VideoIngestionPipeline(tenant_id="test_tenant", config=config)
+        pipeline = VideoIngestionPipeline(
+            tenant_id="test_tenant",
+            config=config,
+            config_manager=config_manager,
+            schema_name="video_colpali_smol500_mv_frame"
+        )
         result = await pipeline.process_video_async(vespa_test_videos[0])
 
         assert result is not None
@@ -208,22 +217,26 @@ class TestVespaBackendIngestion:
     @skip_heavy_models_in_ci
     @skip_if_low_memory
     @pytest.mark.asyncio
-    async def test_videoprism_vespa_ingestion(self, vespa_backend, vespa_test_videos):
+    async def test_videoprism_vespa_ingestion(self, vespa_backend, vespa_test_videos, tmp_path):
         """Test VideoPrism model ingestion to Vespa (local only)."""
         from cogniverse_runtime.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
         )
 
-        config = PipelineConfig.from_config()
+        from cogniverse_core.config.manager import ConfigManager
+        config_manager = ConfigManager(db_path=tmp_path / "test_config.db")
+        config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
-        config.vespa_url = "http://localhost"
-        config.vespa_port = vespa_backend.http_port
-        config.active_video_profile = "video_videoprism_base_mv_chunk_30s"
         config.max_frames_per_video = 1
 
-        pipeline = VideoIngestionPipeline(tenant_id="test_tenant", config=config)
+        pipeline = VideoIngestionPipeline(
+            tenant_id="test_tenant",
+            config=config,
+            config_manager=config_manager,
+            schema_name="video_videoprism_base_mv_chunk_30s"
+        )
         result = await pipeline.process_video_async(vespa_test_videos[0])
 
         assert result is not None
@@ -233,22 +246,26 @@ class TestVespaBackendIngestion:
     @pytest.mark.requires_colqwen
     @skip_heavy_models_in_ci
     @pytest.mark.asyncio
-    async def test_colqwen_vespa_ingestion(self, vespa_backend, vespa_test_videos):
+    async def test_colqwen_vespa_ingestion(self, vespa_backend, vespa_test_videos, tmp_path):
         """Test ColQwen model ingestion to Vespa (local only)."""
         from cogniverse_runtime.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
         )
 
-        config = PipelineConfig.from_config()
+        from cogniverse_core.config.manager import ConfigManager
+        config_manager = ConfigManager(db_path=tmp_path / "test_config.db")
+        config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
-        config.vespa_url = "http://localhost"
-        config.vespa_port = vespa_backend.http_port
-        config.active_video_profile = "video_colqwen_omni_mv_chunk_30s"
         config.max_frames_per_video = 1
 
-        pipeline = VideoIngestionPipeline(tenant_id="test_tenant", config=config)
+        pipeline = VideoIngestionPipeline(
+            tenant_id="test_tenant",
+            config=config,
+            config_manager=config_manager,
+            schema_name="video_colqwen_omni_mv_chunk_30s"
+        )
         result = await pipeline.process_video_async(vespa_test_videos[0])
 
         assert result is not None
@@ -273,7 +290,7 @@ class TestComprehensiveIngestion:
     @pytest.mark.slow
     @pytest.mark.requires_vespa
     @pytest.mark.asyncio
-    async def test_multi_profile_ingestion(self, all_test_videos):
+    async def test_multi_profile_ingestion(self, all_test_videos, tmp_path):
         """Test ingestion with multiple profiles."""
         profiles_to_test = [
             "video_colpali_smol500_mv_frame",
@@ -289,13 +306,19 @@ class TestComprehensiveIngestion:
         results = {}
         for profile in profiles_to_test:
             try:
-                config = PipelineConfig.from_config()
+                from cogniverse_core.config.manager import ConfigManager
+                config_manager = ConfigManager(db_path=tmp_path / "test_config.db")
+                config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
                 config.video_dir = all_test_videos[0].parent
                 config.search_backend = "vespa"
-                config.active_video_profile = profile
                 config.max_frames_per_video = 1
 
-                pipeline = VideoIngestionPipeline(tenant_id="test_tenant", config=config)
+                pipeline = VideoIngestionPipeline(
+                    tenant_id="test_tenant",
+                    config=config,
+                    config_manager=config_manager,
+                    schema_name=profile
+                )
                 result = await pipeline.process_video_async(all_test_videos[0])
                 results[profile] = result
 
@@ -308,7 +331,7 @@ class TestComprehensiveIngestion:
 
     @pytest.mark.benchmark
     @pytest.mark.asyncio
-    async def test_ingestion_performance(self, all_test_videos):
+    async def test_ingestion_performance(self, all_test_videos, tmp_path):
         """Benchmark ingestion performance."""
 
         from cogniverse_runtime.ingestion.pipeline import (
@@ -316,13 +339,19 @@ class TestComprehensiveIngestion:
             VideoIngestionPipeline,
         )
 
-        config = PipelineConfig.from_config()
+        from cogniverse_core.config.manager import ConfigManager
+        config_manager = ConfigManager(db_path=tmp_path / "test_config.db")
+        config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
         config.video_dir = all_test_videos[0].parent
         config.search_backend = "vespa"
-        config.active_video_profile = "video_colpali_smol500_mv_frame"
         config.max_frames_per_video = 5
 
-        pipeline = VideoIngestionPipeline(tenant_id="test_tenant", config=config)
+        pipeline = VideoIngestionPipeline(
+            tenant_id="test_tenant",
+            config=config,
+            config_manager=config_manager,
+            schema_name="video_colpali_smol500_mv_frame"
+        )
 
         start_time = time.time()
         result = await pipeline.process_video_async(all_test_videos[0])

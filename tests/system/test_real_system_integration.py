@@ -208,8 +208,8 @@ class TestRealVespaIntegration:
             print("Initializing Enhanced Video Search Agent...")
             video_agent = VideoSearchAgent(
                 tenant_id="test_tenant",
-                vespa_url=vespa_url,
-                vespa_port=vespa_port,
+                backend_url=vespa_url,
+                backend_port=vespa_port,
                 vespa_config_port=shared_system_vespa["config_port"],  # Config port for schema deployment
                 profile=default_schema,
                 auto_create_schema=False,  # Schema already deployed by fixture
@@ -309,8 +309,8 @@ class TestRealVespaIntegration:
             print("Initializing VideoSearchAgent...")
             video_agent = VideoSearchAgent(
                 tenant_id="test_tenant",
-                vespa_url=vespa_url,
-                vespa_port=vespa_port,
+                backend_url=vespa_url,
+                backend_port=vespa_port,
                 vespa_config_port=shared_system_vespa["config_port"],  # Config port for schema deployment
                 profile=default_schema,
                 auto_create_schema=False,  # Schema already deployed by fixture
@@ -812,8 +812,8 @@ class TestRealEndToEndIntegration:
 
             video_search_agent = VideoSearchAgent(
                 tenant_id="test_tenant",
-                vespa_url="http://localhost",
-                vespa_port=vespa_test_manager.http_port,
+                backend_url="http://localhost",
+                backend_port=vespa_test_manager.http_port,
                 vespa_config_port=19073,  # Config port for schema deployment
                 profile="video_colpali_smol500_mv_frame",
                 auto_create_schema=False,  # Schema already deployed by fixture

@@ -29,9 +29,9 @@ class TestSignature(dspy.Signature):
 class TestAgent(DynamicDSPyMixin, ConfigAPIMixin):
     """Test agent class using both mixins"""
 
-    def __init__(self, config: AgentConfig, app: FastAPI):
+    def __init__(self, config: AgentConfig, app: FastAPI, config_manager, tenant_id: str = "default"):
         self.initialize_dynamic_dspy(config)
-        self.setup_config_endpoints(app)
+        self.setup_config_endpoints(app, config_manager, tenant_id)
 
 
 class TestConfigAPIMixin:
@@ -85,10 +85,17 @@ class TestConfigAPIMixin:
         return FastAPI()
 
     @pytest.fixture
-    def client(self, agent_config, app):
+    def config_manager(self, tmp_path):
+        """Create ConfigManager for testing"""
+        from cogniverse_core.config.manager import ConfigManager
+        db_path = tmp_path / "test_config.db"
+        return ConfigManager(db_path=db_path)
+
+    @pytest.fixture
+    def client(self, agent_config, app, config_manager):
         """Create test client with agent"""
         with patch("dspy.LM"):
-            agent = TestAgent(agent_config, app)
+            agent = TestAgent(agent_config, app, config_manager)
             agent.register_signature("test_sig", TestSignature)
         return TestClient(app)
 
@@ -143,10 +150,10 @@ class TestConfigAPIMixin:
         assert response.status_code == 400
         assert "Invalid module type" in response.json()["detail"]
 
-    def test_get_optimizer_config_endpoint(self, agent_config_with_optimizer, app):
+    def test_get_optimizer_config_endpoint(self, agent_config_with_optimizer, app, config_manager):
         """Test GET /config/optimizer endpoint returns optimizer info"""
         with patch("dspy.LM"):
-            agent = TestAgent(agent_config_with_optimizer, app)
+            agent = TestAgent(agent_config_with_optimizer, app, config_manager)
             agent.register_signature("test_sig", TestSignature)
 
         client = TestClient(app)
@@ -195,10 +202,10 @@ class TestConfigAPIMixin:
         assert response.status_code == 400
         assert "Invalid optimizer type" in response.json()["detail"]
 
-    def test_post_llm_config_update_model(self, agent_config, app):
+    def test_post_llm_config_update_model(self, agent_config, app, config_manager):
         """Test POST /config/llm updates LLM model"""
         with patch("dspy.LM"):
-            agent = TestAgent(agent_config, app)
+            agent = TestAgent(agent_config, app, config_manager)
             agent.register_signature("test_sig", TestSignature)
 
         client = TestClient(app)
@@ -218,10 +225,10 @@ class TestConfigAPIMixin:
         assert data["llm_config"]["model"] == "gpt-4-turbo"
         assert data["llm_config"]["temperature"] == 0.5
 
-    def test_post_llm_config_update_base_url(self, agent_config, app):
+    def test_post_llm_config_update_base_url(self, agent_config, app, config_manager):
         """Test POST /config/llm updates base URL"""
         with patch("dspy.LM"):
-            agent = TestAgent(agent_config, app)
+            agent = TestAgent(agent_config, app, config_manager)
             agent.register_signature("test_sig", TestSignature)
 
         client = TestClient(app)
@@ -273,10 +280,10 @@ class TestConfigAPIMixin:
         assert "copro" in optimizers
         assert "mipro_v2" in optimizers
 
-    def test_post_module_config_clears_cache(self, agent_config, app):
+    def test_post_module_config_clears_cache(self, agent_config, app, config_manager):
         """Test updating module config clears cached modules"""
         with patch("dspy.LM"):
-            agent = TestAgent(agent_config, app)
+            agent = TestAgent(agent_config, app, config_manager)
             agent.register_signature("test_sig", TestSignature)
 
             # Create initial module
@@ -297,10 +304,10 @@ class TestConfigAPIMixin:
         # Verify cache was cleared
         assert len(agent._dynamic_modules) == 0
 
-    def test_post_optimizer_config_clears_optimizer(self, agent_config, app):
+    def test_post_optimizer_config_clears_optimizer(self, agent_config, app, config_manager):
         """Test updating optimizer config clears cached optimizer"""
         with patch("dspy.LM"):
-            agent = TestAgent(agent_config, app)
+            agent = TestAgent(agent_config, app, config_manager)
             agent.register_signature("test_sig", TestSignature)
 
             # Create initial optimizer

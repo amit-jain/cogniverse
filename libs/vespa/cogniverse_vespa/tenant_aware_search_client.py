@@ -15,8 +15,8 @@ Example:
     client = TenantAwareVespaSearchClient(
         tenant_id="acme",
         base_schema_name="video_colpali_smol500_mv_frame",
-        vespa_url="http://localhost",
-        vespa_port=8080
+        backend_url="http://localhost",
+        backend_port=8080
     )
 
     # Search - automatically uses tenant schema
@@ -57,8 +57,9 @@ class TenantAwareVespaSearchClient:
         self,
         tenant_id: str,
         base_schema_name: str,
-        vespa_url: str = "http://localhost",
-        vespa_port: int = 8080,
+        config_manager,
+        backend_url: str = "http://localhost",
+        backend_port: int = 8080,
         auto_create_schema: bool = True,
     ):
         """
@@ -67,34 +68,44 @@ class TenantAwareVespaSearchClient:
         Args:
             tenant_id: Tenant identifier (REQUIRED)
             base_schema_name: Base schema name (e.g., "video_colpali_smol500_mv_frame")
-            vespa_url: Vespa endpoint URL
-            vespa_port: Vespa port number
+            config_manager: ConfigManager instance (REQUIRED)
+            backend_url: Backend endpoint URL
+            backend_port: Backend port number
             auto_create_schema: Automatically create schema if it doesn't exist
 
         Raises:
-            ValueError: If tenant_id or base_schema_name is invalid
+            ValueError: If tenant_id, base_schema_name, or config_manager is invalid
             SchemaNotFoundException: If base schema template not found
             SchemaDeploymentException: If schema deployment fails
 
         Example:
             >>> client = TenantAwareVespaSearchClient(
             ...     tenant_id="acme",
-            ...     base_schema_name="video_colpali_smol500_mv_frame"
+            ...     base_schema_name="video_colpali_smol500_mv_frame",
+            ...     config_manager=config_manager
             ... )
         """
         if not tenant_id:
             raise ValueError("tenant_id is required")
         if not base_schema_name:
             raise ValueError("base_schema_name is required")
+        if config_manager is None:
+            raise ValueError("config_manager is required")
 
         self.tenant_id = tenant_id
         self.base_schema_name = base_schema_name
-        self.vespa_url = vespa_url
-        self.vespa_port = vespa_port
+        self.backend_url = backend_url
+        self.backend_port = backend_port
+        self._config_manager = config_manager
 
         # Initialize schema manager
+        from cogniverse_vespa.config import calculate_config_port
+        config_port = calculate_config_port(backend_port)
         self.schema_manager = get_tenant_schema_manager(
-            vespa_url=vespa_url, vespa_port=vespa_port
+            backend_url=backend_url,
+            backend_port=config_port,
+            http_port=backend_port,
+            config_manager=config_manager
         )
 
         # Resolve tenant-specific schema name
@@ -110,7 +121,7 @@ class TenantAwareVespaSearchClient:
             self.schema_manager.ensure_tenant_schema_exists(tenant_id, base_schema_name)
 
         # Initialize underlying search client
-        self.client = VespaVideoSearchClient(vespa_url=vespa_url, vespa_port=vespa_port)
+        self.client = VespaVideoSearchClient(vespa_url=backend_url, vespa_port=backend_port)
 
         logger.info(
             f"✅ TenantAwareVespaSearchClient initialized: "
@@ -284,8 +295,8 @@ class TenantAwareVespaSearchClient:
             "tenant_id": self.tenant_id,
             "base_schema_name": self.base_schema_name,
             "tenant_schema_name": self.tenant_schema_name,
-            "vespa_url": self.vespa_url,
-            "vespa_port": str(self.vespa_port),
+            "backend_url": self.backend_url,
+            "backend_port": str(self.backend_port),
         }
 
     def get_video_summary(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:

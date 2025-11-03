@@ -18,7 +18,7 @@ Architecture:
 - Caches deployed schemas to avoid redundant checks
 
 Example:
-    manager = TenantSchemaManager(vespa_url="http://localhost", vespa_port=8080)
+    manager = TenantSchemaManager(backend_url="http://localhost", backend_port=19071, http_port=8080)
 
     # Get tenant-specific schema name
     schema_name = manager.get_tenant_schema_name("acme", "video_colpali_smol500_mv_frame")
@@ -82,16 +82,20 @@ class TenantSchemaManager:
 
     def __new__(
         cls,
-        vespa_url: str = "http://localhost",
-        vespa_port: int = 8080,
+        backend_url: str,
+        backend_port: int,
+        http_port: int,
+        config_manager,
         schema_templates_dir: Optional[Path] = None,
     ):
         """
         Singleton pattern - returns same instance for all calls.
 
         Args:
-            vespa_url: Vespa endpoint URL (used only on first instantiation)
-            vespa_port: Vespa config server port (used only on first instantiation)
+            backend_url: Backend endpoint URL (used only on first instantiation)
+            backend_port: Backend config server port for deployment (used only on first instantiation)
+            http_port: Backend HTTP port for queries/status (used only on first instantiation)
+            config_manager: ConfigManager instance (REQUIRED, used only on first instantiation)
             schema_templates_dir: Optional schema templates directory (used only on first instantiation)
         """
         if cls._instance is None:
@@ -101,33 +105,44 @@ class TenantSchemaManager:
                     instance._initialized = False
                     cls._instance = instance
                     logger.info(
-                        f"Created TenantSchemaManager singleton for {vespa_url}:{vespa_port}"
+                        f"Created TenantSchemaManager singleton for {backend_url}:{backend_port}"
                     )
         return cls._instance
 
     def __init__(
         self,
-        vespa_url: str = "http://localhost",
-        vespa_port: int = 8080,
+        backend_url: str,
+        backend_port: int,
+        http_port: int,
+        config_manager,
         schema_templates_dir: Optional[Path] = None,
     ):
         """
         Initialize tenant schema manager.
 
         Args:
-            vespa_url: Vespa endpoint URL
-            vespa_port: Vespa port number
+            backend_url: Backend endpoint URL
+            backend_port: Backend config server port for deployment
+            http_port: Backend HTTP port for queries/status
+            config_manager: ConfigManager instance (REQUIRED)
             schema_templates_dir: Optional directory for schema templates (defaults to configs/schemas)
         """
         if self._initialized:
             return
 
-        self.vespa_url = vespa_url
-        self.vespa_port = vespa_port
+        if config_manager is None:
+            raise ValueError("config_manager is required for TenantSchemaManager initialization")
+
+        self.backend_url = backend_url
+        self.backend_port = backend_port
+        self.http_port = http_port
+        self._config_manager = config_manager
 
         # Underlying schema manager for actual deployment
         self.schema_manager = VespaSchemaManager(
-            vespa_endpoint=vespa_url, vespa_port=vespa_port
+            vespa_endpoint=backend_url,
+            vespa_port=backend_port,
+            config_manager=config_manager
         )
 
         # JSON schema parser for loading templates
@@ -150,7 +165,7 @@ class TenantSchemaManager:
         self.schema_registry = get_schema_registry()
 
         self._initialized = True
-        logger.info(f"TenantSchemaManager initialized: {vespa_url}:{vespa_port}")
+        logger.info(f"TenantSchemaManager initialized: {backend_url}:{backend_port}")
 
     def get_tenant_schema_name(self, tenant_id: str, base_schema_name: str) -> str:
         """
@@ -461,22 +476,66 @@ class TenantSchemaManager:
                 for base_schema in self._deployed_schemas[tenant_id]
             ]
 
-    def validate_tenant_schema(self, tenant_id: str, base_schema_name: str) -> bool:
+    def validate_tenant_schema(self, tenant_id: str, base_schema_name: str, config_manager) -> bool:
         """
-        Validate that a tenant schema exists and is healthy.
+        Validate that a tenant schema exists by querying through the backend.
 
         Args:
             tenant_id: Tenant identifier
             base_schema_name: Base schema name
+            config_manager: ConfigManager instance for backend initialization
 
         Returns:
-            True if schema exists and is healthy
+            True if schema exists and is queryable through backend
 
         Example:
-            >>> is_valid = manager.validate_tenant_schema("acme", "video_colpali_smol500_mv_frame")
+            >>> is_valid = manager.validate_tenant_schema("acme", "video_colpali_smol500_mv_frame", config_manager)
         """
-        tenant_schema_name = self.get_tenant_schema_name(tenant_id, base_schema_name)
-        return self._schema_exists_in_vespa(tenant_schema_name)
+        if config_manager is None:
+            raise ValueError("config_manager is required for schema validation")
+
+        try:
+            from cogniverse_core.registries.backend_registry import get_backend_registry
+
+            registry = get_backend_registry()
+
+            # Get tenant-scoped schema name
+            tenant_schema_name = self.get_tenant_schema_name(tenant_id, base_schema_name)
+
+            # Get search backend for this tenant
+            # Backend config with tenant-scoped schema
+            backend_config = {
+                "url": self.backend_url,
+                "port": self.http_port,
+                "tenant_id": tenant_id,
+                "profiles": {
+                    base_schema_name: {
+                        "schema_name": tenant_schema_name,  # Use tenant-scoped name
+                        "type": "frame_based"
+                    }
+                }
+            }
+
+            backend = registry.get_search_backend(
+                "vespa",
+                tenant_id=tenant_id,
+                config=backend_config,
+                config_manager=config_manager
+            )
+
+            # Try a simple query - if schema exists, this will succeed (even with 0 results)
+            result = backend.search(
+                query="test",
+                profile_name=base_schema_name,
+                limit=0
+            )
+
+            logger.debug(f"Schema {tenant_schema_name} validated successfully for tenant {tenant_id}")
+            return True
+
+        except Exception as e:
+            logger.warning(f"Schema validation failed for {base_schema_name} (tenant: {tenant_id}): {e}")
+            return False
 
     def list_available_base_schemas(self) -> List[str]:
         """
@@ -592,25 +651,30 @@ class TenantSchemaManager:
     def _schema_exists_in_vespa(self, schema_name: str) -> bool:
         """
         Check if schema exists in Vespa by querying the application status API.
+        Uses http_port (not backend_port/config_port) for status queries.
         """
         try:
             import requests
-            # Query the application/v2 API to get deployed schemas
-            # This is the reliable way to check schema existence
-            response = requests.get(
-                f"{self.vespa_url}:{self.vespa_port}/ApplicationStatus",
-                timeout=5
-            )
+            # Query ApplicationStatus on HTTP port (not config port)
+            url = f"{self.backend_url}:{self.http_port}/ApplicationStatus"
+            logger.info(f"Checking schema existence at: {url}")
+            response = requests.get(url, timeout=5)
+            logger.info(f"Response status: {response.status_code}")
             if response.status_code == 200:
                 app_status = response.json()
+                logger.info(f"Application status: {app_status}")
                 # Check if schema_name is in the list of deployed schemas
                 if "application" in app_status and "schemas" in app_status["application"]:
                     deployed_schemas = app_status["application"]["schemas"]
                     logger.info(f"Vespa deployed schemas: {deployed_schemas}, checking for: {schema_name}")
                     return schema_name in deployed_schemas
+                else:
+                    logger.warning(f"No schemas found in application status. Keys: {app_status.keys() if isinstance(app_status, dict) else 'not a dict'}")
+            else:
+                logger.warning(f"ApplicationStatus returned status {response.status_code}")
             return False
         except Exception as e:
-            logger.debug(f"Schema existence check failed for {schema_name}: {e}")
+            logger.error(f"Schema existence check failed for {schema_name}: {e}", exc_info=True)
             return False
 
     def _cache_deployed_schema(self, tenant_id: str, base_schema_name: str) -> None:
@@ -715,23 +779,27 @@ class TenantSchemaManager:
 
 
 def get_tenant_schema_manager(
-    vespa_url: str = "http://localhost",
-    vespa_port: int = 8080,
+    backend_url: str,
+    backend_port: int,
+    http_port: int,
+    config_manager,
     schema_templates_dir: Optional[Path] = None,
 ) -> TenantSchemaManager:
     """
-    Get tenant schema manager instance for specific Vespa endpoint.
+    Get tenant schema manager instance for specific backend endpoint.
 
     Returns the appropriate singleton instance based on (url, port) combination,
-    allowing multiple Vespa instances with separate managers.
+    allowing multiple backend instances with separate managers.
 
     Args:
-        vespa_url: Vespa endpoint URL
-        vespa_port: Vespa port number
+        backend_url: Backend endpoint URL
+        backend_port: Backend config server port for deployment
+        http_port: Backend HTTP port for queries/status
+        config_manager: ConfigManager instance (REQUIRED)
         schema_templates_dir: Optional directory for schema templates (defaults to configs/schemas)
 
     Returns:
         TenantSchemaManager singleton instance for this endpoint
     """
     # Simply instantiate - __new__() handles per-endpoint singleton logic
-    return TenantSchemaManager(vespa_url, vespa_port, schema_templates_dir)
+    return TenantSchemaManager(backend_url, backend_port, http_port, config_manager, schema_templates_dir)

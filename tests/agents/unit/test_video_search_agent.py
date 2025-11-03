@@ -181,7 +181,7 @@ class TestVideoSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
+        agent = VideoSearchAgent(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080)
 
         assert agent.config == mock_config
         assert agent.search_backend == mock_search_backend
@@ -210,7 +210,7 @@ class TestVideoSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
+        agent = VideoSearchAgent(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080)
 
         results = agent.search_by_text("find cats", top_k=5, ranking="binary_binary")
 
@@ -240,7 +240,7 @@ class TestVideoSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
+        agent = VideoSearchAgent(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080)
 
         # Mock video processor
         agent.video_processor.process_video_file = Mock(
@@ -279,7 +279,7 @@ class TestVideoSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
+        agent = VideoSearchAgent(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080)
 
         # Mock video processor
         agent.video_processor.process_image_file = Mock(
@@ -318,7 +318,7 @@ class TestVideoSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
+        agent = VideoSearchAgent(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080)
 
         # Create task with text part
         message = A2AMessage(
@@ -354,7 +354,7 @@ class TestVideoSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
+        agent = VideoSearchAgent(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080)
 
         # Mock video processor
         agent.video_processor.process_video_file = Mock(
@@ -396,7 +396,7 @@ class TestVideoSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
+        agent = VideoSearchAgent(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080)
 
         # Mock video processor
         agent.video_processor.process_image_file = Mock(
@@ -438,7 +438,7 @@ class TestVideoSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
+        agent = VideoSearchAgent(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080)
 
         # Mock video processor
         agent.video_processor.process_video_file = Mock(
@@ -486,7 +486,7 @@ class TestVideoSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
+        agent = VideoSearchAgent(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080)
 
         task = Task(id="test_task", messages=[])
 
@@ -513,7 +513,7 @@ class TestVideoSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
+        agent = VideoSearchAgent(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080)
 
         # Create task with TextPart but no query
         message = A2AMessage(
@@ -546,7 +546,7 @@ class TestVideoSearchAgentEdgeCases:
         mock_registry.return_value.get_search_backend.side_effect = Exception("Vespa connection failed")
 
         with pytest.raises(Exception, match="Vespa connection failed"):
-            VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
+            VideoSearchAgent(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080)
 
     @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.video_search_agent.get_backend_registry")
@@ -568,7 +568,7 @@ class TestVideoSearchAgentEdgeCases:
         )
 
         with pytest.raises(Exception, match="Encoder creation failed"):
-            VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
+            VideoSearchAgent(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080)
 
     @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.video_search_agent.get_backend_registry")
@@ -587,7 +587,7 @@ class TestVideoSearchAgentEdgeCases:
         mock_registry.return_value.get_search_backend.return_value = mock_search_backend
         mock_encoder_factory.create_encoder.return_value = Mock()
 
-        agent = VideoSearchAgent(tenant_id="test_tenant", vespa_url="http://localhost", vespa_port=8080)
+        agent = VideoSearchAgent(tenant_id="test_tenant", backend_url="http://localhost", backend_port=8080)
 
         with pytest.raises(Exception, match="Search failed"):
             agent.search_by_text("test query", ranking="binary_binary")
@@ -669,7 +669,7 @@ class TestVideoSearchAgentAdvancedFeatures:
             mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
             agent = VideoSearchAgent(tenant_id="test_tenant",
-                vespa_url="http://localhost", vespa_port=8080
+                backend_url="http://localhost", backend_port=8080
             )
             return agent
 

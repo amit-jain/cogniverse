@@ -148,7 +148,7 @@ class TestCrossModalFusionIntegration:
 
         schema_manager = VespaSchemaManager(
             vespa_endpoint=test_vespa_fusion["config_url"],
-            vespa_port=test_vespa_fusion["config_port"],
+            backend_port=test_vespa_fusion["config_port"],
         )
 
         # Upload all content type schemas

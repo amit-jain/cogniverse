@@ -63,7 +63,7 @@ class TestMem0MemoryManager:
         # Initialize
         manager.initialize(
             vespa_host="localhost",
-            vespa_port=8080,
+            backend_port=8080,
             base_schema_name="agent_memories",
         )
 

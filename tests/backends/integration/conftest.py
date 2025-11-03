@@ -33,8 +33,8 @@ def vespa_instance():
     Example:
         def test_schema_deployment(vespa_instance):
             manager = TenantSchemaManager(
-                vespa_url="http://localhost",
-                vespa_port=vespa_instance["http_port"]
+                backend_url="http://localhost",
+                backend_port=vespa_instance["http_port"]
             )
     """
     manager = VespaDockerManager()

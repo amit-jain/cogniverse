@@ -29,7 +29,7 @@ def memory_manager(shared_memory_vespa):
     # auto_create_schema=False since schema was already deployed
     manager.initialize(
         vespa_host="localhost",
-        vespa_port=shared_memory_vespa["http_port"],
+        backend_port=shared_memory_vespa["http_port"],
         vespa_config_port=shared_memory_vespa["config_port"],
         base_schema_name="agent_memories",
         auto_create_schema=False,  # Schema already deployed
@@ -327,7 +327,7 @@ class TestMemorySystemCompleteE2E:
             agent_name="mixin_e2e_test",
             tenant_id="test_tenant",  # Same tenant = reuses manager singleton
             vespa_host="http://localhost",
-            vespa_port=shared_memory_vespa["http_port"],
+            backend_port=shared_memory_vespa["http_port"],
             vespa_config_port=shared_memory_vespa["config_port"],
             auto_create_schema=False,  # Explicitly don't try to create (already exists)
         )

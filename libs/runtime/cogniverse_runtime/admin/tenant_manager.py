@@ -74,15 +74,14 @@ def get_backend() -> Backend:
         from cogniverse_core.config.manager import ConfigManager
         config_manager = _config_manager if _config_manager is not None else ConfigManager()
 
-        config = get_config(config_manager=config_manager)
+        config = get_config(tenant_id="system", config_manager=config_manager)
         backend_type = config.get("backend_type", "vespa")
         registry = get_backend_registry()
 
         # Get backend instance with configuration
         backend_config = {
-            "vespa_url": config.get("vespa_url", "http://localhost"),
-            "vespa_port": config.get("vespa_port", 8080),
-            "vespa_config_port": config.get("vespa_config_port", 19071),
+            "url": config.get("backend_url"),
+            "port": config.get("backend_port"),
         }
 
         # Get backend WITHOUT tenant_id (this is for metadata operations across all tenants)

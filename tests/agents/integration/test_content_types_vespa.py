@@ -107,7 +107,7 @@ def test_vespa_manager():
 
     schema_manager = VespaSchemaManager(
         vespa_endpoint=test_vespa["config_url"],
-        vespa_port=test_vespa["config_port"],
+        backend_port=test_vespa["config_port"],
     )
 
     schema_manager.upload_content_type_schemas(

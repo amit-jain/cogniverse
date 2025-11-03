@@ -269,7 +269,7 @@ class VespaTestManager:
             backend_config = test_config.get("backend", {})
             profiles = backend_config.get("profiles", {})
             print(
-                f"🔧 Config loaded with Vespa: vespa_url=http://localhost, vespa_port={self.http_port}"
+                f"🔧 Config loaded with Vespa: backend_url=http://localhost, backend_port={self.http_port}"
             )
             print(f"🔧 Loaded {len(profiles)} profiles: {list(profiles.keys())}")
 
@@ -392,7 +392,7 @@ class VespaTestManager:
                     print("⏳ Waiting for Vespa indexing to complete...")
                     from tests.utils.async_polling import wait_for_vespa_indexing
                     wait_for_vespa_indexing(
-                        vespa_url=f"http://localhost:{self.http_port}",
+                        backend_url=f"http://localhost:{self.http_port}",
                         delay=5.0,
                         description="Vespa document indexing after ingestion"
                     )
@@ -453,7 +453,7 @@ class VespaTestManager:
             from cogniverse_vespa.vespa_uploader import VespaUploader
 
             uploader = VespaUploader(
-                vespa_url=f"http://localhost:{self.http_port}",
+                backend_url=f"http://localhost:{self.http_port}",
                 cert_path=None,
                 schema_name="video_colpali_smol500_mv_frame",
             )

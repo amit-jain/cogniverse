@@ -70,8 +70,8 @@ class TestConfigManagementUI:
             summarizer_agent_url="http://localhost:8004",
             text_analysis_agent_url="http://localhost:8005",
             search_backend="vespa",
-            vespa_url="http://localhost",
-            vespa_port=8080,
+            backend_url="http://localhost",
+            backend_port=8080,
             llm_model="gpt-4-turbo",
             base_url="http://localhost:11434",
             llm_api_key="test-key-123",
@@ -88,7 +88,7 @@ class TestConfigManagementUI:
 
         assert retrieved.tenant_id == tenant_id
         assert retrieved.llm_model == "gpt-4-turbo"
-        assert retrieved.vespa_port == 8080
+        assert retrieved.backend_port == 8080
         # Note: llm_api_key is stored, but masked in to_dict() for security
         assert system_config.llm_api_key == "test-key-123"
         assert retrieved.environment == "development"
@@ -107,13 +107,13 @@ class TestConfigManagementUI:
         # Update config (simulates UI edit)
         updated_config = config_manager.get_system_config(tenant_id)
         updated_config.llm_model = "gpt-4-turbo"
-        updated_config.vespa_port = 9090
+        updated_config.backend_port = 9090
         config_manager.set_system_config(updated_config)
 
         # Verify update
         retrieved = config_manager.get_system_config(tenant_id)
         assert retrieved.llm_model == "gpt-4-turbo"
-        assert retrieved.vespa_port == 9090
+        assert retrieved.backend_port == 9090
 
     def test_agent_config_creation(self, config_manager):
         """Test creating agent configuration through UI"""
@@ -287,13 +287,13 @@ class TestConfigManagementUI:
         tenant_id = "test_tenant"
 
         # Create version 1
-        config_v1 = SystemConfig(tenant_id=tenant_id, llm_model="gpt-4", vespa_port=8080)
+        config_v1 = SystemConfig(tenant_id=tenant_id, llm_model="gpt-4", backend_port=8080)
         config_manager.set_system_config(config_v1)
 
         # Create version 2 (bad config)
         config_v2 = config_manager.get_system_config(tenant_id)
         config_v2.llm_model = "bad-model"
-        config_v2.vespa_port = 9999
+        config_v2.backend_port = 9999
         config_manager.set_system_config(config_v2)
 
         # Simulate rollback in UI: get version 1 from history
@@ -319,7 +319,7 @@ class TestConfigManagementUI:
         # Verify rollback created version 3 with version 1 values
         current_config = config_manager.get_system_config(tenant_id)
         assert current_config.llm_model == "gpt-4"
-        assert current_config.vespa_port == 8080
+        assert current_config.backend_port == 8080
 
     def test_multi_tenant_isolation(self, config_manager):
         """Test multi-tenant configuration isolation"""
@@ -330,7 +330,7 @@ class TestConfigManagementUI:
         config_a = SystemConfig(
             tenant_id=tenant_a,
             llm_model="gpt-4",
-            vespa_port=8080,
+            backend_port=8080,
         )
         config_manager.set_system_config(config_a)
 
@@ -338,7 +338,7 @@ class TestConfigManagementUI:
         config_b = SystemConfig(
             tenant_id=tenant_b,
             llm_model="claude-3",
-            vespa_port=9090,
+            backend_port=9090,
         )
         config_manager.set_system_config(config_b)
 
@@ -347,10 +347,10 @@ class TestConfigManagementUI:
         retrieved_b = config_manager.get_system_config(tenant_b)
 
         assert retrieved_a.llm_model == "gpt-4"
-        assert retrieved_a.vespa_port == 8080
+        assert retrieved_a.backend_port == 8080
 
         assert retrieved_b.llm_model == "claude-3"
-        assert retrieved_b.vespa_port == 9090
+        assert retrieved_b.backend_port == 9090
 
     def test_export_configs_workflow(self, config_manager):
         """Test exporting configurations (UI export button)"""
@@ -529,7 +529,7 @@ class TestConfigManagementUI:
         config = SystemConfig(
             tenant_id=tenant_id,
             llm_model="gpt-4",
-            vespa_port=8080,
+            backend_port=8080,
             environment="production",
         )
         config_manager.set_system_config(config)
@@ -542,7 +542,7 @@ class TestConfigManagementUI:
         # Verify other fields preserved
         final_config = config_manager.get_system_config(tenant_id)
         assert final_config.llm_model == "gpt-4-turbo"  # Updated
-        assert final_config.vespa_port == 8080  # Preserved
+        assert final_config.backend_port == 8080  # Preserved
         assert final_config.environment == "production"  # Preserved
 
     def test_export_with_history(self, config_manager):

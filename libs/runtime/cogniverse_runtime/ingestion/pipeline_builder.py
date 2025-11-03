@@ -22,6 +22,7 @@ class VideoIngestionPipelineBuilder:
     def __init__(self):
         """Initialize builder with default values."""
         self._tenant_id: str | None = None
+        self._config_manager = None
         self._config: PipelineConfig | None = None
         self._app_config: dict[str, Any] | None = None
         self._schema_name: str | None = None
@@ -35,6 +36,11 @@ class VideoIngestionPipelineBuilder:
     def with_tenant_id(self, tenant_id: str) -> "VideoIngestionPipelineBuilder":
         """Set tenant identifier."""
         self._tenant_id = tenant_id
+        return self
+
+    def with_config_manager(self, config_manager) -> "VideoIngestionPipelineBuilder":
+        """Set config manager."""
+        self._config_manager = config_manager
         return self
 
     def with_config(self, config: PipelineConfig) -> "VideoIngestionPipelineBuilder":
@@ -89,12 +95,18 @@ class VideoIngestionPipelineBuilder:
         Build the configured VideoIngestionPipeline.
 
         Raises:
-            ValueError: If tenant_id not set
+            ValueError: If tenant_id or config_manager not set
         """
         # Validate tenant_id
         if not self._tenant_id:
             raise ValueError(
                 "tenant_id must be set using with_tenant_id() before building pipeline"
+            )
+
+        # Validate config_manager
+        if not self._config_manager:
+            raise ValueError(
+                "config_manager must be set using with_config_manager() before building pipeline"
             )
 
         # Build config if not provided
@@ -113,17 +125,15 @@ class VideoIngestionPipelineBuilder:
             self._config = (
                 PipelineConfig(**config_dict)
                 if config_dict
-                else PipelineConfig.from_config()
+                else PipelineConfig.from_config(tenant_id=self._tenant_id, config_manager=self._config_manager)
             )
 
-        # Use provided app config or load default
-        app_config = self._app_config or get_config()
-
-        # Create pipeline instance
+        # Create pipeline instance - config_manager will be used to create app_config if not provided
         pipeline = VideoIngestionPipeline(
             tenant_id=self._tenant_id,
             config=self._config,
-            app_config=app_config,
+            app_config=self._app_config,
+            config_manager=self._config_manager,
             schema_name=self._schema_name,
             debug_mode=self._debug_mode,
         )
