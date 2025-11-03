@@ -14,7 +14,7 @@ from cogniverse_core.config.agent_config import (
     OptimizerConfig,
     OptimizerType,
 )
-from cogniverse_core.config.config_manager import get_config_manager
+from cogniverse_core.config.manager import get_config_manager
 
 logger = logging.getLogger(__name__)
 

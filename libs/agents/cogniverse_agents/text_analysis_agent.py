@@ -18,7 +18,7 @@ from cogniverse_core.config.agent_config import (
     DSPyModuleType,
     ModuleConfig,
 )
-from cogniverse_core.config.config_manager import get_config_manager
+from cogniverse_core.config.manager import get_config_manager
 from cogniverse_core.config.utils import get_config
 from fastapi import FastAPI
 

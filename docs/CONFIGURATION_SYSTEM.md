@@ -102,7 +102,7 @@ class ConfigScope(Enum):
 
 **Usage Example**:
 ```python
-from cogniverse_core.config.config_manager import get_config_manager
+from cogniverse_core.config.manager import get_config_manager
 from cogniverse_core.config.store_interface import ConfigScope
 
 manager = get_config_manager()
@@ -140,7 +140,7 @@ config = manager.get_config(
 Local SQLite database for development and single-instance deployments.
 
 ```python
-from cogniverse_core.config.config_manager import get_config_manager
+from cogniverse_core.config.manager import get_config_manager
 
 # Automatically uses SQLite at data/config/config.db
 manager = get_config_manager()
@@ -164,7 +164,7 @@ Unified configuration storage in Vespa alongside application data.
 ```python
 from vespa.application import Vespa
 from cogniverse_core.config.store import VespaConfigStore
-from cogniverse_core.config.config_manager import ConfigManager
+from cogniverse_core.config.manager import ConfigManager
 
 # Initialize Vespa store
 vespa_app = Vespa(url="http://localhost:8080")
@@ -253,7 +253,7 @@ class RedisConfigStore(ConfigStore):
 Each tenant has completely isolated configuration:
 
 ```python
-from cogniverse_core.config.config_manager import get_config_manager
+from cogniverse_core.config.manager import get_config_manager
 from cogniverse_core.config.unified_config import SystemConfig
 
 manager = get_config_manager()
@@ -313,7 +313,7 @@ manager.delete_tenant("old_tenant", hard_delete=False)
 
 ```python
 from cogniverse_core.config.agent_config import AgentConfig, ModuleConfig, DSPyModuleType
-from cogniverse_core.config.config_manager import get_config_manager
+from cogniverse_core.config.manager import get_config_manager
 
 manager = get_config_manager()
 
@@ -346,7 +346,7 @@ manager.set_agent_config(
 
 ```python
 from cogniverse_agents.routing.optimizer_factory import OptimizerFactory
-from cogniverse_core.config.config_manager import get_config_manager
+from cogniverse_core.config.manager import get_config_manager
 
 manager = get_config_manager()
 factory = OptimizerFactory()
@@ -634,7 +634,7 @@ llm_model = os.getenv("LLM_MODEL", "gpt-4")
 vespa_url = os.getenv("VESPA_URL", "http://localhost:8080")
 
 # New: ConfigManager
-from cogniverse_core.config.config_manager import get_config_manager
+from cogniverse_core.config.manager import get_config_manager
 manager = get_config_manager()
 config = manager.get_system_config("default")
 llm_model = config.llm_model

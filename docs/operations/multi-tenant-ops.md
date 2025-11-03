@@ -25,7 +25,7 @@ Cogniverse implements **schema-per-tenant isolation** to provide complete data s
 ### 1. Tenant Creation
 
 ```python
-from cogniverse_core.config.config_manager import get_config_manager
+from cogniverse_core.config.manager import get_config_manager
 from cogniverse_core.config.unified_config import SystemConfig
 from cogniverse_vespa.backends.vespa_schema_manager import VespaSchemaManager
 

@@ -22,7 +22,7 @@ class TestDynamicConfigIntegration:
     @pytest.fixture
     def fresh_agent(self):
         """Create fresh TextAnalysisAgent instance with clean config"""
-        from cogniverse_core.config.config_manager import ConfigManager
+        from cogniverse_core.config.manager import ConfigManager
         from fastapi import FastAPI
 
         # Reset ConfigManager to ensure clean state

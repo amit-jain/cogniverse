@@ -67,7 +67,7 @@ import asyncio
 
 import httpx
 from cogniverse_agents.tools.a2a_utils import A2AClient
-from cogniverse_core.config.config_manager import get_config_manager
+from cogniverse_core.config.manager import get_config_manager
 
 
 def run_async_in_streamlit(coro):

@@ -68,7 +68,7 @@ class TestProfileAPICRUD:
     @pytest.fixture
     def test_client(self, temp_schema_dir: Path, tmp_path: Path):
         """Create test client for profile API with properly configured test instances."""
-        from cogniverse_core.config.config_manager import ConfigManager
+        from cogniverse_core.config.manager import ConfigManager
         from cogniverse_core.validation.profile_validator import ProfileValidator
         from cogniverse_runtime.routers import admin
 
@@ -509,7 +509,7 @@ class TestProfileAPISchemaDeployment:
     def test_client(self, vespa_backend, tmp_path: Path):
         """Create test client with Vespa backend."""
 
-        from cogniverse_core.config.config_manager import ConfigManager
+        from cogniverse_core.config.manager import ConfigManager
         from cogniverse_core.registries.backend_registry import BackendRegistry
         from cogniverse_core.validation.profile_validator import ProfileValidator
         from cogniverse_runtime.routers import admin

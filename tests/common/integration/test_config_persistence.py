@@ -12,7 +12,7 @@ from cogniverse_core.config.agent_config import (
     DSPyModuleType,
     ModuleConfig,
 )
-from cogniverse_core.config.config_manager import ConfigManager
+from cogniverse_core.config.manager import ConfigManager
 from cogniverse_core.config.unified_config import (
     RoutingConfigUnified,
     SystemConfig,

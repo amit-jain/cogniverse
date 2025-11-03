@@ -89,7 +89,7 @@ class VespaBackend(Backend):
 
         if not self._url and self._tenant_id:
             # Fetch from ConfigManager
-            from cogniverse_core.config.config_manager import get_config_manager
+            from cogniverse_core.config.manager import get_config_manager
             config_manager = get_config_manager()
             system_config = config_manager.get_system_config(self._tenant_id)
             self._url = system_config.vespa_url

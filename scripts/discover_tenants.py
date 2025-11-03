@@ -15,8 +15,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from cogniverse_core.config.config_manager import get_config_manager
-from cogniverse_core.config.store_interface import ConfigScope
+from cogniverse_core.config.manager import get_config_manager
+from cogniverse_core.common.config_store_interface import ConfigScope
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)

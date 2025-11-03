@@ -858,7 +858,7 @@ Tenants can override system-level backend configuration:
 
 **Tenant Override**: Via `ConfigManager`
 ```python
-from cogniverse_core.config.config_manager import get_config_manager
+from cogniverse_core.config.manager import get_config_manager
 
 manager = get_config_manager()
 
