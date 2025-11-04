@@ -5,11 +5,13 @@ Note: Tenant management is available through the standalone tenant_manager app.
 
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict
 
 from cogniverse_core.config.manager import ConfigManager
 from cogniverse_core.config.unified_config import BackendProfileConfig
 from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_core.validation.profile_validator import ProfileValidator
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -106,7 +108,8 @@ async def get_system_stats(
     """Get system statistics."""
     try:
         backend_registry = BackendRegistry.get_instance()
-        backend_instance = backend_registry.get_ingestion_backend(backend, tenant_id=tenant_id, config_manager=config_manager)
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+        backend_instance = backend_registry.get_ingestion_backend(backend, tenant_id=tenant_id, config_manager=config_manager, schema_loader=schema_loader)
         if not backend_instance:
             raise HTTPException(
                 status_code=400, detail=f"Backend '{backend}' not found"
@@ -201,8 +204,9 @@ async def create_profile(
         if request.deploy_schema:
             try:
                 backend_registry = BackendRegistry.get_instance()
+                schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
                 backend = backend_registry.get_ingestion_backend(
-                    "vespa", tenant_id=request.tenant_id, config_manager=config_manager
+                    "vespa", tenant_id=request.tenant_id, config_manager=config_manager, schema_loader=schema_loader
                 )
 
                 if backend:
@@ -275,7 +279,8 @@ async def list_profiles(
             # Check if schema is deployed
             schema_deployed = False
             try:
-                backend = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id, config_manager=config_manager)
+                schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+                backend = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id, config_manager=config_manager, schema_loader=schema_loader)
                 if backend:
                     schema_deployed = backend.schema_exists(
                         schema_name=profile.schema_name, tenant_id=tenant_id
@@ -346,7 +351,8 @@ async def get_profile(
 
         try:
             backend_registry = BackendRegistry.get_instance()
-            backend = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id, config_manager=config_manager)
+            schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+            backend = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id, config_manager=config_manager, schema_loader=schema_loader)
             if backend:
                 schema_deployed = backend.schema_exists(
                     schema_name=profile.schema_name, tenant_id=tenant_id
@@ -548,7 +554,8 @@ async def delete_profile(
             # Delete schema
             try:
                 backend_registry = BackendRegistry.get_instance()
-                backend = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id, config_manager=config_manager)
+                schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+                backend = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id, config_manager=config_manager, schema_loader=schema_loader)
                 if backend:
                     deleted_schemas = backend.delete_schema(
                         schema_name=profile.schema_name, tenant_id=tenant_id
@@ -624,7 +631,8 @@ async def deploy_profile_schema(
 
         # Check if schema already deployed (unless force=True)
         backend_registry = BackendRegistry.get_instance()
-        backend = backend_registry.get_ingestion_backend("vespa", tenant_id=request.tenant_id, config_manager=config_manager)
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+        backend = backend_registry.get_ingestion_backend("vespa", tenant_id=request.tenant_id, config_manager=config_manager, schema_loader=schema_loader)
 
         if not backend:
             raise HTTPException(

@@ -255,12 +255,23 @@ class VespaDockerManager:
                 Validation(validation_id="content-cluster-removal", until=until_date),
             ]
 
-            # Deploy schemas
-            schema_manager = VespaSchemaManager(
-                vespa_endpoint="http://localhost", vespa_port=config_port
-            )
-            schema_manager._deploy_package(app_package)
-            logger.info("✅ Schemas deployed successfully")
+            # Deploy schemas - create temporary ConfigManager for test infrastructure
+            import tempfile
+
+            from cogniverse_core.config.manager import ConfigManager
+
+            with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp_db:
+                config_manager = ConfigManager(db_path=Path(tmp_db.name))
+                schema_manager = VespaSchemaManager(
+                    vespa_endpoint="http://localhost",
+                    vespa_port=config_port,
+                    config_manager=config_manager
+                )
+                schema_manager._deploy_package(app_package)
+                logger.info("✅ Schemas deployed successfully")
+
+            # Cleanup temporary database
+            Path(tmp_db.name).unlink(missing_ok=True)
 
         except Exception as e:
             raise RuntimeError(f"Schema deployment failed: {e}") from e

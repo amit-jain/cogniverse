@@ -183,32 +183,40 @@ class VespaVideoSearchClient:
         })
     """
     
-    def __init__(self, vespa_url: str = "http://localhost", vespa_port: int = 8080):
+    def __init__(self, vespa_url: str = "http://localhost", vespa_port: int = 8080,
+                 tenant_id: str = "default", config_manager=None):
         """
         Initialize Vespa search client
-        
+
         Args:
             vespa_url: Vespa server URL
             vespa_port: Vespa server port
+            tenant_id: Tenant identifier for configuration
+            config_manager: ConfigManager instance for retrieving config
         """
         # Load configuration
         import sys
         from pathlib import Path
         sys.path.append(str(Path(__file__).parent.parent.parent.parent))
         from cogniverse_core.config.utils import get_config
-        self.config = get_config()
-        # Get schema from environment or config (required)
+
+        # Create config_manager if not provided
+        if config_manager is None:
+            from cogniverse_core.config.manager import ConfigManager
+            config_manager = ConfigManager()
+
+        self.config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+        # Get schema from environment or config (optional - can be provided in search params)
         self.vespa_schema = os.environ.get("VESPA_SCHEMA") or self.config.get("schema_name")
-        if not self.vespa_schema:
-            raise ValueError("No schema_name found in VESPA_SCHEMA env var or config")
-        
+
         self.logger = logging.getLogger(__name__)
         self.backend_url = vespa_url
         self.vespa_port = vespa_port
-        
-        # Initialize query encoder based on schema
+
+        # Initialize query encoder based on schema (lazy initialization if schema not set)
         self.query_encoder = None
-        self._init_query_encoder()
+        if self.vespa_schema:
+            self._init_query_encoder()
         
         try:
             self.vespa_app = Vespa(url=f"{vespa_url}:{vespa_port}")
@@ -248,17 +256,32 @@ class VespaVideoSearchClient:
             self.logger.error(f"Failed to initialize query encoder: {e}")
             self.query_encoder = None
     
-    def health_check(self) -> bool:
-        """Check if Vespa is healthy and responsive"""
+    def health_check(self, schema: Optional[str] = None) -> bool:
+        """Check if Vespa is healthy and responsive
+
+        Args:
+            schema: Optional schema name to check. If not provided, uses self.vespa_schema.
+                   If neither is available, does a generic health check.
+        """
         if not self.vespa_app:
             return False
-        
+
         try:
-            # Simple query to test connectivity
-            self.vespa_app.query(
-                yql=f"select * from {self.vespa_schema} where true limit 1",
-                hits=1
-            )
+            # Use provided schema or fall back to instance schema
+            check_schema = schema or self.vespa_schema
+
+            if check_schema:
+                # Schema-specific health check
+                self.vespa_app.query(
+                    yql=f"select * from {check_schema} where true limit 1",
+                    hits=1
+                )
+            else:
+                # Generic health check without schema
+                self.vespa_app.query(
+                    yql="select * from sources * where true limit 1",
+                    hits=1
+                )
             return True
         except Exception as e:
             self.logger.error(f"Vespa health check failed: {e}")
@@ -300,10 +323,21 @@ class VespaVideoSearchClient:
         start_date = params.get("start_date")
         end_date = params.get("end_date")
         
-        # Extract schema from params if provided, otherwise use the method parameter
+        # Extract schema from params if provided, otherwise use the method parameter or instance default
         if "schema" in params:
             schema = params.get("schema")
-        
+        elif schema is None:
+            schema = self.vespa_schema
+
+        # Schema is now required for search
+        if not schema:
+            raise ValueError("No schema specified. Provide schema in search params or configure schema_name in config.")
+
+        # Lazy initialize query encoder if needed and not already done
+        if not self.query_encoder and schema:
+            self.vespa_schema = schema
+            self._init_query_encoder()
+
         # Validate ranking strategy
         try:
             strategy = RankingStrategy(ranking)

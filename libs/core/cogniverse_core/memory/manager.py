@@ -9,6 +9,7 @@ Each tenant gets dedicated Vespa schema for memory isolation.
 import logging
 import os
 import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 # Disable Mem0's telemetry BEFORE importing mem0
@@ -127,8 +128,10 @@ class Mem0MemoryManager:
             raise ValueError("tenant_id must be set before initialize()")
 
         # Get tenant-specific schema name via Backend interface
+        from cogniverse_core.config.manager import ConfigManager
         from cogniverse_core.config.utils import get_config
         from cogniverse_core.registries.backend_registry import get_backend_registry
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
         config = get_config()
         backend_type = config.get("backend_type", "vespa")
@@ -140,8 +143,10 @@ class Mem0MemoryManager:
             "vespa_port": vespa_port,
             "vespa_config_port": 19071,
         }
+        config_manager = ConfigManager()
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         backend = registry.get_ingestion_backend(
-            backend_type, tenant_id=self.tenant_id, config=backend_config
+            backend_type, tenant_id=self.tenant_id, config=backend_config, config_manager=config_manager, schema_loader=schema_loader
         )
 
         # Get tenant-specific schema name

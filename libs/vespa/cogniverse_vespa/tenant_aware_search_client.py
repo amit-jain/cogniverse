@@ -34,6 +34,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
 from cogniverse_vespa.tenant_schema_manager import (
     get_tenant_schema_manager,
@@ -99,13 +100,20 @@ class TenantAwareVespaSearchClient:
         self._config_manager = config_manager
 
         # Initialize schema manager
+        from pathlib import Path
+
         from cogniverse_vespa.config import calculate_config_port
         config_port = calculate_config_port(backend_port)
+
+        # Create schema loader for configs/schemas directory
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
         self.schema_manager = get_tenant_schema_manager(
             backend_url=backend_url,
             backend_port=config_port,
             http_port=backend_port,
-            config_manager=config_manager
+            config_manager=config_manager,
+            schema_loader=schema_loader
         )
 
         # Resolve tenant-specific schema name

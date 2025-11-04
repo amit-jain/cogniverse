@@ -15,16 +15,39 @@ logger = logging.getLogger(__name__)
 class SearchService:
     """Unified search service for video retrieval."""
 
-    def __init__(self, config: Dict[str, Any], profile: str):
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        profile: str,
+        tenant_id: str = "default",
+        config_manager = None,
+        schema_loader = None
+    ):
         """
         Initialize search service.
 
         Args:
             config: Configuration dictionary
             profile: Video processing profile to use
+            tenant_id: Tenant identifier (default: "default")
+            config_manager: ConfigManager instance for dependency injection
+            schema_loader: SchemaLoader instance for dependency injection
         """
         self.config = config
         self.profile = profile
+        self.tenant_id = tenant_id
+
+        # Initialize dependencies - use provided or create defaults
+        if config_manager is None:
+            from cogniverse_core.config.manager import ConfigManager
+            config_manager = ConfigManager.get_instance()
+        self.config_manager = config_manager
+
+        if schema_loader is None:
+            from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+            from pathlib import Path
+            schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+        self.schema_loader = schema_loader
 
         # Initialize new telemetry system
         from cogniverse_core.telemetry.manager import get_telemetry_manager
@@ -86,12 +109,15 @@ class SearchService:
             "query_encoder": self.query_encoder
         }
 
-        # Get backend instance from registry
+        # Get backend instance from registry with dependency injection
         self.search_backend = backend_registry.get_search_backend(
             backend_type,
-            backend_config
+            self.tenant_id,
+            backend_config,
+            config_manager=self.config_manager,
+            schema_loader=self.schema_loader
         )
-        logger.info(f"Initialized {backend_type} search backend with schema: {schema_name}")
+        logger.info(f"Initialized {backend_type} search backend with schema: {schema_name} for tenant: {self.tenant_id}")
     
     def search(
         self,

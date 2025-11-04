@@ -599,17 +599,6 @@ class TestProfileAPISchemaDeployment:
         from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
         TenantSchemaManager._instance = None
 
-        # CRITICAL: Pre-create TenantSchemaManager with test schema directory
-        # This ensures the singleton is created with the right schema_templates_dir
-        # before any backend tries to create it
-        _ = TenantSchemaManager(
-            backend_url="http://localhost",
-            backend_port=vespa_backend.config_port,
-            http_port=vespa_backend.http_port,
-            schema_templates_dir=schema_dir
-        )
-        print(f"[FIXTURE DEBUG] Pre-created TenantSchemaManager with schema_templates_dir={schema_dir}")
-
         # Reset SchemaRegistry singleton AND module-level global
         from cogniverse_core.registries import schema_registry as schema_registry_module
         from cogniverse_core.registries.schema_registry import SchemaRegistry
@@ -656,6 +645,23 @@ class TestProfileAPISchemaDeployment:
             backend_port=actual_vespa_port,
         )
         config_manager.set_system_config(system_config_already)
+
+        # CRITICAL: Pre-create TenantSchemaManager with test schema directory
+        # This ensures the singleton is created with the right config and schema_loader
+        # before any backend tries to create it
+        from pathlib import Path
+
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+        schema_loader = FilesystemSchemaLoader(Path(schema_dir))
+        _ = TenantSchemaManager(
+            backend_url="http://localhost",
+            backend_port=vespa_backend.config_port,
+            http_port=vespa_backend.http_port,
+            config_manager=config_manager,
+            schema_loader=schema_loader
+        )
+        print(f"[FIXTURE DEBUG] Pre-created TenantSchemaManager with schema_dir={schema_dir}")
 
         # Set ConfigManager and schema directory for admin router using new DI API
         admin.set_config_manager(config_manager)
@@ -825,9 +831,12 @@ class TestProfileAPISchemaDeployment:
         print(f"Tenant schema name: {tenant_schema_name}")
 
         # Step 2: Verify schema exists in Vespa
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         from cogniverse_runtime.routers import admin
+
         backend_registry = BackendRegistry.get_instance()
-        vespa_backend_obj = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id, config_manager=admin._config_manager)
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+        vespa_backend_obj = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id, config_manager=admin._config_manager, schema_loader=schema_loader)
         assert vespa_backend_obj is not None
 
         schema_exists = vespa_backend_obj.schema_exists(
@@ -905,7 +914,9 @@ class TestProfileAPISchemaDeployment:
 
         try:
             # Get VespaBackend instance for this tenant
-            backend = BackendRegistry.get_ingestion_backend("vespa", tenant_id, config_manager=admin._config_manager)
+            from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+            schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+            backend = BackendRegistry.get_ingestion_backend("vespa", tenant_id, config_manager=admin._config_manager, schema_loader=schema_loader)
 
             # Create test document with embedding
             test_doc = Document(

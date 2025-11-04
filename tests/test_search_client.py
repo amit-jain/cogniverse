@@ -12,11 +12,16 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
+import torch
+
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from cogniverse_agents.search.service import SearchService
+from cogniverse_core.config.manager import ConfigManager
+from cogniverse_core.config.utils import get_config
 from cogniverse_vespa.vespa_search_client import RankingStrategy, VespaVideoSearchClient
+from colpali_engine.models import ColIdefics3, ColIdefics3Processor
 
 # Setup logging with more verbose output
 logging.basicConfig(
@@ -25,6 +30,51 @@ logging.basicConfig(
     stream=sys.stdout
 )
 logger = logging.getLogger(__name__)
+
+
+def load_colpali_model():
+    """Load ColPali model for embedding generation"""
+    config_manager = ConfigManager()
+    config = get_config(tenant_id="test_tenant", config_manager=config_manager)
+    model_name = config.get("colpali_model", "vidore/colsmol-500m")
+
+    # Use same device detection as video agent
+    if torch.cuda.is_available():
+        device = "cuda"
+        dtype = torch.bfloat16
+    elif torch.backends.mps.is_available():
+        device = "mps"
+        dtype = torch.float32
+    else:
+        device = "cpu"
+        dtype = torch.float32
+
+    logger.info(f"Loading ColPali model: {model_name}")
+    logger.info(f"Device: {device}, dtype: {dtype}")
+
+    col_model = ColIdefics3.from_pretrained(
+        model_name,
+        torch_dtype=dtype,
+        device_map=device
+    ).eval()
+
+    col_processor = ColIdefics3Processor.from_pretrained(model_name)
+    logger.info("✅ ColPali model loaded")
+
+    return col_model, col_processor, device
+
+
+def generate_test_embeddings(col_model, col_processor, device, query_text):
+    """Generate embeddings for a test query"""
+    batch_queries = col_processor.process_queries([query_text]).to(device)
+    with torch.no_grad():
+        query_embeddings = col_model(**batch_queries)
+
+    # Convert to numpy
+    embeddings_np = query_embeddings.cpu().numpy().squeeze(0)
+    logger.info(f"Generated embeddings with shape: {embeddings_np.shape}")
+
+    return embeddings_np
 
 def create_search_services(config):
     """Create search services for different profiles"""
@@ -142,22 +192,26 @@ def analyze_ranking_results(results_df, strategy_performance):
 
 def test_ranking_strategies(query=None, table_output=False, show_analysis=True):
     """Test all ranking strategies with appropriate inputs"""
-    
+
     print("\n--- STARTING test_ranking_strategies ---")
-    
+
     # Always save results to test_results directory
     from cogniverse_core.common.utils.output_manager import get_output_manager
     output_manager = get_output_manager()
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     auto_csv_path = output_manager.get_test_results_dir() / f"search_client_test_{timestamp}.csv"
-    
-    # Initialize client
+
+    # Initialize client (schema will be provided in search params)
     print("Initializing VespaVideoSearchClient...")
-    client = VespaVideoSearchClient()
+    config_manager = ConfigManager()
+    client = VespaVideoSearchClient(tenant_id="test_tenant", config_manager=config_manager)
+
+    # Schema to use for testing
+    test_schema = "video_colpali_smol500_mv_frame"
     
     # Check health
     print("Checking Vespa health...")
-    if not client.health_check():
+    if not client.health_check(schema=test_schema):
         logger.error("❌ Vespa health check failed")
         print("ERROR: Vespa health check failed")
         return
@@ -190,7 +244,8 @@ def test_ranking_strategies(query=None, table_output=False, show_analysis=True):
             results = client.search({
                 "query": test_query,
                 "ranking": strategy,
-                "top_k": 10
+                "top_k": 10,
+                "schema": test_schema
             })
             
             # Store results for table output
@@ -256,7 +311,8 @@ def test_ranking_strategies(query=None, table_output=False, show_analysis=True):
             results = client.search({
                 "query": "",  # Empty query for pure visual
                 "ranking": strategy,
-                "top_k": 10
+                "top_k": 10,
+                "schema": test_schema
             }, embeddings=embeddings)
             
             # Store results for table output
@@ -318,7 +374,8 @@ def test_ranking_strategies(query=None, table_output=False, show_analysis=True):
             results = client.search({
                 "query": test_query,
                 "ranking": strategy,
-                "top_k": 10
+                "top_k": 10,
+                "schema": test_schema
             }, embeddings=embeddings)
             
             # Store results for table output
@@ -395,7 +452,8 @@ def test_ranking_strategies(query=None, table_output=False, show_analysis=True):
             client.search({
                 "query": test_query,
                 "ranking": RankingStrategy.HYBRID_FLOAT_BM25.value,
-                "top_k": 3
+                "top_k": 3,
+                "schema": test_schema
             })
             logger.error("❌ Should have failed without embeddings")
         except ValueError as e:
@@ -406,7 +464,8 @@ def test_ranking_strategies(query=None, table_output=False, show_analysis=True):
         client.search({
             "query": "",  # Empty query
             "ranking": RankingStrategy.BM25_ONLY.value,
-            "top_k": 3
+            "top_k": 3,
+            "schema": test_schema
         })
         logger.error("❌ Should have failed without text query")
     except ValueError as e:
@@ -485,18 +544,21 @@ def save_results_to_csv(all_results, filename):
 
 def test_default_ranking(query=None):
     """Test default ranking profile (should be 'default' from schema)"""
-    client = VespaVideoSearchClient()
-    
+    config_manager = ConfigManager()
+    client = VespaVideoSearchClient(tenant_id="test_tenant", config_manager=config_manager)
+
     logger.info("\n=== Testing Default Ranking Profile ===")
-    
+
     # Use provided query or default
     test_query = query if query else "doctor explaining medical procedures"
-    
+    test_schema = "video_colpali_smol500_mv_frame"
+
     try:
         # Test with no ranking specified - should use default
         results = client.search({
             "query": test_query,
-            "top_k": 3
+            "top_k": 3,
+            "schema": test_schema
         })
         logger.info(f"✅ Default ranking: Got {len(results)} results")
         for i, result in enumerate(results[:2]):

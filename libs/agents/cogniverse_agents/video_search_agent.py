@@ -364,8 +364,19 @@ class VideoSearchAgent(MemoryAwareMixin, TenantAwareAgentMixin):
             }
 
             # Get search backend from registry
+            from cogniverse_core.config.manager import ConfigManager
+            from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+            from pathlib import Path
+
             registry = get_backend_registry()
-            self.search_backend = registry.get_search_backend("vespa", tenant_id, backend_config)
+            config_manager = ConfigManager.get_instance()
+            schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+            self.search_backend = registry.get_search_backend(
+                "vespa", tenant_id, backend_config,
+                config_manager=config_manager,
+                schema_loader=schema_loader
+            )
 
             logger.info(
                 f"Search backend initialized at {vespa_url}:{vespa_port} "

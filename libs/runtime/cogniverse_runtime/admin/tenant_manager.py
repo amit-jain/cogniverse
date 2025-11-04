@@ -29,6 +29,7 @@ Example Usage:
 
 import logging
 import time
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import uvicorn
@@ -36,6 +37,7 @@ from cogniverse_core.common.tenant_utils import parse_tenant_id
 from cogniverse_core.config.utils import get_config
 from cogniverse_core.interfaces.backend import Backend
 from cogniverse_core.registries.backend_registry import get_backend_registry
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from fastapi import FastAPI, HTTPException
 
 from cogniverse_runtime.admin.models import (
@@ -87,8 +89,9 @@ def get_backend() -> Backend:
         # Get backend WITHOUT tenant_id (this is for metadata operations across all tenants)
         # We'll pass tenant_id explicitly when needed for schema operations
         try:
+            schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
             backend = registry.get_ingestion_backend(
-                backend_type, tenant_id="system", config=backend_config, config_manager=config_manager
+                backend_type, tenant_id="system", config=backend_config, config_manager=config_manager, schema_loader=schema_loader
             )
         except Exception as e:
             logger.error(f"Failed to get backend: {e}")

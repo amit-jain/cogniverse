@@ -84,7 +84,7 @@ class BackendRegistry:
 
     @classmethod
     def get_ingestion_backend(
-        cls, name: str, tenant_id: str, config: Optional[Dict[str, Any]] = None, config_manager=None
+        cls, name: str, tenant_id: str, config: Optional[Dict[str, Any]] = None, config_manager=None, schema_loader=None
     ) -> IngestionBackend:
         """
         Get a tenant-specific ingestion backend instance.
@@ -94,12 +94,13 @@ class BackendRegistry:
             tenant_id: Tenant identifier (REQUIRED - no default)
             config: Optional configuration for initialization
             config_manager: ConfigManager instance for dependency injection (REQUIRED)
+            schema_loader: SchemaLoader instance for dependency injection (REQUIRED)
 
         Returns:
             Initialized IngestionBackend instance
 
         Raises:
-            ValueError: If backend not found, tenant_id not provided, or config_manager not provided
+            ValueError: If backend not found, tenant_id not provided, config_manager not provided, or schema_loader not provided
 
         Note:
             Backend instances are cached per tenant for isolation.
@@ -110,6 +111,9 @@ class BackendRegistry:
 
         if config_manager is None:
             raise ValueError("config_manager is required for backend initialization")
+
+        if schema_loader is None:
+            raise ValueError("schema_loader is required for backend initialization")
 
         # Cache key includes tenant_id for isolation
         if name in cls._full_backends:
@@ -133,9 +137,9 @@ class BackendRegistry:
                 f"Available backends: {available}"
             )
 
-        # Create and initialize instance (config_manager is guaranteed to be non-None)
+        # Create and initialize instance (config_manager and schema_loader are guaranteed to be non-None)
         backend_class = cls._ingestion_backends[name]
-        instance = backend_class(config_manager=config_manager)
+        instance = backend_class(config_manager=config_manager, schema_loader=schema_loader)
 
         # Build backend config - merge top-level keys with backend section
         # Start with tenant_id, then add all top-level config keys
@@ -160,7 +164,7 @@ class BackendRegistry:
 
     @classmethod
     def get_search_backend(
-        cls, name: str, tenant_id: str, config: Optional[Dict[str, Any]] = None
+        cls, name: str, tenant_id: str, config: Optional[Dict[str, Any]] = None, config_manager=None, schema_loader=None
     ) -> SearchBackend:
         """
         Get a tenant-specific search backend instance.
@@ -169,12 +173,14 @@ class BackendRegistry:
             name: Backend name
             tenant_id: Tenant identifier (REQUIRED - no default)
             config: Optional configuration for initialization
+            config_manager: ConfigManager instance for dependency injection (REQUIRED)
+            schema_loader: SchemaLoader instance for dependency injection (REQUIRED)
 
         Returns:
             Initialized SearchBackend instance
 
         Raises:
-            ValueError: If backend not found or tenant_id not provided
+            ValueError: If backend not found, tenant_id not provided, config_manager not provided, or schema_loader not provided
 
         Note:
             Backend instances are cached per tenant for isolation.
@@ -182,6 +188,12 @@ class BackendRegistry:
         """
         if not tenant_id:
             raise ValueError("tenant_id is required - no default tenant")
+
+        if config_manager is None:
+            raise ValueError("config_manager is required for backend initialization")
+
+        if schema_loader is None:
+            raise ValueError("schema_loader is required for backend initialization")
 
         # Cache key includes tenant_id for isolation
         # For full backends, use same key as ingestion to share instance
@@ -206,9 +218,9 @@ class BackendRegistry:
                 f"Available backends: {available}"
             )
 
-        # Create and initialize instance
+        # Create and initialize instance (config_manager and schema_loader are guaranteed to be non-None)
         backend_class = cls._search_backends[name]
-        instance = backend_class()
+        instance = backend_class(config_manager=config_manager, schema_loader=schema_loader)
 
         # Build backend config - merge top-level keys with backend section
         # Start with tenant_id, then add all top-level config keys

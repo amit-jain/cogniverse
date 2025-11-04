@@ -494,12 +494,21 @@ class VespaTestManager:
         try:
             # Use backend abstraction instead of direct HTTP calls
             from cogniverse_core.config.utils import get_config
+            from cogniverse_core.config.manager import ConfigManager
             from cogniverse_core.registries.backend_registry import get_backend_registry
+            from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+            from pathlib import Path
+            import tempfile
 
             registry = get_backend_registry()
 
             # Load full config with backend section
             full_config = get_config()
+
+            # Create config_manager and schema_loader for dependency injection
+            temp_dir = tempfile.mkdtemp()
+            config_manager = ConfigManager(db_path=Path(temp_dir) / "test_config.db")
+            schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
             # Get backend for test tenant with search configuration
             # Explicitly pass profile to avoid relying on dynamic loading
@@ -510,7 +519,7 @@ class VespaTestManager:
             }
 
             backend = registry.get_search_backend(
-                "vespa", "test_tenant", backend_config
+                "vespa", "test_tenant", backend_config, config_manager=config_manager, schema_loader=schema_loader
             )
 
             # Use backend's search method with query_dict format

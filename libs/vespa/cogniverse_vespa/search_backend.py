@@ -11,7 +11,6 @@ Features:
 """
 
 import logging
-import os
 import threading
 import time
 import uuid
@@ -19,7 +18,6 @@ from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -269,7 +267,9 @@ class VespaSearchBackend(SearchBackend):
         enable_connection_pool: bool = True,
         pool_config: Optional[ConnectionPoolConfig] = None,
         retry_config: Optional[RetryConfig] = None,
-        config: Optional[Dict[str, Any]] = None  # NEW: Accept config dict
+        config: Optional[Dict[str, Any]] = None,  # NEW: Accept config dict
+        config_manager = None,  # ConfigManager instance for dependency injection
+        schema_loader = None  # SchemaLoader instance for dependency injection
     ):
         """
         Initialize Vespa search backend with ALL profiles.
@@ -287,6 +287,10 @@ class VespaSearchBackend(SearchBackend):
             retry_config: Retry configuration
             config: Backend configuration dict (NEW - preferred way)
         """
+        # Store config_manager and schema_loader
+        self._config_manager = config_manager
+        self._schema_loader = schema_loader
+
         # If config provided, extract from it (new approach)
         if config is not None:
             self.backend_url = config.get("url", "http://localhost")
@@ -352,7 +356,7 @@ class VespaSearchBackend(SearchBackend):
         Called by backend registry after instantiation.
 
         Args:
-            config: Configuration with keys url, port, schema_name, profile, tenant_id
+            config: Configuration with keys url, port, schema_name, profile, tenant_id, config_manager
         """
         # Extract config values
         self.backend_url = config.get("url", "http://localhost")
@@ -361,13 +365,21 @@ class VespaSearchBackend(SearchBackend):
         tenant_id = config.get("tenant_id")
         self.profile = config.get("profile")  # Changed from "active_video_profile" to "profile"
         self.query_encoder = None
+        self._config_manager = config.get("config_manager")
 
         # Transform schema name to tenant-scoped format if tenant_id provided
         if tenant_id and base_schema_name:
+            from pathlib import Path
+
+            from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
             from cogniverse_vespa.config import calculate_config_port
             from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
             config_port = calculate_config_port(self.vespa_port)
-            tenant_manager = TenantSchemaManager(self.backend_url, config_port, self.vespa_port)
+            schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+            tenant_manager = TenantSchemaManager(
+                self.backend_url, config_port, self.vespa_port, self._config_manager, schema_loader
+            )
             self.schema_name = tenant_manager.get_tenant_schema_name(tenant_id, base_schema_name)
             logger.info(f"Transformed schema name: {base_schema_name} → {self.schema_name} (tenant: {tenant_id})")
         else:
@@ -679,10 +691,17 @@ class VespaSearchBackend(SearchBackend):
                 f"Profile '{profile_name}' cannot be used without tenant isolation."
             )
 
+
+
         from cogniverse_vespa.config import calculate_config_port
         from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
         config_port = calculate_config_port(self.vespa_port)
-        tenant_manager = TenantSchemaManager(self.backend_url, config_port, self.vespa_port)
+        # schema_loader is REQUIRED
+        if self._schema_loader is None:
+            raise ValueError("schema_loader is required for VespaSearchBackend")
+        tenant_manager = TenantSchemaManager(
+            self.backend_url, config_port, self.vespa_port, self._config_manager, self._schema_loader
+        )
         schema_name = tenant_manager.get_tenant_schema_name(self.tenant_id, base_schema_name)
         logger.info(f"[{correlation_id}] Applied tenant scoping: {base_schema_name} → {schema_name}")
 
@@ -785,6 +804,7 @@ class VespaSearchBackend(SearchBackend):
                     )
             
             # Build query based on strategy
+            # Use tenant-scoped schema_name for Vespa query (schemas are actually deployed per-tenant)
             query_params = self._build_query(
                 query_text, query_embeddings, rank_config, strategy_name,
                 schema_name, top_k, correlation_id
@@ -795,7 +815,7 @@ class VespaSearchBackend(SearchBackend):
 
             # Log the complete query for debugging
             logger.info(f"[{correlation_id}] Query parameters:")
-            logger.info(f"[{correlation_id}]   schema_name: '{schema_name}'")
+            logger.info(f"[{correlation_id}]   schema_name: '{schema_name}' (tenant-scoped)")
             logger.info(f"[{correlation_id}]   model.restrict: '{query_params.get('model.restrict')}'")
             logger.info(f"[{correlation_id}]   ranking: '{query_params.get('ranking')}'")
             logger.info(f"[{correlation_id}]   yql: '{query_params.get('yql')}'")
@@ -1294,7 +1314,7 @@ class VespaSearchBackend(SearchBackend):
 
     def _load_ranking_strategies(self) -> Dict[str, Dict[str, Any]]:
         """
-        Load ranking strategies from Vespa schema files.
+        Load ranking strategies from Vespa schema files using injected schema_loader.
 
         This is an internal method that extracts ranking profile configurations
         from schema JSON files in the schemas directory.
@@ -1306,27 +1326,17 @@ class VespaSearchBackend(SearchBackend):
             extract_all_ranking_strategies,
         )
 
-        # Determine schemas directory
-        # Try COGNIVERSE_CONFIG env var first
-        config_env = os.environ.get('COGNIVERSE_CONFIG')
-        if config_env:
-            config_file = Path(config_env)
-            if config_file.exists():
-                # For test configs like tests/system/resources/configs/system_test_config.json,
-                # schemas dir is at tests/system/resources/schemas
-                # For production configs like configs/config.json,
-                # schemas dir is at configs/schemas
-                if config_file.name != "config.json":
-                    # Test config - schemas in parent.parent/schemas
-                    schemas_dir = config_file.parent.parent / "schemas"
-                else:
-                    # Production config - schemas in parent/schemas
-                    schemas_dir = config_file.parent / "schemas"
-            else:
-                logger.warning(f"COGNIVERSE_CONFIG file not found: {config_env}, using default")
-                schemas_dir = Path("configs/schemas")
-        else:
-            schemas_dir = Path("configs/schemas")
+        # Use schema_loader to get schemas directory
+        if self._schema_loader is None:
+            raise ValueError("schema_loader is required for loading ranking strategies")
+
+        # Get schemas directory from schema_loader
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        if not isinstance(self._schema_loader, FilesystemSchemaLoader):
+            logger.error(f"Unsupported schema_loader type: {type(self._schema_loader)}")
+            return {}
+
+        schemas_dir = self._schema_loader.base_path
 
         if not schemas_dir.exists():
             logger.error(f"Schemas directory not found: {schemas_dir}")

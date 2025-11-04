@@ -61,12 +61,15 @@ def load_test_queries(num_queries=5, seed=42):
 
 def test_colpali_search(output_format="table", save_results=False, num_queries=5):
     """Test ColPali search using the new SearchService"""
-    
+    from cogniverse_core.config.manager import ConfigManager
+
     # Initialize results formatter
     formatter = TestResultsFormatter("colpali_search_service")
-    
+
     # Get config and create search service
-    config = get_config()
+    # Create temporary ConfigManager for test
+    config_manager = ConfigManager()
+    config = get_config(tenant_id="test_tenant", config_manager=config_manager)
     profile = "frame_based_colpali"
     
     print(f"Creating SearchService for profile: {profile}")
@@ -194,7 +197,9 @@ def test_float_float_search(output_format="table", save_results=False, monkeypat
     formatter = TestResultsFormatter("colpali_float_float")
 
     # Load config
-    config = get_config()
+    from cogniverse_core.config.manager import ConfigManager
+    config_manager = ConfigManager()
+    config = get_config(tenant_id="test_tenant", config_manager=config_manager)
     model_name = config.get("colpali_model", "vidore/colsmol-500m")
     vespa_url = config.get("vespa_url", "http://localhost")
     vespa_port = config.get("vespa_port", 8080)
@@ -239,9 +244,10 @@ def test_float_float_search(output_format="table", save_results=False, monkeypat
     
     # Use the search client directly
     from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
-    
+
     # Initialize search client
-    search_client = VespaVideoSearchClient(backend_url=vespa_url, backend_port=vespa_port)
+    search_client = VespaVideoSearchClient(vespa_url=vespa_url, vespa_port=vespa_port,
+                                          tenant_id="test_tenant", config_manager=config_manager)
     
     # Prepare search params - NO text query for pure visual search
     search_params = {
@@ -309,7 +315,9 @@ def test_hybrid_float_bm25(output_format="table", save_results=False, monkeypatc
     formatter = TestResultsFormatter("colpali_hybrid_float_bm25")
 
     # Load config
-    config = get_config()
+    from cogniverse_core.config.manager import ConfigManager
+    config_manager = ConfigManager()
+    config = get_config(tenant_id="test_tenant", config_manager=config_manager)
     model_name = config.get("colpali_model", "vidore/colsmol-500m")
     vespa_url = config.get("vespa_url", "http://localhost")
     vespa_port = config.get("vespa_port", 8080)
@@ -354,9 +362,10 @@ def test_hybrid_float_bm25(output_format="table", save_results=False, monkeypatc
     
     # Use the search client directly to ensure proper formatting
     from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
-    
+
     # Initialize search client
-    search_client = VespaVideoSearchClient(backend_url=vespa_url, backend_port=vespa_port)
+    search_client = VespaVideoSearchClient(vespa_url=vespa_url, vespa_port=vespa_port,
+                                          tenant_id="test_tenant", config_manager=config_manager)
     
     # Prepare search params
     search_params = {
@@ -429,8 +438,10 @@ if __name__ == "__main__":
                        help="Random seed for query selection (default: 42)")
     
     args = parser.parse_args()
-    
-    config = get_config()
+
+    from cogniverse_core.config.manager import ConfigManager
+    config_manager = ConfigManager()
+    config = get_config(tenant_id="test_tenant", config_manager=config_manager)
     output_format = config.get("test_output_format", args.format)
     
     print("Running ColPali search tests...")

@@ -32,9 +32,17 @@ def vespa_instance():
 
     Example:
         def test_schema_deployment(vespa_instance):
+            from pathlib import Path
+            from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+            from unittest.mock import MagicMock
+
+            schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
             manager = TenantSchemaManager(
                 backend_url="http://localhost",
-                backend_port=vespa_instance["http_port"]
+                backend_port=vespa_instance["config_port"],
+                http_port=vespa_instance["http_port"],
+                config_manager=MagicMock(),
+                schema_loader=schema_loader
             )
     """
     manager = VespaDockerManager()

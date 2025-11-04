@@ -4,10 +4,12 @@ Backend Factory - Creates backend clients
 """
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from cogniverse_core.interfaces.backend import IngestionBackend
 from cogniverse_core.registries.backend_registry import get_backend_registry
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
 
 class BackendFactory:
@@ -20,6 +22,7 @@ class BackendFactory:
         tenant_id: str,
         config: dict[str, Any],
         logger: logging.Logger | None = None,
+        config_manager=None,
     ) -> IngestionBackend:
         """Create a backend of the specified type using the backend registry
 
@@ -28,6 +31,7 @@ class BackendFactory:
             tenant_id: Tenant identifier (REQUIRED - no default)
             config: Full application config
             logger: Optional logger
+            config_manager: ConfigManager instance for dependency injection
 
         Returns:
             IngestionBackend: The backend that implements the ingestion interface
@@ -49,8 +53,14 @@ class BackendFactory:
 
         # Get backend from registry (singleton per tenant)
         registry = get_backend_registry()
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-        backend = registry.get_ingestion_backend(backend_type, tenant_id, config)
+        # Create config_manager if not provided
+        if config_manager is None:
+            from cogniverse_core.config.manager import ConfigManager
+            config_manager = ConfigManager()
+
+        backend = registry.get_ingestion_backend(backend_type, tenant_id, config, config_manager=config_manager, schema_loader=schema_loader)
 
         logger.warning(f"   Got backend instance for tenant {tenant_id}: {id(backend)}")
 

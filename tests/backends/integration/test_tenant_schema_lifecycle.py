@@ -6,8 +6,11 @@ Requires Docker to be running.
 """
 
 import logging
+from pathlib import Path
 
 import pytest
+from cogniverse_core.config.manager import ConfigManager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_vespa.tenant_schema_manager import (
     SchemaNotFoundException,
     TenantSchemaManager,
@@ -17,14 +20,42 @@ from cogniverse_vespa.tenant_schema_manager import (
 logger = logging.getLogger(__name__)
 
 
+@pytest.fixture(autouse=True)
+def clear_singletons():
+    """
+    Clear singleton state before each test for proper isolation.
+
+    TenantSchemaManager is a singleton that persists state across tests,
+    which causes test pollution. This fixture ensures each test starts fresh.
+    """
+    # Clear TenantSchemaManager singleton BEFORE each test
+    TenantSchemaManager._clear_instance()
+    yield
+    # Clear again after test completes
+    TenantSchemaManager._clear_instance()
+
+
+@pytest.fixture
+def temp_config_manager(tmp_path):
+    """
+    Provide a temporary ConfigManager for test isolation.
+
+    This prevents SchemaRegistry state from persisting between tests,
+    ensuring each test has a clean slate.
+    """
+    return ConfigManager(db_path=tmp_path / "test_config.db")
+
+
 @pytest.mark.integration
 class TestTenantSchemaDeployment:
     """Test actual schema deployment to Vespa"""
 
-    def test_deploy_single_tenant_schema(self, vespa_instance):
+    def test_deploy_single_tenant_schema(self, vespa_instance, temp_config_manager):
         """Test deploying a single tenant schema"""
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         manager = TenantSchemaManager(
-            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"]
+            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"],
+            config_manager=temp_config_manager, schema_loader=schema_loader
         )
         manager.clear_cache()
 
@@ -40,10 +71,12 @@ class TestTenantSchemaDeployment:
         assert stats["tenants_cached"] == 1
         assert stats["total_schemas_cached"] == 1
 
-    def test_deploy_multiple_schemas_same_tenant(self, vespa_instance):
+    def test_deploy_multiple_schemas_same_tenant(self, vespa_instance, temp_config_manager):
         """Test deploying multiple schemas for the same tenant"""
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         manager = TenantSchemaManager(
-            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"]
+            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"],
+            config_manager=temp_config_manager, schema_loader=schema_loader
         )
         manager.clear_cache()
 
@@ -57,10 +90,12 @@ class TestTenantSchemaDeployment:
         assert "video_colpali_smol500_mv_frame_acme" in tenant_schemas
         assert "video_videoprism_base_mv_chunk_30s_acme" in tenant_schemas
 
-    def test_deploy_same_schema_multiple_tenants(self, vespa_instance):
+    def test_deploy_same_schema_multiple_tenants(self, vespa_instance, temp_config_manager):
         """Test deploying the same base schema for multiple tenants"""
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         manager = TenantSchemaManager(
-            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"]
+            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"],
+            config_manager=temp_config_manager, schema_loader=schema_loader
         )
         manager.clear_cache()
 
@@ -80,10 +115,12 @@ class TestTenantSchemaDeployment:
         assert stats["tenants_cached"] == 2
         assert stats["total_schemas_cached"] == 2
 
-    def test_deploy_nonexistent_schema_fails(self, vespa_instance):
+    def test_deploy_nonexistent_schema_fails(self, vespa_instance, temp_config_manager):
         """Test that deploying nonexistent schema raises SchemaNotFoundException"""
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         manager = TenantSchemaManager(
-            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"]
+            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"],
+            config_manager=temp_config_manager, schema_loader=schema_loader
         )
         manager.clear_cache()
 
@@ -95,10 +132,12 @@ class TestTenantSchemaDeployment:
 class TestLazySchemaCreation:
     """Test lazy schema creation via ensure_tenant_schema_exists"""
 
-    def test_ensure_creates_schema_on_first_call(self, vespa_instance):
+    def test_ensure_creates_schema_on_first_call(self, vespa_instance, temp_config_manager):
         """Test that ensure_tenant_schema_exists creates schema on first call"""
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         manager = TenantSchemaManager(
-            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"]
+            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"],
+            config_manager=temp_config_manager, schema_loader=schema_loader
         )
         manager.clear_cache()
 
@@ -109,10 +148,12 @@ class TestLazySchemaCreation:
         # Verify cached
         assert "video_colpali_smol500_mv_frame_acme" in manager.list_tenant_schemas("acme")
 
-    def test_ensure_is_idempotent(self, vespa_instance):
+    def test_ensure_is_idempotent(self, vespa_instance, temp_config_manager):
         """Test that ensure_tenant_schema_exists is idempotent"""
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         manager = TenantSchemaManager(
-            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"]
+            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"],
+            config_manager=temp_config_manager, schema_loader=schema_loader
         )
         manager.clear_cache()
 
@@ -128,10 +169,12 @@ class TestLazySchemaCreation:
         tenant_schemas = manager.list_tenant_schemas("acme")
         assert len(tenant_schemas) == 1
 
-    def test_ensure_works_for_multiple_schemas(self, vespa_instance):
+    def test_ensure_works_for_multiple_schemas(self, vespa_instance, temp_config_manager):
         """Test ensure_tenant_schema_exists for multiple schemas"""
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         manager = TenantSchemaManager(
-            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"]
+            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"],
+            config_manager=temp_config_manager, schema_loader=schema_loader
         )
         manager.clear_cache()
 
@@ -147,10 +190,12 @@ class TestLazySchemaCreation:
 class TestSchemaNameGeneration:
     """Test schema name generation in real deployment"""
 
-    def test_schema_name_format(self, vespa_instance):
+    def test_schema_name_format(self, vespa_instance, temp_config_manager):
         """Test that deployed schemas have correct naming format"""
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         manager = TenantSchemaManager(
-            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"]
+            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"],
+            config_manager=temp_config_manager, schema_loader=schema_loader
         )
         manager.clear_cache()
 
@@ -162,10 +207,12 @@ class TestSchemaNameGeneration:
         expected_name = "video_colpali_smol500_mv_frame_test_tenant"
         assert expected_name in tenant_schemas
 
-    def test_underscore_in_tenant_id(self, vespa_instance):
+    def test_underscore_in_tenant_id(self, vespa_instance, temp_config_manager):
         """Test that underscores in tenant_id are preserved"""
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         manager = TenantSchemaManager(
-            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"]
+            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"],
+            config_manager=temp_config_manager, schema_loader=schema_loader
         )
         manager.clear_cache()
 
@@ -183,16 +230,29 @@ class TestSchemaValidation:
 
     def test_validate_existing_schema(self, vespa_instance, tmp_path):
         """Test validation of deployed schema"""
+        import time
+
         from cogniverse_core.config.manager import ConfigManager
         from cogniverse_core.config.unified_config import SystemConfig
 
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+        # Use a real temporary ConfigManager for proper test isolation
+        # (not a mock) so SchemaRegistry state doesn't persist between tests
+        temp_config_manager = ConfigManager(db_path=tmp_path / "manager_config.db")
+
         manager = TenantSchemaManager(
-            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"]
+            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"],
+            config_manager=temp_config_manager, schema_loader=schema_loader
         )
         manager.clear_cache()
 
-        # Deploy schema
-        manager.deploy_tenant_schema("acme", "video_colpali_smol500_mv_frame")
+        # Deploy schema with force=True to ensure actual Vespa deployment
+        # (bypasses SchemaRegistry check that might have stale data from previous tests)
+        manager.deploy_tenant_schema("acme", "video_colpali_smol500_mv_frame", force=True)
+
+        # Wait for Vespa to fully initialize the schema (increased for container resource contention)
+        time.sleep(5)
 
         # Create config_manager for validation
         config_manager = ConfigManager(db_path=tmp_path / "test_config.db")
@@ -203,8 +263,19 @@ class TestSchemaValidation:
         )
         config_manager.set_system_config(system_config)
 
-        # Validate - schema should exist after deployment
-        result = manager.validate_tenant_schema("acme", "video_colpali_smol500_mv_frame", config_manager)
+        # Validate with retry logic for robustness against timing issues
+        # Increased retries for resource contention when running full test suite
+        max_retries = 5
+        retry_delay = 2.0
+        result = False
+
+        for attempt in range(max_retries):
+            result = manager.validate_tenant_schema("acme", "video_colpali_smol500_mv_frame", config_manager)
+            if result:
+                break
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+                retry_delay = min(retry_delay * 1.5, 10.0)  # Exponential backoff capped at 10s
 
         # Schema validation now properly checks Vespa
         assert result is True  # Schema exists after deployment
@@ -214,10 +285,12 @@ class TestSchemaValidation:
 class TestTenantIsolation:
     """Test tenant isolation in schema management"""
 
-    def test_different_tenants_have_separate_schemas(self, vespa_instance):
+    def test_different_tenants_have_separate_schemas(self, vespa_instance, temp_config_manager):
         """Test that different tenants have completely isolated schemas"""
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         manager = TenantSchemaManager(
-            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"]
+            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"],
+            config_manager=temp_config_manager, schema_loader=schema_loader
         )
         manager.clear_cache()
 
@@ -241,10 +314,12 @@ class TestTenantIsolation:
         # Verify tenant B doesn't see tenant A's schemas
         assert "video_colpali_smol500_mv_frame_tenant_a" not in tenant_b_schemas
 
-    def test_cache_isolation_between_tenants(self, vespa_instance):
+    def test_cache_isolation_between_tenants(self, vespa_instance, temp_config_manager):
         """Test that cache properly isolates tenants"""
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         manager = TenantSchemaManager(
-            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"]
+            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"],
+            config_manager=temp_config_manager, schema_loader=schema_loader
         )
         manager.clear_cache()
 
@@ -267,10 +342,12 @@ class TestTenantIsolation:
 class TestSchemaDeletion:
     """Test schema deletion"""
 
-    def test_delete_tenant_schemas(self, vespa_instance):
+    def test_delete_tenant_schemas(self, vespa_instance, temp_config_manager):
         """Test deleting all schemas for a tenant"""
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         manager = TenantSchemaManager(
-            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"]
+            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"],
+            config_manager=temp_config_manager, schema_loader=schema_loader
         )
         manager.clear_cache()
 
@@ -288,10 +365,12 @@ class TestSchemaDeletion:
         assert len(deleted) == 2
         assert len(manager.list_tenant_schemas("acme")) == 0
 
-    def test_delete_doesnt_affect_other_tenants(self, vespa_instance):
+    def test_delete_doesnt_affect_other_tenants(self, vespa_instance, temp_config_manager):
         """Test that deleting one tenant's schemas doesn't affect others"""
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         manager = TenantSchemaManager(
-            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"]
+            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"],
+            config_manager=temp_config_manager, schema_loader=schema_loader
         )
         manager.clear_cache()
 
@@ -313,13 +392,16 @@ class TestSchemaDeletion:
 class TestSingletonBehavior:
     """Test singleton behavior in integration context"""
 
-    def test_singleton_across_tests(self, vespa_instance):
+    def test_singleton_across_tests(self, vespa_instance, temp_config_manager):
         """Test that singleton is maintained across test methods"""
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         manager1 = get_tenant_schema_manager(
-            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"]
+            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"],
+            config_manager=temp_config_manager, schema_loader=schema_loader
         )
         manager2 = get_tenant_schema_manager(
-            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"]
+            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"],
+            config_manager=temp_config_manager, schema_loader=schema_loader
         )
 
         assert manager1 is manager2
@@ -329,19 +411,23 @@ class TestSingletonBehavior:
 class TestErrorHandling:
     """Test error handling in integration scenarios"""
 
-    def test_invalid_tenant_id_fails(self, vespa_instance):
+    def test_invalid_tenant_id_fails(self, vespa_instance, temp_config_manager):
         """Test that invalid tenant IDs are rejected"""
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         manager = TenantSchemaManager(
-            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"]
+            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"],
+            config_manager=temp_config_manager, schema_loader=schema_loader
         )
 
         with pytest.raises(ValueError, match="only alphanumeric, underscore, and colon allowed"):
             manager.deploy_tenant_schema("tenant-with-dash", "video_colpali_smol500_mv_frame")
 
-    def test_empty_tenant_id_fails(self, vespa_instance):
+    def test_empty_tenant_id_fails(self, vespa_instance, temp_config_manager):
         """Test that empty tenant ID is rejected"""
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         manager = TenantSchemaManager(
-            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"]
+            backend_url="http://localhost", backend_port=vespa_instance["config_port"], http_port=vespa_instance["http_port"],
+            config_manager=temp_config_manager, schema_loader=schema_loader
         )
 
         with pytest.raises(ValueError, match="tenant_id cannot be empty"):

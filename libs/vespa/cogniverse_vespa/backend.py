@@ -6,10 +6,12 @@ and SearchBackend interfaces, with self-registration to the backend registry.
 """
 
 import logging
+from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from cogniverse_core.common.document import Document
 from cogniverse_core.interfaces.backend import Backend
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
 from .config import calculate_config_port
 from .ingestion_client import VespaPyClient
@@ -35,17 +37,21 @@ class VespaBackend(Backend):
     a unified interface compatible with the backend registry.
     """
 
-    def __init__(self, config_manager):
+    def __init__(self, config_manager, schema_loader=None):
         """
         Initialize Vespa backend.
 
         Args:
             config_manager: ConfigManager instance for fetching config (REQUIRED)
+            schema_loader: SchemaLoader instance for loading schemas (REQUIRED)
         """
         if config_manager is None:
             raise ValueError("config_manager is required for VespaBackend initialization")
+        if schema_loader is None:
+            raise ValueError("schema_loader is required for VespaBackend initialization")
         super().__init__("vespa")
         self._config_manager_instance = config_manager
+        self._schema_loader_instance = schema_loader
         self._vespa_search_backend: Optional[VespaSearchBackend] = None
         # Store multiple ingestion clients, one per schema
         self._vespa_ingestion_clients: Dict[str, VespaPyClient] = {}
@@ -129,13 +135,17 @@ class VespaBackend(Backend):
 
         # Get schema_templates_dir from config if provided (for testing)
         schema_templates_dir = merged_config.get("schema_templates_dir")
+        if schema_templates_dir is not None:
+            schema_loader = FilesystemSchemaLoader(Path(schema_templates_dir))
+        else:
+            schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
         self.tenant_schema_manager = TenantSchemaManager(
             backend_url=url,
             backend_port=config_port,
             http_port=port,
             config_manager=self._config_manager_instance,
-            schema_templates_dir=schema_templates_dir
+            schema_loader=schema_loader
         )
 
         # Backend is initialized with all profiles available
@@ -462,6 +472,8 @@ class VespaBackend(Backend):
             # VespaSearchBackend will handle profile/strategy resolution per query
             self._vespa_search_backend = VespaSearchBackend(
                 config=self.config,  # Pass merged config (includes url, port, profiles, default_profiles)
+                config_manager=self._config_manager_instance,
+                schema_loader=self._schema_loader_instance
             )
             self._initialized_as_search = True
             logger.info("VespaSearchBackend initialized with all profiles")

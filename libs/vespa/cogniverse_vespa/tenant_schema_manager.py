@@ -40,9 +40,12 @@ Example:
 import json
 import logging
 import threading
-from pathlib import Path
 from typing import Dict, List, Optional, Set
 
+from cogniverse_core.interfaces.schema_loader import SchemaLoader
+from cogniverse_core.interfaces.schema_loader import (
+    SchemaNotFoundException as SchemaLoaderNotFoundException,
+)
 from vespa.package import ApplicationPackage, Schema
 
 from cogniverse_vespa.json_schema_parser import JsonSchemaParser
@@ -86,7 +89,7 @@ class TenantSchemaManager:
         backend_port: int,
         http_port: int,
         config_manager,
-        schema_templates_dir: Optional[Path] = None,
+        schema_loader: SchemaLoader,
     ):
         """
         Singleton pattern - returns same instance for all calls.
@@ -96,7 +99,7 @@ class TenantSchemaManager:
             backend_port: Backend config server port for deployment (used only on first instantiation)
             http_port: Backend HTTP port for queries/status (used only on first instantiation)
             config_manager: ConfigManager instance (REQUIRED, used only on first instantiation)
-            schema_templates_dir: Optional schema templates directory (used only on first instantiation)
+            schema_loader: SchemaLoader instance (REQUIRED, used only on first instantiation)
         """
         if cls._instance is None:
             with cls._lock:
@@ -115,7 +118,7 @@ class TenantSchemaManager:
         backend_port: int,
         http_port: int,
         config_manager,
-        schema_templates_dir: Optional[Path] = None,
+        schema_loader: SchemaLoader,
     ):
         """
         Initialize tenant schema manager.
@@ -125,7 +128,10 @@ class TenantSchemaManager:
             backend_port: Backend config server port for deployment
             http_port: Backend HTTP port for queries/status
             config_manager: ConfigManager instance (REQUIRED)
-            schema_templates_dir: Optional directory for schema templates (defaults to configs/schemas)
+            schema_loader: SchemaLoader instance (REQUIRED)
+
+        Raises:
+            ValueError: If config_manager or schema_loader is None
         """
         if self._initialized:
             return
@@ -133,10 +139,14 @@ class TenantSchemaManager:
         if config_manager is None:
             raise ValueError("config_manager is required for TenantSchemaManager initialization")
 
+        if schema_loader is None:
+            raise ValueError("schema_loader is required for TenantSchemaManager initialization")
+
         self.backend_url = backend_url
         self.backend_port = backend_port
         self.http_port = http_port
         self._config_manager = config_manager
+        self.schema_loader = schema_loader
 
         # Underlying schema manager for actual deployment
         self.schema_manager = VespaSchemaManager(
@@ -147,13 +157,6 @@ class TenantSchemaManager:
 
         # JSON schema parser for loading templates
         self.parser = JsonSchemaParser()
-
-        # Base schema templates directory
-        self.schema_templates_dir = (
-            schema_templates_dir
-            if schema_templates_dir is not None
-            else Path("configs/schemas")
-        )
 
         # Cache of deployed tenant schemas (tenant_id -> Set[base_schema_name])
         self._deployed_schemas: Dict[str, Set[str]] = {}
@@ -255,7 +258,7 @@ class TenantSchemaManager:
             self.deploy_tenant_schema(tenant_id, base_schema_name)
             return True
 
-    def deploy_tenant_schema(self, tenant_id: str, base_schema_name: str) -> None:
+    def deploy_tenant_schema(self, tenant_id: str, base_schema_name: str, force: bool = False) -> None:
         """
         Deploy a tenant-specific schema from base schema template.
 
@@ -264,7 +267,7 @@ class TenantSchemaManager:
         deployment, ensuring Vespa doesn't remove schemas that aren't in the package.
 
         Steps:
-        1. Check if schema already in registry - skip if so
+        1. Check if schema already in registry - skip if so (unless force=True)
         2. Load base schema JSON from configs/schemas/
         3. Transform schema: rename to include tenant suffix
         4. Get ALL existing schemas from registry
@@ -274,6 +277,7 @@ class TenantSchemaManager:
         Args:
             tenant_id: Tenant identifier
             base_schema_name: Base schema name
+            force: If True, deploy even if schema exists in registry (for testing/validation)
 
         Raises:
             SchemaNotFoundException: If base schema template not found
@@ -281,12 +285,13 @@ class TenantSchemaManager:
 
         Example:
             >>> manager.deploy_tenant_schema("acme", "video_colpali_smol500_mv_frame")
+            >>> manager.deploy_tenant_schema("acme", "video_colpali_smol500_mv_frame", force=True)  # Force redeploy
         """
         self._validate_tenant_id(tenant_id)
         self._validate_schema_name(base_schema_name)
 
-        # Check if schema already deployed in registry
-        if self.schema_registry.schema_exists(tenant_id, base_schema_name):
+        # Check if schema already deployed in registry (skip check if force=True)
+        if not force and self.schema_registry.schema_exists(tenant_id, base_schema_name):
             logger.info(
                 f"Schema '{base_schema_name}' already deployed for tenant '{tenant_id}' "
                 f"(found in schema registry). Skipping redeployment."
@@ -296,7 +301,11 @@ class TenantSchemaManager:
             return
 
         # Load base schema template
-        base_schema_json = self._load_base_schema_json(base_schema_name)
+        try:
+            base_schema_json = self.schema_loader.load_schema(base_schema_name)
+        except SchemaLoaderNotFoundException as e:
+            # Re-raise as our own exception type for backward compatibility
+            raise SchemaNotFoundException(str(e)) from e
 
         # Transform for tenant
         tenant_schema_json = self._transform_schema_for_tenant(
@@ -503,14 +512,14 @@ class TenantSchemaManager:
             tenant_schema_name = self.get_tenant_schema_name(tenant_id, base_schema_name)
 
             # Get search backend for this tenant
-            # Backend config with tenant-scoped schema
+            # Profile should contain base schema name (tenant scoping happens automatically)
             backend_config = {
                 "url": self.backend_url,
                 "port": self.http_port,
                 "tenant_id": tenant_id,
                 "profiles": {
                     base_schema_name: {
-                        "schema_name": tenant_schema_name,  # Use tenant-scoped name
+                        "schema_name": base_schema_name,  # Use base name for ranking strategy lookup
                         "type": "frame_based"
                     }
                 }
@@ -520,15 +529,19 @@ class TenantSchemaManager:
                 "vespa",
                 tenant_id=tenant_id,
                 config=backend_config,
-                config_manager=config_manager
+                config_manager=config_manager,
+                schema_loader=self.schema_loader
             )
 
             # Try a simple query - if schema exists, this will succeed (even with 0 results)
-            result = backend.search(
-                query="test",
-                profile_name=base_schema_name,
-                limit=0
-            )
+            query_dict = {
+                "query": "test",
+                "type": "video",
+                "profile": base_schema_name,
+                "strategy": "default",  # Use default strategy for validation
+                "top_k": 0
+            }
+            backend.search(query_dict)
 
             logger.debug(f"Schema {tenant_schema_name} validated successfully for tenant {tenant_id}")
             return True
@@ -549,30 +562,7 @@ class TenantSchemaManager:
             >>> print(schemas)
             ['video_colpali_smol500_mv_frame', 'video_videoprism_base_mv_chunk_30s', ...]
         """
-        if not self.schema_templates_dir.exists():
-            return []
-
-        schema_files = self.schema_templates_dir.glob("*_schema.json")
-        return [f.stem.replace("_schema", "") for f in schema_files]
-
-    def _load_base_schema_json(self, base_schema_name: str) -> Dict:
-        """Load base schema JSON from configs/schemas/"""
-        schema_file = self.schema_templates_dir / f"{base_schema_name}_schema.json"
-
-        if not schema_file.exists():
-            available = self.list_available_base_schemas()
-            raise SchemaNotFoundException(
-                f"Base schema '{base_schema_name}' not found. "
-                f"Available schemas: {available}"
-            )
-
-        try:
-            with open(schema_file, "r") as f:
-                return json.load(f)
-        except Exception as e:
-            raise SchemaNotFoundException(
-                f"Failed to load base schema {base_schema_name}: {e}"
-            ) from e
+        return self.schema_loader.list_available_schemas()
 
     def _transform_schema_for_tenant(
         self, base_schema_json: Dict, tenant_id: str, base_schema_name: str
@@ -783,7 +773,7 @@ def get_tenant_schema_manager(
     backend_port: int,
     http_port: int,
     config_manager,
-    schema_templates_dir: Optional[Path] = None,
+    schema_loader: SchemaLoader,
 ) -> TenantSchemaManager:
     """
     Get tenant schema manager instance for specific backend endpoint.
@@ -796,10 +786,10 @@ def get_tenant_schema_manager(
         backend_port: Backend config server port for deployment
         http_port: Backend HTTP port for queries/status
         config_manager: ConfigManager instance (REQUIRED)
-        schema_templates_dir: Optional directory for schema templates (defaults to configs/schemas)
+        schema_loader: SchemaLoader instance (REQUIRED)
 
     Returns:
         TenantSchemaManager singleton instance for this endpoint
     """
     # Simply instantiate - __new__() handles per-endpoint singleton logic
-    return TenantSchemaManager(backend_url, backend_port, http_port, config_manager, schema_templates_dir)
+    return TenantSchemaManager(backend_url, backend_port, http_port, config_manager, schema_loader)

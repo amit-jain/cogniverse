@@ -34,8 +34,9 @@ from cogniverse_core.registries.backend_registry import (
 class MockIngestionBackend(IngestionBackend):
     """Mock ingestion backend for testing."""
 
-    def __init__(self, config_manager=None):
+    def __init__(self, config_manager=None, schema_loader=None):
         self.config_manager = config_manager
+        self.schema_loader = schema_loader
 
     def initialize(self, config: Dict[str, Any]) -> None:
         self.config = config
@@ -69,6 +70,10 @@ class MockIngestionBackend(IngestionBackend):
 
 class MockSearchBackend(SearchBackend):
     """Mock search backend for testing."""
+
+    def __init__(self, config_manager=None, schema_loader=None):
+        self.config_manager = config_manager
+        self.schema_loader = schema_loader
 
     def initialize(self, config: Dict[str, Any]) -> None:
         self.config = config
@@ -115,9 +120,10 @@ class MockSearchBackend(SearchBackend):
 class MockFullBackend(Backend):
     """Mock full backend for testing."""
 
-    def __init__(self, config_manager=None):
+    def __init__(self, config_manager=None, schema_loader=None):
         super().__init__("mock_full")
         self.config_manager = config_manager
+        self.schema_loader = schema_loader
         self.documents = {}
     
     def _initialize_backend(self, config: Dict[str, Any]) -> None:
@@ -236,10 +242,13 @@ class TestBackendRegistry(unittest.TestCase):
         # Get fresh registry and clear any existing registrations
         self.registry = BackendRegistry()
         # Create config_manager for tests
-        from cogniverse_core.config.manager import ConfigManager
         import tempfile
+
+        from cogniverse_core.config.manager import ConfigManager
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         self.temp_dir = tempfile.mkdtemp()
         self.config_manager = ConfigManager(db_path=Path(self.temp_dir) / "test_config.db")
+        self.schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         # Save current registry state to restore in tearDown
         self._saved_ingestion = BackendRegistry._ingestion_backends.copy()
         self._saved_search = BackendRegistry._search_backends.copy()
@@ -296,7 +305,7 @@ class TestBackendRegistry(unittest.TestCase):
         self.registry.register_ingestion("test_ingestion", MockIngestionBackend)
 
         config = {"test_config": "value"}
-        backend = self.registry.get_ingestion_backend("test_ingestion", "test_tenant", config, config_manager=self.config_manager)
+        backend = self.registry.get_ingestion_backend("test_ingestion", "test_tenant", config, config_manager=self.config_manager, schema_loader=self.schema_loader)
 
         self.assertIsInstance(backend, MockIngestionBackend)
         # Config should have tenant_id injected by registry
@@ -308,7 +317,7 @@ class TestBackendRegistry(unittest.TestCase):
         self.registry.register_search("test_search", MockSearchBackend)
 
         config = {"search_config": "value"}
-        backend = self.registry.get_search_backend("test_search", "test_tenant", config)
+        backend = self.registry.get_search_backend("test_search", "test_tenant", config, config_manager=self.config_manager, schema_loader=self.schema_loader)
 
         self.assertIsInstance(backend, MockSearchBackend)
         # Config should have tenant_id injected by registry
@@ -320,8 +329,8 @@ class TestBackendRegistry(unittest.TestCase):
         self.registry.register_backend("test_full", MockFullBackend)
 
         # Get instance twice for same tenant
-        backend1 = self.registry.get_search_backend("test_full", "test_tenant", {"config": 1})
-        backend2 = self.registry.get_search_backend("test_full", "test_tenant", {"config": 2})
+        backend1 = self.registry.get_search_backend("test_full", "test_tenant", {"config": 1}, config_manager=self.config_manager, schema_loader=self.schema_loader)
+        backend2 = self.registry.get_search_backend("test_full", "test_tenant", {"config": 2}, config_manager=self.config_manager, schema_loader=self.schema_loader)
 
         # Should be the same instance (cached)
         self.assertIs(backend1, backend2)
@@ -330,9 +339,9 @@ class TestBackendRegistry(unittest.TestCase):
         """Test clearing cached instances."""
         self.registry.register_backend("test_full", MockFullBackend)
 
-        backend1 = self.registry.get_search_backend("test_full", "test_tenant", {})
+        backend1 = self.registry.get_search_backend("test_full", "test_tenant", {}, config_manager=self.config_manager, schema_loader=self.schema_loader)
         self.registry.clear_instances()
-        backend2 = self.registry.get_search_backend("test_full", "test_tenant", {})
+        backend2 = self.registry.get_search_backend("test_full", "test_tenant", {}, config_manager=self.config_manager, schema_loader=self.schema_loader)
 
         # Should be different instances after clearing
         self.assertIsNot(backend1, backend2)
@@ -340,7 +349,7 @@ class TestBackendRegistry(unittest.TestCase):
     def test_unregistered_backend_error(self):
         """Test that getting unregistered backend raises error."""
         with self.assertRaises(ValueError) as context:
-            self.registry.get_search_backend("nonexistent", "test_tenant", {})
+            self.registry.get_search_backend("nonexistent", "test_tenant", {}, config_manager=self.config_manager, schema_loader=self.schema_loader)
 
         self.assertIn("nonexistent", str(context.exception))
         self.assertIn("not found", str(context.exception))
@@ -350,7 +359,7 @@ class TestBackendRegistry(unittest.TestCase):
         self.registry.register_backend("test_full", MockFullBackend)
 
         # Get backend instance - note: same instance for ingestion and search due to caching
-        backend = self.registry.get_ingestion_backend("test_full", "test_tenant", {}, config_manager=self.config_manager)
+        backend = self.registry.get_ingestion_backend("test_full", "test_tenant", {}, config_manager=self.config_manager, schema_loader=self.schema_loader)
 
         # Test ingestion
         doc = Document(
@@ -365,7 +374,7 @@ class TestBackendRegistry(unittest.TestCase):
 
         # Get the SAME backend instance for search (due to caching)
         # This is important - it's the same object that has the ingested documents
-        search_backend = self.registry.get_search_backend("test_full", "test_tenant", {})
+        search_backend = self.registry.get_search_backend("test_full", "test_tenant", {}, config_manager=self.config_manager, schema_loader=self.schema_loader)
 
         # Verify it's the same instance
         self.assertIs(backend, search_backend)
@@ -426,7 +435,7 @@ class TestBackendRegistry(unittest.TestCase):
 
             # Should not raise error (but may fail to connect)
             try:
-                backend = registry.get_search_backend("vespa", "test_tenant", config)
+                backend = registry.get_search_backend("vespa", "test_tenant", config, config_manager=self.config_manager, schema_loader=self.schema_loader)
                 self.assertIsNotNone(backend)
             except Exception as e:
                 # OK if it fails to connect, just checking registration
@@ -442,10 +451,13 @@ class TestBackendIntegration(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        from cogniverse_core.config.manager import ConfigManager
         import tempfile
+
+        from cogniverse_core.config.manager import ConfigManager
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         self.temp_dir = tempfile.mkdtemp()
         self.config_manager = ConfigManager(db_path=Path(self.temp_dir) / "test_config.db")
+        self.schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
     def tearDown(self):
         """Clean up test fixtures."""
@@ -462,7 +474,7 @@ class TestBackendIntegration(unittest.TestCase):
         register_backend("workflow_test", MockFullBackend)
 
         # Get backend instance
-        backend = registry.get_ingestion_backend("workflow_test", "test_tenant", {"test": True}, config_manager=self.config_manager)
+        backend = registry.get_ingestion_backend("workflow_test", "test_tenant", {"test": True}, config_manager=self.config_manager, schema_loader=self.schema_loader)
 
         # Ingest documents
         docs = [
@@ -474,7 +486,7 @@ class TestBackendIntegration(unittest.TestCase):
         self.assertEqual(result["success_count"], 5)
 
         # Get search backend - should be same instance due to caching
-        search_backend = registry.get_search_backend("workflow_test", "test_tenant", {})
+        search_backend = registry.get_search_backend("workflow_test", "test_tenant", {}, config_manager=self.config_manager, schema_loader=self.schema_loader)
 
         # Verify it's the same instance (has the ingested documents)
         self.assertIs(backend, search_backend)
