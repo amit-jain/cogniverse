@@ -9,31 +9,33 @@ import logging
 from pathlib import Path
 
 import pytest
-from cogniverse_core.config.manager import ConfigManager
-from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_core.backends.tenant_schema_manager import (
     SchemaDeploymentException,
-    SchemaNotFoundException,
     TenantSchemaManager,
 )
+from cogniverse_core.config.manager import ConfigManager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
 logger = logging.getLogger(__name__)
 
 
-@pytest.fixture
-def temp_config_manager(tmp_path):
+@pytest.fixture(scope="module")
+def temp_config_manager(tmp_path_factory):
     """
     Provide a temporary ConfigManager for test isolation.
 
-    This prevents SchemaRegistry state from persisting between tests,
-    ensuring each test has a clean slate.
+    Scope is "module" because Vespa state persists across test classes in this module
+    (even though vespa_instance fixture is class-scoped, the actual container state persists).
+    This ensures SchemaRegistry tracks all schemas deployed by any test class, preventing
+    Vespa schema-removal errors.
     """
+    tmp_path = tmp_path_factory.mktemp("config")
     return ConfigManager(db_path=tmp_path / "test_config.db")
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def schema_loader():
-    """Provide FilesystemSchemaLoader for tests."""
+    """Provide FilesystemSchemaLoader for tests (module-scoped for reuse)."""
     return FilesystemSchemaLoader(Path("configs/schemas"))
 
 

@@ -9,8 +9,6 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from cogniverse_core.config.manager import ConfigManager
-
 logger = logging.getLogger(__name__)
 
 
@@ -37,7 +35,8 @@ class SchemaRegistry:
     would inadvertently delete all existing schemas from Vespa.
 
     Usage:
-        registry = get_schema_registry()
+        config_manager = ConfigManager()
+        registry = SchemaRegistry(config_manager)
 
         # Register a newly deployed schema
         registry.register_schema(
@@ -55,26 +54,27 @@ class SchemaRegistry:
         exists = registry.schema_exists("test_tenant", "video_colpali_smol500_mv_frame")
     """
 
-    _instance = None
-    _lock = None
+    def __init__(self, config_manager, backend=None, schema_loader=None):
+        """
+        Initialize SchemaRegistry with in-memory schema tracking.
 
-    def __new__(cls):
-        """Singleton pattern with thread safety"""
-        if cls._instance is None:
-            import threading
+        Args:
+            config_manager: ConfigManager instance (REQUIRED)
+            backend: Backend instance for schema deployment (optional)
+            schema_loader: SchemaLoader instance for loading schema definitions (optional)
 
-            cls._lock = threading.Lock()
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False
-        return cls._instance
+        Note:
+            backend and schema_loader are optional and can be configured later
+            using set_deployment_dependencies(). If not provided, deploy_schema()
+            will raise an error.
+        """
+        if config_manager is None:
+            raise ValueError("config_manager is required")
 
-    def __init__(self):
-        """Initialize SchemaRegistry with in-memory schema tracking"""
-        if self._initialized:
-            return
-        self._config_manager = ConfigManager()
+        self._config_manager = config_manager
+        self._backend = backend
+        self._schema_loader = schema_loader
+
         # In-memory registry of all deployed schemas
         # Key: (tenant_id, base_schema_name), Value: SchemaInfo
         self._schemas: Dict[tuple, SchemaInfo] = {}
@@ -82,8 +82,23 @@ class SchemaRegistry:
         # Load all previously deployed schemas from persistent storage
         self._load_schemas_from_storage()
 
-        self._initialized = True
         logger.info(f"SchemaRegistry initialized with {len(self._schemas)} schemas loaded")
+
+    def set_deployment_dependencies(self, backend, schema_loader):
+        """
+        Set deployment dependencies after initialization.
+
+        This allows configuring backend and schema_loader after the singleton
+        has been created, which is useful when these dependencies have circular
+        references or are created later.
+
+        Args:
+            backend: Backend instance for schema deployment
+            schema_loader: SchemaLoader instance for loading schema definitions
+        """
+        self._backend = backend
+        self._schema_loader = schema_loader
+        logger.info("SchemaRegistry deployment dependencies configured")
 
     def _load_schemas_from_storage(self):
         """Load all schemas from ConfigManager into in-memory registry on startup"""
@@ -160,6 +175,111 @@ class SchemaRegistry:
             deployment_time=datetime.now(timezone.utc).isoformat(),
         )
 
+    def deploy_schema(
+        self,
+        tenant_id: str,
+        base_schema_name: str,
+        config: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        Deploy schema for a tenant - MAIN ORCHESTRATION METHOD.
+
+        This is the primary entry point for schema deployment. It:
+        1. Checks if schema already deployed
+        2. Loads base schema definition
+        3. Transforms to tenant-specific schema
+        4. Collects ALL existing schemas (cross-tenant)
+        5. Calls backend.deploy_schemas() with complete list
+        6. Registers the newly deployed schema
+
+        Args:
+            tenant_id: Tenant identifier
+            base_schema_name: Base schema name (e.g., 'video_colpali_smol500_mv_frame')
+            config: Optional schema configuration
+
+        Returns:
+            Tenant-specific schema name (e.g., 'video_colpali_smol500_mv_frame_acme')
+
+        Raises:
+            ValueError: If backend or schema_loader not configured
+            Exception: If schema deployment fails
+
+        Example:
+            registry = SchemaRegistry(backend=vespa_backend, schema_loader=loader)
+            schema_name = registry.deploy_schema(
+                tenant_id="acme",
+                base_schema_name="video_colpali_smol500_mv_frame"
+            )
+            # Returns: "video_colpali_smol500_mv_frame_acme"
+        """
+        if not self._backend:
+            raise ValueError("Backend required for schema deployment. Initialize SchemaRegistry with backend.")
+        if not self._schema_loader:
+            raise ValueError("SchemaLoader required for schema deployment. Initialize SchemaRegistry with schema_loader.")
+
+        # Generate tenant-specific schema name
+        tenant_schema_name = f"{base_schema_name}_{tenant_id}"
+
+        # Check if already deployed
+        if self.schema_exists(tenant_id, base_schema_name):
+            logger.debug(f"Schema '{tenant_schema_name}' already deployed for tenant '{tenant_id}'")
+            return tenant_schema_name
+
+        # Load base schema from schema loader
+        try:
+            base_schema_json = self._schema_loader.load_schema(base_schema_name)
+        except Exception as e:
+            raise Exception(f"Failed to load base schema '{base_schema_name}': {e}")
+
+        # Transform schema name to tenant-specific
+        base_schema_json['name'] = tenant_schema_name
+
+        # Collect ALL existing schemas (including from other tenants)
+        # This is critical for backends like Vespa that require all schemas in each deployment
+        import json
+
+        schema_definitions = []
+
+        # Add all existing schemas
+        existing_schemas = self._get_all_schemas()  # Private method
+        for schema_info in existing_schemas:
+            schema_definitions.append({
+                "name": schema_info.full_schema_name,
+                "definition": schema_info.schema_definition,
+                "tenant_id": schema_info.tenant_id,
+                "base_schema_name": schema_info.base_schema_name,
+            })
+
+        # Add the new schema
+        schema_definitions.append({
+            "name": tenant_schema_name,
+            "definition": json.dumps(base_schema_json),
+            "tenant_id": tenant_id,
+            "base_schema_name": base_schema_name,
+        })
+
+        logger.info(
+            f"Deploying {len(schema_definitions)} schemas "
+            f"({len(existing_schemas)} existing + 1 new)"
+        )
+
+        # Deploy all schemas via backend
+        success = self._backend.deploy_schemas(schema_definitions)
+        if not success:
+            raise Exception(f"Backend failed to deploy schema '{tenant_schema_name}'")
+
+        # Register the new schema
+        self.register_schema(
+            tenant_id=tenant_id,
+            base_schema_name=base_schema_name,
+            full_schema_name=tenant_schema_name,
+            schema_definition=json.dumps(base_schema_json),
+            config=config,
+        )
+
+        logger.info(f"Successfully deployed and registered schema '{tenant_schema_name}' for tenant '{tenant_id}'")
+        return tenant_schema_name
+
     def get_tenant_schemas(self, tenant_id: str) -> List[SchemaInfo]:
         """
         Get all schemas deployed for a specific tenant.
@@ -199,15 +319,20 @@ class SchemaRegistry:
             if tid == tenant_id
         ]
 
-    def get_all_schemas(self) -> List[SchemaInfo]:
+    def _get_all_schemas(self) -> List[SchemaInfo]:
         """
-        Get all deployed schemas across all tenants.
+        Get all deployed schemas across all tenants (PRIVATE - internal use only).
 
-        CRITICAL for multi-tenant deployments: Some backends require all schemas
-        to be redeployed together. This method provides cross-tenant schema access.
+        Used internally by deploy_schema() to collect existing schemas before deployment.
+        This method provides cross-tenant schema access for backends that require
+        all schemas to be redeployed together.
 
         Returns:
             List of all SchemaInfo objects across all tenants
+
+        Note:
+            This is a private method. External code should NOT call this directly.
+            Use deploy_schema() for orchestrated deployment instead.
         """
         return list(self._schemas.values())
 
@@ -279,26 +404,3 @@ class SchemaRegistry:
         schemas = self.get_tenant_schemas(tenant_id)
         for schema in schemas:
             self.unregister_schema(tenant_id, schema.base_schema_name)
-
-
-# Global accessor function
-_registry_instance: Optional[SchemaRegistry] = None
-
-
-def get_schema_registry() -> SchemaRegistry:
-    """
-    Get or create the global SchemaRegistry instance.
-
-    Returns:
-        Singleton SchemaRegistry instance
-
-    Example:
-        from cogniverse_core.registries.schema_registry import get_schema_registry
-
-        registry = get_schema_registry()
-        registry.register_schema(...)
-    """
-    global _registry_instance
-    if _registry_instance is None:
-        _registry_instance = SchemaRegistry()
-    return _registry_instance

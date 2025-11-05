@@ -137,9 +137,14 @@ class VespaBackend(Backend):
             config_port = calculate_config_port(port)
             logger.debug(f"Calculated config port {config_port} from data port {port}")
 
-        # Import schema_registry for tracking tenant schemas
-        from cogniverse_core.registries.schema_registry import get_schema_registry
-        schema_registry = get_schema_registry()
+        # Create schema_registry for tracking tenant schemas
+        # SchemaRegistry requires ConfigManager via dependency injection
+        from cogniverse_core.registries.schema_registry import SchemaRegistry
+        schema_registry = SchemaRegistry(
+            config_manager=self._config_manager_instance,
+            backend=self,
+            schema_loader=self._schema_loader_instance
+        )
 
         self.schema_manager = VespaSchemaManager(
             backend_endpoint=url,
@@ -585,6 +590,74 @@ class VespaBackend(Backend):
             logger.error(
                 f"Failed to deploy schema '{schema_name}' for tenant '{effective_tenant_id}': {e}"
             )
+            return False
+
+    def deploy_schemas(
+        self, schema_definitions: List[Dict[str, Any]]
+    ) -> bool:
+        """
+        Deploy multiple schemas together.
+
+        This is the low-level deployment interface called by SchemaRegistry.
+        Deploys ALL provided schemas in a single Vespa ApplicationPackage.
+
+        Args:
+            schema_definitions: List of schema definition dicts, each containing:
+                - name: Full schema name (e.g., "video_colpali_acme")
+                - definition: Schema JSON definition
+                - tenant_id: Tenant identifier
+                - base_schema_name: Original base schema name
+
+        Returns:
+            True if successful, False otherwise
+
+        Raises:
+            RuntimeError: If backend not initialized
+            Exception: If deployment fails
+        """
+        if not self.schema_manager:
+            raise RuntimeError("Backend not initialized. Call initialize() first.")
+
+        try:
+            import json
+
+            from vespa.package import ApplicationPackage
+
+            from cogniverse_vespa.json_schema_parser import JsonSchemaParser
+
+            parser = JsonSchemaParser()
+            schemas_to_deploy = []
+
+            # Parse all schema definitions into pyvespa Schema objects
+            for schema_def in schema_definitions:
+                schema_name = schema_def["name"]
+                schema_json = schema_def["definition"]
+
+                try:
+                    # If definition is string, parse it
+                    if isinstance(schema_json, str):
+                        schema_json = json.loads(schema_json)
+
+                    # Parse JSON to pyvespa Schema
+                    schema_obj = parser.parse_schema(schema_json)
+                    schemas_to_deploy.append(schema_obj)
+                    logger.debug(f"Parsed schema for deployment: {schema_name}")
+                except Exception as e:
+                    logger.error(f"Failed to parse schema {schema_name}: {e}")
+                    raise
+
+            # Deploy all schemas together in one ApplicationPackage
+            logger.info(f"Deploying {len(schemas_to_deploy)} schemas to Vespa")
+            app_package = ApplicationPackage(name="videosearch", schema=schemas_to_deploy)
+
+            # Use VespaSchemaManager's _deploy_package method
+            self.schema_manager._deploy_package(app_package)
+
+            logger.info(f"Successfully deployed {len(schemas_to_deploy)} schemas")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to deploy schemas: {e}")
             return False
 
     def delete_schema(

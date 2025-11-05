@@ -6,22 +6,25 @@ Provides Vespa Docker instance fixture for testing schema lifecycle.
 
 import logging
 
-import pytest
-
 # Import vespa backend to trigger self-registration
 import cogniverse_vespa  # noqa: F401
+import pytest
 
 from tests.utils.vespa_docker import VespaDockerManager
 
 logger = logging.getLogger(__name__)
 
 
-@pytest.fixture(scope="class")
+@pytest.fixture(scope="module")
 def vespa_instance():
     """
     Start isolated Vespa Docker instance for backend integration tests.
 
-    Uses unique ports per test class to avoid conflicts with:
+    Module-scoped to match temp_config_manager and schema_loader fixtures.
+    This ensures SchemaRegistry state stays consistent with Vespa state
+    across all test classes in this module.
+
+    Uses unique ports per test module to avoid conflicts with:
     - Main Vespa (8080)
     - System tests (different module, different ports)
     - Other test modules (deterministic hash-based port assignment)

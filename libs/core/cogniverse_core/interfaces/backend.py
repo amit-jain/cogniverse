@@ -319,6 +319,51 @@ class Backend(IngestionBackend, SearchBackend):
         pass
 
     @abstractmethod
+    def deploy_schemas(
+        self, schema_definitions: List[Dict[str, Any]]
+    ) -> bool:
+        """
+        Deploy multiple schemas together (required for multi-tenant backends).
+
+        This is the low-level deployment interface called by SchemaRegistry.
+        For backends like Vespa that require ALL schemas to be deployed together,
+        this method receives the complete list of schemas to deploy.
+
+        Args:
+            schema_definitions: List of schema definition dicts, each containing:
+                - name: Full schema name (e.g., "video_colpali_acme")
+                - definition: Schema structure (fields, rank profiles, etc.)
+                - tenant_id: Tenant identifier
+                - base_schema_name: Original base schema name
+
+        Returns:
+            True if successful, False otherwise
+
+        Note:
+            This is called by SchemaRegistry, which collects all existing schemas
+            and adds the new one before calling this method. This ensures that
+            backends requiring full schema redeployment (like Vespa) work correctly.
+
+        Example:
+            schemas = [
+                {
+                    "name": "video_colpali_tenant_a",
+                    "definition": {...},
+                    "tenant_id": "tenant_a",
+                    "base_schema_name": "video_colpali"
+                },
+                {
+                    "name": "video_colpali_tenant_b",
+                    "definition": {...},
+                    "tenant_id": "tenant_b",
+                    "base_schema_name": "video_colpali"
+                }
+            ]
+            backend.deploy_schemas(schemas)
+        """
+        pass
+
+    @abstractmethod
     def delete_schema(
         self, schema_name: str, tenant_id: Optional[str] = None
     ) -> List[str]:
