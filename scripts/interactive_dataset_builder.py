@@ -17,15 +17,33 @@ import click
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.app.search.service import SearchService
+from cogniverse_agents.search.service import SearchService
+from cogniverse_core.config.manager import ConfigManager
+from cogniverse_core.config.utils import get_config
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from src.evaluation.data.datasets import DatasetManager
 
 
 class InteractiveDatasetBuilder:
     """Interactive tool for building evaluation datasets."""
-    
+
     def __init__(self, profile: str = "frame_based_colpali", strategy: str = "binary_binary"):
-        self.search_service = SearchService(profile=profile, strategy=strategy)
+        # Create dependencies for dependency injection
+        config_manager = ConfigManager()
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+        # Get config for tenant
+        tenant_id = "default"
+        config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+
+        # Initialize search service with all required parameters
+        self.search_service = SearchService(
+            config=config,
+            profile=profile,
+            tenant_id=tenant_id,
+            config_manager=config_manager,
+            schema_loader=schema_loader
+        )
         self.dataset_queries = []
         self.profile = profile
         self.strategy = strategy
@@ -74,7 +92,7 @@ class InteractiveDatasetBuilder:
                     break
                 else:
                     click.echo("Invalid selection. Please enter valid numbers.")
-            except:
+            except (ValueError, IndexError):
                 click.echo("Invalid format. Please enter comma-separated numbers or 'none'.")
         
         # Extract selected videos

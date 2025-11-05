@@ -158,7 +158,9 @@ class DSPyGLiNEROptimizer:
     """
 
     def __init__(self):
-        self.config = get_config()
+        from cogniverse_core.config.manager import ConfigManager
+        config_manager = ConfigManager()
+        self.config = get_config(tenant_id="default", config_manager=config_manager)
         self.analyzer = QueryAnalyzer()
 
         # Configure DSPy with LiteLLM for Ollama

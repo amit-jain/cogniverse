@@ -7,8 +7,8 @@ Uses shared session-scoped Vespa container from conftest.py.
 
 
 import pytest
-from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
-from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+from cogniverse_core.memory.manager import Mem0MemoryManager
+from cogniverse_core.backends import TenantSchemaManager
 
 from tests.utils.async_polling import wait_for_vespa_indexing
 
@@ -16,23 +16,33 @@ from tests.utils.async_polling import wait_for_vespa_indexing
 @pytest.fixture(scope="module")
 def memory_manager(shared_memory_vespa):
     """Create and initialize Mem0 memory manager with shared Vespa"""
-    # Clear singletons to ensure fresh state
-    TenantSchemaManager._clear_instance()
+    # Clear Mem0 singleton to ensure fresh state
     Mem0MemoryManager._instances.clear()
 
+    from pathlib import Path
+
+    from cogniverse_core.config.manager import ConfigManager
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
     manager = Mem0MemoryManager(tenant_id="test_tenant")
+
+    # Create dependencies for dependency injection
+    config_manager = ConfigManager()
+    schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
     # Initialize with shared Vespa backend using Ollama
     # auto_create_schema=False since schema was already deployed by shared_memory_vespa fixture
     manager.initialize(
-        vespa_host="localhost",
+        backend_host="http://localhost",  # Must include protocol
         backend_port=shared_memory_vespa["http_port"],
-        vespa_config_port=shared_memory_vespa["config_port"],
+        backend_config_port=shared_memory_vespa["config_port"],
         base_schema_name="agent_memories",
         llm_model="llama3.2",
         embedding_model="nomic-embed-text",
         ollama_base_url="http://localhost:11434/v1",
         auto_create_schema=False,  # Schema already deployed
+        config_manager=config_manager,
+        schema_loader=schema_loader
     )
 
     yield manager
@@ -385,10 +395,11 @@ class TestMem0MemoryAwareMixinIntegration:
     def test_mixin_with_real_memory(self, shared_memory_vespa):
         """Test MemoryAwareMixin with real Mem0 backend"""
         from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+        from cogniverse_core.config.manager import ConfigManager
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from pathlib import Path
 
         # CRITICAL: Clear singletons FIRST before any initialization
-        # Otherwise TenantSchemaManager gets created with default port 8080
-        TenantSchemaManager._clear_instance()
         Mem0MemoryManager._instances.clear()
 
         class TestAgent(MemoryAwareMixin):
@@ -397,13 +408,19 @@ class TestMem0MemoryAwareMixinIntegration:
 
         agent = TestAgent()
 
+        # Create dependencies for dependency injection
+        config_manager = ConfigManager()
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
         # Initialize memory with shared Vespa ports
         success = agent.initialize_memory(
             agent_name="mixin_test_agent",
             tenant_id="test_tenant",
-            vespa_host="http://localhost",
+            backend_host="http://localhost",
             backend_port=shared_memory_vespa["http_port"],
-            vespa_config_port=shared_memory_vespa["config_port"],
+            backend_config_port=shared_memory_vespa["config_port"],
+            config_manager=config_manager,
+            schema_loader=schema_loader,
         )
         assert success is True
 

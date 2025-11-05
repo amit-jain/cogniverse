@@ -369,16 +369,25 @@ class VespaSearchBackend(SearchBackend):
 
         # Transform schema name to tenant-scoped format if tenant_id provided
         if tenant_id and base_schema_name:
-            from pathlib import Path
-
-            from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-
             from cogniverse_vespa.config import calculate_config_port
-            from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+            from cogniverse_core.backends import TenantSchemaManager
+
             config_port = calculate_config_port(self.vespa_port)
-            schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+            # schema_loader is REQUIRED
+            if self._schema_loader is None:
+                raise ValueError(
+                    "schema_loader is required for VespaSearchBackend. "
+                    "Dependency injection is mandatory - pass SchemaLoader instance explicitly."
+                )
+
             tenant_manager = TenantSchemaManager(
-                self.backend_url, config_port, self.vespa_port, self._config_manager, schema_loader
+                backend_name="vespa",
+                backend_url=self.backend_url,
+                backend_port=config_port,
+                http_port=self.vespa_port,
+                config_manager=self._config_manager,
+                schema_loader=self._schema_loader
             )
             self.schema_name = tenant_manager.get_tenant_schema_name(tenant_id, base_schema_name)
             logger.info(f"Transformed schema name: {base_schema_name} → {self.schema_name} (tenant: {tenant_id})")
@@ -422,9 +431,9 @@ class VespaSearchBackend(SearchBackend):
         if not document_ids:
             return []
 
-        # Use search query with document ID filter for efficient batch retrieval
-        # Build YQL with documentid() function for precise ID matching
-        doc_id_conditions = " OR ".join([f'documentid = "id:video:{self.schema_name}::{doc_id}"' for doc_id in document_ids])
+        # Use schema's id field for matching (convention: all schemas should have id field)
+        # TODO: Implement proper schema field mapping/registry system for text/id field conventions
+        doc_id_conditions = " OR ".join([f'id contains "{doc_id}"' for doc_id in document_ids])
         yql = f"select * from {self.schema_name} where {doc_id_conditions}"
 
         query_params = {
@@ -624,7 +633,7 @@ class VespaSearchBackend(SearchBackend):
             raise ValueError("query_dict must contain 'type' key (e.g., 'video')")
 
         top_k = query_dict.get("top_k", 10)
-        # filters = query_dict.get("filters")  # TODO: Implement filter support
+        filters = query_dict.get("filters", {})  # Get filters from query_dict
         query_embeddings = query_dict.get("query_embeddings")
 
         # Phase 1: Profile Resolution
@@ -694,13 +703,18 @@ class VespaSearchBackend(SearchBackend):
 
 
         from cogniverse_vespa.config import calculate_config_port
-        from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+        from cogniverse_core.backends import TenantSchemaManager
         config_port = calculate_config_port(self.vespa_port)
         # schema_loader is REQUIRED
         if self._schema_loader is None:
             raise ValueError("schema_loader is required for VespaSearchBackend")
         tenant_manager = TenantSchemaManager(
-            self.backend_url, config_port, self.vespa_port, self._config_manager, self._schema_loader
+            backend_name="vespa",
+            backend_url=self.backend_url,
+            backend_port=config_port,
+            http_port=self.vespa_port,
+            config_manager=self._config_manager,
+            schema_loader=self._schema_loader
         )
         schema_name = tenant_manager.get_tenant_schema_name(self.tenant_id, base_schema_name)
         logger.info(f"[{correlation_id}] Applied tenant scoping: {base_schema_name} → {schema_name}")
@@ -807,19 +821,15 @@ class VespaSearchBackend(SearchBackend):
             # Use tenant-scoped schema_name for Vespa query (schemas are actually deployed per-tenant)
             query_params = self._build_query(
                 query_text, query_embeddings, rank_config, strategy_name,
-                schema_name, top_k, correlation_id
+                schema_name, top_k, filters, correlation_id
             )
 
             # Execute search
-            logger.info(f"[{correlation_id}] Executing query with ranking={query_params.get('ranking')}, keys={list(query_params.keys())}")
-
-            # Log the complete query for debugging
-            logger.info(f"[{correlation_id}] Query parameters:")
-            logger.info(f"[{correlation_id}]   schema_name: '{schema_name}' (tenant-scoped)")
-            logger.info(f"[{correlation_id}]   model.restrict: '{query_params.get('model.restrict')}'")
-            logger.info(f"[{correlation_id}]   ranking: '{query_params.get('ranking')}'")
-            logger.info(f"[{correlation_id}]   yql: '{query_params.get('yql')}'")
-            logger.info(f"[{correlation_id}]   hits: {query_params.get('hits')}")
+            logger.info(
+                f"[{correlation_id}] Executing query: yql='{query_params.get('yql')}', "
+                f"ranking={query_params.get('ranking')}"
+            )
+            logger.debug(f"[{correlation_id}] Query has embeddings: {'input.query(q)' in query_params or 'input.query(qt)' in query_params}")
 
             if self.pool:
                 with self.pool.get_connection() as conn:
@@ -851,6 +861,37 @@ class VespaSearchBackend(SearchBackend):
             logger.error(f"[{correlation_id}] Search failed: {e}")
             raise
     
+    def _build_filter_conditions(self, filters: Dict[str, Any]) -> str:
+        """Build Vespa YQL filter conditions from filters dict.
+
+        Args:
+            filters: Dict of field_name -> value pairs
+
+        Returns:
+            Filter string like 'user_id contains "test" AND agent_id contains "agent1"'
+            Empty string if no filters
+        """
+        if not filters:
+            return ""
+
+        conditions = []
+        for field, value in filters.items():
+            if isinstance(value, str):
+                # String attributes use 'contains' for matching
+                # This works for string attributes in Vespa
+                conditions.append(f'{field} contains "{value}"')
+            elif isinstance(value, (int, float)):
+                # Numeric values use equality
+                conditions.append(f'{field} = {value}')
+            elif isinstance(value, bool):
+                # Boolean values
+                conditions.append(f'{field} = {str(value).lower()}')
+            else:
+                # For other types, convert to string and use contains
+                conditions.append(f'{field} contains "{str(value)}"')
+
+        return " AND ".join(conditions)
+
     def _build_query(
         self,
         query_text: str,
@@ -859,6 +900,7 @@ class VespaSearchBackend(SearchBackend):
         ranking_profile: str,
         schema_name: str,
         limit: int,
+        filters: Dict[str, Any],
         correlation_id: str
     ) -> Dict[str, Any]:
         """Build Vespa query based on ranking strategy - NO HARDCODING!"""
@@ -872,7 +914,12 @@ class VespaSearchBackend(SearchBackend):
             "hits": limit,
             "ranking": ranking_profile,
         }
-        
+
+        # Build filter conditions
+        filter_conditions = self._build_filter_conditions(filters)
+        if filter_conditions:
+            logger.info(f"[{correlation_id}] Applying filters: {filter_conditions}")
+
         # Build YQL based on strategy configuration
         if rank_config.get("use_nearestneighbor"):
             # Use nearestNeighbor for visual search
@@ -881,25 +928,35 @@ class VespaSearchBackend(SearchBackend):
 
             if rank_config.get("needs_text_query") and query_text:
                 # Hybrid search with nearestNeighbor
-                query_params["yql"] = (
-                    f"select * from {schema_name} where "
+                base_where = (
                     f"userInput(@userQuery) OR "
                     f"({{targetHits: {limit}}}nearestNeighbor({nn_field}, {nn_tensor}))"
                 )
+                if filter_conditions:
+                    query_params["yql"] = f"select * from {schema_name} where ({base_where}) AND {filter_conditions}"
+                else:
+                    query_params["yql"] = f"select * from {schema_name} where {base_where}"
                 query_params["userQuery"] = query_text
             else:
-                # Pure visual search with nearestNeighbor
-                query_params["yql"] = (
-                    f"select * from {schema_name} where "
-                    f"{{targetHits: {limit}}}nearestNeighbor({nn_field}, {nn_tensor})"
-                )
+                # Pure semantic/visual search with nearestNeighbor
+                base_where = f"{{targetHits: {limit}}}nearestNeighbor({nn_field}, {nn_tensor})"
+                if filter_conditions:
+                    query_params["yql"] = f"select * from {schema_name} where {base_where} AND {filter_conditions}"
+                else:
+                    query_params["yql"] = f"select * from {schema_name} where {base_where}"
         elif rank_config.get("needs_text_query"):
             # Text or hybrid search without nearestNeighbor
-            query_params["yql"] = f"select * from {schema_name} where userInput(@userQuery)"
+            if filter_conditions:
+                query_params["yql"] = f"select * from {schema_name} where userInput(@userQuery) AND {filter_conditions}"
+            else:
+                query_params["yql"] = f"select * from {schema_name} where userInput(@userQuery)"
             query_params["userQuery"] = query_text
         else:
             # Regular ranking without nearestNeighbor (patch-based models)
-            query_params["yql"] = f"select * from {schema_name} where true"
+            if filter_conditions:
+                query_params["yql"] = f"select * from {schema_name} where {filter_conditions}"
+            else:
+                query_params["yql"] = f"select * from {schema_name} where true"
         
         # Add tensor embeddings based on what the strategy says it needs
         # NO MORE HARDCODED CHECKS!
@@ -975,25 +1032,32 @@ class VespaSearchBackend(SearchBackend):
     def _result_to_document(self, result: Dict[str, Any]) -> Document:
         """Convert Vespa result to Document object."""
         fields = result.get("fields", {})
-        
+
         # Extract document ID
         doc_id = result.get("id", "").split("::")[-1]
-        
+
         # Create Document using new generic structure
         document = Document(
             id=doc_id,
             content_type=ContentType.VIDEO,
             status=ProcessingStatus.COMPLETED
         )
-        
+
+        # Map Vespa text fields to Document.text_content
+        # Try common text field names in order of priority
+        for text_field_name in ["text", "transcription", "text_content", "content"]:
+            if text_field_name in fields and fields[text_field_name]:
+                document.text_content = fields[text_field_name]
+                break
+
         # Add all fields as metadata
         for key, value in fields.items():
             if value is not None:
                 document.add_metadata(key, value)
-        
+
         # Add source_id to metadata
         document.add_metadata("source_id", fields.get("video_id", doc_id.split("_")[0]))
-        
+
         return document
     
     def _process_results(
@@ -1003,11 +1067,12 @@ class VespaSearchBackend(SearchBackend):
     ) -> List[SearchResult]:
         """Process Vespa response into SearchResult objects"""
         results = []
-        
+
         if not response or not hasattr(response, 'hits'):
             logger.warning(f"[{correlation_id}] Empty response from Vespa")
             return results
-        
+
+        logger.debug(f"[{correlation_id}] Processing {len(response.hits)} hits from Vespa")
         for hit in response.hits:
             try:
                 doc = self._result_to_document(hit)

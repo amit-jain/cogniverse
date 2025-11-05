@@ -240,7 +240,8 @@ async def analyze_text_endpoint(
 
 
 if __name__ == "__main__":
-    config = get_config()
+    from cogniverse_core.config.manager import ConfigManager
+    config = get_config(tenant_id="default", config_manager=ConfigManager())
     port = config.get("text_analysis_port", 8005)
 
     logger.info(f"Starting Text Analysis Agent on port {port}")

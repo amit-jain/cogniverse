@@ -30,8 +30,10 @@ class SearchRequest(BaseModel):
 async def search(request: SearchRequest) -> Dict[str, Any]:
     """Execute a search query."""
     try:
-        config_manager = ConfigManager.get_instance()
-        config = config_manager.get_config()
+        from cogniverse_core.config.utils import get_config
+
+        config_manager = ConfigManager()
+        config = get_config(tenant_id=request.tenant_id or "default", config_manager=config_manager)
 
         # Create search service
         search_service = SearchService(
@@ -82,8 +84,10 @@ async def list_strategies() -> Dict[str, Any]:
 @router.get("/profiles")
 async def list_profiles() -> Dict[str, Any]:
     """List available search profiles."""
-    config_manager = ConfigManager.get_instance()
-    config = config_manager.get_config()
+    from cogniverse_core.config.utils import get_config
+
+    config_manager = ConfigManager()
+    config = get_config(tenant_id="default", config_manager=config_manager)
 
     backend_config = config.get("backend", {})
     profiles = backend_config.get("profiles", {})

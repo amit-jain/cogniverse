@@ -248,6 +248,7 @@ class TestBackendRegistry(unittest.TestCase):
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         self.temp_dir = tempfile.mkdtemp()
         self.config_manager = ConfigManager(db_path=Path(self.temp_dir) / "test_config.db")
+        # Test fixture pattern: Create schema_loader in setUp for use across test methods
         self.schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         # Save current registry state to restore in tearDown
         self._saved_ingestion = BackendRegistry._ingestion_backends.copy()
@@ -457,6 +458,7 @@ class TestBackendIntegration(unittest.TestCase):
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         self.temp_dir = tempfile.mkdtemp()
         self.config_manager = ConfigManager(db_path=Path(self.temp_dir) / "test_config.db")
+        # Test fixture pattern: Create schema_loader in setUp for use across test methods
         self.schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
     def tearDown(self):

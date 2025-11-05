@@ -26,7 +26,9 @@ class CogniverseRetrievalSolver(Solver):
     def __init__(self, profiles: list[str], strategies: list[str]):
         self.profiles = profiles
         self.strategies = strategies
-        self.config = get_config()
+        from cogniverse_core.config.manager import ConfigManager
+        config_manager = ConfigManager()
+        self.config = get_config(tenant_id="default", config_manager=config_manager)
         self.search_services = {}
 
         # Initialize search services for each profile

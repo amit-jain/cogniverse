@@ -32,9 +32,8 @@ class TestMultiTenantTelemetryIntegration:
         """Create config for SYNC export mode (for testing)."""
         return TelemetryConfig(
             enabled=True,
-            phoenix_enabled=True,
-            phoenix_endpoint="http://localhost:6006",
-            phoenix_use_tls=False,
+            otlp_endpoint="http://localhost:4317", provider_config={"http_endpoint": "http://localhost:6006", "grpc_endpoint": "http://localhost:4317"},
+            
             service_name="test-service",
             environment="test",
             level=TelemetryLevel.DETAILED,
@@ -49,9 +48,8 @@ class TestMultiTenantTelemetryIntegration:
         """Create config for BATCH export mode (production mode)."""
         return TelemetryConfig(
             enabled=True,
-            phoenix_enabled=True,
-            phoenix_endpoint="http://localhost:6006",
-            phoenix_use_tls=False,
+            otlp_endpoint="http://localhost:4317", provider_config={"http_endpoint": "http://localhost:6006", "grpc_endpoint": "http://localhost:4317"},
+            
             service_name="test-service",
             environment="test",
             level=TelemetryLevel.DETAILED,
@@ -121,9 +119,9 @@ class TestMultiTenantTelemetryIntegration:
 
         assert tracer_a is not None
         assert tracer_b is not None
-        # They should be cached separately
-        assert "tenant-a:test-service" in manager._tenant_tracers
-        assert "tenant-b:test-service" in manager._tenant_tracers
+        # They should be cached separately (cache key format: tenant_id:project_name)
+        assert "tenant-a:cogniverse-tenant-a" in manager._tenant_tracers
+        assert "tenant-b:cogniverse-tenant-b" in manager._tenant_tracers
 
         # Verify cache hits
         stats = manager.get_stats()
@@ -209,9 +207,8 @@ class TestMultiTenantTelemetryIntegration:
         # Config with small cache size for testing
         config = TelemetryConfig(
             enabled=True,
-            phoenix_enabled=True,
-            phoenix_endpoint="http://localhost:6006",
-            phoenix_use_tls=False,
+            otlp_endpoint="http://localhost:4317", provider_config={"http_endpoint": "http://localhost:6006", "grpc_endpoint": "http://localhost:4317"},
+            
             service_name="test-service",
             max_cached_tenants=3,  # Small cache for testing
             batch_config=BatchExportConfig(use_sync_export=True),
@@ -323,14 +320,14 @@ class TestMultiTenantTelemetryIntegration:
             with manager.span(
                 name="operation",
                 tenant_id=tenant_id,
-                service_name=service,
+                project_name=service,
                 attributes={"service": service},
             ) as span:
                 assert not isinstance(span, NoOpSpan)
 
-        # Verify different tracers created
+        # Verify different tracers created (cache key format: tenant_id:full_project_name)
         for service in services:
-            cache_key = f"{tenant_id}:{service}"
+            cache_key = f"{tenant_id}:cogniverse-{tenant_id}-{service}"
             assert cache_key in manager._tenant_tracers
 
         # Should have 3 tracers for same tenant
@@ -394,9 +391,8 @@ class TestPhoenixIntegrationWithRealServer:
         """Config for real Phoenix integration."""
         return TelemetryConfig(
             enabled=True,
-            phoenix_enabled=True,
-            phoenix_endpoint="http://localhost:6006",
-            phoenix_use_tls=False,
+            otlp_endpoint="http://localhost:4317", provider_config={"http_endpoint": "http://localhost:6006", "grpc_endpoint": "http://localhost:4317"},
+            
             service_name="integration-test",
             environment="test",
             batch_config=BatchExportConfig(
@@ -424,7 +420,7 @@ class TestPhoenixIntegrationWithRealServer:
             with manager.span(
                 name=f"alpha_operation_{i}",
                 tenant_id="tenant-alpha",
-                service_name="routing",
+                project_name="routing",
                 attributes={
                     "operation_id": i,
                     "tenant": "alpha",
@@ -438,7 +434,7 @@ class TestPhoenixIntegrationWithRealServer:
             with manager.span(
                 name=f"beta_operation_{i}",
                 tenant_id="tenant-beta",
-                service_name="routing",
+                project_name="routing",
                 attributes={
                     "operation_id": i,
                     "tenant": "beta",

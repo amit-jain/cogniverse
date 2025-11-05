@@ -67,21 +67,23 @@ class TestMemoryAwareMixin:
         mock_manager.memory = None  # Not initialized yet
         mock_manager_class.return_value = mock_manager
 
-        # Initialize memory with custom Vespa config
+        # Initialize memory with custom backend config
         success = agent.initialize_memory(
             "test_agent",
             "test_tenant",
-            vespa_host="vespa.local",
+            backend_host="backend.local",
             backend_port=9090,
         )
 
         assert success is True
         mock_manager.initialize.assert_called_once_with(
-            vespa_host="vespa.local",
+            backend_host="backend.local",
             backend_port=9090,
-            vespa_config_port=None,
+            backend_config_port=None,
             base_schema_name="agent_memories",
             auto_create_schema=True,
+            config_manager=None,
+            schema_loader=None,
         )
 
     def test_get_relevant_context_without_initialization(self, agent):

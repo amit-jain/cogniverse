@@ -8,46 +8,44 @@ Each tenant gets dedicated Vespa schema for memory isolation.
 
 import logging
 import os
-import sys
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 # Disable Mem0's telemetry BEFORE importing mem0
 os.environ["MEM0_TELEMETRY"] = "False"
 
 from mem0 import Memory
-from mem0.vector_stores.configs import VectorStoreConfig
 
 logger = logging.getLogger(__name__)
 
 
-# Register Vespa as a supported vector store provider in Mem0
-def _register_vespa_provider():
-    """Register Vespa as a supported vector store provider in Mem0"""
-    # Import vespa_memory_config so it's available in sys.modules
-    import src.common.vespa_memory_config  # noqa: F401
+# Register backend as a supported vector store provider in Mem0
+def _register_backend_provider():
+    """Register backend-agnostic vector store provider in Mem0"""
+    import sys
+    from mem0.configs.base import VectorStoreConfig
     from mem0.utils.factory import VectorStoreFactory
 
-    # Register Vespa config in the provider_configs default dict
-    provider_configs = VectorStoreConfig._provider_configs.default
-    if "vespa" not in provider_configs:
-        provider_configs["vespa"] = "VespaConfig"
-        # Make VespaConfig available for import
-        sys.modules["mem0.configs.vector_stores.vespa"] = sys.modules[
-            "src.common.vespa_memory_config"
-        ]
-        logger.info("Registered Vespa config in Mem0")
+    # Make BackendConfig available for mem0 import
+    from cogniverse_core.memory import backend_config
+    sys.modules["mem0.configs.vector_stores.backend"] = backend_config
+    logger.debug("Registered backend config module for mem0 import")
 
-    # Register Vespa vector store implementation
-    if "vespa" not in VectorStoreFactory.provider_to_class:
-        VectorStoreFactory.provider_to_class["vespa"] = (
-            "src.common.mem0_vespa_store.VespaVectorStore"
+    # Register in VectorStoreConfig._provider_configs (access via private attrs)
+    provider_configs_attr = VectorStoreConfig.__private_attributes__["_provider_configs"]
+    if "backend" not in provider_configs_attr.default:
+        provider_configs_attr.default["backend"] = "BackendConfig"
+        logger.info("Registered backend in VectorStoreConfig._provider_configs")
+
+    # Register BackendVectorStore in factory
+    if "backend" not in VectorStoreFactory.provider_to_class:
+        VectorStoreFactory.provider_to_class["backend"] = (
+            "cogniverse_core.memory.backend_vector_store.BackendVectorStore"
         )
-        logger.info("Registered Vespa vector store in Mem0 factory")
+        logger.info("Registered BackendVectorStore in Mem0 factory")
 
 
 # Register on module import
-_register_vespa_provider()
+_register_backend_provider()
 
 
 class Mem0MemoryManager:
@@ -81,7 +79,9 @@ class Mem0MemoryManager:
                 instance = super().__new__(cls)
                 instance._initialized = False
                 cls._instances[tenant_id] = instance
-                logger.info(f"Created new Mem0MemoryManager instance for tenant: {tenant_id}")
+                logger.info(
+                    f"Created new Mem0MemoryManager instance for tenant: {tenant_id}"
+                )
             return cls._instances[tenant_id]
 
     def __init__(self, tenant_id: str):
@@ -101,25 +101,31 @@ class Mem0MemoryManager:
 
     def initialize(
         self,
-        vespa_host: str = "localhost",
-        vespa_port: int = 8080,
+        backend_host: str = "localhost",
+        backend_port: int = 8080,
+        backend_config_port: Optional[int] = None,
         base_schema_name: str = "agent_memories",
         llm_model: str = "llama3.2",
         embedding_model: str = "nomic-embed-text",
         ollama_base_url: str = "http://localhost:11434/v1",
         auto_create_schema: bool = True,
+        config_manager = None,
+        schema_loader = None,
     ) -> None:
         """
-        Initialize Mem0 with Vespa backend using tenant-specific schema.
+        Initialize Mem0 with backend using tenant-specific schema.
 
         Args:
-            vespa_host: Vespa endpoint host
-            vespa_port: Vespa endpoint port
+            backend_host: Backend endpoint host
+            backend_port: Backend data endpoint port (default: 8080)
+            backend_config_port: Backend config endpoint port (default: 19071)
             base_schema_name: Base schema name (default: agent_memories)
             llm_model: Ollama model name (default: llama3.2)
             embedding_model: Ollama embedding model (default: nomic-embed-text)
             ollama_base_url: Ollama OpenAI-compatible API endpoint
             auto_create_schema: Auto-deploy tenant schema if not exists
+            config_manager: ConfigManager instance (REQUIRED)
+            schema_loader: SchemaLoader instance (REQUIRED)
 
         Raises:
             ValueError: If tenant_id not set
@@ -127,26 +133,51 @@ class Mem0MemoryManager:
         if not self.tenant_id:
             raise ValueError("tenant_id must be set before initialize()")
 
-        # Get tenant-specific schema name via Backend interface
+        # Get backend instance for memory operations
         from cogniverse_core.config.manager import ConfigManager
         from cogniverse_core.config.utils import get_config
         from cogniverse_core.registries.backend_registry import get_backend_registry
-        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
-        config = get_config()
+        config_manager = ConfigManager()
+        config = get_config(tenant_id="default", config_manager=config_manager)
         backend_type = config.get("backend_type", "vespa")
         registry = get_backend_registry()
 
-        # Get backend instance
-        backend_config = {
-            "vespa_url": vespa_host,
-            "vespa_port": vespa_port,
-            "vespa_config_port": 19071,
+        # Get backend instance with full config including profiles
+        # Add agent_memories profile since it may not be in config
+        profiles = config.get("profiles", {})
+        if base_schema_name not in profiles:
+            # Add minimal profile for agent_memories schema
+            profiles[base_schema_name] = {
+                "type": "memory",
+                "model": "nomic-embed-text",
+                "embedding_dims": 768,
+                "encoder": "ollama",
+                "strategy": "semantic_search",  # Default to semantic search for memories
+            }
+
+        # Build backend section with ollama_base_url and profiles for encoder initialization
+        backend_section = {
+            "ollama_base_url": ollama_base_url,  # Required for Ollama encoder
+            "profiles": profiles,  # Profiles for VespaSearchBackend._initialize_encoders()
+            **config.get("backend", {}),  # Merge any existing backend config
         }
-        config_manager = ConfigManager()
-        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+        backend_config_dict = {
+            "url": backend_host,  # VespaBackend expects "url", not "backend_url"
+            "port": backend_port,  # VespaBackend expects "port", not "backend_port"
+            "config_port": backend_config_port or 19071,
+            "schema_name": base_schema_name,  # Base schema name for operations (backend handles tenant transformation)
+            "backend": backend_section,  # Backend section for search operations
+            "profiles": profiles,  # Also keep at top level for config merging
+            "default_profiles": config.get("default_profiles", {}),
+        }
+
+        # Create tenant-specific backend for memory operations
+        # Each tenant gets their own memory schema (agent_memories_{tenant_id})
         backend = registry.get_ingestion_backend(
-            backend_type, tenant_id=self.tenant_id, config=backend_config, config_manager=config_manager, schema_loader=schema_loader
+            backend_type, tenant_id=self.tenant_id, config=backend_config_dict,
+            config_manager=config_manager, schema_loader=schema_loader
         )
 
         # Get tenant-specific schema name
@@ -156,14 +187,10 @@ class Mem0MemoryManager:
 
         # Deploy tenant schema if needed
         if auto_create_schema:
-            try:
-                backend.deploy_schema(base_schema_name, tenant_id=self.tenant_id)
-                logger.info(f"Ensured tenant schema exists: {tenant_schema_name}")
-            except Exception as e:
-                logger.warning(f"Failed to deploy tenant schema: {e}")
-                # Continue anyway - schema might already exist
+            backend.deploy_schema(base_schema_name, tenant_id=self.tenant_id)
+            logger.info(f"Ensured tenant schema exists: {tenant_schema_name}")
 
-        # Configure Mem0 with Ollama provider and tenant-specific schema
+        # Configure Mem0 with Ollama provider and backend-agnostic storage
         self.config = {
             "llm": {
                 "provider": "ollama",
@@ -181,12 +208,13 @@ class Mem0MemoryManager:
                 },
             },
             "vector_store": {
-                "provider": "vespa",
+                "provider": "backend",  # Backend-agnostic (not vespa-specific)
                 "config": {
                     "collection_name": tenant_schema_name,  # Tenant-specific schema
-                    "host": vespa_host,
-                    "port": vespa_port,
+                    "backend_client": backend,  # Pre-configured backend instance
                     "embedding_model_dims": 768,  # nomic-embed-text dimensions
+                    "tenant_id": self.tenant_id,  # Pass tenant_id directly
+                    "profile": base_schema_name,  # Pass base schema/profile name
                 },
             },
         }
@@ -196,7 +224,7 @@ class Mem0MemoryManager:
 
         logger.info(
             f"Mem0MemoryManager initialized for tenant {self.tenant_id} "
-            f"with schema {tenant_schema_name} at {vespa_host}:{vespa_port}"
+            f"with schema {tenant_schema_name} at {backend_host}:{backend_port}"
         )
 
     def add_memory(

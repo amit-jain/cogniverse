@@ -29,7 +29,9 @@ def main():
     
     try:
         # Get configuration
-        config = get_config()
+        from cogniverse_core.config.manager import ConfigManager
+        config_manager = ConfigManager()
+        config = get_config(tenant_id="default", config_manager=config_manager)
         
         # Initialize the schema manager
         schema_manager = VespaSchemaManager()

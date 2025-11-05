@@ -27,10 +27,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from cogniverse_core.config.manager import ConfigManager
 from cogniverse_core.config.utils import get_config
 
 # Add VideoPrism to path once at module level
-config = get_config()
+config_manager = ConfigManager()
+config = get_config(tenant_id="default", config_manager=config_manager)
 videoprism_path = config.get("videoprism_repo_path")
 if videoprism_path and str(videoprism_path) not in sys.path:
     sys.path.insert(0, str(videoprism_path))

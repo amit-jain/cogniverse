@@ -55,7 +55,7 @@ class TestTenantManagerAPI:
 
         # Import app and reset globals
         from cogniverse_runtime.admin import tenant_manager
-        from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+        from cogniverse_core.backends import TenantSchemaManager
 
         tenant_manager.backend = None  # Reset backend
         tenant_manager.set_config_manager(config_manager)  # Inject ConfigManager

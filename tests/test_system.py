@@ -23,9 +23,11 @@ from cogniverse_core.config.utils import get_config
 
 class SystemTester:
     """Comprehensive system tester for the multi-agent RAG system."""
-    
+
     def __init__(self):
-        self.config = get_config()
+        from cogniverse_core.config.manager import ConfigManager
+        config_manager = ConfigManager()
+        self.config = get_config(tenant_id="default", config_manager=config_manager)
         self.client = A2AClient()
         self.test_results = []
         self.failed_tests = []

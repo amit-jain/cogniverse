@@ -15,26 +15,46 @@ logger = logging.getLogger(__name__)
 
 class StrategyAwareProcessor:
     """Process documents based on ranking strategy requirements"""
-    
-    def __init__(self):
+
+    def __init__(self, schema_loader):
+        """
+        Initialize strategy-aware processor.
+
+        Args:
+            schema_loader: SchemaLoader instance for loading schemas (REQUIRED)
+        """
+        if schema_loader is None:
+            raise ValueError(
+                "schema_loader is required for StrategyAwareProcessor. "
+                "Dependency injection is mandatory - pass SchemaLoader instance explicitly."
+            )
+        self.schema_loader = schema_loader
         self.ranking_strategies = self._load_ranking_strategies()
-    
+
     def _load_ranking_strategies(self) -> Dict[str, Dict[str, Any]]:
         """Load ranking strategies from JSON file"""
-        strategies_file = Path("configs/schemas/ranking_strategies.json")
-        
+        # Get schemas directory from injected schema_loader
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        if not isinstance(self.schema_loader, FilesystemSchemaLoader):
+            raise ValueError(
+                f"Unsupported schema_loader type: {type(self.schema_loader)}. "
+                f"StrategyAwareProcessor requires FilesystemSchemaLoader."
+            )
+
+        schemas_dir = self.schema_loader.base_path
+        strategies_file = schemas_dir / "ranking_strategies.json"
+
         if not strategies_file.exists():
             # Auto-generate if missing
             from .ranking_strategy_extractor import (
                 extract_all_ranking_strategies,
                 save_ranking_strategies,
             )
-            
-            schemas_dir = Path("configs/schemas")
+
             strategies = extract_all_ranking_strategies(schemas_dir)
             save_ranking_strategies(strategies, strategies_file)
             logger.info("Generated ranking strategies file")
-        
+
         with open(strategies_file, 'r') as f:
             return json.load(f)
     
@@ -214,11 +234,11 @@ class StrategyAwareProcessor:
 
 
 # Example usage in processing pipeline
-def process_with_strategy_awareness(video_path: str, profile: str):
+def process_with_strategy_awareness(video_path: str, profile: str, schema_loader):
     """Example of how to use strategy-aware processing"""
-    
-    # Initialize processor
-    processor = StrategyAwareProcessor()
+
+    # Initialize processor with injected schema_loader
+    processor = StrategyAwareProcessor(schema_loader)
     
     # Schema name is the same as profile name
     schema_name = profile

@@ -38,11 +38,14 @@ class ConfigLoader:
         "document_agent": "cogniverse_agents.document_agent:DocumentAgent",
     }
 
-    def __init__(self):
+    def __init__(self, tenant_id: str = "default"):
         """Initialize config loader."""
-        self.backend_registry = BackendRegistry.get_instance()
-        self.agent_registry = AgentRegistry.get_instance()
-        self.config = get_config()
+        from cogniverse_core.config.manager import ConfigManager
+
+        self.config_manager = ConfigManager()
+        self.backend_registry = BackendRegistry(config_manager=self.config_manager)
+        self.agent_registry = AgentRegistry(config_manager=self.config_manager)
+        self.config = get_config(tenant_id=tenant_id, config_manager=self.config_manager)
 
     def load_backends(self) -> None:
         """Load and register backends from configuration."""
@@ -156,12 +159,12 @@ class ConfigLoader:
         """Get runtime configuration."""
         return self.config.get("runtime", {})
 
-    def reload_config(self) -> None:
+    def reload_config(self, tenant_id: str = "default") -> None:
         """Reload configuration and re-initialize components."""
         logger.info("Reloading configuration...")
 
         # Reload config
-        self.config = get_config()
+        self.config = get_config(tenant_id=tenant_id, config_manager=self.config_manager)
 
         # Reload backends and agents
         self.load_backends()

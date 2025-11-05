@@ -166,7 +166,8 @@ class QueryEncoderFactory:
 
         Dynamically determines the encoder based on config.json video_processing_profiles
         """
-        config = get_config()
+        from cogniverse_core.config.manager import ConfigManager
+        config = get_config(tenant_id="default", config_manager=ConfigManager())
         video_profiles = config.get("video_processing_profiles", {})
 
         # Check if profile exists in config
@@ -206,6 +207,7 @@ class QueryEncoderFactory:
     @staticmethod
     def get_supported_profiles() -> list:
         """Return list of supported profiles from config.json"""
-        config = get_config()
+        from cogniverse_core.config.manager import ConfigManager
+        config = get_config(tenant_id="default", config_manager=ConfigManager())
         video_profiles = config.get("video_processing_profiles", {})
         return list(video_profiles.keys())

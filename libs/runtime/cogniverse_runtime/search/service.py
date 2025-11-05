@@ -37,16 +37,19 @@ class SearchService:
         self.profile = profile
         self.tenant_id = tenant_id
 
-        # Initialize dependencies - use provided or create defaults
+        # Require dependencies via dependency injection
         if config_manager is None:
-            from cogniverse_core.config.manager import ConfigManager
-            config_manager = ConfigManager.get_instance()
+            raise ValueError(
+                "config_manager is required for SearchService. "
+                "Dependency injection is mandatory - pass ConfigManager instance explicitly."
+            )
         self.config_manager = config_manager
 
         if schema_loader is None:
-            from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-            from pathlib import Path
-            schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+            raise ValueError(
+                "schema_loader is required for SearchService. "
+                "Dependency injection is mandatory - pass SchemaLoader instance explicitly."
+            )
         self.schema_loader = schema_loader
 
         # Initialize new telemetry system

@@ -16,7 +16,9 @@ from src.common.config_utils import get_config, setup_environment
 
 def create_directories():
     """Create necessary data directories."""
-    config = get_config()
+    from cogniverse_core.config.manager import ConfigManager
+    config_manager = ConfigManager()
+    config = get_config(tenant_id="default", config_manager=config_manager)
     
     directories = [
         config.get("video_data_dir", "data/videos"),

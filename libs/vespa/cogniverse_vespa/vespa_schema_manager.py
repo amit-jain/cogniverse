@@ -24,28 +24,32 @@ class VespaSchemaManager:
     Supports both native .sd files and JSON schema definitions.
     """
     
-    def __init__(self, vespa_endpoint: str, vespa_port: int, config_manager):
+    def __init__(self, backend_endpoint: str, backend_port: int, config_manager, schema_loader=None, schema_registry=None):
         """
-        Initialize Vespa schema manager.
+        Initialize schema manager.
 
         Args:
-            vespa_endpoint: Vespa endpoint URL (REQUIRED)
-            vespa_port: Vespa port number (REQUIRED)
+            backend_endpoint: Backend endpoint URL (REQUIRED)
+            backend_port: Backend port number (REQUIRED)
             config_manager: ConfigManager instance (REQUIRED)
+            schema_loader: SchemaLoader instance (optional, needed for tenant schema operations)
+            schema_registry: SchemaRegistry instance (optional, needed for tenant schema operations)
 
         Raises:
             ValueError: If any parameter is None
         """
-        if vespa_endpoint is None:
-            raise ValueError("vespa_endpoint is required")
-        if vespa_port is None:
-            raise ValueError("vespa_port is required")
+        if backend_endpoint is None:
+            raise ValueError("backend_endpoint is required")
+        if backend_port is None:
+            raise ValueError("backend_port is required")
         if config_manager is None:
             raise ValueError("config_manager is required")
 
-        self.vespa_endpoint = vespa_endpoint
-        self.vespa_port = vespa_port
+        self.backend_endpoint = backend_endpoint
+        self.backend_port = backend_port
         self._config_manager = config_manager
+        self._schema_loader = schema_loader
+        self._schema_registry = schema_registry
         self._logger = logging.getLogger(self.__class__.__name__)
     
     def read_sd_file(self, sd_file_path: str) -> str:
@@ -826,10 +830,44 @@ class VespaSchemaManager:
             self._logger.error(f"Failed to upload schema: {str(e)}")
             raise
     
+    def deploy_schema_from_json(self, schema_json: dict, app_name: str = "videosearch") -> None:
+        """
+        Deploy schema from JSON dict to Vespa using JSON parser.
+
+        Args:
+            schema_json: Schema configuration as dict
+            app_name: Name of the application
+        """
+        try:
+            from vespa.package import ApplicationPackage
+
+            from .json_schema_parser import JsonSchemaParser
+
+            # Parse JSON schema to PyVespa objects
+            parser = JsonSchemaParser()
+            schema = parser.parse_schema(schema_json)
+
+            # Validate the schema
+            errors = parser.validate_schema_config(schema_json)
+            if errors:
+                raise ValueError(f"Schema validation errors: {'; '.join(errors)}")
+
+            # Create application package
+            app_package = ApplicationPackage(name=app_name, schema=[schema])
+
+            # Deploy to Vespa
+            self._deploy_package(app_package)
+
+            self._logger.info(f"Successfully deployed schema: {schema_json.get('name', 'unknown')}")
+
+        except Exception as e:
+            self._logger.error(f"Failed to deploy schema from JSON: {str(e)}")
+            raise
+
     def upload_schema_from_json_file(self, json_file_path: str, app_name: str = "videosearch") -> None:
         """
         Load schema from JSON file and deploy to Vespa using JSON parser.
-        
+
         Args:
             json_file_path: Path to the JSON schema file
             app_name: Name of the application
@@ -956,8 +994,8 @@ class VespaSchemaManager:
         # Create the deployment URL - properly construct with base URL and port
         import re
         # Remove any existing port from endpoint
-        base_url = re.sub(r':\d+$', '', self.vespa_endpoint)
-        deploy_url = f"{base_url}:{self.vespa_port}/application/v2/tenant/default/prepareandactivate"
+        base_url = re.sub(r':\d+$', '', self.backend_endpoint)
+        deploy_url = f"{base_url}:{self.backend_port}/application/v2/tenant/default/prepareandactivate"
         
         try:
             # Generate the ZIP package
@@ -1125,3 +1163,156 @@ class VespaSchemaManager:
         except Exception as e:
             self._logger.error(f"Failed to deploy metadata schemas: {str(e)}")
             raise
+
+    # ============================================================================
+    # Tenant Schema Management (Multi-Tenancy Support)
+    # ============================================================================
+
+    def get_tenant_schema_name(self, tenant_id: str, base_schema_name: str) -> str:
+        """
+        Generate tenant-specific schema name from base schema and tenant ID.
+
+        Args:
+            tenant_id: Tenant identifier
+            base_schema_name: Base schema name
+
+        Returns:
+            Tenant-specific schema name (e.g., "video_colpali_acme")
+        """
+        if not tenant_id:
+            return base_schema_name
+
+        # Transform org:tenant to org_tenant for schema naming
+        tenant_suffix = tenant_id.replace(":", "_")
+        return f"{base_schema_name}_{tenant_suffix}"
+
+    def deploy_tenant_schema(self, tenant_id: str, base_schema_name: str) -> str:
+        """
+        Deploy schema for a specific tenant.
+
+        Args:
+            tenant_id: Tenant identifier
+            base_schema_name: Base schema name to deploy
+
+        Returns:
+            Tenant-specific schema name that was deployed
+
+        Raises:
+            ValueError: If schema_loader or schema_registry not configured
+            Exception: If schema deployment fails
+        """
+        if not self._schema_loader:
+            raise ValueError("schema_loader required for tenant schema operations")
+        if not self._schema_registry:
+            raise ValueError("schema_registry required for tenant schema operations")
+
+        tenant_schema_name = self.get_tenant_schema_name(tenant_id, base_schema_name)
+
+        # Check if already deployed in registry
+        if self._schema_registry.schema_exists(tenant_id, base_schema_name):
+            self._logger.debug(f"Schema '{tenant_schema_name}' already registered for tenant '{tenant_id}'")
+            return tenant_schema_name
+
+        # Load base schema from schema loader
+        try:
+            base_schema_json = self._schema_loader.load_schema(base_schema_name)
+        except Exception as e:
+            raise Exception(f"Failed to load base schema '{base_schema_name}': {e}")
+
+        # Transform schema name in JSON
+        base_schema_json['name'] = tenant_schema_name
+
+        # Vespa requires ALL schemas in each deployment
+        # Get existing schemas for this tenant and deploy them together with the new one
+        try:
+            import json
+            from vespa.package import ApplicationPackage
+            from .json_schema_parser import JsonSchemaParser
+
+            parser = JsonSchemaParser()
+            schemas_to_deploy = []
+
+            # Get ALL existing schemas across all tenants from registry
+            # CRITICAL: Backend requires all schemas in each deployment
+            existing_schema_infos = self._schema_registry.get_all_schemas()
+            for schema_info in existing_schema_infos:
+                try:
+                    schema_def = json.loads(schema_info.schema_definition)
+                    schema_obj = parser.parse_schema(schema_def)
+                    schemas_to_deploy.append(schema_obj)
+                    self._logger.debug(f"Including existing schema: {schema_info.full_schema_name}")
+                except Exception as e:
+                    self._logger.warning(f"Failed to parse existing schema {schema_info.full_schema_name}: {e}")
+
+            # Add the new schema
+            new_schema_obj = parser.parse_schema(base_schema_json)
+            schemas_to_deploy.append(new_schema_obj)
+            self._logger.info(f"Deploying {len(schemas_to_deploy)} schemas ({len(existing_schema_infos)} existing + 1 new)")
+
+            # Deploy all schemas together in one ApplicationPackage
+            app_package = ApplicationPackage(name="videosearch", schema=schemas_to_deploy)
+            self._deploy_package(app_package)
+
+            # Register the new schema in registry
+            schema_definition_str = json.dumps(base_schema_json)
+            self._schema_registry.register_schema(
+                tenant_id,
+                base_schema_name,
+                tenant_schema_name,
+                schema_definition_str
+            )
+            self._logger.info(f"Successfully deployed and registered schema '{tenant_schema_name}' for tenant '{tenant_id}'")
+            return tenant_schema_name
+        except Exception as e:
+            raise Exception(f"Failed to deploy schema '{tenant_schema_name}': {e}")
+
+    def delete_tenant_schemas(self, tenant_id: str) -> list:
+        """
+        Delete all schemas for a tenant.
+
+        Args:
+            tenant_id: Tenant identifier
+
+        Returns:
+            List of deleted schema names
+
+        Raises:
+            ValueError: If schema_registry not configured
+        """
+        if not self._schema_registry:
+            raise ValueError("schema_registry required for tenant schema operations")
+
+        deleted_schemas = []
+        tenant_schema_infos = self._schema_registry.get_tenant_schemas(tenant_id)
+
+        for schema_info in tenant_schema_infos:
+            base_schema_name = schema_info.base_schema_name
+            tenant_schema_name = self.get_tenant_schema_name(tenant_id, base_schema_name)
+            try:
+                # Delete from Vespa (unregister only, Vespa doesn't support schema deletion)
+                self._schema_registry.unregister_schema(tenant_id, base_schema_name)
+                deleted_schemas.append(tenant_schema_name)
+                self._logger.info(f"Unregistered schema '{tenant_schema_name}' for tenant '{tenant_id}'")
+            except Exception as e:
+                self._logger.error(f"Failed to delete schema '{tenant_schema_name}': {e}")
+
+        return deleted_schemas
+
+    def tenant_schema_exists(self, tenant_id: str, base_schema_name: str) -> bool:
+        """
+        Check if tenant schema exists in registry.
+
+        Args:
+            tenant_id: Tenant identifier
+            base_schema_name: Base schema name
+
+        Returns:
+            True if schema exists, False otherwise
+
+        Raises:
+            ValueError: If schema_registry not configured
+        """
+        if not self._schema_registry:
+            raise ValueError("schema_registry required for tenant schema operations")
+
+        return self._schema_registry.schema_exists(tenant_id, base_schema_name)

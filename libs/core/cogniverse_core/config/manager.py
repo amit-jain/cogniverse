@@ -678,11 +678,10 @@ class ConfigManager:
                 service="schema_registry",
             )
         else:
-            # This is trickier - need to get across all tenants
-            # For now, we'll require tenant_id to be specified
-            # In future, could extend store interface to support cross-tenant queries
-            raise ValueError(
-                "tenant_id must be specified. Cross-tenant queries not yet supported."
+            # Get schemas across all tenants
+            entries = self.store.list_all_configs(
+                scope=ConfigScope.SCHEMA,
+                service="schema_registry",
             )
 
         schemas = []

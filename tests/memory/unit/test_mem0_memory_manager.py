@@ -5,7 +5,7 @@ Unit tests for Mem0MemoryManager
 from unittest.mock import MagicMock, patch
 
 import pytest
-from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
+from cogniverse_core.memory.manager import Mem0MemoryManager
 
 
 class TestMem0MemoryManager:
@@ -36,7 +36,7 @@ class TestMem0MemoryManager:
         assert manager.config is None
 
     @patch("cogniverse_core.registries.backend_registry.get_backend_registry")
-    @patch("cogniverse_core.common.mem0_memory_manager.Memory")
+    @patch("cogniverse_core.memory.manager.Memory")
     def test_initialize_success(
         self,
         mock_memory_class,
@@ -60,11 +60,21 @@ class TestMem0MemoryManager:
         mock_registry.get_ingestion_backend.return_value = mock_backend
         mock_get_backend_registry.return_value = mock_registry
 
+        # Create dependencies for dependency injection
+        from pathlib import Path
+
+        from cogniverse_core.config.manager import ConfigManager
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        config_manager = ConfigManager()
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
         # Initialize
         manager.initialize(
-            vespa_host="localhost",
+            backend_host="localhost",
             backend_port=8080,
             base_schema_name="agent_memories",
+            config_manager=config_manager,
+            schema_loader=schema_loader
         )
 
         assert manager.memory is not None
@@ -75,7 +85,7 @@ class TestMem0MemoryManager:
             == "agent_memories_test_tenant"
         )
 
-    @patch("cogniverse_core.common.mem0_memory_manager.Memory")
+    @patch("cogniverse_core.memory.manager.Memory")
     def test_add_memory(self, mock_memory_class, manager):
         """Test adding memory"""
         # Setup
@@ -98,7 +108,7 @@ class TestMem0MemoryManager:
             metadata={},
         )
 
-    @patch("cogniverse_core.common.mem0_memory_manager.Memory")
+    @patch("cogniverse_core.memory.manager.Memory")
     def test_search_memory(self, mock_memory_class, manager):
         """Test searching memory"""
         # Setup
@@ -138,7 +148,7 @@ class TestMem0MemoryManager:
         )
         assert results == []
 
-    @patch("cogniverse_core.common.mem0_memory_manager.Memory")
+    @patch("cogniverse_core.memory.manager.Memory")
     def test_get_all_memories(self, mock_memory_class, manager):
         """Test getting all memories"""
         # Setup
@@ -161,7 +171,7 @@ class TestMem0MemoryManager:
             agent_id="test_agent",
         )
 
-    @patch("cogniverse_core.common.mem0_memory_manager.Memory")
+    @patch("cogniverse_core.memory.manager.Memory")
     def test_delete_memory(self, mock_memory_class, manager):
         """Test deleting memory"""
         # Setup
@@ -179,7 +189,7 @@ class TestMem0MemoryManager:
         # Implementation only passes memory_id (tenant_id and agent_name not used)
         mock_memory.delete.assert_called_once_with("mem_123")
 
-    @patch("cogniverse_core.common.mem0_memory_manager.Memory")
+    @patch("cogniverse_core.memory.manager.Memory")
     def test_clear_agent_memory(self, mock_memory_class, manager):
         """Test clearing all agent memory"""
         # Setup
@@ -199,7 +209,7 @@ class TestMem0MemoryManager:
         assert success is True
         assert mock_memory.delete.call_count == 2
 
-    @patch("cogniverse_core.common.mem0_memory_manager.Memory")
+    @patch("cogniverse_core.memory.manager.Memory")
     def test_update_memory(self, mock_memory_class, manager):
         """Test updating memory"""
         # Setup
@@ -217,7 +227,7 @@ class TestMem0MemoryManager:
         assert success is True
         mock_memory.update.assert_called_once()
 
-    @patch("cogniverse_core.common.mem0_memory_manager.Memory")
+    @patch("cogniverse_core.memory.manager.Memory")
     def test_health_check(self, mock_memory_class, manager):
         """Test health check"""
         # Setup
@@ -236,7 +246,7 @@ class TestMem0MemoryManager:
         health = manager.health_check()
         assert health is False
 
-    @patch("cogniverse_core.common.mem0_memory_manager.Memory")
+    @patch("cogniverse_core.memory.manager.Memory")
     def test_get_memory_stats(self, mock_memory_class, manager):
         """Test getting memory stats"""
         # Setup

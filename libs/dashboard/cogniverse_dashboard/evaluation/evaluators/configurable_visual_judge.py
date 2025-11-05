@@ -26,7 +26,9 @@ class ConfigurableVisualJudge(Evaluator):
         Args:
             evaluator_name: Name of evaluator config to use
         """
-        config = get_config()
+        from cogniverse_core.config.manager import ConfigManager
+        config_manager = ConfigManager()
+        config = get_config(tenant_id="default", config_manager=config_manager)
         self.evaluator_name = evaluator_name
 
         # Get evaluator config
@@ -76,7 +78,9 @@ class ConfigurableVisualJudge(Evaluator):
         frame_paths = []
 
         # Determine how many frames to extract based on config
-        config = get_config()
+        from cogniverse_core.config.manager import ConfigManager
+        config_manager = ConfigManager()
+        config = get_config(tenant_id="default", config_manager=config_manager)
         evaluator_config = config.get("evaluators", {}).get(self.evaluator_name, {})
         frames_per_video = evaluator_config.get("frames_per_video", 30)
         max_videos = evaluator_config.get("max_videos", 2)
@@ -218,7 +222,9 @@ class ConfigurableVisualJudge(Evaluator):
             # If sample_all, extract every frame (with limit)
             if sample_all:
                 # Get max_total_frames from config
-                config = get_config()
+                from cogniverse_core.config.manager import ConfigManager
+                config_manager = ConfigManager()
+                config = get_config(tenant_id="default", config_manager=config_manager)
                 evaluator_config = config.get("evaluators", {}).get(
                     self.evaluator_name, {}
                 )

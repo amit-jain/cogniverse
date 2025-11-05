@@ -16,7 +16,6 @@ from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 from cogniverse_core.common.a2a_mixin import A2AEndpointsMixin
 from cogniverse_core.common.health_mixin import HealthCheckMixin
 from cogniverse_core.common.vlm_interface import VLMInterface
-from cogniverse_core.config.utils import get_config
 from fastapi import FastAPI, HTTPException
 
 # Enhanced routing support
@@ -130,12 +129,12 @@ class SummarizerAgent(TenantAwareAgentMixin, DSPySummaryMixin, A2AEndpointsMixin
         HealthCheckMixin.__init__(self)
 
         logger.info(f"Initializing SummarizerAgent for tenant: {tenant_id}...")
-        self.config = get_config()
+        # self.config already set by TenantAwareAgentMixin
 
         # Initialize DSPy components
         self._initialize_vlm_client()
         self.dspy_summarizer = dspy.Predict(SummaryGenerationSignature)
-        self.vlm = VLMInterface()
+        self.vlm = VLMInterface(config_manager=self.config_manager, tenant_id=self.tenant_id)
 
         # A2A agent metadata
         self.agent_name = "summarizer_agent"

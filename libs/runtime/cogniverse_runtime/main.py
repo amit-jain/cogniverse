@@ -32,15 +32,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("Starting Cogniverse Runtime...")
 
     # 1. Load configuration
-    config = get_config()
+    from cogniverse_core.config.manager import ConfigManager
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from pathlib import Path
+
+    config_manager = ConfigManager()
+    config = get_config(tenant_id="default", config_manager=config_manager)
     logger.info(f"Loaded configuration for tenant: {config.tenant_id}")
 
-    # 2. Initialize registries
-    backend_registry = BackendRegistry.get_instance()
-    agent_registry = AgentRegistry.get_instance()
+    # 2. Initialize SchemaLoader
+    schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+    logger.info("SchemaLoader initialized")
+
+    # 3. Set dependencies on routers
+    admin.set_config_manager(config_manager)
+    admin.set_schema_loader(schema_loader)
+    ingestion.set_config_manager(config_manager)
+    ingestion.set_schema_loader(schema_loader)
+    logger.info("Router dependencies configured")
+
+    # 4. Initialize registries
+    backend_registry = BackendRegistry(config_manager=config_manager)
+    agent_registry = AgentRegistry(config_manager=config_manager)
     logger.info("Registries initialized")
 
-    # 3. Use config loader to dynamically load backends and agents
+    # 5. Use config loader to dynamically load backends and agents
     config_loader = get_config_loader()
     config_loader.load_backends()
     config_loader.load_agents()
@@ -99,9 +115,11 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
+    from cogniverse_core.config.manager import ConfigManager
 
     # Load config to get port
-    config = get_config()
+    config_manager = ConfigManager()
+    config = get_config(tenant_id="default", config_manager=config_manager)
 
     port = config.get("runtime", {}).get("port", 8000)
     host = config.get("runtime", {}).get("host", "0.0.0.0")

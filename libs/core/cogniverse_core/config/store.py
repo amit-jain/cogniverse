@@ -404,6 +404,85 @@ class SQLiteConfigStore(ConfigStore):
 
             return entries
 
+    def list_all_configs(
+        self,
+        scope: Optional[ConfigScope] = None,
+        service: Optional[str] = None,
+    ) -> List[ConfigEntry]:
+        """
+        Get all current configurations across all tenants.
+
+        Args:
+            scope: Optional scope filter
+            service: Optional service filter
+
+        Returns:
+            List of current ConfigEntry objects from all tenants
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+
+            # Build query based on filters
+            if scope is None and service is None:
+                cursor.execute(
+                    """
+                    SELECT tenant_id, scope, service, config_key, config_value,
+                           version, created_at, updated_at
+                    FROM current_configurations
+                    ORDER BY tenant_id, scope, service, config_key
+                    """
+                )
+            elif scope is not None and service is None:
+                cursor.execute(
+                    """
+                    SELECT tenant_id, scope, service, config_key, config_value,
+                           version, created_at, updated_at
+                    FROM current_configurations
+                    WHERE scope = ?
+                    ORDER BY tenant_id, service, config_key
+                    """,
+                    (scope.value,),
+                )
+            elif scope is None and service is not None:
+                cursor.execute(
+                    """
+                    SELECT tenant_id, scope, service, config_key, config_value,
+                           version, created_at, updated_at
+                    FROM current_configurations
+                    WHERE service = ?
+                    ORDER BY tenant_id, scope, config_key
+                    """,
+                    (service,),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT tenant_id, scope, service, config_key, config_value,
+                           version, created_at, updated_at
+                    FROM current_configurations
+                    WHERE scope = ? AND service = ?
+                    ORDER BY tenant_id, config_key
+                    """,
+                    (scope.value, service),
+                )
+
+            entries = []
+            for row in cursor.fetchall():
+                entries.append(
+                    ConfigEntry(
+                        tenant_id=row[0],
+                        scope=ConfigScope(row[1]),
+                        service=row[2],
+                        config_key=row[3],
+                        config_value=json.loads(row[4]),
+                        version=row[5],
+                        created_at=datetime.fromisoformat(row[6]),
+                        updated_at=datetime.fromisoformat(row[7]),
+                    )
+                )
+
+            return entries
+
     def delete_config(
         self, tenant_id: str, scope: ConfigScope, service: str, config_key: str
     ) -> bool:

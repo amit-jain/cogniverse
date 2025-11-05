@@ -88,8 +88,11 @@ class VespaPyClient:
         # Create embedding processor with this client's schema
         self._embedding_processor = VespaEmbeddingProcessor(self.logger, model_name, self.schema_name)
 
-        # Initialize strategy-aware processor
-        self._strategy_processor = StrategyAwareProcessor()
+        # Initialize strategy-aware processor with schema_loader
+        schema_loader = config.get("schema_loader")
+        if schema_loader is None:
+            raise ValueError("schema_loader is required in config for StrategyAwareProcessor")
+        self._strategy_processor = StrategyAwareProcessor(schema_loader)
 
         # Load schema fields for this specific schema
         self._load_schema_fields()
@@ -232,10 +235,25 @@ class VespaPyClient:
         
         # Build base fields for all schemas (all use per-document structure now)
         fields = {
-            "creation_timestamp": int(time.time() * 1000),  # milliseconds
             **processed_embeddings
         }
-        
+
+        # Add document ID to id field if schema has it
+        if "id" in self.schema_fields:
+            fields["id"] = doc.id
+
+        # Add text content if schema has text field
+        if "text" in self.schema_fields and doc.text_content:
+            fields["text"] = doc.text_content
+
+        # Add timestamp field (different schemas use different names and units)
+        # Video schemas use milliseconds, memory schemas use seconds
+        if "creation_timestamp" in self.schema_fields:
+            fields["creation_timestamp"] = int(time.time() * 1000)  # milliseconds
+        elif "created_at" in self.schema_fields:
+            # Memory schemas use Unix timestamp in seconds
+            fields["created_at"] = int(time.time())  # seconds
+
         # Only add fields that exist in the schema definition
         # This makes the code completely schema-driven
         
@@ -264,8 +282,10 @@ class VespaPyClient:
             if key in self.schema_fields and key not in fields:
                 fields[key] = value
         
-        # Create Vespa document with this client's schema  
-        doc_id_string = f"id:video:{self.schema_name}::{doc.id}"
+        # Create Vespa document with this client's schema
+        # Use appropriate namespace based on schema type
+        namespace = "memory_content" if "agent_memories" in self.schema_name else "video"
+        doc_id_string = f"id:{namespace}:{self.schema_name}::{doc.id}"
         
         # CRITICAL: Log schema being used for each document (first doc only to avoid spam)
         if doc.id.endswith("_0_0") or doc.id.endswith("_0"):  # Log first doc of each video

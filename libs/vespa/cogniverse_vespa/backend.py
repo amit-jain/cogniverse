@@ -6,17 +6,14 @@ and SearchBackend interfaces, with self-registration to the backend registry.
 """
 
 import logging
-from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from cogniverse_core.common.document import Document
 from cogniverse_core.interfaces.backend import Backend
-from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
 from .config import calculate_config_port
 from .ingestion_client import VespaPyClient
 from .search_backend import VespaSearchBackend
-from .tenant_schema_manager import TenantSchemaManager
 from .vespa_schema_manager import VespaSchemaManager
 
 # Check if async ingestion client is available (optional dependency)
@@ -57,7 +54,6 @@ class VespaBackend(Backend):
         self._vespa_ingestion_clients: Dict[str, VespaPyClient] = {}
         self._async_ingestion_clients: Dict[str, Any] = {}  # For async ingestion (optional)
         self.schema_manager: Optional[VespaSchemaManager] = None
-        self.tenant_schema_manager: Optional[TenantSchemaManager] = None
         self._initialized_as_search = False
         self._initialized_as_ingestion = False
         self.use_async_ingestion = False  # Flag to enable async mode
@@ -85,10 +81,24 @@ class VespaBackend(Backend):
         # Extract backend section if present, otherwise use config as-is
         backend_section = config.get("backend", config)
 
-        # Merge backend section with top-level keys for compatibility
-        # This creates a flattened config that VespaSearchBackend can use
-        # Backend section keys take precedence over top-level keys
-        merged_config = {**config, **backend_section}
+        # Merge backend section with top-level config
+        # Strategy: backend_section provides defaults, top-level overrides
+        # Special handling for profiles (merge dicts), url/port (top-level wins)
+        merged_config = {**backend_section}  # Start with backend section defaults
+
+        # Add all top-level keys (overwriting backend section)
+        for key, value in config.items():
+            if key == "backend":
+                # Skip the backend section itself
+                continue
+            elif key == "profiles":
+                # Merge profiles: backend section + top-level (top-level wins on conflicts)
+                backend_profiles = backend_section.get("profiles", {})
+                top_profiles = config.get("profiles", {})
+                merged_config["profiles"] = {**backend_profiles, **top_profiles}
+            else:
+                # Top-level wins for all other keys (url, port, tenant_id, etc.)
+                merged_config[key] = value
 
         # Store merged config for accessing profiles and other settings
         self.config = merged_config
@@ -127,25 +137,16 @@ class VespaBackend(Backend):
             config_port = calculate_config_port(port)
             logger.debug(f"Calculated config port {config_port} from data port {port}")
 
+        # Import schema_registry for tracking tenant schemas
+        from cogniverse_core.registries.schema_registry import get_schema_registry
+        schema_registry = get_schema_registry()
+
         self.schema_manager = VespaSchemaManager(
-            vespa_endpoint=f"{url}:{port}",
-            vespa_port=config_port,
-            config_manager=self._config_manager_instance
-        )
-
-        # Get schema_templates_dir from config if provided (for testing)
-        schema_templates_dir = merged_config.get("schema_templates_dir")
-        if schema_templates_dir is not None:
-            schema_loader = FilesystemSchemaLoader(Path(schema_templates_dir))
-        else:
-            schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-
-        self.tenant_schema_manager = TenantSchemaManager(
-            backend_url=url,
+            backend_endpoint=url,
             backend_port=config_port,
-            http_port=port,
             config_manager=self._config_manager_instance,
-            schema_loader=schema_loader
+            schema_loader=self._schema_loader_instance,
+            schema_registry=schema_registry
         )
 
         # Backend is initialized with all profiles available
@@ -174,10 +175,8 @@ class VespaBackend(Backend):
         """
         # Transform base schema name to tenant-scoped name if tenant_id is set
         target_schema_name = schema_name
-        if self._tenant_id and self.tenant_schema_manager:
-            target_schema_name = self.tenant_schema_manager.get_tenant_schema_name(
-                self._tenant_id, schema_name
-            )
+        if self._tenant_id:
+            target_schema_name = self.get_tenant_schema_name(self._tenant_id, schema_name)
             logger.debug(
                 f"Transformed base schema '{schema_name}' to tenant schema '{target_schema_name}' "
                 f"for tenant '{self._tenant_id}'"
@@ -185,7 +184,7 @@ class VespaBackend(Backend):
 
             # Ensure tenant schema exists (auto-deploy if needed)
             try:
-                self.tenant_schema_manager.ensure_tenant_schema_exists(
+                self._ensure_tenant_schema_exists(
                     self._tenant_id, schema_name
                 )
                 logger.debug(f"Verified tenant schema '{target_schema_name}' exists in Vespa")
@@ -208,7 +207,8 @@ class VespaBackend(Backend):
                 "base_schema_name": schema_name,  # Base schema name for loading schema file
                 "url": self._url,
                 "port": self._port,
-                "profile_config": profile_config  # Pass only the specific profile config
+                "profile_config": profile_config,  # Pass only the specific profile config
+                "schema_loader": self._schema_loader_instance  # Pass schema_loader for StrategyAwareProcessor
             }
 
             client = VespaPyClient(
@@ -259,10 +259,8 @@ class VespaBackend(Backend):
                     try:
                         # Get the tenant-scoped schema name for verification
                         target_schema = schema_name
-                        if self._tenant_id and self.tenant_schema_manager:
-                            target_schema = self.tenant_schema_manager.get_tenant_schema_name(
-                                self._tenant_id, schema_name
-                            )
+                        if self._tenant_id:
+                            target_schema = self.get_tenant_schema_name(self._tenant_id, schema_name)
 
                         wait_for_vespa_document_visible(
                             vespa_url=f"{self._url}:{self._port}",
@@ -332,16 +330,22 @@ class VespaBackend(Backend):
     def update_document(self, document_id: str, document: Document) -> bool:
         """
         Update a document in Vespa.
-        
+
         Args:
             document_id: ID of document to update
             document: Updated Document object
-            
+
         Returns:
             True if successful
         """
         try:
-            results = self.ingest_documents([document])
+            # Get schema name from config
+            schema_name = self.config.get("schema_name")
+            if not schema_name:
+                logger.error("No schema_name in config for update operation")
+                return False
+
+            results = self.ingest_documents([document], schema_name=schema_name)
             return results["success_count"] > 0
         except Exception as e:
             logger.error(f"Failed to update document {document_id}: {e}")
@@ -350,21 +354,35 @@ class VespaBackend(Backend):
     def delete_document(self, document_id: str) -> bool:
         """
         Delete a document from Vespa.
-        
+
         Args:
             document_id: ID of document to delete
-            
+
         Returns:
             True if successful
         """
         if not self.schema_manager:
             raise RuntimeError("Backend not initialized. Call initialize() first.")
-        
+
         try:
-            # Use Vespa client to delete document
-            # This would use the actual Vespa deletion API
-            logger.info(f"Deleted document: {document_id}")
-            return True
+            # Get schema name from config
+            schema_name = self.config.get("schema_name")
+            if not schema_name:
+                logger.error("No schema_name in config for delete operation")
+                return False
+
+            # Get ingestion client for this schema (handles tenant-aware schema naming)
+            client = self._get_or_create_ingestion_client(schema_name)
+
+            # Call delete_document on the ingestion client
+            success = client.delete_document(document_id)
+
+            if success:
+                logger.info(f"Deleted document: {document_id}")
+            else:
+                logger.warning(f"Delete returned False for document: {document_id}")
+
+            return success
         except Exception as e:
             logger.error(f"Failed to delete document {document_id}: {e}")
             return False
@@ -547,7 +565,7 @@ class VespaBackend(Backend):
         Returns:
             True if successful, False otherwise
         """
-        if not self.tenant_schema_manager:
+        if not self.schema_manager:
             raise RuntimeError("Backend not initialized. Call initialize() first.")
 
         # Use provided tenant_id or fall back to instance tenant_id
@@ -556,7 +574,7 @@ class VespaBackend(Backend):
             raise ValueError("tenant_id required for schema deployment")
 
         try:
-            self.tenant_schema_manager.ensure_tenant_schema_exists(
+            self._ensure_tenant_schema_exists(
                 effective_tenant_id, schema_name
             )
             logger.info(
@@ -582,7 +600,7 @@ class VespaBackend(Backend):
         Returns:
             List of deleted schema names
         """
-        if not self.tenant_schema_manager:
+        if not self.schema_manager:
             raise RuntimeError("Backend not initialized. Call initialize() first.")
 
         # Use provided tenant_id or fall back to instance tenant_id
@@ -591,7 +609,7 @@ class VespaBackend(Backend):
             raise ValueError("tenant_id required for schema deletion")
 
         try:
-            deleted_schemas = self.tenant_schema_manager.delete_tenant_schemas(
+            deleted_schemas = self._delete_tenant_schemas(
                 effective_tenant_id
             )
             logger.info(
@@ -617,7 +635,7 @@ class VespaBackend(Backend):
         Returns:
             True if schema exists, False otherwise
         """
-        if not self.tenant_schema_manager:
+        if not self.schema_manager:
             raise RuntimeError("Backend not initialized. Call initialize() first.")
 
         # Use provided tenant_id or fall back to instance tenant_id
@@ -627,8 +645,8 @@ class VespaBackend(Backend):
             return self.validate_schema(schema_name)
 
         try:
-            # Check if schema exists in SchemaRegistry
-            return self.tenant_schema_manager.schema_registry.schema_exists(
+            # Check if schema exists via VespaSchemaManager
+            return self.schema_manager.tenant_schema_exists(
                 effective_tenant_id, schema_name
             )
         except Exception as e:
@@ -637,25 +655,51 @@ class VespaBackend(Backend):
             )
             return False
 
+    def _ensure_tenant_schema_exists(self, tenant_id: str, base_schema_name: str) -> None:
+        """
+        Ensure tenant schema exists, deploying if needed.
+
+        Delegates to VespaSchemaManager.
+
+        Args:
+            tenant_id: Tenant identifier
+            base_schema_name: Base schema name
+
+        Raises:
+            Exception: If schema deployment fails
+        """
+        self.schema_manager.deploy_tenant_schema(tenant_id, base_schema_name)
+
+    def _delete_tenant_schemas(self, tenant_id: str) -> List[str]:
+        """
+        Delete all schemas for a tenant.
+
+        Delegates to VespaSchemaManager.
+
+        Args:
+            tenant_id: Tenant identifier
+
+        Returns:
+            List of deleted schema names
+        """
+        return self.schema_manager.delete_tenant_schemas(tenant_id)
+
     def get_tenant_schema_name(
         self, tenant_id: str, base_schema_name: str
     ) -> str:
         """
         Get tenant-specific schema name.
 
+        Delegates to VespaSchemaManager.
+
         Args:
             tenant_id: Tenant identifier
             base_schema_name: Base schema name
 
         Returns:
-            Tenant-specific schema name
+            Tenant-specific schema name (e.g., "video_colpali_acme")
         """
-        if not self.tenant_schema_manager:
-            raise RuntimeError("Backend not initialized. Call initialize() first.")
-
-        return self.tenant_schema_manager.get_tenant_schema_name(
-            tenant_id, base_schema_name
-        )
+        return self.schema_manager.get_tenant_schema_name(tenant_id, base_schema_name)
 
     # ============================================================================
     # Metadata Document Operations (Backend interface implementation)

@@ -14,7 +14,6 @@ import numpy as np
 import uvicorn
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
-from cogniverse_core.config.utils import get_config
 from cogniverse_core.registries.backend_registry import get_backend_registry
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -240,17 +239,27 @@ class VideoSearchAgent(MemoryAwareMixin, TenantAwareAgentMixin):
     Enhanced with memory capabilities for learning from search patterns.
     """
 
-    def __init__(self, tenant_id: str, **kwargs):
+    def __init__(self, tenant_id: str, schema_loader=None, **kwargs):
         """
         Initialize enhanced video search agent
 
         Args:
             tenant_id: Tenant identifier (REQUIRED - no default)
+            schema_loader: SchemaLoader instance (REQUIRED for dependency injection)
             **kwargs: Additional configuration options
 
         Raises:
-            ValueError: If tenant_id is empty or None
+            ValueError: If tenant_id is empty or None or schema_loader is None
         """
+        if schema_loader is None:
+            raise ValueError(
+                "schema_loader is required for VideoSearchAgent. "
+                "Dependency injection is mandatory - pass SchemaLoader instance explicitly."
+            )
+
+        # Store schema_loader for use in backend initialization
+        self.schema_loader = schema_loader
+
         # Initialize tenant support via TenantAwareAgentMixin
         # This validates tenant_id and stores it (eliminates duplication)
         TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
@@ -258,8 +267,7 @@ class VideoSearchAgent(MemoryAwareMixin, TenantAwareAgentMixin):
         super().__init__()  # Initialize MemoryAwareMixin
         logger.info(f"Initializing VideoSearchAgent for tenant: {tenant_id}...")
 
-        # Initialize base configuration
-        self.config = get_config()
+        # self.config already set by TenantAwareAgentMixin
 
         # Check environment variables first, then kwargs, then defaults
         vespa_url = kwargs.get("vespa_url") or os.getenv(
@@ -364,18 +372,13 @@ class VideoSearchAgent(MemoryAwareMixin, TenantAwareAgentMixin):
             }
 
             # Get search backend from registry
-            from cogniverse_core.config.manager import ConfigManager
-            from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-            from pathlib import Path
-
             registry = get_backend_registry()
-            config_manager = ConfigManager.get_instance()
-            schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+            # Use self.config_manager and self.schema_loader from dependency injection
 
             self.search_backend = registry.get_search_backend(
                 "vespa", tenant_id, backend_config,
-                config_manager=config_manager,
-                schema_loader=schema_loader
+                config_manager=self.config_manager,
+                schema_loader=self.schema_loader
             )
 
             logger.info(

@@ -10,8 +10,8 @@ from typing import Any, Dict
 
 from cogniverse_core.config.manager import ConfigManager
 from cogniverse_core.config.unified_config import BackendProfileConfig
+from cogniverse_core.interfaces.schema_loader import SchemaLoader
 from cogniverse_core.registries.backend_registry import BackendRegistry
-from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_core.validation.profile_validator import ProfileValidator
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -32,8 +32,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Module-level ConfigManager instance for dependency injection
+# Module-level ConfigManager and SchemaLoader instances for dependency injection
 _config_manager: ConfigManager = None
+_schema_loader: SchemaLoader = None
 _profile_validator_schema_dir_override = None  # For test overrides
 
 
@@ -48,6 +49,19 @@ def set_config_manager(config_manager: ConfigManager) -> None:
     """
     global _config_manager
     _config_manager = config_manager
+
+
+def set_schema_loader(schema_loader: SchemaLoader) -> None:
+    """
+    Set the SchemaLoader instance for this router.
+
+    Must be called during application startup before handling requests.
+
+    Args:
+        schema_loader: SchemaLoader instance to use
+    """
+    global _schema_loader
+    _schema_loader = schema_loader
 
 
 def set_profile_validator_schema_dir(schema_dir) -> None:
@@ -78,6 +92,23 @@ def get_config_manager_dependency() -> ConfigManager:
     return _config_manager
 
 
+def get_schema_loader_dependency() -> SchemaLoader:
+    """
+    FastAPI dependency for SchemaLoader.
+
+    Returns:
+        SchemaLoader instance
+
+    Raises:
+        RuntimeError: If SchemaLoader not initialized via set_schema_loader()
+    """
+    if _schema_loader is None:
+        raise RuntimeError(
+            "SchemaLoader not initialized. Call set_schema_loader() during app startup."
+        )
+    return _schema_loader
+
+
 def get_profile_validator_dependency(
     config_manager: ConfigManager = Depends(get_config_manager_dependency),
 ) -> ProfileValidator:
@@ -104,11 +135,11 @@ async def get_system_stats(
     tenant_id: str,
     backend: str,
     config_manager: ConfigManager = Depends(get_config_manager_dependency),
+    schema_loader: SchemaLoader = Depends(get_schema_loader_dependency),
 ) -> Dict[str, Any]:
     """Get system statistics."""
     try:
-        backend_registry = BackendRegistry.get_instance()
-        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+        backend_registry = BackendRegistry(config_manager=config_manager)
         backend_instance = backend_registry.get_ingestion_backend(backend, tenant_id=tenant_id, config_manager=config_manager, schema_loader=schema_loader)
         if not backend_instance:
             raise HTTPException(
@@ -142,6 +173,7 @@ async def get_system_stats(
 async def create_profile(
     request: ProfileCreateRequest,
     config_manager: ConfigManager = Depends(get_config_manager_dependency),
+    schema_loader: SchemaLoader = Depends(get_schema_loader_dependency),
     validator: ProfileValidator = Depends(get_profile_validator_dependency),
 ) -> ProfileCreateResponse:
     """
@@ -153,6 +185,7 @@ async def create_profile(
     Args:
         request: Profile creation request
         config_manager: ConfigManager instance (injected)
+        schema_loader: SchemaLoader instance (injected)
         validator: ProfileValidator instance (injected)
 
     Returns:
@@ -203,8 +236,7 @@ async def create_profile(
 
         if request.deploy_schema:
             try:
-                backend_registry = BackendRegistry.get_instance()
-                schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+                backend_registry = BackendRegistry(config_manager=config_manager)
                 backend = backend_registry.get_ingestion_backend(
                     "vespa", tenant_id=request.tenant_id, config_manager=config_manager, schema_loader=schema_loader
                 )
@@ -250,6 +282,7 @@ async def create_profile(
 async def list_profiles(
     tenant_id: str,
     config_manager: ConfigManager = Depends(get_config_manager_dependency),
+    schema_loader: SchemaLoader = Depends(get_schema_loader_dependency),
 ) -> ProfileListResponse:
     """
     List all backend profiles for a tenant.
@@ -257,6 +290,7 @@ async def list_profiles(
     Args:
         tenant_id: Tenant identifier (query parameter)
         config_manager: ConfigManager instance (injected)
+        schema_loader: SchemaLoader instance (injected)
 
     Returns:
         List of profile summaries
@@ -273,13 +307,12 @@ async def list_profiles(
 
         # Convert to summary format
         profile_summaries = []
-        backend_registry = BackendRegistry.get_instance()
+        backend_registry = BackendRegistry(config_manager=config_manager)
 
         for profile_name, profile in profiles.items():
             # Check if schema is deployed
             schema_deployed = False
             try:
-                schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
                 backend = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id, config_manager=config_manager, schema_loader=schema_loader)
                 if backend:
                     schema_deployed = backend.schema_exists(
@@ -316,6 +349,7 @@ async def get_profile(
     profile_name: str,
     tenant_id: str,
     config_manager: ConfigManager = Depends(get_config_manager_dependency),
+    schema_loader: SchemaLoader = Depends(get_schema_loader_dependency),
 ) -> ProfileDetail:
     """
     Get a specific backend profile.
@@ -324,6 +358,7 @@ async def get_profile(
         profile_name: Profile name (path parameter)
         tenant_id: Tenant identifier (query parameter)
         config_manager: ConfigManager instance (injected)
+        schema_loader: SchemaLoader instance (injected)
 
     Returns:
         Detailed profile information
@@ -350,8 +385,7 @@ async def get_profile(
         tenant_schema_name = None
 
         try:
-            backend_registry = BackendRegistry.get_instance()
-            schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+            backend_registry = BackendRegistry(config_manager=config_manager)
             backend = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id, config_manager=config_manager, schema_loader=schema_loader)
             if backend:
                 schema_deployed = backend.schema_exists(
@@ -496,6 +530,7 @@ async def delete_profile(
     tenant_id: str,
     delete_schema: bool = False,
     config_manager: ConfigManager = Depends(get_config_manager_dependency),
+    schema_loader: SchemaLoader = Depends(get_schema_loader_dependency),
 ) -> ProfileDeleteResponse:
     """
     Delete a backend profile.
@@ -507,6 +542,7 @@ async def delete_profile(
         tenant_id: Tenant identifier (query parameter)
         delete_schema: Whether to also delete the schema (query parameter, default: false)
         config_manager: ConfigManager instance (injected)
+        schema_loader: SchemaLoader instance (injected)
 
     Returns:
         Deletion confirmation
@@ -553,8 +589,7 @@ async def delete_profile(
 
             # Delete schema
             try:
-                backend_registry = BackendRegistry.get_instance()
-                schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+                backend_registry = BackendRegistry(config_manager=config_manager)
                 backend = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id, config_manager=config_manager, schema_loader=schema_loader)
                 if backend:
                     deleted_schemas = backend.delete_schema(
@@ -596,6 +631,7 @@ async def deploy_profile_schema(
     profile_name: str,
     request: SchemaDeploymentRequest,
     config_manager: ConfigManager = Depends(get_config_manager_dependency),
+    schema_loader: SchemaLoader = Depends(get_schema_loader_dependency),
 ) -> SchemaDeploymentResponse:
     """
     Deploy schema for a backend profile.
@@ -606,6 +642,7 @@ async def deploy_profile_schema(
         profile_name: Profile name (path parameter)
         request: Deployment request
         config_manager: ConfigManager instance (injected)
+        schema_loader: SchemaLoader instance (injected)
 
     Returns:
         Deployment status
@@ -630,8 +667,7 @@ async def deploy_profile_schema(
             )
 
         # Check if schema already deployed (unless force=True)
-        backend_registry = BackendRegistry.get_instance()
-        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+        backend_registry = BackendRegistry(config_manager=config_manager)
         backend = backend_registry.get_ingestion_backend("vespa", tenant_id=request.tenant_id, config_manager=config_manager, schema_loader=schema_loader)
 
         if not backend:

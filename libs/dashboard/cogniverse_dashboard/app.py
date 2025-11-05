@@ -307,7 +307,9 @@ def get_a2a_client():
 @st.cache_data
 def get_agent_config():
     """Get agent endpoints from configuration - fail fast if missing required URLs"""
-    config = get_config()
+    from cogniverse_core.config.manager import ConfigManager
+    config_manager = ConfigManager()
+    config = get_config(tenant_id="default", config_manager=config_manager)
 
     # Required agent URLs - fail fast if not configured
     required_agents = {
@@ -1038,7 +1040,9 @@ with tabs[5]:
 
 # Helper function to create Phoenix trace link
 def create_phoenix_link(trace_id, text="View in Phoenix"):
-    config = get_config()
+    from cogniverse_core.config.manager import ConfigManager
+    config_manager = ConfigManager()
+    config = get_config(tenant_id="default", config_manager=config_manager)
     phoenix_base_url = config.get("phoenix_base_url", "http://localhost:6006")
     # Phoenix uses project-based routing with base64 encoded project IDs
     # Default project is "Project:1" which encodes to "UHJvamVjdDox"
@@ -1218,8 +1222,11 @@ if enable_rca and len(tabs) > 6:
                                     # Show Phoenix query for trace IDs
                                     trace_ids_query = " or ".join([f'trace_id == "{tid}"' for tid in hypothesis.affected_traces[:5]])
                                     st.code(trace_ids_query, language="python")
-                                    
-                                    phoenix_base_url = get_config().get("phoenix_base_url", "http://localhost:6006")
+
+                                    from cogniverse_core.config.manager import ConfigManager
+                                    config_manager = ConfigManager()
+                                    config = get_config(tenant_id="default", config_manager=config_manager)
+                                    phoenix_base_url = config.get("phoenix_base_url", "http://localhost:6006")
                                     import base64
                                     project_encoded = base64.b64encode(b"Project:1").decode('utf-8')
                                     phoenix_link = f"{phoenix_base_url}/projects/{project_encoded}/traces"
@@ -1307,7 +1314,10 @@ if enable_rca and len(tabs) > 6:
                 
                 # Add link to view all failed traces
                 if summary.get('failed_traces', 0) > 0:
-                    phoenix_base_url = get_config().get("phoenix_base_url", "http://localhost:6006")
+                    from cogniverse_core.config.manager import ConfigManager
+                    config_manager = ConfigManager()
+                    config = get_config(tenant_id="default", config_manager=config_manager)
+                    phoenix_base_url = config.get("phoenix_base_url", "http://localhost:6006")
                     import base64
                     project_encoded = base64.b64encode(b"Project:1").decode('utf-8')
                     st.markdown(f"[📊 View all {summary.get('failed_traces', 0)} failed traces in Phoenix]({phoenix_base_url}/projects/{project_encoded}/traces)")
@@ -1375,7 +1385,10 @@ if enable_rca and len(tabs) > 6:
                     
                     # Create DataFrame for temporal patterns
                     burst_data = []
-                    phoenix_base_url = get_config().get("phoenix_base_url", "http://localhost:6006")
+                    from cogniverse_core.config.manager import ConfigManager
+                    config_manager = ConfigManager()
+                    config = get_config(tenant_id="default", config_manager=config_manager)
+                    phoenix_base_url = config.get("phoenix_base_url", "http://localhost:6006")
                     import base64
                     project_encoded = base64.b64encode(b"Project:1").decode('utf-8')
                     
@@ -1414,7 +1427,10 @@ if enable_rca and len(tabs) > 6:
                                     end_iso = pattern.get('end_time', pattern['start_time'])
                                     phoenix_time_query = f'timestamp >= "{start_iso}" and timestamp <= "{end_iso}"'
                                     st.code(phoenix_time_query, language="python")
-                            phoenix_base_url = get_config().get("phoenix_base_url", "http://localhost:6006")
+                            from cogniverse_core.config.manager import ConfigManager
+                            config_manager = ConfigManager()
+                            config = get_config(tenant_id="default", config_manager=config_manager)
+                            phoenix_base_url = config.get("phoenix_base_url", "http://localhost:6006")
                             import base64
                             project_encoded = base64.b64encode(b"Project:1").decode('utf-8')
                             st.caption(f"☝️ Copy these queries and paste them in the [Phoenix]({phoenix_base_url}/projects/{project_encoded}/traces) search bar")
@@ -1426,7 +1442,10 @@ if enable_rca and len(tabs) > 6:
                 
                 # Add link to view slow traces
                 if summary.get('performance_degraded', 0) > 0 and 'threshold' in perf:
-                    phoenix_base_url = get_config().get("phoenix_base_url", "http://localhost:6006")
+                    from cogniverse_core.config.manager import ConfigManager
+                    config_manager = ConfigManager()
+                    config = get_config(tenant_id="default", config_manager=config_manager)
+                    phoenix_base_url = config.get("phoenix_base_url", "http://localhost:6006")
                     import base64
                     project_encoded = base64.b64encode(b"Project:1").decode('utf-8')
                     st.markdown(f"[📊 View {summary.get('performance_degraded', 0)} slow traces in Phoenix]({phoenix_base_url}/projects/{project_encoded}/traces)")

@@ -70,7 +70,9 @@ class CombinedRoutingTester:
     """Test suite for evaluating both LLM and GLiNER routing and temporal extraction."""
 
     def __init__(self):
-        self.config = get_config()
+        from cogniverse_core.config.manager import ConfigManager
+        config_manager = ConfigManager()
+        self.config = get_config(tenant_id="default", config_manager=config_manager)
 
     def load_test_queries(self, filename: str = "test_queries.txt") -> list[TestQuery]:
         """Load test queries from file."""

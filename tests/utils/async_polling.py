@@ -294,8 +294,9 @@ def wait_for_vespa_document_visible(
     def check_document():
         try:
             query_url = f"{vespa_url}/search/"
+            # Use matches for string attribute queries (works for UUIDs with hyphens)
             params = {
-                "yql": f"select * from {schema_name} where documentid contains '{document_id}' limit 1",
+                "yql": f'select * from {schema_name} where id matches "{document_id}" limit 1',
             }
             response = requests.get(query_url, params=params, timeout=5)
             if response.status_code == 200:

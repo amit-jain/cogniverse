@@ -40,7 +40,9 @@ class SystemOptimizer:
     """CLI interface for system optimization"""
 
     def __init__(self):
-        self.config = get_config()
+        from cogniverse_core.config.manager import ConfigManager
+        config_manager = ConfigManager()
+        self.config = get_config(tenant_id="default", config_manager=config_manager)
         self.a2a_client = A2AClient(timeout=60.0)
 
         # Fail fast if required configuration is missing

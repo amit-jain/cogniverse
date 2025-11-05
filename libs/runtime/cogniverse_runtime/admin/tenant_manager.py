@@ -29,15 +29,13 @@ Example Usage:
 
 import logging
 import time
-from pathlib import Path
 from typing import Dict, List, Optional
 
 import uvicorn
 from cogniverse_core.common.tenant_utils import parse_tenant_id
 from cogniverse_core.config.utils import get_config
 from cogniverse_core.interfaces.backend import Backend
-from cogniverse_core.registries.backend_registry import get_backend_registry
-from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from cogniverse_core.interfaces.schema_loader import SchemaLoader
 from fastapi import FastAPI, HTTPException
 
 from cogniverse_runtime.admin.models import (
@@ -60,12 +58,26 @@ app = FastAPI(
 # Backend for metadata storage and schema management
 backend: Optional[Backend] = None
 _config_manager = None  # For test injection
+_schema_loader: SchemaLoader = None  # For dependency injection
 
 
 def set_config_manager(config_manager):
     """Set ConfigManager for this module (for tests)"""
     global _config_manager
     _config_manager = config_manager
+
+
+def set_schema_loader(schema_loader: SchemaLoader) -> None:
+    """
+    Set the SchemaLoader instance for this module.
+
+    Must be called during application startup before handling requests.
+
+    Args:
+        schema_loader: SchemaLoader instance to use
+    """
+    global _schema_loader
+    _schema_loader = schema_loader
 
 
 def get_backend() -> Backend:
@@ -78,7 +90,9 @@ def get_backend() -> Backend:
 
         config = get_config(tenant_id="system", config_manager=config_manager)
         backend_type = config.get("backend_type", "vespa")
-        registry = get_backend_registry()
+
+        from cogniverse_core.registries.backend_registry import BackendRegistry
+        registry = BackendRegistry(config_manager=config_manager)
 
         # Get backend instance with configuration
         backend_config = {
@@ -89,7 +103,13 @@ def get_backend() -> Backend:
         # Get backend WITHOUT tenant_id (this is for metadata operations across all tenants)
         # We'll pass tenant_id explicitly when needed for schema operations
         try:
-            schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+            # Require injected SchemaLoader
+            if _schema_loader is None:
+                raise RuntimeError(
+                    "SchemaLoader not initialized. Call set_schema_loader() during app startup."
+                )
+            schema_loader = _schema_loader
+
             backend = registry.get_ingestion_backend(
                 backend_type, tenant_id="system", config=backend_config, config_manager=config_manager, schema_loader=schema_loader
             )
@@ -692,7 +712,9 @@ async def health_check():
 
 
 if __name__ == "__main__":
-    config = get_config()
+    from cogniverse_core.config.manager import ConfigManager
+    config_manager = ConfigManager()
+    config = get_config(tenant_id="default", config_manager=config_manager)
     port = config.get("tenant_manager_port", 9000)
 
     logger.info(f"Starting Tenant Management API on port {port}")

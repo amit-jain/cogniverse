@@ -7,13 +7,16 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import httpx
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.config.utils import get_config
 
 from cogniverse_agents.tools.a2a_utils import A2AClient
+
+if TYPE_CHECKING:
+    from cogniverse_core.config.manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +36,19 @@ class AgentRegistry:
     Registry for managing available agents with health monitoring and load balancing.
     """
 
-    def __init__(self):
-        """Initialize agent registry"""
-        self.config = get_config()
+    def __init__(self, tenant_id: str = "default", config_manager: "ConfigManager" = None):
+        """Initialize agent registry
+
+        Args:
+            tenant_id: Tenant identifier for multi-tenancy support
+            config_manager: ConfigManager instance for configuration access
+        """
+        if config_manager is None:
+            raise ValueError("config_manager is required for AgentRegistry")
+
+        self.tenant_id = tenant_id
+        self.config_manager = config_manager
+        self.config = get_config(tenant_id=tenant_id, config_manager=config_manager)
         self.agents: Dict[str, AgentEndpoint] = {}
         self.capabilities: Dict[str, List[str]] = {}  # capability -> agent names
         self.http_client = httpx.AsyncClient(timeout=10.0)

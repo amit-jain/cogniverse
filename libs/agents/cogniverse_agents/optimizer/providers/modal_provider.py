@@ -7,12 +7,14 @@ This contains all the existing Modal-specific logic.
 
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import requests
-from cogniverse_core.config.utils import get_config
 
 from .base_provider import ArtifactProvider, ModelProvider, ProviderFactory
+
+if TYPE_CHECKING:
+    from cogniverse_core.config.system_config import SystemConfig
 
 
 class ModalModelProvider(ModelProvider):
@@ -64,11 +66,22 @@ class ModalModelProvider(ModelProvider):
         else:
             raise Exception(f"Unexpected response format: {result}")
     
-    def deploy_model_service(self, model_id: str = None, **kwargs) -> Dict[str, str]:
-        """Deploy the Modal model service."""
+    def deploy_model_service(self, model_id: str = None, config: Optional["SystemConfig"] = None, **kwargs) -> Dict[str, str]:
+        """Deploy the Modal model service.
+
+        Args:
+            model_id: Optional model ID to deploy
+            config: SystemConfig instance (required for dependency injection)
+            **kwargs: Additional deployment options
+        """
+        # Require config via dependency injection
+        if config is None:
+            raise ValueError(
+                "config is required for ModalProvider.deploy(). "
+                "Pass SystemConfig instance explicitly."
+            )
+
         # Check if we already have a deployed endpoint in config
-        config = get_config()
-        
         existing_endpoint = config.get('inference.modal_endpoint')
         if existing_endpoint:
             print(f"📍 Using existing Modal endpoint from config: {existing_endpoint}")
@@ -150,8 +163,12 @@ class ModalModelProvider(ModelProvider):
             
             # Update config with the deployed endpoint
             try:
-                config = get_config()
-                
+                # Re-get config if not passed in
+                if config is None:
+                    from cogniverse_core.config.manager import ConfigManager
+                    from cogniverse_core.config.utils import get_config
+                    config = get_config(tenant_id="default", config_manager=ConfigManager())
+
                 # Update the modal endpoint in config
                 config.set('inference.modal_endpoint', service_urls["inference_endpoint"])
                 

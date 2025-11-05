@@ -12,7 +12,10 @@ For Ollama models, use "openai/<model_name>" with api_base set to Ollama endpoin
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from cogniverse_core.config.manager import ConfigManager
 
 from cogniverse_core.config.utils import get_config_value
 from litellm import arerank, rerank
@@ -34,7 +37,7 @@ class LearnedReranker:
     Configuration is loaded from config.json under "reranking" section.
     """
 
-    def __init__(self, model: Optional[str] = None):
+    def __init__(self, model: Optional[str] = None, tenant_id: str = "default", config_manager: "ConfigManager" = None):
         """
         Initialize learned reranker
 
@@ -42,9 +45,20 @@ class LearnedReranker:
             model: Model name (e.g., "cohere/rerank-english-v3.0", "openai/bge-reranker-v2-m3")
                    For Ollama models, use "openai/<model_name>" with api_base set
                    If None, loads from config.json
+            tenant_id: Tenant identifier for config scoping
+            config_manager: ConfigManager instance (required for dependency injection)
+
+        Raises:
+            ValueError: If config_manager is not provided
         """
+        if config_manager is None:
+            raise ValueError(
+                "config_manager is required for LearnedReranker. "
+                "Pass ConfigManager() explicitly."
+            )
+
         # Load config
-        rerank_config = get_config_value("reranking", {})
+        rerank_config = get_config_value("reranking", {}, tenant_id=tenant_id, config_manager=config_manager)
 
         # Determine model to use
         if model:

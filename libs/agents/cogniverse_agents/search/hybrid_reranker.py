@@ -10,7 +10,10 @@ Strategies:
 """
 
 import logging
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from cogniverse_core.config.manager import ConfigManager
 
 from cogniverse_core.config.utils import get_config_value
 
@@ -38,6 +41,8 @@ class HybridReranker:
         strategy: Optional[str] = None,
         learned_weight: Optional[float] = None,
         heuristic_weight: Optional[float] = None,
+        tenant_id: str = "default",
+        config_manager: "ConfigManager" = None,
     ):
         """
         Initialize hybrid reranker
@@ -48,13 +53,24 @@ class HybridReranker:
             strategy: Fusion strategy (loads from config if None)
             learned_weight: Weight for learned scores (loads from config if None)
             heuristic_weight: Weight for heuristic scores (loads from config if None)
+            tenant_id: Tenant identifier for config scoping
+            config_manager: ConfigManager instance (required for dependency injection)
+
+        Raises:
+            ValueError: If config_manager is not provided
         """
+        if config_manager is None:
+            raise ValueError(
+                "config_manager is required for HybridReranker. "
+                "Pass ConfigManager() explicitly."
+            )
+
         # Load config
-        rerank_config = get_config_value("reranking", {})
+        rerank_config = get_config_value("reranking", {}, tenant_id=tenant_id, config_manager=config_manager)
 
         # Initialize rerankers
         self.heuristic_reranker = heuristic_reranker or MultiModalReranker()
-        self.learned_reranker = learned_reranker or LearnedReranker()
+        self.learned_reranker = learned_reranker or LearnedReranker(tenant_id=tenant_id, config_manager=config_manager)
 
         # Load fusion settings from config
         self.strategy = strategy or rerank_config.get(

@@ -109,7 +109,10 @@ class PipelineConfig:
     @classmethod
     def from_profile(cls, profile_name: str) -> "PipelineConfig":
         """Load pipeline config for a specific profile"""
-        config = get_config()
+        from cogniverse_core.config.manager import ConfigManager
+
+        config_manager = ConfigManager()
+        config = get_config(tenant_id="default", config_manager=config_manager)
 
         # Get profile-specific config from backend section
         backend_config = config.get("backend", {})

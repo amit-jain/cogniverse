@@ -536,8 +536,10 @@ class TestSystemIntegrationReadiness:
     def test_system_configuration_readiness(self):
         """Test system can handle different configuration states"""
         from cogniverse_core.config.utils import get_config
+        from cogniverse_core.config.manager import ConfigManager
 
-        config = get_config()
+        config_manager = ConfigManager()
+        config = get_config(tenant_id="default", config_manager=config_manager)
 
         # Should return a configuration
         assert config is not None

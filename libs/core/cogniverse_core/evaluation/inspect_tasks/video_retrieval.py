@@ -6,7 +6,6 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from cogniverse_core.config.utils import get_config
 from inspect_ai import Task, task
 from inspect_ai.dataset import Dataset, Sample
 
@@ -45,9 +44,6 @@ def video_retrieval_accuracy(
     Returns:
         Inspect AI Task for video retrieval evaluation
     """
-    # Load configuration
-    _ = get_config()  # noqa: F841
-
     # Default profiles and strategies if not specified
     if profiles is None:
         profiles = [

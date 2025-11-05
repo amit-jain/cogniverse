@@ -5,8 +5,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from cogniverse_core.config.manager import ConfigManager
+from cogniverse_core.interfaces.schema_loader import SchemaLoader
 from cogniverse_core.registries.backend_registry import BackendRegistry
-from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -39,10 +40,77 @@ class IngestionStatus(BaseModel):
 # In-memory job tracking (replace with Redis/DB in production)
 ingestion_jobs: Dict[str, IngestionStatus] = {}
 
+# Module-level ConfigManager and SchemaLoader instances for dependency injection
+_config_manager: ConfigManager = None
+_schema_loader: SchemaLoader = None
+
+
+def set_config_manager(config_manager: ConfigManager) -> None:
+    """
+    Set the ConfigManager instance for this router.
+
+    Must be called during application startup before handling requests.
+
+    Args:
+        config_manager: ConfigManager instance to use
+    """
+    global _config_manager
+    _config_manager = config_manager
+
+
+def set_schema_loader(schema_loader: SchemaLoader) -> None:
+    """
+    Set the SchemaLoader instance for this router.
+
+    Must be called during application startup before handling requests.
+
+    Args:
+        schema_loader: SchemaLoader instance to use
+    """
+    global _schema_loader
+    _schema_loader = schema_loader
+
+
+def get_config_manager_dependency() -> ConfigManager:
+    """
+    FastAPI dependency for ConfigManager.
+
+    Returns:
+        ConfigManager instance
+
+    Raises:
+        RuntimeError: If ConfigManager not initialized via set_config_manager()
+    """
+    if _config_manager is None:
+        raise RuntimeError(
+            "ConfigManager not initialized. Call set_config_manager() during app startup."
+        )
+    return _config_manager
+
+
+def get_schema_loader_dependency() -> SchemaLoader:
+    """
+    FastAPI dependency for SchemaLoader.
+
+    Returns:
+        SchemaLoader instance
+
+    Raises:
+        RuntimeError: If SchemaLoader not initialized via set_schema_loader()
+    """
+    if _schema_loader is None:
+        raise RuntimeError(
+            "SchemaLoader not initialized. Call set_schema_loader() during app startup."
+        )
+    return _schema_loader
+
 
 @router.post("/start")
 async def start_ingestion(
-    request: IngestionRequest, background_tasks: BackgroundTasks
+    request: IngestionRequest,
+    background_tasks: BackgroundTasks,
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
+    schema_loader: SchemaLoader = Depends(get_schema_loader_dependency),
 ) -> Dict[str, Any]:
     """Start video ingestion process."""
     try:
@@ -53,8 +121,8 @@ async def start_ingestion(
                 status_code=400, detail=f"Video directory not found: {request.video_dir}"
             )
 
-        # Get backend
-        backend_registry = BackendRegistry.get_instance()
+        # Get backend with dependency injection
+        backend_registry = BackendRegistry(config_manager=config_manager)
         backend = backend_registry.get_backend(request.backend)
         if not backend:
             raise HTTPException(
@@ -109,6 +177,8 @@ async def upload_video(
     backend: str = "vespa",
     tenant_id: Optional[str] = None,
     org_id: Optional[str] = None,
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
+    schema_loader: SchemaLoader = Depends(get_schema_loader_dependency),
 ) -> Dict[str, Any]:
     """Upload and ingest a single video file."""
     try:
@@ -122,8 +192,8 @@ async def upload_video(
             tmp.write(content)
             tmp_path = tmp.name
 
-        # Get backend
-        backend_registry = BackendRegistry.get_instance()
+        # Get backend with dependency injection
+        backend_registry = BackendRegistry(config_manager=config_manager)
         backend_instance = backend_registry.get_backend(backend)
         if not backend_instance:
             raise HTTPException(
@@ -131,10 +201,11 @@ async def upload_video(
             )
 
         # Process video
+        from cogniverse_core.config.utils import get_config
+
         from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 
-        config_manager = ConfigManager.get_instance()
-        config = config_manager.get_config()
+        config = get_config(tenant_id=tenant_id or "default", config_manager=config_manager)
 
         pipeline = VideoIngestionPipeline(
             config=config, profile=profile, backend=backend_instance
@@ -164,10 +235,12 @@ async def run_ingestion(
 ) -> None:
     """Run ingestion process (background task)."""
     try:
+        from cogniverse_core.config.utils import get_config
+
         from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 
-        config_manager = ConfigManager.get_instance()
-        config = config_manager.get_config()
+        config_manager = ConfigManager()
+        config = get_config(tenant_id=request.tenant_id or "default", config_manager=config_manager)
 
         pipeline = VideoIngestionPipeline(
             config=config, profile=request.profile, backend=backend

@@ -82,7 +82,7 @@ class TestRoutingAgentWithAdvancedFeatures:
         """Test that route_query works with advanced features"""
         query = "show me tutorials from 2023"
 
-        result = await routing_agent.route_query(query)
+        result = await routing_agent.route_query(query, tenant_id="test-tenant")
 
         # Verify routing decision is returned
         assert result is not None

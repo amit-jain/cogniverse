@@ -239,8 +239,10 @@ class VespaTestManager:
 
             # Store original config values for restoration
             from cogniverse_core.config.utils import get_config
+            from cogniverse_core.config.manager import ConfigManager
 
-            _original_config_values = get_config()
+            config_manager = ConfigManager()
+            _original_config_values = get_config(tenant_id="default", config_manager=config_manager)
             _original_config_vespa_url = _original_config_values.get("vespa_url")
             _original_config_vespa_port = _original_config_values.get("vespa_port")
 
@@ -275,8 +277,10 @@ class VespaTestManager:
 
             # Verify the config will be loaded from environment
             from cogniverse_core.config.utils import get_config
+            from cogniverse_core.config.manager import ConfigManager
 
-            current_config = get_config()
+            config_manager = ConfigManager()
+            current_config = get_config(tenant_id="default", config_manager=config_manager)
             current_backend_config = current_config.get("backend", {})
             loaded_profiles = current_backend_config.get("profiles", {})
             print(
@@ -502,12 +506,14 @@ class VespaTestManager:
 
             registry = get_backend_registry()
 
-            # Load full config with backend section
-            full_config = get_config()
-
             # Create config_manager and schema_loader for dependency injection
             temp_dir = tempfile.mkdtemp()
             config_manager = ConfigManager(db_path=Path(temp_dir) / "test_config.db")
+
+            # Load full config with backend section
+            full_config = get_config(tenant_id="default", config_manager=config_manager)
+
+            # Local instantiation in test utility (acceptable pattern)
             schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
             # Get backend for test tenant with search configuration

@@ -10,12 +10,16 @@ instead of embedding large video data directly in HTML artifacts.
 import asyncio
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING, Optional
 
 import uvicorn
 from cogniverse_core.config.utils import get_config
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+
+if TYPE_CHECKING:
+    from cogniverse_core.config.system_config import SystemConfig
 
 # Configure logging
 logging.basicConfig(
@@ -27,10 +31,22 @@ logger = logging.getLogger(__name__)
 
 class VideoFileServer:
     """HTTP server for serving video files"""
-    
-    def __init__(self, port: int = 8888):
+
+    def __init__(self, port: int = 8888, config: Optional["SystemConfig"] = None):
+        """Initialize video file server
+
+        Args:
+            port: Port number to serve on
+            config: SystemConfig instance (required for dependency injection)
+        """
         self.port = port
-        self.config = get_config()
+        if config is None:
+            raise ValueError(
+                "config is required for VideoFileServer. "
+                "Pass SystemConfig instance explicitly."
+            )
+
+        self.config = config
         self.video_dir = Path(self.config.get("video_dir", "data/videos"))
         self.app = FastAPI(title="Video File Server", version="1.0.0")
         
@@ -145,10 +161,11 @@ class VideoFileServer:
 
 async def main():
     """Main function to start the video file server"""
-    config = get_config()
+    from cogniverse_core.config.manager import ConfigManager
+    config = get_config(tenant_id="default", config_manager=ConfigManager())
     port = config.get("static_server_port", 8888)
-    
-    server = VideoFileServer(port=port)
+
+    server = VideoFileServer(port=port, config=config)
     await server.start()
 
 

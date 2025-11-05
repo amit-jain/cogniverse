@@ -2,11 +2,14 @@
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List
 
 import dspy
 
 from cogniverse_core.config.utils import get_config
+
+if TYPE_CHECKING:
+    from cogniverse_core.config.manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +50,10 @@ class DetailedVisualAnalysisSignature(dspy.Signature):
 class VLMInterface:
     """Interface for Vision Language Model operations using DSPy"""
 
-    def __init__(self):
-        self.config = get_config()
+    def __init__(self, config_manager: "ConfigManager" = None, tenant_id: str = "default"):
+        if config_manager is None:
+            raise ValueError("config_manager is required for VLMInterface initialization")
+        self.config = get_config(tenant_id=tenant_id, config_manager=config_manager)
         self._initialize_vlm_client()
 
     def _initialize_vlm_client(self):

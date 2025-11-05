@@ -8,12 +8,15 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from cogniverse_core.config.utils import get_config
 
 from cogniverse_agents.dspy_integration_mixin import DSPyQueryAnalysisMixin
 from cogniverse_agents.routing_agent import RoutingAgent
+
+if TYPE_CHECKING:
+    from cogniverse_core.config.manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -136,12 +139,23 @@ class QueryAnalysisToolV3(DSPyQueryAnalysisMixin):
     - Workflow orchestration
     """
 
-    def __init__(self, **kwargs):
-        """Initialize the enhanced query analysis tool"""
+    def __init__(self, tenant_id: str = "default", config_manager: "ConfigManager" = None, **kwargs):
+        """Initialize the enhanced query analysis tool
+
+        Args:
+            tenant_id: Tenant identifier for multi-tenancy support
+            config_manager: ConfigManager instance for configuration access
+            **kwargs: Additional configuration options
+        """
         logger.info("Initializing QueryAnalysisToolV3...")
         super().__init__()  # Initialize DSPy mixin
 
-        self.config = get_config()
+        if config_manager is None:
+            raise ValueError("config_manager is required for QueryAnalysisToolV3")
+
+        self.tenant_id = tenant_id
+        self.config_manager = config_manager
+        self.config = get_config(tenant_id=tenant_id, config_manager=config_manager)
 
         # Configuration
         self.enable_thinking_phase = kwargs.get("enable_thinking_phase", True)

@@ -36,10 +36,12 @@ async def main_async():
     parser.add_argument("--test-mode", action="store_true", help="Use test mode with limited frames")
 
     args = parser.parse_args()
-    
+
     # Get profiles to process
     from src.common.config_utils import get_config
-    app_config = get_config()
+    from cogniverse_core.config.manager import ConfigManager
+    config_manager = ConfigManager()
+    app_config = get_config(tenant_id="default", config_manager=config_manager)
     
     if args.profile:
         profiles_to_process = args.profile

@@ -66,7 +66,9 @@ class PhoenixExperimentRunner:
             provider = telemetry_manager.provider
 
         self.provider = provider
-        self.config = get_config()
+        from cogniverse_core.config.manager import ConfigManager
+        config_manager = ConfigManager()
+        self.config = get_config(tenant_id="default", config_manager=config_manager)
         self.experiment_project = experiment_project_name
         self.enable_quality_evaluators = enable_quality_evaluators
         self.enable_llm_evaluators = enable_llm_evaluators

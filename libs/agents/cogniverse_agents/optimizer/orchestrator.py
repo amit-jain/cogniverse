@@ -233,10 +233,10 @@ class ModelClientLM(DSPyLMProvider):
 
 class OptimizationOrchestrator:
     """Main orchestrator for the optimization process."""
-    
+
     def __init__(self, config_path: str = "config.json"):
-        
-        self.config_instance = get_config()
+        from cogniverse_core.config.manager import ConfigManager
+        self.config_instance = get_config(tenant_id="default", config_manager=ConfigManager())
         self.config = self._load_config()
         self.client = ModelClient(self.config)
         
@@ -514,14 +514,13 @@ class OptimizationOrchestrator:
         student_config = self.client.config["student"]
         student_model = student_config["model"]
         student_provider = student_config["provider"]
-        
+
         # Create student LM
         print(f"\n🎓 Configuring student model: {student_model} via {student_provider}")
         if student_provider == "modal":
             # For Modal, we need to use the deployed endpoint
-            # Use Config class to get configuration
-            config = get_config()
-            modal_endpoint = config.get("inference.modal_endpoint")
+            # Use the already loaded config instance
+            modal_endpoint = self.config_instance.get("inference.modal_endpoint")
             
             print(f"📍 Modal endpoint from config: {modal_endpoint}")
             

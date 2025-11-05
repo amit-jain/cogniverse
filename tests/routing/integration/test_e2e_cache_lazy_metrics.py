@@ -345,7 +345,7 @@ class TestProductionRoutingRealInfrastructure:
         assert cached is None, "Cache should be empty initially"
 
         # First execution
-        result1 = await routing_agent.route_query(query, context, tenant_id=context.get("tenant_id"))
+        result1 = await routing_agent.route_query(query, tenant_id=context.get("tenant_id"))
         logger.info(f"✅ First execution: {result1.recommended_agent if result1 else 'unknown'}")
 
         # Cache the result
@@ -372,7 +372,7 @@ class TestProductionRoutingRealInfrastructure:
         ):
             """Execute routing for specific modality"""
             # Use real routing agent to determine results
-            result = await routing_agent.route_query(query, context, tenant_id=context.get("tenant_id"))
+            result = await routing_agent.route_query(query, tenant_id=context.get("tenant_id"))
 
             # Simulate modality-specific results
             return {
@@ -621,7 +621,7 @@ class TestProductionRoutingRealInfrastructure:
             query: str, modality: QueryModality, context: dict
         ):
             execution_order.append(modality)
-            result = await routing_agent.route_query(query, context, tenant_id=context.get("tenant_id", "test-cost"))
+            result = await routing_agent.route_query(query, tenant_id=context.get("tenant_id", "test-cost"))
             # Return low confidence to force all executions
             return {
                 "results": [],

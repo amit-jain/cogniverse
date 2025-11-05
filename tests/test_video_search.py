@@ -32,8 +32,12 @@ class VideoSearchComparison:
         """
         self.agents = agent_configs
         self.results = {}
-        self.config = get_config()
-        
+        from cogniverse_core.config.manager import ConfigManager
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        config_manager = ConfigManager()
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+        self.config = get_config(tenant_id="default", config_manager=config_manager)
+
         # Initialize search services for each profile
         self.search_services = {}
         for agent in agent_configs:
@@ -41,7 +45,7 @@ class VideoSearchComparison:
             # Update config with agent-specific settings
             self.config['vespa_url'] = agent['url']
             self.config['vespa_port'] = agent['port']
-            self.search_services[profile] = SearchService(self.config, profile)
+            self.search_services[profile] = SearchService(self.config, profile, config_manager=config_manager, schema_loader=schema_loader)
     
     def search_profile(self, profile: str, query: str, top_k: int = 10) -> Dict[str, Any]:
         """Search using a specific profile"""

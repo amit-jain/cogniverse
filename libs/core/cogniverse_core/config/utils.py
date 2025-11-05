@@ -314,7 +314,7 @@ def get_config(
     return ConfigUtils(tenant_id, config_manager=config_manager)
 
 
-def get_config_value(key: str, default: Any = None, tenant_id: str = "default") -> Any:
+def get_config_value(key: str, default: Any = None, tenant_id: str = "default", config_manager: "ConfigManager" = None) -> Any:
     """
     Get single config value by key.
 
@@ -322,9 +322,18 @@ def get_config_value(key: str, default: Any = None, tenant_id: str = "default") 
         key: Configuration key
         default: Default value if not found
         tenant_id: Tenant identifier
+        config_manager: ConfigManager instance (REQUIRED - no fallback)
 
     Returns:
         Configuration value
+
+    Raises:
+        ValueError: If config_manager is not provided
     """
-    config = ConfigUtils(tenant_id)
+    if config_manager is None:
+        raise ValueError(
+            "config_manager is required for get_config_value(). "
+            "Dependency injection is mandatory - pass ConfigManager() explicitly."
+        )
+    config = ConfigUtils(tenant_id, config_manager)
     return config.get(key, default)

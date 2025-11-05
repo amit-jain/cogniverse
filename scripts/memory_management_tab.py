@@ -6,10 +6,13 @@ Supports viewing, searching, adding, and deleting memories per agent/tenant.
 """
 
 import json
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
+from cogniverse_core.memory.manager import Mem0MemoryManager
+from cogniverse_core.config.manager import ConfigManager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
 
 def render_memory_management_tab():
@@ -37,7 +40,7 @@ def render_memory_management_tab():
         import httpx
         vespa_response = httpx.get("http://localhost:8080/ApplicationStatus", timeout=2)
         vespa_available = vespa_response.status_code == 200
-    except:
+    except Exception:
         vespa_available = False
 
     if not vespa_available:
@@ -53,7 +56,15 @@ def render_memory_management_tab():
         # Check if initialized
         if manager.memory is None:
             st.info("⚙️ Initializing Mem0 memory manager...")
-            manager.initialize()
+
+            # Create dependencies for dependency injection
+            config_manager = ConfigManager()
+            schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+            manager.initialize(
+                config_manager=config_manager,
+                schema_loader=schema_loader
+            )
             st.success("✅ Memory manager initialized")
     except Exception as e:
         st.error(f"❌ Failed to initialize memory manager: {e}")

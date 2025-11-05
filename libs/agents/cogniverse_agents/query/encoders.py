@@ -4,7 +4,7 @@ import logging
 import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 import torch
@@ -12,7 +12,9 @@ import torch
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from cogniverse_core.common.models import get_or_load_model
-from cogniverse_core.config.utils import get_config
+
+if TYPE_CHECKING:
+    from cogniverse_core.config.system_config import SystemConfig
 
 logger = logging.getLogger(__name__)
 
@@ -161,12 +163,22 @@ class QueryEncoderFactory:
     _encoder_cache = {}  # Cache for config-based encoder mappings
 
     @staticmethod
-    def create_encoder(profile: str, model_name: Optional[str] = None) -> QueryEncoder:
+    def create_encoder(profile: str, model_name: Optional[str] = None, config: Optional["SystemConfig"] = None) -> QueryEncoder:
         """Create query encoder for the given profile
 
         Dynamically determines the encoder based on config.json backend.profiles
+
+        Args:
+            profile: Profile name to use
+            model_name: Optional model name override
+            config: SystemConfig instance (required for dependency injection)
         """
-        config = get_config()
+        if config is None:
+            raise ValueError(
+                "config is required for QueryEncoderFactory.create(). "
+                "Pass SystemConfig instance explicitly."
+            )
+
         backend_config = config.get("backend", {})
         video_profiles = backend_config.get("profiles", {})
 
@@ -205,9 +217,18 @@ class QueryEncoderFactory:
                 )
 
     @staticmethod
-    def get_supported_profiles() -> list:
-        """Return list of supported profiles from config.json"""
-        config = get_config()
+    def get_supported_profiles(config: Optional["SystemConfig"] = None) -> list:
+        """Return list of supported profiles from config.json
+
+        Args:
+            config: SystemConfig instance (required for dependency injection)
+        """
+        if config is None:
+            raise ValueError(
+                "config is required for QueryEncoderFactory.get_supported_profiles(). "
+                "Pass SystemConfig instance explicitly."
+            )
+
         backend_config = config.get("backend", {})
         video_profiles = backend_config.get("profiles", {})
         return list(video_profiles.keys())

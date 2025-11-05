@@ -46,7 +46,9 @@ def video_retrieval_accuracy(
         Inspect AI Task for video retrieval evaluation
     """
     # Load configuration
-    _ = get_config()  # noqa: F841
+    from cogniverse_core.config.manager import ConfigManager
+    config_manager = ConfigManager()
+    _ = get_config(tenant_id="default", config_manager=config_manager)  # noqa: F841
 
     # Default profiles and strategies if not specified
     if profiles is None:

@@ -51,9 +51,12 @@ def create_retrieval_solver(
         # Import here to avoid circular dependencies
         from cogniverse_runtime.search.service import SearchService
 
+        from cogniverse_core.config.manager import ConfigManager
         from cogniverse_core.config.utils import get_config
 
-        main_config = get_config()
+        # Initialize ConfigManager for dependency injection
+        config_manager = ConfigManager()
+        main_config = get_config(tenant_id="default", config_manager=config_manager)
 
         # Store results for each configuration
         all_results = {}
@@ -201,9 +204,12 @@ def create_batch_solver(
             try:
                 from cogniverse_runtime.search.service import SearchService
 
+                from cogniverse_core.config.manager import ConfigManager
                 from cogniverse_core.config.utils import get_config
 
-                main_config = get_config()
+                # Initialize ConfigManager for dependency injection
+                ground_truth_config_manager = ConfigManager()
+                main_config = get_config(tenant_id="default", config_manager=ground_truth_config_manager)
                 search_service = SearchService(main_config)
                 backend = search_service.backend
             except Exception as e:

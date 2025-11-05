@@ -8,17 +8,20 @@ import logging
 
 import pytest
 
+# Import vespa backend to trigger self-registration
+import cogniverse_vespa  # noqa: F401
+
 from tests.utils.vespa_docker import VespaDockerManager
 
 logger = logging.getLogger(__name__)
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="class")
 def vespa_instance():
     """
     Start isolated Vespa Docker instance for backend integration tests.
 
-    Uses unique ports per test module to avoid conflicts with:
+    Uses unique ports per test class to avoid conflicts with:
     - Main Vespa (8080)
     - System tests (different module, different ports)
     - Other test modules (deterministic hash-based port assignment)
@@ -36,6 +39,7 @@ def vespa_instance():
             from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
             from unittest.mock import MagicMock
 
+            # Example shows direct instantiation (use fixture in actual tests)
             schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
             manager = TenantSchemaManager(
                 backend_url="http://localhost",
@@ -54,16 +58,16 @@ def vespa_instance():
         # Wait for config server to be ready
         manager.wait_for_config_ready(container_info)
 
-        # Deploy base schemas (must be AFTER config ready, BEFORE application ready)
-        logger.info("Deploying base schemas...")
-        try:
-            manager.deploy_schemas(container_info, include_metadata=True)
-        except Exception as e:
-            logger.warning(f"Schema deployment failed: {e}")
-            # Continue anyway - some tests might not need schemas
+        # Give Vespa additional time to fully initialize all services
+        # Config port being ready doesn't mean data port is ready
+        import time
+        logger.info("Waiting additional 10 seconds for Vespa services to fully initialize...")
+        time.sleep(10)
+        logger.info("Vespa initialization complete")
 
-        # Wait for application to be ready (must be AFTER schemas deployed)
-        manager.wait_for_application_ready(container_info)
+        # NOTE: Schema deployment is intentionally SKIPPED for backend schema lifecycle tests
+        # These tests are designed to TEST schema deployment, so they deploy schemas themselves
+        # Pre-deploying schemas would interfere with the tests and cause timeout issues
 
         # Yield instance info
         yield container_info
@@ -80,10 +84,6 @@ def vespa_instance():
         try:
             from cogniverse_core.config.manager import ConfigManager
             from cogniverse_core.registries.backend_registry import get_backend_registry
-            from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
-
-            # Clear TenantSchemaManager singleton
-            TenantSchemaManager._clear_instance()
 
             # Clear backend registry instances
             registry = get_backend_registry()

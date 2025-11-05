@@ -8,7 +8,7 @@ Handles context retrieval, memory updates, and lifecycle management.
 import logging
 from typing import Any, Dict, Optional
 
-from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
+from cogniverse_core.memory.manager import Mem0MemoryManager
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +47,12 @@ class MemoryAwareMixin:
         self,
         agent_name: str,
         tenant_id: str,
-        vespa_host: str = "localhost",
-        vespa_port: int = 8080,
-        vespa_config_port: Optional[int] = None,
+        backend_host: str = "localhost",
+        backend_port: int = 8080,
+        backend_config_port: Optional[int] = None,
         auto_create_schema: bool = True,
+        config_manager = None,
+        schema_loader = None,
     ) -> bool:
         """
         Initialize memory for this agent
@@ -58,10 +60,12 @@ class MemoryAwareMixin:
         Args:
             agent_name: Name of the agent
             tenant_id: Tenant identifier (REQUIRED - no default)
-            vespa_host: Vespa endpoint host
-            vespa_port: Vespa data endpoint port
-            vespa_config_port: Vespa config endpoint port (default: 19071)
+            backend_host: Backend endpoint host
+            backend_port: Backend data endpoint port
+            backend_config_port: Backend config endpoint port (default: 19071)
             auto_create_schema: Auto-deploy tenant schema if not exists (default: True)
+            config_manager: ConfigManager instance (REQUIRED)
+            schema_loader: SchemaLoader instance (REQUIRED)
 
         Returns:
             Success status
@@ -82,11 +86,13 @@ class MemoryAwareMixin:
             # Initialize if not already done
             if self.memory_manager.memory is None:
                 self.memory_manager.initialize(
-                    vespa_host=vespa_host,
-                    vespa_port=vespa_port,
-                    vespa_config_port=vespa_config_port,
+                    backend_host=backend_host,
+                    backend_port=backend_port,
+                    backend_config_port=backend_config_port,
                     base_schema_name="agent_memories",
                     auto_create_schema=auto_create_schema,
+                    config_manager=config_manager,
+                    schema_loader=schema_loader,
                 )
 
             self._memory_initialized = True

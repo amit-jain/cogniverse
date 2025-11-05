@@ -76,10 +76,10 @@ def generate_test_embeddings(col_model, col_processor, device, query_text):
 
     return embeddings_np
 
-def create_search_services(config):
+def create_search_services(config, config_manager, schema_loader):
     """Create search services for different profiles"""
     services = {}
-    
+
     # Define profiles to test
     profiles = [
         "frame_based_colpali",
@@ -87,14 +87,14 @@ def create_search_services(config):
         "direct_video_frame",
         "direct_video_global"
     ]
-    
+
     for profile in profiles:
         try:
-            services[profile] = SearchService(config, profile)
+            services[profile] = SearchService(config, profile, config_manager=config_manager, schema_loader=schema_loader)
             logger.info(f"✅ Created search service for profile: {profile}")
         except Exception as e:
             logger.error(f"❌ Failed to create service for {profile}: {e}")
-    
+
     return services
 
 def analyze_ranking_results(results_df, strategy_performance):

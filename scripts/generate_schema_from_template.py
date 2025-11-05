@@ -45,8 +45,10 @@ def generate_schema(profile_name: str, profile_config: dict) -> str:
 
 def main():
     """Generate schemas for all profiles with schema_config"""
-    
-    config = get_config()
+
+    from cogniverse_core.config.manager import ConfigManager
+    config_manager = ConfigManager()
+    config = get_config(tenant_id="default", config_manager=config_manager)
     profiles = config.get("video_processing_profiles", {})
     
     generated_count = 0

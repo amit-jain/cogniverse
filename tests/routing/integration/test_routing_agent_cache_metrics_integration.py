@@ -39,10 +39,10 @@ class TestRoutingAgentCacheMetricsIntegration:
     async def test_cache_integration_with_routing(self, routing_agent):
         """Test cache integration with real routing queries"""
         query = "machine learning videos"
-        context = {"tenant_id": "test-cache-integration"}
+        tenant_id = "test-cache-integration"
 
         # First execution (cache miss)
-        result1 = await routing_agent.route_query(query, context)
+        result1 = await routing_agent.route_query(query, tenant_id=tenant_id)
         # route_query now returns a RoutingDecision object directly
         assert result1 is not None
         assert hasattr(result1, 'recommended_agent')
@@ -52,7 +52,7 @@ class TestRoutingAgentCacheMetricsIntegration:
         initial_hits = video_stats["hits"]
 
         # Second execution (should hit cache)
-        result2 = await routing_agent.route_query(query, context)
+        result2 = await routing_agent.route_query(query, tenant_id=tenant_id)
 
         # Results should match (except execution_time)
         assert result1.recommended_agent == result2.recommended_agent
@@ -74,7 +74,7 @@ class TestRoutingAgentCacheMetricsIntegration:
         ]
 
         for query, expected_modality in queries:
-            await routing_agent.route_query(query, {"tenant_id": "test-metrics"})
+            await routing_agent.route_query(query, tenant_id="test-metrics")
 
         # Verify metrics were recorded
         summary = routing_agent.metrics_tracker.get_summary_stats()
@@ -86,13 +86,13 @@ class TestRoutingAgentCacheMetricsIntegration:
     async def test_cache_miss_then_hit(self, routing_agent):
         """Test cache miss followed by cache hit"""
         query = "deep learning tutorials"
-        context = {"tenant_id": "test-cache-miss-hit"}
+        tenant_id = "test-cache-miss-hit"
 
         # First call - cache miss (fresh routing agent has empty cache)
-        result1 = await routing_agent.route_query(query, context)
+        result1 = await routing_agent.route_query(query, tenant_id=tenant_id)
 
         # Second call - cache hit
-        result2 = await routing_agent.route_query(query, context)
+        result2 = await routing_agent.route_query(query, tenant_id=tenant_id)
 
         # Results should match (except execution_time)
         assert result1.query == result2.query
@@ -110,7 +110,7 @@ class TestRoutingAgentCacheMetricsIntegration:
         """Test metrics track both successful and failed executions"""
         # Successful query
         await routing_agent.route_query(
-            "machine learning", {"tenant_id": "test-metrics-success"}
+            "machine learning", tenant_id="test-metrics-success"
         )
 
         summary = routing_agent.metrics_tracker.get_summary_stats()
@@ -118,7 +118,7 @@ class TestRoutingAgentCacheMetricsIntegration:
 
         # Another successful query
         await routing_agent.route_query(
-            "deep learning", {"tenant_id": "test-metrics-success"}
+            "deep learning", tenant_id="test-metrics-success"
         )
 
         summary = routing_agent.metrics_tracker.get_summary_stats()
@@ -127,10 +127,10 @@ class TestRoutingAgentCacheMetricsIntegration:
     async def test_concurrent_queries_with_cache(self, routing_agent):
         """Test concurrent queries benefit from caching"""
         query = "neural networks"
-        context = {"tenant_id": "test-concurrent-cache"}
+        tenant_id = "test-concurrent-cache"
 
         # Execute same query concurrently
-        tasks = [routing_agent.route_query(query, context) for _ in range(5)]
+        tasks = [routing_agent.route_query(query, tenant_id=tenant_id) for _ in range(5)]
 
         results = await asyncio.gather(*tasks)
 
@@ -158,10 +158,10 @@ class TestRoutingAgentCacheMetricsIntegration:
         # Execute queries twice to populate caches
         for query, _ in queries:
             await routing_agent.route_query(
-                query, {"tenant_id": "test-modality-cache"}
+                query, tenant_id="test-modality-cache"
             )
             await routing_agent.route_query(
-                query, {"tenant_id": "test-modality-cache"}
+                query, tenant_id="test-modality-cache"
             )
 
         # Verify we have cache hits (queries executed twice each)
@@ -179,10 +179,10 @@ class TestRoutingAgentCacheMetricsIntegration:
     async def test_cache_ttl_expiration(self, routing_agent):
         """Test cache TTL expiration"""
         query = "ai research papers"
-        context = {"tenant_id": "test-cache-ttl"}
+        tenant_id = "test-cache-ttl"
 
         # Execute query
-        result1 = await routing_agent.route_query(query, context)
+        result1 = await routing_agent.route_query(query, tenant_id=tenant_id)
 
         # Manually cache with short TTL
         routing_agent.cache_manager.cache_result(query, QueryModality.DOCUMENT, result1)
@@ -212,7 +212,7 @@ class TestRoutingAgentCacheMetricsIntegration:
 
         for query, _ in queries:
             await routing_agent.route_query(
-                query, {"tenant_id": "test-per-modality"}
+                query, tenant_id="test-per-modality"
             )
 
         # Verify total requests across all modalities
@@ -233,7 +233,7 @@ class TestRoutingAgentCacheMetricsIntegration:
         for query, expected_modality in test_cases:
             # Execute routing and verify the decision contains proper structure
             result = await routing_agent.route_query(
-                query, {"tenant_id": "test-detection"}
+                query, tenant_id="test-detection"
             )
             # route_query now returns a RoutingDecision object directly
             assert result is not None

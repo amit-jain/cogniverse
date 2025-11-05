@@ -15,6 +15,8 @@ Example:
     client = TenantAwareVespaSearchClient(
         tenant_id="acme",
         base_schema_name="video_colpali_smol500_mv_frame",
+        config_manager=config_manager,
+        schema_loader=schema_loader,
         backend_url="http://localhost",
         backend_port=8080
     )
@@ -34,11 +36,8 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
-from cogniverse_vespa.tenant_schema_manager import (
-    get_tenant_schema_manager,
-)
+from cogniverse_core.backends.tenant_schema_manager import TenantSchemaManager
 from cogniverse_vespa.vespa_search_client import (
     VespaVideoSearchClient,
 )
@@ -59,6 +58,7 @@ class TenantAwareVespaSearchClient:
         tenant_id: str,
         base_schema_name: str,
         config_manager,
+        schema_loader,
         backend_url: str = "http://localhost",
         backend_port: int = 8080,
         auto_create_schema: bool = True,
@@ -70,12 +70,13 @@ class TenantAwareVespaSearchClient:
             tenant_id: Tenant identifier (REQUIRED)
             base_schema_name: Base schema name (e.g., "video_colpali_smol500_mv_frame")
             config_manager: ConfigManager instance (REQUIRED)
+            schema_loader: SchemaLoader instance for loading schemas (REQUIRED)
             backend_url: Backend endpoint URL
             backend_port: Backend port number
             auto_create_schema: Automatically create schema if it doesn't exist
 
         Raises:
-            ValueError: If tenant_id, base_schema_name, or config_manager is invalid
+            ValueError: If tenant_id, base_schema_name, config_manager, or schema_loader is invalid
             SchemaNotFoundException: If base schema template not found
             SchemaDeploymentException: If schema deployment fails
 
@@ -83,7 +84,8 @@ class TenantAwareVespaSearchClient:
             >>> client = TenantAwareVespaSearchClient(
             ...     tenant_id="acme",
             ...     base_schema_name="video_colpali_smol500_mv_frame",
-            ...     config_manager=config_manager
+            ...     config_manager=config_manager,
+            ...     schema_loader=schema_loader
             ... )
         """
         if not tenant_id:
@@ -91,24 +93,29 @@ class TenantAwareVespaSearchClient:
         if not base_schema_name:
             raise ValueError("base_schema_name is required")
         if config_manager is None:
-            raise ValueError("config_manager is required")
+            raise ValueError(
+                "config_manager is required for TenantAwareVespaSearchClient. "
+                "Dependency injection is mandatory - pass ConfigManager instance explicitly."
+            )
+        if schema_loader is None:
+            raise ValueError(
+                "schema_loader is required for TenantAwareVespaSearchClient. "
+                "Dependency injection is mandatory - pass SchemaLoader instance explicitly."
+            )
 
         self.tenant_id = tenant_id
         self.base_schema_name = base_schema_name
         self.backend_url = backend_url
         self.backend_port = backend_port
         self._config_manager = config_manager
+        self._schema_loader = schema_loader
 
         # Initialize schema manager
-        from pathlib import Path
-
         from cogniverse_vespa.config import calculate_config_port
         config_port = calculate_config_port(backend_port)
 
-        # Create schema loader for configs/schemas directory
-        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-
-        self.schema_manager = get_tenant_schema_manager(
+        self.schema_manager = TenantSchemaManager(
+            backend_name="vespa",
             backend_url=backend_url,
             backend_port=config_port,
             http_port=backend_port,

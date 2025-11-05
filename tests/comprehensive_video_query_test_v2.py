@@ -473,12 +473,18 @@ def calculate_metrics(results: List[Dict], expected_videos: List[str], k_values:
 
 def test_profile_with_queries(profile: str, queries: List[Dict], test_multiple_strategies: bool = False) -> Dict:
     """Test a profile with all queries and return detailed results"""
-    
+
     # Get config and create search service
-    config = get_config()
-    
+    from pathlib import Path
+
+    from cogniverse_core.config.manager import ConfigManager
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    config_manager = ConfigManager()
+    schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+    config = get_config(tenant_id="default", config_manager=config_manager)
+
     try:
-        search_service = SearchService(config, profile)
+        search_service = SearchService(config, profile, config_manager=config_manager, schema_loader=schema_loader)
     except Exception as e:
         print(f"❌ Failed to create search service for {profile}: {e}")
         return {
@@ -512,9 +518,8 @@ def test_profile_with_queries(profile: str, queries: List[Dict], test_multiple_s
     else:
         # Use default strategy for profile
         strategies_to_test = [(None, 'Default')]
-    
-    # Get model name from config
-    config = get_config()
+
+    # Get model name from config (reuse config_manager from above)
     profiles = config.get("video_processing_profiles", {})
     model_name = profiles.get(profile, {}).get("embedding_model", "Unknown")
     
@@ -759,10 +764,7 @@ def main():
     if args.test_multiple_strategies:
         print("📊 Testing multiple ranking strategies for each profile...")
         print("    This will help identify the optimal strategy for each model\n")
-    
-    # Get config
-    config = get_config()
-    
+
     # Create output directory if it doesn't exist
     output_dir = Path(__file__).parent.parent / "outputs" / "test_results"
     output_dir.mkdir(parents=True, exist_ok=True)

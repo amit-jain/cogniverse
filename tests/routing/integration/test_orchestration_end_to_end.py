@@ -40,7 +40,7 @@ class TestOrchestrationEndToEnd:
         query = "Find videos and documents about artificial intelligence"
         context = {"tenant_id": "test-tenant"}
 
-        result = await routing_agent.route_query(query, context)
+        result = await routing_agent.route_query(query, tenant_id=context["tenant_id"])
 
         # RoutingAgent returns a RoutingDecision object
         assert result is not None
@@ -59,7 +59,7 @@ class TestOrchestrationEndToEnd:
         query = "Provide detailed analysis of quantum computing advancements"
         context = {"tenant_id": "test-tenant"}
 
-        result = await routing_agent.route_query(query, context)
+        result = await routing_agent.route_query(query, tenant_id=context["tenant_id"])
 
         assert result is not None
         assert hasattr(result, 'recommended_agent')
@@ -73,7 +73,7 @@ class TestOrchestrationEndToEnd:
         query = "show me machine learning videos"
         context = {"tenant_id": "test-tenant"}
 
-        result = await routing_agent.route_query(query, context)
+        result = await routing_agent.route_query(query, tenant_id=context["tenant_id"])
 
         assert result is not None
         assert hasattr(result, 'recommended_agent')
@@ -83,7 +83,7 @@ class TestOrchestrationEndToEnd:
         query = "Compare video tutorials and research papers on deep learning"
         context = {"tenant_id": "test-tenant"}
 
-        result = await routing_agent.route_query(query, context)
+        result = await routing_agent.route_query(query, tenant_id=context["tenant_id"])
 
         assert result is not None
         # Telemetry spans are created internally, just verify routing works
@@ -94,7 +94,7 @@ class TestOrchestrationEndToEnd:
         query = ""  # Empty query
         context = {"tenant_id": "test-tenant"}
 
-        result = await routing_agent.route_query(query, context)
+        result = await routing_agent.route_query(query, tenant_id=context["tenant_id"])
 
         # Should still return a decision even for edge cases
         assert result is not None
@@ -105,7 +105,7 @@ class TestOrchestrationEndToEnd:
         query = "Find videos and images about neural networks"
         context = {"tenant_id": "test-tenant"}
 
-        result = await routing_agent.route_query(query, context)
+        result = await routing_agent.route_query(query, tenant_id=context["tenant_id"])
 
         assert result is not None
         # Check for orchestration metadata
@@ -117,7 +117,7 @@ class TestOrchestrationEndToEnd:
         query = "Analyze this video then summarize the findings"
         context = {"tenant_id": "test-tenant"}
 
-        result = await routing_agent.route_query(query, context)
+        result = await routing_agent.route_query(query, tenant_id=context["tenant_id"])
 
         assert result is not None
         assert hasattr(result, 'recommended_agent')
@@ -127,7 +127,7 @@ class TestOrchestrationEndToEnd:
         query = "Search videos, then create a detailed report"
         context = {"tenant_id": "test-tenant"}
 
-        result = await routing_agent.route_query(query, context)
+        result = await routing_agent.route_query(query, tenant_id=context["tenant_id"])
 
         assert result is not None
         assert hasattr(result, 'metadata')
@@ -137,7 +137,7 @@ class TestOrchestrationEndToEnd:
         query = "Multi-modal search across videos and documents"
         context = {"tenant_id": "test-tenant"}
 
-        result = await routing_agent.route_query(query, context)
+        result = await routing_agent.route_query(query, tenant_id=context["tenant_id"])
 
         assert result is not None
         assert hasattr(result, 'metadata')

@@ -3,6 +3,7 @@
 import logging
 from typing import Any, Dict
 
+from cogniverse_core.config.manager import ConfigManager
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -24,7 +25,8 @@ class AgentTask(BaseModel):
 @router.get("/")
 async def list_agents() -> Dict[str, Any]:
     """List all registered agents."""
-    agent_registry = AgentRegistry.get_instance()
+    config_manager = ConfigManager()
+    agent_registry = AgentRegistry(config_manager=config_manager)
     agents = agent_registry.list_agents()
 
     return {
@@ -36,7 +38,8 @@ async def list_agents() -> Dict[str, Any]:
 @router.get("/{agent_name}")
 async def get_agent_info(agent_name: str) -> Dict[str, Any]:
     """Get information about a specific agent."""
-    agent_registry = AgentRegistry.get_instance()
+    config_manager = ConfigManager()
+    agent_registry = AgentRegistry(config_manager=config_manager)
 
     # Try to get agent
     agent = agent_registry.get_agent(agent_name)
@@ -55,7 +58,8 @@ async def get_agent_info(agent_name: str) -> Dict[str, Any]:
 @router.get("/{agent_name}/card")
 async def get_agent_card(agent_name: str) -> Dict[str, Any]:
     """Get agent card (A2A protocol) for a specific agent."""
-    agent_registry = AgentRegistry.get_instance()
+    config_manager = ConfigManager()
+    agent_registry = AgentRegistry(config_manager=config_manager)
 
     agent = agent_registry.get_agent(agent_name)
     if not agent:
@@ -80,7 +84,8 @@ async def get_agent_card(agent_name: str) -> Dict[str, Any]:
 @router.post("/{agent_name}/process")
 async def process_agent_task(agent_name: str, task: AgentTask) -> Dict[str, Any]:
     """Process a task with a specific agent."""
-    agent_registry = AgentRegistry.get_instance()
+    config_manager = ConfigManager()
+    agent_registry = AgentRegistry(config_manager=config_manager)
 
     agent = agent_registry.get_agent(agent_name)
     if not agent:
@@ -116,7 +121,8 @@ async def upload_file_to_agent(
     top_k: int = 10,
 ) -> Dict[str, Any]:
     """Upload a file for agent processing (e.g., video/image search)."""
-    agent_registry = AgentRegistry.get_instance()
+    config_manager = ConfigManager()
+    agent_registry = AgentRegistry(config_manager=config_manager)
 
     agent = agent_registry.get_agent(agent_name)
     if not agent:

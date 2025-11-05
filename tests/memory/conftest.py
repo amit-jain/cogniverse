@@ -1,7 +1,7 @@
 """
 Shared fixtures for memory integration tests.
 
-Provides session-scoped Vespa container that:
+Provides session-scoped backend container that:
 1. Starts once for entire test session
 2. Deploys memory schemas once
 3. Tests clean up documents (not schemas)
@@ -15,29 +15,23 @@ from pathlib import Path
 
 import pytest
 import requests
-from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
-from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
-from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-from vespa.package import (
-    ApplicationPackage,
-    Document,
-    Field,
-    Schema,
-    Validation,
-)
+from cogniverse_core.memory.manager import Mem0MemoryManager
+from cogniverse_core.backends import TenantSchemaManager
+
+# Import vespa backend to trigger self-registration
+import cogniverse_vespa  # noqa: F401
 
 from tests.utils.async_polling import wait_for_service_startup, wait_for_vespa_indexing
 
-# Shared Vespa configuration for all memory tests
-MEMORY_VESPA_PORT = 8081
-MEMORY_VESPA_CONFIG_PORT = 19072
-MEMORY_VESPA_CONTAINER = "vespa-memory-tests"
+# Shared backend configuration for all memory tests
+MEMORY_BACKEND_PORT = 8081
+MEMORY_BACKEND_CONFIG_PORT = 19072
+MEMORY_BACKEND_CONTAINER = "backend-memory-tests"
 
 
-def wait_for_vespa_ready(config_port: int, timeout: int = 120) -> bool:
-    """Wait for Vespa to be ready to accept requests"""
-    print(f"⏳ Waiting for Vespa to be ready on port {config_port}...")
+def wait_for_backend_ready(config_port: int, timeout: int = 120) -> bool:
+    """Wait for backend to be ready to accept requests"""
+    print(f"⏳ Waiting for backend to be ready on port {config_port}...")
     for i in range(timeout):
         try:
             response = requests.get(
@@ -45,153 +39,66 @@ def wait_for_vespa_ready(config_port: int, timeout: int = 120) -> bool:
                 timeout=2,
             )
             if response.status_code == 200:
-                print(f"✅ Vespa ready after {i + 1} seconds")
+                print(f"✅ Backend ready after {i + 1} seconds")
                 return True
         except Exception:
             pass
-        wait_for_service_startup(delay=1.0, description="Vespa container startup")
+        wait_for_service_startup(delay=1.0, description="Backend container startup")
 
-    print(f"❌ Vespa not ready after {timeout} seconds")
+    print(f"❌ Backend not ready after {timeout} seconds")
     return False
 
 
 def deploy_memory_schema_for_tests(
     tenant_id: str,
     base_schema_name: str,
-    vespa_url: str,
-    vespa_config_port: int,
+    backend_url: str,
+    backend_config_port: int,
 ) -> str:
     """
-    Deploy memory schema for tests.
+    Deploy memory schema for tests using TenantSchemaManager.
 
-    Uses standard PyVespa deployment without explicit ContentCluster configuration,
-    same as the rest of the codebase.
+    Uses backend abstraction layer for all schema deployment.
 
     Returns:
         Tenant schema name that was deployed
     """
-    from datetime import datetime, timedelta
+    from cogniverse_core.config.manager import ConfigManager
+    from cogniverse_core.config.utils import get_config
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
-    # Construct tenant schema name
-    tenant_suffix = tenant_id.replace(":", "_")
-    tenant_schema_name = f"{base_schema_name}_{tenant_suffix}"
+    print(f"📦 Deploying {base_schema_name} for {tenant_id}...")
 
-    print(f"📦 Deploying {tenant_schema_name}...")
+    # Create dependencies for backend abstraction
+    config_manager = ConfigManager()
+    schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-    # Load base schema
-    schema_file = Path("configs/schemas") / f"{base_schema_name}_schema.json"
-    with open(schema_file, "r") as f:
-        base_schema_json = json.load(f)
+    # Get backend type from tenant's config (REQUIRED - no fallback)
+    config = get_config(tenant_id, config_manager)
+    backend_config = config.get("backend")
+    if not backend_config or "type" not in backend_config:
+        raise ValueError(
+            f"Backend type not configured for tenant {tenant_id}. "
+            "Config must have 'backend.type' field."
+        )
+    backend_type = backend_config["type"]
 
-    # Transform schema for tenant
-    tenant_schema_json = json.loads(json.dumps(base_schema_json))
-    tenant_schema_json["name"] = tenant_schema_name
-    if "document" in tenant_schema_json:
-        tenant_schema_json["document"]["name"] = tenant_schema_name
-
-    # Parse to Vespa Schema object
-    parser = JsonSchemaParser()
-    schema = parser.parse_schema(tenant_schema_json)
-
-    # Create application package WITHOUT explicit ContentCluster
-    # Let PyVespa use default behavior like the rest of the codebase
-    app_package = ApplicationPackage(name="memorysearch")
-
-    # Add the tenant schema
-    app_package.add_schema(schema)
-
-    # Add metadata schemas to prevent removal
-    organization_metadata_schema = Schema(
-        name="organization_metadata",
-        document=Document(
-            fields=[
-                Field(
-                    name="org_id",
-                    type="string",
-                    indexing=["summary", "attribute"],
-                    attribute=["fast-search"],
-                ),
-                Field(name="org_name", type="string", indexing=["summary", "index"]),
-                Field(
-                    name="created_at", type="long", indexing=["summary", "attribute"]
-                ),
-                Field(
-                    name="created_by", type="string", indexing=["summary", "attribute"]
-                ),
-                Field(
-                    name="status",
-                    type="string",
-                    indexing=["summary", "attribute"],
-                    attribute=["fast-search"],
-                ),
-                Field(
-                    name="tenant_count", type="int", indexing=["summary", "attribute"]
-                ),
-            ]
-        ),
-    )
-    app_package.add_schema(organization_metadata_schema)
-
-    tenant_metadata_schema = Schema(
-        name="tenant_metadata",
-        document=Document(
-            fields=[
-                Field(
-                    name="tenant_full_id",
-                    type="string",
-                    indexing=["summary", "attribute"],
-                    attribute=["fast-search"],
-                ),
-                Field(
-                    name="org_id",
-                    type="string",
-                    indexing=["summary", "index", "attribute"],
-                    attribute=["fast-search"],
-                ),
-                Field(
-                    name="tenant_name", type="string", indexing=["summary", "attribute"]
-                ),
-                Field(
-                    name="created_at", type="long", indexing=["summary", "attribute"]
-                ),
-                Field(
-                    name="created_by", type="string", indexing=["summary", "attribute"]
-                ),
-                Field(
-                    name="status",
-                    type="string",
-                    indexing=["summary", "attribute"],
-                    attribute=["fast-search"],
-                ),
-                Field(
-                    name="schemas_deployed",
-                    type="array<string>",
-                    indexing=["summary", "attribute"],
-                ),
-            ]
-        ),
-    )
-    app_package.add_schema(tenant_metadata_schema)
-
-    # Add validation overrides
-    until_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-    schema_removal_validation = Validation(
-        validation_id="schema-removal", until=until_date
-    )
-    content_cluster_validation = Validation(
-        validation_id="content-cluster-removal", until=until_date
+    # Use TenantSchemaManager for backend-agnostic schema deployment
+    # Note: http_port is for data operations, backend_config_port is for admin/config
+    manager = TenantSchemaManager(
+        backend_name=backend_type,
+        backend_url=backend_url,
+        backend_port=backend_config_port,
+        http_port=MEMORY_BACKEND_PORT,
+        config_manager=config_manager,
+        schema_loader=schema_loader
     )
 
-    if app_package.validations is None:
-        app_package.validations = []
-    app_package.validations.append(schema_removal_validation)
-    app_package.validations.append(content_cluster_validation)
-
-    # Deploy via VespaSchemaManager
-    schema_manager = VespaSchemaManager(
-        vespa_endpoint=vespa_url, backend_port=vespa_config_port
+    # Deploy the tenant schema (manager handles all complexity)
+    tenant_schema_name = manager.deploy_tenant_schema(
+        tenant_id=tenant_id,
+        base_schema_name=base_schema_name
     )
-    schema_manager._deploy_package(app_package)
 
     print(f"✅ Deployed {tenant_schema_name}")
     return tenant_schema_name
@@ -215,21 +122,26 @@ def wait_for_schema_ready(data_port: int, schema_name: str, timeout: int = 60) -
 
     for i in range(timeout):
         try:
+            # Use correct Vespa document ID format: id:<namespace>:<schema>::<id>
             response = requests.post(
-                f"http://localhost:{data_port}/document/v1/{schema_name}/{schema_name}/docid/readiness_check",
+                f"http://localhost:{data_port}/document/v1/video/{schema_name}/docid/readiness_check",
                 json=test_doc,
                 timeout=2,
             )
             if response.status_code in [200, 201]:
                 # Cleanup test document
                 requests.delete(
-                    f"http://localhost:{data_port}/document/v1/{schema_name}/{schema_name}/docid/readiness_check",
+                    f"http://localhost:{data_port}/document/v1/video/{schema_name}/docid/readiness_check",
                     timeout=2,
                 )
                 print(f"✅ Schema {schema_name} ready after {i + 1} seconds")
                 return True
-        except Exception:
-            pass
+            elif i % 10 == 0:  # Log non-success status codes every 10 attempts
+                print(f"   Attempt {i+1}: Status {response.status_code}: {response.text[:100]}")
+        except Exception as e:
+            # Log every 10th attempt to avoid spam
+            if i % 10 == 0:
+                print(f"   Attempt {i+1}: Readiness check error: {type(e).__name__}: {e}")
         wait_for_vespa_indexing(delay=1.0, description="schema readiness check")
 
     print(f"❌ Schema {schema_name} not ready after {timeout} seconds")
@@ -239,23 +151,23 @@ def wait_for_schema_ready(data_port: int, schema_name: str, timeout: int = 60) -
 @pytest.fixture(scope="session")
 def shared_memory_vespa():
     """
-    Session-scoped Vespa instance for all memory tests.
+    Session-scoped backend instance for all memory tests.
 
     Starts once, deploys schemas once, used by all tests.
     Tests are responsible for cleaning up their own documents.
     """
     print("\n" + "=" * 70)
-    print("🚀 Starting shared Vespa container for memory tests...")
-    print(f"   Port: {MEMORY_VESPA_PORT} (data), {MEMORY_VESPA_CONFIG_PORT} (config)")
+    print("🚀 Starting shared backend container for memory tests...")
+    print(f"   Port: {MEMORY_BACKEND_PORT} (data), {MEMORY_BACKEND_CONFIG_PORT} (config)")
     print("=" * 70)
 
     # Stop and remove any existing container
     subprocess.run(
-        ["docker", "stop", MEMORY_VESPA_CONTAINER],
+        ["docker", "stop", MEMORY_BACKEND_CONTAINER],
         capture_output=True,
     )
     subprocess.run(
-        ["docker", "rm", MEMORY_VESPA_CONTAINER],
+        ["docker", "rm", MEMORY_BACKEND_CONTAINER],
         capture_output=True,
     )
 
@@ -265,18 +177,18 @@ def shared_memory_vespa():
         "linux/arm64" if machine in ["arm64", "aarch64"] else "linux/amd64"
     )
 
-    # Start fresh Vespa container
+    # Start fresh backend container
     result = subprocess.run(
         [
             "docker",
             "run",
             "-d",
             "--name",
-            MEMORY_VESPA_CONTAINER,
+            MEMORY_BACKEND_CONTAINER,
             "-p",
-            f"{MEMORY_VESPA_PORT}:8080",
+            f"{MEMORY_BACKEND_PORT}:8080",
             "-p",
-            f"{MEMORY_VESPA_CONFIG_PORT}:19071",
+            f"{MEMORY_BACKEND_CONFIG_PORT}:19071",
             "--platform",
             docker_platform,
             "vespaengine/vespa",
@@ -286,63 +198,105 @@ def shared_memory_vespa():
     )
 
     if result.returncode != 0:
-        pytest.fail(f"Failed to start Vespa container: {result.stderr}")
+        pytest.fail(f"Failed to start backend container: {result.stderr}")
 
     print(f"✅ Container started: {result.stdout.strip()}")
 
-    # Wait for Vespa to be ready
-    if not wait_for_vespa_ready(MEMORY_VESPA_CONFIG_PORT, timeout=120):
+    # Wait for backend config port to be ready
+    if not wait_for_backend_ready(MEMORY_BACKEND_CONFIG_PORT, timeout=120):
         # Cleanup on failure
-        subprocess.run(["docker", "stop", MEMORY_VESPA_CONTAINER], capture_output=True)
-        subprocess.run(["docker", "rm", MEMORY_VESPA_CONTAINER], capture_output=True)
-        pytest.fail("Vespa failed to start within 120 seconds")
+        subprocess.run(["docker", "stop", MEMORY_BACKEND_CONTAINER], capture_output=True)
+        subprocess.run(["docker", "rm", MEMORY_BACKEND_CONTAINER], capture_output=True)
+        pytest.fail("Backend config port failed to start within 120 seconds")
 
-    # Deploy memory schema for test_tenant using test-specific deployment
-    print("\n📦 Deploying agent_memories schema for test_tenant...")
+    # Give Vespa additional time to fully initialize all services
+    # Config port being ready doesn't mean data port is ready for document operations
+    import time
+    print(f"⏳ Waiting additional 10 seconds for Vespa services to fully initialize...")
+    time.sleep(10)
+    print(f"✅ Vespa initialization complete")
 
-    # Clear singletons to ensure fresh state
+    # Deploy memory schema using the SAME approach as working backend tests
+    print("\n📦 Deploying agent_memories schema...")
+
+    # Clear singletons and backend registry cache to ensure fresh state
     TenantSchemaManager._instance = None
     Mem0MemoryManager._instances.clear()
 
+    # Clear backend registry cache to force recreation with profiles
+    from cogniverse_core.registries.backend_registry import BackendRegistry
+    BackendRegistry._backend_instances.clear()
+
     try:
-        tenant_schema_name = deploy_memory_schema_for_tests(
-            tenant_id="test_tenant",
-            base_schema_name="agent_memories",
-            backend_url="http://localhost",
-            vespa_config_port=MEMORY_VESPA_CONFIG_PORT,
-        )
-        print("✅ Schema deployment completed")
+        # Deploy application package with tenant-specific schema (same as working backend tests)
+        from pathlib import Path
+        from vespa.package import ApplicationPackage
+        from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+        from cogniverse_vespa.json_schema_parser import JsonSchemaParser
+        from cogniverse_core.config.manager import ConfigManager
+        import tempfile
+
+        # Create application package
+        app_package = ApplicationPackage(name="memory")
+        parser = JsonSchemaParser()
+
+        # Load agent_memories schema and rename it to tenant-specific name
+        schema_file = Path("configs/schemas/agent_memories_schema.json")
+        schema = parser.load_schema_from_json_file(str(schema_file))
+
+        # Rename schema to tenant-specific name
+        tenant_schema_name = "agent_memories_test_tenant"
+        schema.name = tenant_schema_name
+        app_package.add_schema(schema)
+        print(f"  Added schema: {schema.name}")
+
+        # Deploy using VespaSchemaManager (same as working tests)
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp_db:
+            config_manager = ConfigManager(db_path=Path(tmp_db.name))
+            schema_manager = VespaSchemaManager(
+                backend_endpoint="http://localhost",
+                backend_port=MEMORY_BACKEND_CONFIG_PORT,
+                config_manager=config_manager
+            )
+            schema_manager._deploy_package(app_package)
+            print("✅ Schema deployment completed")
+
+            # Cleanup temporary database
+            Path(tmp_db.name).unlink(missing_ok=True)
+
+        # Clear backend cache AGAIN after schema deployment
+        # This ensures the memory manager gets a fresh backend WITH profiles
+        print("🔄 Clearing backend cache after schema deployment...")
+        BackendRegistry._backend_instances.clear()
+        print("✅ Backend cache cleared - memory manager will create fresh instance with profiles")
+
     except Exception as e:
         # Cleanup on failure
-        subprocess.run(["docker", "stop", MEMORY_VESPA_CONTAINER], capture_output=True)
-        subprocess.run(["docker", "rm", MEMORY_VESPA_CONTAINER], capture_output=True)
+        subprocess.run(["docker", "stop", MEMORY_BACKEND_CONTAINER], capture_output=True)
+        subprocess.run(["docker", "rm", MEMORY_BACKEND_CONTAINER], capture_output=True)
         pytest.fail(f"Failed to deploy schema: {e}")
 
     # Wait for schema to be fully ready
-    if not wait_for_schema_ready(MEMORY_VESPA_PORT, tenant_schema_name, timeout=60):
+    if not wait_for_schema_ready(MEMORY_BACKEND_PORT, tenant_schema_name, timeout=60):
         print("⚠️  Warning: Schema readiness check failed, but continuing anyway...")
         print(
             "   This may indicate deployment issues or readiness check needs updating"
         )
 
     print("\n" + "=" * 70)
-    print("✅ Shared Vespa ready for memory tests")
+    print("✅ Shared backend ready for memory tests")
     print("=" * 70 + "\n")
 
-    vespa_config = {
-        "http_port": MEMORY_VESPA_PORT,
-        "config_port": MEMORY_VESPA_CONFIG_PORT,
-        "container_name": MEMORY_VESPA_CONTAINER,
-        "base_url": f"http://localhost:{MEMORY_VESPA_PORT}",
+    backend_config = {
+        "http_port": MEMORY_BACKEND_PORT,
+        "config_port": MEMORY_BACKEND_CONFIG_PORT,
+        "container_name": MEMORY_BACKEND_CONTAINER,
+        "base_url": f"http://localhost:{MEMORY_BACKEND_PORT}",
         "tenant_schema_name": tenant_schema_name,
     }
 
-    yield vespa_config
+    yield backend_config
 
-    # Cleanup
-    print("\n" + "=" * 70)
-    print("🧹 Cleaning up Vespa container...")
-    print("=" * 70)
-    subprocess.run(["docker", "stop", MEMORY_VESPA_CONTAINER], capture_output=True)
-    subprocess.run(["docker", "rm", MEMORY_VESPA_CONTAINER], capture_output=True)
-    print("✅ Cleanup complete")
+    # Cleanup container after tests
+    subprocess.run(["docker", "stop", MEMORY_BACKEND_CONTAINER], capture_output=True)
+    subprocess.run(["docker", "rm", MEMORY_BACKEND_CONTAINER], capture_output=True)

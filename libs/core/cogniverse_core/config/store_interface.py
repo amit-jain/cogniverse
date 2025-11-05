@@ -194,6 +194,24 @@ class ConfigStore(ABC):
         pass
 
     @abstractmethod
+    def list_all_configs(
+        self,
+        scope: Optional[ConfigScope] = None,
+        service: Optional[str] = None,
+    ) -> List[ConfigEntry]:
+        """
+        List all configurations across all tenants
+
+        Args:
+            scope: Filter by scope (None = all scopes)
+            service: Filter by service (None = all services)
+
+        Returns:
+            List of latest version ConfigEntry objects from all tenants
+        """
+        pass
+
+    @abstractmethod
     def delete_config(
         self,
         tenant_id: str,

@@ -68,13 +68,17 @@ def test_colpali_search(output_format="table", save_results=False, num_queries=5
 
     # Get config and create search service
     # Create temporary ConfigManager for test
+    from pathlib import Path
+
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     config_manager = ConfigManager()
+    schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
     config = get_config(tenant_id="test_tenant", config_manager=config_manager)
     profile = "frame_based_colpali"
-    
+
     print(f"Creating SearchService for profile: {profile}")
     try:
-        search_service = SearchService(config, profile)
+        search_service = SearchService(config, profile, config_manager=config_manager, schema_loader=schema_loader)
         print("✅ SearchService created")
     except Exception as e:
         print(f"❌ Failed to create SearchService: {e}")

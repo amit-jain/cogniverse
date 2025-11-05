@@ -97,11 +97,15 @@ class TenantAwareAgentMixin:
         # Store tenant_id
         self.tenant_id = tenant_id
 
+        # Initialize or get config manager
+        from cogniverse_core.config.manager import ConfigManager
+        self.config_manager = ConfigManager()
+
         # Store or load configuration
         self.config = config
         if config is None:
             try:
-                self.config = get_config()
+                self.config = get_config(tenant_id=tenant_id, config_manager=self.config_manager)
             except Exception as e:
                 logger.warning(f"Failed to load system config for tenant {tenant_id}: {e}")
                 self.config = None

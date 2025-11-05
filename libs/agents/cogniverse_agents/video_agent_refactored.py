@@ -2,7 +2,10 @@
 
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from cogniverse_core.config.manager import ConfigManager
 
 from a2a import DataPart
 from cogniverse_core.config.utils import get_config
@@ -23,9 +26,28 @@ app = FastAPI(
 class VideoSearchAgent:
     """Video search agent using unified search service."""
 
-    def __init__(self, profile: Optional[str] = None):
-        """Initialize video search agent."""
-        self.config = get_config()
+    def __init__(self, profile: Optional[str] = None, tenant_id: str = "default", config_manager: "ConfigManager" = None):
+        """
+        Initialize video search agent.
+
+        Args:
+            profile: Profile name to use (optional)
+            tenant_id: Tenant identifier for config scoping
+            config_manager: ConfigManager instance (required for dependency injection)
+
+        Raises:
+            ValueError: If config_manager is not provided
+        """
+        if config_manager is None:
+            raise ValueError(
+                "config_manager is required for VideoSearchAgent. "
+                "Pass ConfigManager() explicitly."
+            )
+
+
+        self.tenant_id = tenant_id
+        self.config_manager = config_manager
+        self.config = get_config(tenant_id=tenant_id, config_manager=config_manager)
 
         # Determine profile
         if profile:

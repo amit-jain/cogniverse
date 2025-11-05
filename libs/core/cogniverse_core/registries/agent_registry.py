@@ -7,13 +7,16 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import httpx
 
 from cogniverse_core.common.a2a_utils import A2AClient
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.config.utils import get_config
+
+if TYPE_CHECKING:
+    from cogniverse_core.config.manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -31,30 +34,25 @@ class AgentCapability:
 class AgentRegistry:
     """
     Registry for managing available agents with health monitoring and load balancing.
-    Singleton pattern ensures single registry instance across the application.
+    Uses dependency injection for ConfigManager instead of singleton pattern.
     """
 
-    _instance = None
+    def __init__(self, tenant_id: str = "default", config_manager: "ConfigManager" = None):
+        """Initialize agent registry with dependency injection
 
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
+        Args:
+            tenant_id: Tenant identifier for config isolation
+            config_manager: ConfigManager instance (required for dependency injection)
+        """
+        if config_manager is None:
+            raise ValueError(
+                "config_manager is required for AgentRegistry. "
+                "Dependency injection is mandatory - pass ConfigManager() explicitly."
+            )
 
-    @classmethod
-    def get_instance(cls) -> "AgentRegistry":
-        """Get the singleton AgentRegistry instance."""
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
-
-    def __init__(self):
-        """Initialize agent registry"""
-        # Only initialize once
-        if hasattr(self, '_initialized'):
-            return
-
-        self.config = get_config()
+        self.tenant_id = tenant_id
+        self.config_manager = config_manager
+        self.config = get_config(tenant_id=tenant_id, config_manager=config_manager)
         self.agents: Dict[str, AgentEndpoint] = {}
         self.capabilities: Dict[str, List[str]] = {}  # capability -> agent names
         self.http_client = httpx.AsyncClient(timeout=10.0)
@@ -63,8 +61,7 @@ class AgentRegistry:
         # Initialize with system config agents
         self._initialize_from_config()
 
-        self._initialized = True
-        logger.info("AgentRegistry initialized")
+        logger.info(f"AgentRegistry initialized for tenant: {tenant_id}")
 
     def _initialize_from_config(self):
         """Initialize registry from system configuration"""

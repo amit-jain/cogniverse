@@ -38,9 +38,11 @@ def get_available_videos() -> Dict[str, Dict]:
     """
     if not VESPA_AVAILABLE:
         return {}
-    
+
     try:
-        config = get_config()
+        from cogniverse_core.config.manager import ConfigManager
+        config_manager = ConfigManager()
+        config = get_config(tenant_id="default", config_manager=config_manager)
         backend = SearchBackend(
             url=config.get("vespa_url", "http://localhost"),
             port=config.get("vespa_port", 8080),

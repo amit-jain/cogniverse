@@ -9,7 +9,10 @@ modality-query alignment.
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from cogniverse_core.config.manager import ConfigManager
 
 
 class QueryModality(Enum):
@@ -407,8 +410,17 @@ class ConfigurableMultiModalReranker:
     Configuration loaded from config.json under "reranking" section.
     """
 
-    def __init__(self):
-        """Initialize configurable reranker from config.json"""
+    def __init__(self, tenant_id: str = "default", config_manager: "ConfigManager" = None):
+        """
+        Initialize configurable reranker from config.json
+
+        Args:
+            tenant_id: Tenant identifier for config scoping
+            config_manager: ConfigManager instance (required for dependency injection)
+
+        Raises:
+            ValueError: If config_manager is not provided
+        """
         import logging
 
         from cogniverse_core.config.utils import get_config_value
@@ -416,10 +428,20 @@ class ConfigurableMultiModalReranker:
         from cogniverse_agents.search.hybrid_reranker import HybridReranker
         from cogniverse_agents.search.learned_reranker import LearnedReranker
 
+        if config_manager is None:
+            raise ValueError(
+                "config_manager is required for ConfigurableMultiModalReranker. "
+                "Pass ConfigManager() explicitly."
+            )
+
         logger = logging.getLogger(__name__)
 
+        # Store for later use
+        self.tenant_id = tenant_id
+        self.config_manager = config_manager
+
         # Load config
-        rerank_config = get_config_value("reranking", {})
+        rerank_config = get_config_value("reranking", {}, tenant_id=tenant_id, config_manager=config_manager)
         self.enabled = rerank_config.get("enabled", False)
         model_key = rerank_config.get("model", "heuristic")
         use_hybrid = rerank_config.get("use_hybrid", False)
@@ -431,7 +453,7 @@ class ConfigurableMultiModalReranker:
         self.learned_reranker: Optional[LearnedReranker] = None
         if self.enabled and model_key != "heuristic":
             try:
-                self.learned_reranker = LearnedReranker()
+                self.learned_reranker = LearnedReranker(tenant_id=tenant_id, config_manager=config_manager)
                 logger.info("Initialized learned reranker")
             except Exception as e:
                 logger.warning(
@@ -447,6 +469,8 @@ class ConfigurableMultiModalReranker:
                 self.hybrid_reranker = HybridReranker(
                     heuristic_reranker=self.heuristic_reranker,
                     learned_reranker=self.learned_reranker,
+                    tenant_id=tenant_id,
+                    config_manager=config_manager,
                 )
                 logger.info("Initialized hybrid reranker")
             except Exception as e:
@@ -503,7 +527,7 @@ class ConfigurableMultiModalReranker:
         """
         from cogniverse_core.config.utils import get_config_value
 
-        rerank_config = get_config_value("reranking", {})
+        rerank_config = get_config_value("reranking", {}, tenant_id=self.tenant_id, config_manager=self.config_manager)
 
         return {
             "enabled": self.enabled,

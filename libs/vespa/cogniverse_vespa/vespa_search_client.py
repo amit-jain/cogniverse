@@ -200,10 +200,12 @@ class VespaVideoSearchClient:
         sys.path.append(str(Path(__file__).parent.parent.parent.parent))
         from cogniverse_core.config.utils import get_config
 
-        # Create config_manager if not provided
+        # Require config_manager via dependency injection
         if config_manager is None:
-            from cogniverse_core.config.manager import ConfigManager
-            config_manager = ConfigManager()
+            raise ValueError(
+                "config_manager is required for VespaSearchClient. "
+                "Dependency injection is mandatory - pass ConfigManager instance explicitly."
+            )
 
         self.config = get_config(tenant_id=tenant_id, config_manager=config_manager)
         # Get schema from environment or config (optional - can be provided in search params)

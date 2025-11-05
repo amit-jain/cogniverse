@@ -6,7 +6,10 @@ Handles message formatting, routing coordination, and response aggregation.
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from cogniverse_core.config.manager import ConfigManager
 
 import httpx
 from cogniverse_core.common.a2a_utils import (
@@ -43,21 +46,35 @@ class A2ARoutingAgent:
     Provides standardized A2A communication and response aggregation.
     """
 
-    def __init__(self, routing_agent: Optional[RoutingAgent] = None):
+    def __init__(self, tenant_id: str = "default", routing_agent: Optional[RoutingAgent] = None, config_manager: "ConfigManager" = None):
         """
         Initialize A2A routing agent.
 
         Args:
+            tenant_id: Tenant identifier for config scoping
             routing_agent: Optional routing agent instance (will create if not provided)
+            config_manager: ConfigManager instance (required for dependency injection)
+
+        Raises:
+            ValueError: If config_manager is not provided
         """
-        self.config = get_config()
-        self.routing_agent = routing_agent or RoutingAgent()
+        if config_manager is None:
+            raise ValueError(
+                "config_manager is required for A2ARoutingAgent. "
+                "Pass ConfigManager() explicitly."
+            )
+
+
+        self.tenant_id = tenant_id
+        self.config_manager = config_manager
+        self.config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+        self.routing_agent = routing_agent or RoutingAgent(tenant_id=tenant_id, config_manager=config_manager)
         self.http_client = httpx.AsyncClient(timeout=30.0)
 
         # Initialize agent registry
         from cogniverse_agents.agent_registry import AgentRegistry
 
-        self.agent_registry = AgentRegistry()
+        self.agent_registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
 
         logger.info("A2ARoutingAgent initialized successfully")
 

@@ -17,10 +17,11 @@ logger = logging.getLogger(__name__)
 # Import our custom utilities
 from cogniverse_core.common.a2a_utils import A2AClient, format_search_results
 from cogniverse_core.common.tools.video_player_tool import VideoPlayerTool
+from cogniverse_core.config.manager import ConfigManager
 from cogniverse_core.config.utils import get_config
 
 # Initialize configuration
-config = get_config()
+config = get_config(tenant_id="default", config_manager=ConfigManager())
 
 
 # --- Enhanced A2A Tool for Specialist Agents ---
@@ -138,8 +139,12 @@ class QueryAnalysisTool(BaseTool):
         elif self.inference_mode == "llm":
             # Use PromptManager for LLM-based routing
             from cogniverse_core.common.utils.prompt_manager import PromptManager
+            from cogniverse_core.config.manager import ConfigManager
 
-            self.prompt_manager = PromptManager()
+            self.prompt_manager = PromptManager(
+                config_manager=ConfigManager(),
+                tenant_id="default"
+            )
 
     async def execute(self, query: str) -> Dict[str, Any]:
         """Analyze query for intent and temporal information."""

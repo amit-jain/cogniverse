@@ -71,12 +71,42 @@ class SchemaRegistry:
         return cls._instance
 
     def __init__(self):
-        """Initialize SchemaRegistry with ConfigManager"""
+        """Initialize SchemaRegistry with in-memory schema tracking"""
         if self._initialized:
             return
         self._config_manager = ConfigManager()
+        # In-memory registry of all deployed schemas
+        # Key: (tenant_id, base_schema_name), Value: SchemaInfo
+        self._schemas: Dict[tuple, SchemaInfo] = {}
+
+        # Load all previously deployed schemas from persistent storage
+        self._load_schemas_from_storage()
+
         self._initialized = True
-        logger.info("SchemaRegistry initialized")
+        logger.info(f"SchemaRegistry initialized with {len(self._schemas)} schemas loaded")
+
+    def _load_schemas_from_storage(self):
+        """Load all schemas from ConfigManager into in-memory registry on startup"""
+        try:
+            # Load all schemas across all tenants
+            all_schema_data = self._config_manager.get_deployed_schemas(tenant_id=None)
+            for schema_data in all_schema_data:
+                tenant_id = schema_data["tenant_id"]
+                base_schema_name = schema_data["base_schema_name"]
+                key = (tenant_id, base_schema_name)
+
+                self._schemas[key] = SchemaInfo(
+                    tenant_id=tenant_id,
+                    base_schema_name=base_schema_name,
+                    full_schema_name=schema_data["full_schema_name"],
+                    schema_definition=schema_data["schema_definition"],
+                    config=schema_data.get("config", {}),
+                    deployment_time=schema_data["deployment_time"],
+                )
+
+            logger.info(f"Loaded {len(self._schemas)} schemas from storage")
+        except Exception as e:
+            logger.warning(f"Failed to load schemas from storage: {e}. Starting with empty registry.")
 
     def register_schema(
         self,
@@ -118,6 +148,18 @@ class SchemaRegistry:
             config=config,
         )
 
+        # Add to in-memory registry
+        from datetime import datetime, timezone
+        key = (tenant_id, base_schema_name)
+        self._schemas[key] = SchemaInfo(
+            tenant_id=tenant_id,
+            base_schema_name=base_schema_name,
+            full_schema_name=full_schema_name,
+            schema_definition=schema_definition,
+            config=config or {},
+            deployment_time=datetime.now(timezone.utc).isoformat(),
+        )
+
     def get_tenant_schemas(self, tenant_id: str) -> List[SchemaInfo]:
         """
         Get all schemas deployed for a specific tenant.
@@ -150,33 +192,24 @@ class SchemaRegistry:
             # Now deployment won't wipe existing schemas
             deploy_package(app_package)
         """
-        schemas_data = self._config_manager.get_deployed_schemas(tenant_id=tenant_id)
+        # Return schemas from in-memory registry
         return [
-            SchemaInfo(
-                tenant_id=s["tenant_id"],
-                base_schema_name=s["base_schema_name"],
-                full_schema_name=s["full_schema_name"],
-                schema_definition=s["schema_definition"],
-                config=s.get("config", {}),
-                deployment_time=s["deployment_time"],
-            )
-            for s in schemas_data
+            schema_info
+            for (tid, _), schema_info in self._schemas.items()
+            if tid == tenant_id
         ]
 
     def get_all_schemas(self) -> List[SchemaInfo]:
         """
         Get all deployed schemas across all tenants.
 
-        NOTE: Currently not implemented due to ConfigStore limitations.
-        Use get_tenant_schemas(tenant_id) instead.
+        CRITICAL for multi-tenant deployments: Some backends require all schemas
+        to be redeployed together. This method provides cross-tenant schema access.
 
-        Raises:
-            NotImplementedError: Cross-tenant queries not yet supported
+        Returns:
+            List of all SchemaInfo objects across all tenants
         """
-        raise NotImplementedError(
-            "Cross-tenant schema queries not yet supported. "
-            "Use get_tenant_schemas(tenant_id) instead."
-        )
+        return list(self._schemas.values())
 
     def schema_exists(self, tenant_id: str, base_schema_name: str) -> bool:
         """
@@ -198,14 +231,15 @@ class SchemaRegistry:
                 # Register after successful deployment
                 registry.register_schema(...)
         """
-        return self._config_manager.schema_deployed(tenant_id, base_schema_name)
+        key = (tenant_id, base_schema_name)
+        return key in self._schemas
 
     def unregister_schema(self, tenant_id: str, base_schema_name: str) -> None:
         """
-        Remove schema from registry (when deleted from Vespa).
+        Remove schema from registry (when deleted from backend).
 
-        Marks schema as deleted rather than removing it entirely.
-        This preserves audit trail.
+        Marks schema as deleted in persistent storage and removes from in-memory registry.
+        This preserves audit trail in persistent storage.
 
         Args:
             tenant_id: Tenant identifier
@@ -221,6 +255,11 @@ class SchemaRegistry:
             f"Unregistering schema '{base_schema_name}' for tenant '{tenant_id}'"
         )
         self._config_manager.unregister_schema(tenant_id, base_schema_name)
+
+        # Remove from in-memory registry
+        key = (tenant_id, base_schema_name)
+        if key in self._schemas:
+            del self._schemas[key]
 
     def unregister_tenant_schemas(self, tenant_id: str) -> None:
         """

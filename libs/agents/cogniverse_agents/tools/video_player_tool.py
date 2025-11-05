@@ -8,22 +8,36 @@ Generates HTML with embedded video player and timeline markers for search result
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from cogniverse_core.config.utils import get_config
 from google.adk.tools import BaseTool
 from google.genai.types import Part
 
+if TYPE_CHECKING:
+    from cogniverse_core.config.manager import ConfigManager
+
 
 class VideoPlayerTool(BaseTool):
     """Tool for playing videos with frame tagging based on search results"""
 
-    def __init__(self):
+    def __init__(self, tenant_id: str = "default", config_manager: "ConfigManager" = None):
+        """Initialize video player tool
+
+        Args:
+            tenant_id: Tenant identifier for multi-tenancy support
+            config_manager: ConfigManager instance for configuration access
+        """
         super().__init__(
             name="VideoPlayer",
             description="Play videos with frame tagging and timeline markers for search results",
         )
-        self.config = get_config()
+        if config_manager is None:
+            raise ValueError("config_manager is required for VideoPlayerTool")
+
+        self.tenant_id = tenant_id
+        self.config_manager = config_manager
+        self.config = get_config(tenant_id=tenant_id, config_manager=config_manager)
         self.video_dir = Path(self.config.get("video_dir", "data/videos"))
 
     async def execute(

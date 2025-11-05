@@ -90,7 +90,11 @@ class TestProfileAPICRUD:
         config_manager.set_system_config(system_config)
 
         # Set ConfigManager and schema directory for admin router using new DI API
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        schema_loader = FilesystemSchemaLoader(temp_schema_dir)
+
         admin.set_config_manager(config_manager)
+        admin.set_schema_loader(schema_loader)
         admin.set_profile_validator_schema_dir(temp_schema_dir)
 
         try:
@@ -102,6 +106,7 @@ class TestProfileAPICRUD:
         finally:
             # Reset globals after test
             admin._config_manager = None
+            admin._schema_loader = None
             admin._profile_validator_schema_dir_override = None
             BackendRegistry._instance = None
 
@@ -497,6 +502,12 @@ class TestProfileAPISchemaDeployment:
         manager.cleanup()
 
     @pytest.fixture
+    def schema_loader(self):
+        """Provide FilesystemSchemaLoader for tests."""
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        return FilesystemSchemaLoader(Path("configs/schemas"))
+
+    @pytest.fixture
     def test_client(self, vespa_backend, tmp_path: Path):
         """Create test client with Vespa backend."""
 
@@ -596,7 +607,7 @@ class TestProfileAPISchemaDeployment:
         BackendRegistry._instance = None
 
         # Reset TenantSchemaManager singleton
-        from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+        from cogniverse_core.backends import TenantSchemaManager
         TenantSchemaManager._instance = None
 
         # Reset SchemaRegistry singleton AND module-level global
@@ -663,8 +674,9 @@ class TestProfileAPISchemaDeployment:
         )
         print(f"[FIXTURE DEBUG] Pre-created TenantSchemaManager with schema_dir={schema_dir}")
 
-        # Set ConfigManager and schema directory for admin router using new DI API
+        # Set ConfigManager, SchemaLoader, and schema directory for admin router using new DI API
         admin.set_config_manager(config_manager)
+        admin.set_schema_loader(schema_loader)
         admin.set_profile_validator_schema_dir(schema_dir)
 
         try:
@@ -675,6 +687,7 @@ class TestProfileAPISchemaDeployment:
         finally:
             # Reset globals after test
             admin._config_manager = None
+            admin._schema_loader = None
             admin._profile_validator_schema_dir_override = None
             BackendRegistry._instance = None
             BackendRegistry._backend_instances.clear()
@@ -792,7 +805,7 @@ class TestProfileAPISchemaDeployment:
         data = response.json()
         assert data["deployment_status"] == "success"
 
-    def test_end_to_end_schema_deployment_and_ingestion(self, test_client: TestClient, vespa_backend):
+    def test_end_to_end_schema_deployment_and_ingestion(self, test_client: TestClient, vespa_backend, schema_loader):
         """
         Comprehensive end-to-end test:
         1. Create profile and deploy schema via API
@@ -831,11 +844,11 @@ class TestProfileAPISchemaDeployment:
         print(f"Tenant schema name: {tenant_schema_name}")
 
         # Step 2: Verify schema exists in Vespa
-        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         from cogniverse_runtime.routers import admin
+        from cogniverse_core.config.manager import ConfigManager
 
-        backend_registry = BackendRegistry.get_instance()
-        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+        config_manager = ConfigManager()
+        backend_registry = BackendRegistry(config_manager=config_manager)
         vespa_backend_obj = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id, config_manager=admin._config_manager, schema_loader=schema_loader)
         assert vespa_backend_obj is not None
 
@@ -914,8 +927,6 @@ class TestProfileAPISchemaDeployment:
 
         try:
             # Get VespaBackend instance for this tenant
-            from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-            schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
             backend = BackendRegistry.get_ingestion_backend("vespa", tenant_id, config_manager=admin._config_manager, schema_loader=schema_loader)
 
             # Create test document with embedding
