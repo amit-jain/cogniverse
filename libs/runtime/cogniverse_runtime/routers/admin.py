@@ -5,7 +5,6 @@ Note: Tenant management is available through the standalone tenant_manager app.
 
 import logging
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict
 
 from cogniverse_core.config.manager import ConfigManager
@@ -139,7 +138,7 @@ async def get_system_stats(
 ) -> Dict[str, Any]:
     """Get system statistics."""
     try:
-        backend_registry = BackendRegistry(config_manager=config_manager)
+        backend_registry = BackendRegistry.get_instance()
         backend_instance = backend_registry.get_ingestion_backend(backend, tenant_id=tenant_id, config_manager=config_manager, schema_loader=schema_loader)
         if not backend_instance:
             raise HTTPException(
@@ -236,16 +235,18 @@ async def create_profile(
 
         if request.deploy_schema:
             try:
-                backend_registry = BackendRegistry(config_manager=config_manager)
+                backend_registry = BackendRegistry.get_instance()
                 backend = backend_registry.get_ingestion_backend(
                     "vespa", tenant_id=request.tenant_id, config_manager=config_manager, schema_loader=schema_loader
                 )
 
                 if backend:
-                    success = backend.deploy_schema(
-                        schema_name=request.schema_name, tenant_id=request.tenant_id
+                    backend.schema_registry.deploy_schema(
+                        tenant_id=request.tenant_id,
+                        base_schema_name=request.schema_name
                     )
-                    schema_deployed = success
+                    success = True
+                    schema_deployed = True
 
                     if success:
                         tenant_schema_name = backend.get_tenant_schema_name(
@@ -307,7 +308,7 @@ async def list_profiles(
 
         # Convert to summary format
         profile_summaries = []
-        backend_registry = BackendRegistry(config_manager=config_manager)
+        backend_registry = BackendRegistry.get_instance()
 
         for profile_name, profile in profiles.items():
             # Check if schema is deployed
@@ -385,7 +386,7 @@ async def get_profile(
         tenant_schema_name = None
 
         try:
-            backend_registry = BackendRegistry(config_manager=config_manager)
+            backend_registry = BackendRegistry.get_instance()
             backend = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id, config_manager=config_manager, schema_loader=schema_loader)
             if backend:
                 schema_deployed = backend.schema_exists(
@@ -589,7 +590,7 @@ async def delete_profile(
 
             # Delete schema
             try:
-                backend_registry = BackendRegistry(config_manager=config_manager)
+                backend_registry = BackendRegistry.get_instance()
                 backend = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id, config_manager=config_manager, schema_loader=schema_loader)
                 if backend:
                     deleted_schemas = backend.delete_schema(
@@ -667,7 +668,7 @@ async def deploy_profile_schema(
             )
 
         # Check if schema already deployed (unless force=True)
-        backend_registry = BackendRegistry(config_manager=config_manager)
+        backend_registry = BackendRegistry.get_instance()
         backend = backend_registry.get_ingestion_backend("vespa", tenant_id=request.tenant_id, config_manager=config_manager, schema_loader=schema_loader)
 
         if not backend:
@@ -694,15 +695,17 @@ async def deploy_profile_schema(
 
         # Deploy schema
         try:
-            success = backend.deploy_schema(
-                schema_name=profile.schema_name, tenant_id=request.tenant_id
+            backend.schema_registry.deploy_schema(
+                tenant_id=request.tenant_id,
+                base_schema_name=profile.schema_name,
+                force=request.force
             )
 
             tenant_schema_name = backend.get_tenant_schema_name(
                 request.tenant_id, profile.schema_name
             )
 
-            if success:
+            if True:
                 return SchemaDeploymentResponse(
                     profile_name=profile_name,
                     tenant_id=request.tenant_id,

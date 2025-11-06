@@ -175,33 +175,76 @@ class SchemaRegistry:
             deployment_time=datetime.now(timezone.utc).isoformat(),
         )
 
+    def _validate_tenant_id(self, tenant_id: str) -> None:
+        """
+        Validate tenant ID format.
+
+        Args:
+            tenant_id: Tenant identifier to validate
+
+        Raises:
+            ValueError: If tenant_id is invalid
+            TypeError: If tenant_id is not a string
+        """
+        if not tenant_id:
+            raise ValueError("tenant_id is required")
+        if not isinstance(tenant_id, str):
+            raise TypeError(f"tenant_id must be string, got {type(tenant_id)}")
+
+        # Validate character set (alphanumeric, underscore, colon only)
+        import re
+        if not re.match(r'^[a-zA-Z0-9_:]+$', tenant_id):
+            raise ValueError(
+                f"Invalid tenant_id '{tenant_id}': only alphanumeric, underscore, and colon allowed"
+            )
+
+    def _validate_schema_name(self, schema_name: str) -> None:
+        """
+        Validate schema name format.
+
+        Args:
+            schema_name: Schema name to validate
+
+        Raises:
+            ValueError: If schema_name is invalid
+            TypeError: If schema_name is not a string
+        """
+        if not schema_name:
+            raise ValueError("schema_name is required")
+        if not isinstance(schema_name, str):
+            raise TypeError(f"schema_name must be string, got {type(schema_name)}")
+
     def deploy_schema(
         self,
         tenant_id: str,
         base_schema_name: str,
         config: Optional[Dict[str, Any]] = None,
+        force: bool = False,
     ) -> str:
         """
         Deploy schema for a tenant - MAIN ORCHESTRATION METHOD.
 
         This is the primary entry point for schema deployment. It:
-        1. Checks if schema already deployed
-        2. Loads base schema definition
-        3. Transforms to tenant-specific schema
-        4. Collects ALL existing schemas (cross-tenant)
-        5. Calls backend.deploy_schemas() with complete list
-        6. Registers the newly deployed schema
+        1. Validates inputs
+        2. Checks if schema already deployed (unless force=True)
+        3. Loads base schema definition
+        4. Transforms to tenant-specific schema
+        5. Collects ALL existing schemas (cross-tenant)
+        6. Calls backend.deploy_schemas() with complete list
+        7. Registers the newly deployed schema
 
         Args:
             tenant_id: Tenant identifier
             base_schema_name: Base schema name (e.g., 'video_colpali_smol500_mv_frame')
             config: Optional schema configuration
+            force: Force redeployment even if schema exists (default: False)
 
         Returns:
             Tenant-specific schema name (e.g., 'video_colpali_smol500_mv_frame_acme')
 
         Raises:
-            ValueError: If backend or schema_loader not configured
+            ValueError: If backend or schema_loader not configured, or invalid inputs
+            TypeError: If tenant_id or base_schema_name are not strings
             Exception: If schema deployment fails
 
         Example:
@@ -212,6 +255,10 @@ class SchemaRegistry:
             )
             # Returns: "video_colpali_smol500_mv_frame_acme"
         """
+        # Validate inputs
+        self._validate_tenant_id(tenant_id)
+        self._validate_schema_name(base_schema_name)
+
         if not self._backend:
             raise ValueError("Backend required for schema deployment. Initialize SchemaRegistry with backend.")
         if not self._schema_loader:
@@ -220,9 +267,9 @@ class SchemaRegistry:
         # Generate tenant-specific schema name
         tenant_schema_name = f"{base_schema_name}_{tenant_id}"
 
-        # Check if already deployed
-        if self.schema_exists(tenant_id, base_schema_name):
-            logger.debug(f"Schema '{tenant_schema_name}' already deployed for tenant '{tenant_id}'")
+        # Check if already deployed (unless force=True)
+        if not force and self.schema_exists(tenant_id, base_schema_name):
+            logger.debug(f"Schema '{tenant_schema_name}' already deployed for tenant '{tenant_id}', skipping")
             return tenant_schema_name
 
         # Load base schema from schema loader

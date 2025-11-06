@@ -92,7 +92,7 @@ def get_backend() -> Backend:
         backend_type = config.get("backend_type", "vespa")
 
         from cogniverse_core.registries.backend_registry import BackendRegistry
-        registry = BackendRegistry(config_manager=config_manager)
+        registry = BackendRegistry.get_instance()
 
         # Get backend instance with configuration
         backend_config = {
@@ -462,7 +462,10 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
         deployed_schemas = []
         for base_schema in base_schemas:
             try:
-                backend.deploy_schema(base_schema, tenant_id=tenant_full_id)
+                backend.schema_registry.deploy_schema(
+                    tenant_id=tenant_full_id,
+                    base_schema_name=base_schema
+                )
                 deployed_schemas.append(base_schema)
             except Exception as e:
                 logger.error(f"Failed to deploy schema {base_schema} for {tenant_full_id}: {e}")

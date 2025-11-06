@@ -1185,39 +1185,6 @@ class VespaSchemaManager:
         tenant_suffix = tenant_id.replace(":", "_")
         return f"{base_schema_name}_{tenant_suffix}"
 
-    def deploy_tenant_schema(self, tenant_id: str, base_schema_name: str) -> str:
-        """
-        Deploy schema for a specific tenant.
-
-        DEPRECATED: This method now delegates to SchemaRegistry.deploy_schema().
-        The orchestration logic has been moved to SchemaRegistry for better
-        architecture and backend abstraction.
-
-        Args:
-            tenant_id: Tenant identifier
-            base_schema_name: Base schema name to deploy
-
-        Returns:
-            Tenant-specific schema name that was deployed
-
-        Raises:
-            ValueError: If schema_registry not configured
-            Exception: If schema deployment fails
-        """
-        if not self._schema_registry:
-            raise ValueError("schema_registry required for tenant schema operations")
-
-        # Delegate to SchemaRegistry - it owns the orchestration now
-        self._logger.debug(
-            f"Delegating schema deployment to SchemaRegistry for tenant '{tenant_id}', "
-            f"schema '{base_schema_name}'"
-        )
-
-        return self._schema_registry.deploy_schema(
-            tenant_id=tenant_id,
-            base_schema_name=base_schema_name
-        )
-
     def delete_tenant_schemas(self, tenant_id: str) -> list:
         """
         Delete all schemas for a tenant.

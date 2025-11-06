@@ -11,7 +11,6 @@ Run with: pytest tests/memory/integration/test_mem0_complete_e2e.py -v -s
 import pytest
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.memory.manager import Mem0MemoryManager
-from cogniverse_core.backends import TenantSchemaManager
 
 from tests.utils.async_polling import wait_for_vespa_indexing
 

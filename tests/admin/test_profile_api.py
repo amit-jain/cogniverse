@@ -606,10 +606,6 @@ class TestProfileAPISchemaDeployment:
         # Reset singletons AFTER cleanup
         BackendRegistry._instance = None
 
-        # Reset TenantSchemaManager singleton
-        from cogniverse_core.backends import TenantSchemaManager
-        TenantSchemaManager._instance = None
-
         # Reset SchemaRegistry singleton AND module-level global
         from cogniverse_core.registries import schema_registry as schema_registry_module
         from cogniverse_core.registries.schema_registry import SchemaRegistry
@@ -657,22 +653,10 @@ class TestProfileAPISchemaDeployment:
         )
         config_manager.set_system_config(system_config_already)
 
-        # CRITICAL: Pre-create TenantSchemaManager with test schema directory
-        # This ensures the singleton is created with the right config and schema_loader
-        # before any backend tries to create it
-        from pathlib import Path
-
+        # Create schema loader for test schema directory
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
         schema_loader = FilesystemSchemaLoader(Path(schema_dir))
-        _ = TenantSchemaManager(
-            backend_url="http://localhost",
-            backend_port=vespa_backend.config_port,
-            http_port=vespa_backend.http_port,
-            config_manager=config_manager,
-            schema_loader=schema_loader
-        )
-        print(f"[FIXTURE DEBUG] Pre-created TenantSchemaManager with schema_dir={schema_dir}")
 
         # Set ConfigManager, SchemaLoader, and schema directory for admin router using new DI API
         admin.set_config_manager(config_manager)
@@ -691,7 +675,6 @@ class TestProfileAPISchemaDeployment:
             admin._profile_validator_schema_dir_override = None
             BackendRegistry._instance = None
             BackendRegistry._backend_instances.clear()
-            TenantSchemaManager._instance = None
             SchemaRegistry._instance = None
 
             # Cleanup happens automatically via tmp_path
@@ -857,8 +840,7 @@ class TestProfileAPISchemaDeployment:
         )
         print(f"Schema exists in registry: {schema_exists}")
 
-        # Note: Due to complex singleton/port issues with TenantSchemaManager,
-        # we rely on the feed operation to verify schema deployment
+        # Verify schema was registered
         assert schema_exists is True
 
         # Wait for Vespa document feed API to be ready

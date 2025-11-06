@@ -5,7 +5,6 @@ This shows how processing should use the extracted ranking strategies.
 
 import json
 import logging
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 import numpy as np

@@ -5,7 +5,7 @@ Single source of truth for organization and tenant metadata schemas.
 These schemas store multi-tenant management data in Vespa.
 
 Used by:
-- TenantSchemaManager: For schema deployment
+- SchemaRegistry: For schema deployment
 - VespaTestManager: For test isolation
 - Integration tests: For test setup
 

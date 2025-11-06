@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 def _register_backend_provider():
     """Register backend-agnostic vector store provider in Mem0"""
     import sys
+
     from mem0.configs.base import VectorStoreConfig
     from mem0.utils.factory import VectorStoreFactory
 
@@ -187,7 +188,10 @@ class Mem0MemoryManager:
 
         # Deploy tenant schema if needed
         if auto_create_schema:
-            backend.deploy_schema(base_schema_name, tenant_id=self.tenant_id)
+            backend.schema_registry.deploy_schema(
+                tenant_id=self.tenant_id,
+                base_schema_name=base_schema_name
+            )
             logger.info(f"Ensured tenant schema exists: {tenant_schema_name}")
 
         # Configure Mem0 with Ollama provider and backend-agnostic storage

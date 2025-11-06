@@ -36,8 +36,8 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+from cogniverse_core.registries.backend_registry import BackendRegistry
 
-from cogniverse_core.backends.tenant_schema_manager import TenantSchemaManager
 from cogniverse_vespa.vespa_search_client import (
     VespaVideoSearchClient,
 )
@@ -110,30 +110,35 @@ class TenantAwareVespaSearchClient:
         self._config_manager = config_manager
         self._schema_loader = schema_loader
 
-        # Initialize schema manager
+        # Get backend via BackendRegistry for schema deployment
         from cogniverse_vespa.config import calculate_config_port
         config_port = calculate_config_port(backend_port)
 
-        self.schema_manager = TenantSchemaManager(
-            backend_name="vespa",
-            backend_url=backend_url,
-            backend_port=config_port,
-            http_port=backend_port,
+        registry = BackendRegistry.get_instance()
+        config = {
+            "backend": {
+                "url": backend_url,
+                "config_port": config_port,
+                "port": backend_port,
+            }
+        }
+        backend = registry.get_search_backend(
+            name="vespa",
+            tenant_id=tenant_id,
+            config=config,
             config_manager=config_manager,
             schema_loader=schema_loader
         )
 
         # Resolve tenant-specific schema name
-        self.tenant_schema_name = self.schema_manager.get_tenant_schema_name(
-            tenant_id, base_schema_name
-        )
+        self.tenant_schema_name = f"{base_schema_name}_{tenant_id}"
 
-        # Lazy schema creation
+        # Lazy schema creation via SchemaRegistry
         if auto_create_schema:
             logger.info(
                 f"Ensuring schema exists: {self.tenant_schema_name} for tenant {tenant_id}"
             )
-            self.schema_manager.ensure_tenant_schema_exists(tenant_id, base_schema_name)
+            backend.schema_registry.deploy_schema(tenant_id, base_schema_name)
 
         # Initialize underlying search client
         self.client = VespaVideoSearchClient(vespa_url=backend_url, vespa_port=backend_port)

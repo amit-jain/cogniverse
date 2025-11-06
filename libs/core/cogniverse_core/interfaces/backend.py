@@ -297,28 +297,6 @@ class Backend(IngestionBackend, SearchBackend):
     # ============================================================================
 
     @abstractmethod
-    def deploy_schema(
-        self, schema_name: str, tenant_id: Optional[str] = None, **kwargs
-    ) -> bool:
-        """
-        Deploy or ensure schema exists for tenant.
-
-        Args:
-            schema_name: Base schema name to deploy
-            tenant_id: Tenant identifier (for multi-tenant backends)
-            **kwargs: Additional schema deployment options
-
-        Returns:
-            True if successful, False otherwise
-
-        Note:
-            For multi-tenant backends, this creates tenant-specific schema
-            (e.g., video_colpali_{tenant_id}). For single-tenant backends,
-            this ensures the base schema exists.
-        """
-        pass
-
-    @abstractmethod
     def deploy_schemas(
         self, schema_definitions: List[Dict[str, Any]]
     ) -> bool:

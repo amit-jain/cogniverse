@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 import requests
 from cogniverse_core.memory.manager import Mem0MemoryManager
-from cogniverse_core.backends import TenantSchemaManager
+from cogniverse_core.registries.backend_registry import BackendRegistry
 
 # Import vespa backend to trigger self-registration
 import cogniverse_vespa  # noqa: F401
@@ -56,7 +56,7 @@ def deploy_memory_schema_for_tests(
     backend_config_port: int,
 ) -> str:
     """
-    Deploy memory schema for tests using TenantSchemaManager.
+    Deploy memory schema for tests using SchemaRegistry.
 
     Uses backend abstraction layer for all schema deployment.
 
@@ -83,19 +83,25 @@ def deploy_memory_schema_for_tests(
         )
     backend_type = backend_config["type"]
 
-    # Use TenantSchemaManager for backend-agnostic schema deployment
-    # Note: http_port is for data operations, backend_config_port is for admin/config
-    manager = TenantSchemaManager(
-        backend_name=backend_type,
-        backend_url=backend_url,
-        backend_port=backend_config_port,
-        http_port=MEMORY_BACKEND_PORT,
+    # Get backend via BackendRegistry
+    registry = BackendRegistry.get_instance()
+    backend_config_dict = {
+        "backend": {
+            "url": backend_url,
+            "config_port": backend_config_port,
+            "port": MEMORY_BACKEND_PORT,
+        }
+    }
+    backend = registry.get_search_backend(
+        name=backend_type,
+        tenant_id=tenant_id,
+        config=backend_config_dict,
         config_manager=config_manager,
         schema_loader=schema_loader
     )
 
-    # Deploy the tenant schema (manager handles all complexity)
-    tenant_schema_name = manager.deploy_tenant_schema(
+    # Deploy via SchemaRegistry
+    tenant_schema_name = backend.schema_registry.deploy_schema(
         tenant_id=tenant_id,
         base_schema_name=base_schema_name
     )
@@ -219,8 +225,7 @@ def shared_memory_vespa():
     # Deploy memory schema using the SAME approach as working backend tests
     print("\n📦 Deploying agent_memories schema...")
 
-    # Clear singletons and backend registry cache to ensure fresh state
-    TenantSchemaManager._instance = None
+    # Clear backend registry cache to ensure fresh state
     Mem0MemoryManager._instances.clear()
 
     # Clear backend registry cache to force recreation with profiles

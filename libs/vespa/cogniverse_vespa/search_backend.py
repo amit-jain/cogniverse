@@ -369,27 +369,8 @@ class VespaSearchBackend(SearchBackend):
 
         # Transform schema name to tenant-scoped format if tenant_id provided
         if tenant_id and base_schema_name:
-            from cogniverse_vespa.config import calculate_config_port
-            from cogniverse_core.backends import TenantSchemaManager
-
-            config_port = calculate_config_port(self.vespa_port)
-
-            # schema_loader is REQUIRED
-            if self._schema_loader is None:
-                raise ValueError(
-                    "schema_loader is required for VespaSearchBackend. "
-                    "Dependency injection is mandatory - pass SchemaLoader instance explicitly."
-                )
-
-            tenant_manager = TenantSchemaManager(
-                backend_name="vespa",
-                backend_url=self.backend_url,
-                backend_port=config_port,
-                http_port=self.vespa_port,
-                config_manager=self._config_manager,
-                schema_loader=self._schema_loader
-            )
-            self.schema_name = tenant_manager.get_tenant_schema_name(tenant_id, base_schema_name)
+            # Generate tenant-specific schema name
+            self.schema_name = f"{base_schema_name}_{tenant_id}"
             logger.info(f"Transformed schema name: {base_schema_name} → {self.schema_name} (tenant: {tenant_id})")
         else:
             self.schema_name = base_schema_name
@@ -700,23 +681,8 @@ class VespaSearchBackend(SearchBackend):
                 f"Profile '{profile_name}' cannot be used without tenant isolation."
             )
 
-
-
-        from cogniverse_vespa.config import calculate_config_port
-        from cogniverse_core.backends import TenantSchemaManager
-        config_port = calculate_config_port(self.vespa_port)
-        # schema_loader is REQUIRED
-        if self._schema_loader is None:
-            raise ValueError("schema_loader is required for VespaSearchBackend")
-        tenant_manager = TenantSchemaManager(
-            backend_name="vespa",
-            backend_url=self.backend_url,
-            backend_port=config_port,
-            http_port=self.vespa_port,
-            config_manager=self._config_manager,
-            schema_loader=self._schema_loader
-        )
-        schema_name = tenant_manager.get_tenant_schema_name(self.tenant_id, base_schema_name)
+        # Generate tenant-specific schema name
+        schema_name = f"{base_schema_name}_{self.tenant_id}"
         logger.info(f"[{correlation_id}] Applied tenant scoping: {base_schema_name} → {schema_name}")
 
         # Load ranking strategies from internal cache (not from Strategy object)
@@ -875,20 +841,20 @@ class VespaSearchBackend(SearchBackend):
             return ""
 
         conditions = []
-        for field, value in filters.items():
+        for field_name, value in filters.items():
             if isinstance(value, str):
                 # String attributes use 'contains' for matching
                 # This works for string attributes in Vespa
-                conditions.append(f'{field} contains "{value}"')
+                conditions.append(f'{field_name} contains "{value}"')
             elif isinstance(value, (int, float)):
                 # Numeric values use equality
-                conditions.append(f'{field} = {value}')
+                conditions.append(f'{field_name} = {value}')
             elif isinstance(value, bool):
                 # Boolean values
-                conditions.append(f'{field} = {str(value).lower()}')
+                conditions.append(f'{field_name} = {str(value).lower()}')
             else:
                 # For other types, convert to string and use contains
-                conditions.append(f'{field} contains "{str(value)}"')
+                conditions.append(f'{field_name} contains "{str(value)}"')
 
         return " AND ".join(conditions)
 

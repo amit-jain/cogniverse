@@ -44,7 +44,6 @@ def shared_system_vespa():
     from cogniverse_core.memory.manager import Mem0MemoryManager
     from cogniverse_core.config.manager import ConfigManager
     from cogniverse_core.registries.backend_registry import get_backend_registry
-    from cogniverse_core.backends import TenantSchemaManager
 
     print("🧹 Clearing all singleton state before setup...")
 
@@ -57,9 +56,6 @@ def shared_system_vespa():
     )
     os.environ["COGNIVERSE_CONFIG"] = str(test_config_path.absolute())
     print(f"   Set COGNIVERSE_CONFIG={os.environ['COGNIVERSE_CONFIG']}")
-
-    # Clear TenantSchemaManager singleton
-    TenantSchemaManager._clear_instance()
 
     # Clear StrategyRegistry singleton (critical - it caches strategy config)
     from cogniverse_core.registries.registry import get_registry
@@ -130,10 +126,6 @@ def shared_system_vespa():
             from cogniverse_core.config.manager import ConfigManager
             from cogniverse_core.registries.backend_registry import get_backend_registry
             from cogniverse_core.registries.registry import get_registry
-            from cogniverse_core.backends import TenantSchemaManager
-
-            # Clear TenantSchemaManager singleton
-            TenantSchemaManager._clear_instance()
 
             # Clear Mem0MemoryManager instances
             Mem0MemoryManager._instances.clear()

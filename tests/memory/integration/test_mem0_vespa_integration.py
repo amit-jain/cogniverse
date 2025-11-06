@@ -8,7 +8,6 @@ Uses shared session-scoped Vespa container from conftest.py.
 
 import pytest
 from cogniverse_core.memory.manager import Mem0MemoryManager
-from cogniverse_core.backends import TenantSchemaManager
 
 from tests.utils.async_polling import wait_for_vespa_indexing
 

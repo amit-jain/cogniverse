@@ -55,15 +55,9 @@ class TestTenantManagerAPI:
 
         # Import app and reset globals
         from cogniverse_runtime.admin import tenant_manager
-        from cogniverse_core.backends import TenantSchemaManager
 
         tenant_manager.backend = None  # Reset backend
         tenant_manager.set_config_manager(config_manager)  # Inject ConfigManager
-
-        # Reset tenant schema manager singleton
-        if TenantSchemaManager._instance is not None:
-            TenantSchemaManager._instance._initialized = False
-        TenantSchemaManager._instance = None
 
         try:
             client = TestClient(tenant_manager.app)

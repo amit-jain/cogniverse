@@ -137,10 +137,13 @@ class VespaBackend(Backend):
             config_port = calculate_config_port(port)
             logger.debug(f"Calculated config port {config_port} from data port {port}")
 
+        # Store config port for schema deployment
+        self._config_port = config_port
+
         # Create schema_registry for tracking tenant schemas
         # SchemaRegistry requires ConfigManager via dependency injection
         from cogniverse_core.registries.schema_registry import SchemaRegistry
-        schema_registry = SchemaRegistry(
+        self.schema_registry = SchemaRegistry(
             config_manager=self._config_manager_instance,
             backend=self,
             schema_loader=self._schema_loader_instance
@@ -151,7 +154,7 @@ class VespaBackend(Backend):
             backend_port=config_port,
             config_manager=self._config_manager_instance,
             schema_loader=self._schema_loader_instance,
-            schema_registry=schema_registry
+            schema_registry=self.schema_registry
         )
 
         # Backend is initialized with all profiles available
@@ -189,8 +192,9 @@ class VespaBackend(Backend):
 
             # Ensure tenant schema exists (auto-deploy if needed)
             try:
-                self._ensure_tenant_schema_exists(
-                    self._tenant_id, schema_name
+                self.schema_registry.deploy_schema(
+                    tenant_id=self._tenant_id,
+                    base_schema_name=schema_name
                 )
                 logger.debug(f"Verified tenant schema '{target_schema_name}' exists in Vespa")
             except Exception as e:
@@ -556,42 +560,6 @@ class VespaBackend(Backend):
     # Schema Management Operations (Backend interface implementation)
     # ============================================================================
 
-    def deploy_schema(
-        self, schema_name: str, tenant_id: Optional[str] = None, **kwargs
-    ) -> bool:
-        """
-        Deploy or ensure schema exists for tenant.
-
-        Args:
-            schema_name: Base schema name to deploy
-            tenant_id: Tenant identifier (uses self._tenant_id if not provided)
-            **kwargs: Additional schema deployment options
-
-        Returns:
-            True if successful, False otherwise
-        """
-        if not self.schema_manager:
-            raise RuntimeError("Backend not initialized. Call initialize() first.")
-
-        # Use provided tenant_id or fall back to instance tenant_id
-        effective_tenant_id = tenant_id or self._tenant_id
-        if not effective_tenant_id:
-            raise ValueError("tenant_id required for schema deployment")
-
-        try:
-            self._ensure_tenant_schema_exists(
-                effective_tenant_id, schema_name
-            )
-            logger.info(
-                f"Deployed schema '{schema_name}' for tenant '{effective_tenant_id}'"
-            )
-            return True
-        except Exception as e:
-            logger.error(
-                f"Failed to deploy schema '{schema_name}' for tenant '{effective_tenant_id}': {e}"
-            )
-            return False
-
     def deploy_schemas(
         self, schema_definitions: List[Dict[str, Any]]
     ) -> bool:
@@ -650,8 +618,8 @@ class VespaBackend(Backend):
             logger.info(f"Deploying {len(schemas_to_deploy)} schemas to Vespa")
             app_package = ApplicationPackage(name="videosearch", schema=schemas_to_deploy)
 
-            # Use VespaSchemaManager's _deploy_package method
-            self.schema_manager._deploy_package(app_package)
+            # Deploy package directly via Backend's own method
+            self._deploy_package(app_package)
 
             logger.info(f"Successfully deployed {len(schemas_to_deploy)} schemas")
             return True
@@ -659,6 +627,70 @@ class VespaBackend(Backend):
         except Exception as e:
             logger.error(f"Failed to deploy schemas: {e}")
             return False
+
+    def _deploy_package(self, app_package, allow_field_type_change: bool = False) -> None:
+        """
+        Deploy an application package to Vespa.
+
+        Args:
+            app_package: The ApplicationPackage to deploy
+            allow_field_type_change: If True, adds validation override for field type changes
+
+        Raises:
+            RuntimeError: If deployment fails
+        """
+        import json
+        import re
+
+        import requests
+        from vespa.package import Validation, ValidationID
+
+        # Add validation override if requested
+        if allow_field_type_change:
+            from datetime import datetime, timedelta
+            # Set validation until 29 days from now (to stay within 30-day limit)
+            until_date = (datetime.now() + timedelta(days=29)).strftime("%Y-%m-%d")
+            validation = Validation(
+                validation_id=ValidationID.fieldTypeChange,
+                until=until_date,
+                comment="Allow field type changes for schema updates"
+            )
+            if app_package.validations is None:
+                app_package.validations = []
+            app_package.validations.append(validation)
+
+        # Create the deployment URL - properly construct with base URL and port
+        # Remove any existing port from endpoint
+        base_url = re.sub(r':\d+$', '', self._url)
+        deploy_url = f"{base_url}:{self._config_port}/application/v2/tenant/default/prepareandactivate"
+
+        try:
+            # Generate the ZIP package
+            app_zip = app_package.to_zip()
+
+            # Deploy via HTTP
+            response = requests.post(
+                deploy_url,
+                headers={"Content-Type": "application/zip"},
+                data=app_zip,
+                verify=False
+            )
+
+            if response.status_code == 200:
+                logger.info("Successfully deployed application package")
+            else:
+                error_msg = f"Deployment failed with status {response.status_code}"
+                try:
+                    error_detail = json.loads(response.content.decode('utf-8'))
+                    error_msg += f": {error_detail}"
+                except Exception:
+                    error_msg += f": {response.content.decode('utf-8')}"
+
+                raise RuntimeError(error_msg)
+
+        except Exception as e:
+            logger.error(f"Failed to deploy package: {str(e)}")
+            raise
 
     def delete_schema(
         self, schema_name: str, tenant_id: Optional[str] = None
@@ -727,21 +759,6 @@ class VespaBackend(Backend):
                 f"Failed to check schema existence for '{schema_name}' tenant '{effective_tenant_id}': {e}"
             )
             return False
-
-    def _ensure_tenant_schema_exists(self, tenant_id: str, base_schema_name: str) -> None:
-        """
-        Ensure tenant schema exists, deploying if needed.
-
-        Delegates to VespaSchemaManager.
-
-        Args:
-            tenant_id: Tenant identifier
-            base_schema_name: Base schema name
-
-        Raises:
-            Exception: If schema deployment fails
-        """
-        self.schema_manager.deploy_tenant_schema(tenant_id, base_schema_name)
 
     def _delete_tenant_schemas(self, tenant_id: str) -> List[str]:
         """
