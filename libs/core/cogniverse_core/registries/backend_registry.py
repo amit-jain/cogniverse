@@ -139,33 +139,20 @@ class BackendRegistry:
 
         # Create BackendConfig from config_manager
         from cogniverse_core.config.unified_config import BackendConfig
+        from cogniverse_core.factories.backend_factory import BackendFactory
 
         # Get system config for URL and port
         system_config = config_manager.get_system_config(tenant_id)
 
-        # Create BackendConfig object (required by new VespaBackend signature)
+        # Create BackendConfig object
         backend_config_obj = BackendConfig(
             tenant_id=tenant_id,
-            backend_type=name,  # e.g., "vespa"
+            backend_type=name,
             url=system_config.backend_url,
             port=system_config.backend_port,
         )
 
-        # Create backend instance with BackendConfig
-        backend_class = cls._ingestion_backends[name]
-        instance = backend_class(backend_config=backend_config_obj, schema_loader=schema_loader, config_manager=config_manager)
-
-        # Create and inject SchemaRegistry (fixes circular dependency)
-        from cogniverse_core.registries.schema_registry import SchemaRegistry
-        schema_registry = SchemaRegistry(
-            config_manager=config_manager,
-            backend=instance,
-            schema_loader=schema_loader
-        )
-        instance.schema_registry = schema_registry
-
-        # Build backend config dict for initialize() - merge top-level keys with backend section
-        # Start with tenant_id, then add all top-level config keys
+        # Build backend initialization config - merge top-level keys with backend section
         backend_init_config = {"tenant_id": tenant_id}
 
         if config:
@@ -177,13 +164,16 @@ class BackendRegistry:
             if "backend" in config:
                 backend_init_config["backend"] = config["backend"]
 
-        instance.initialize(backend_init_config)
-
-        # CRITICAL FIX: Inject schema_registry into schema_manager AFTER initialize()
-        # VespaSchemaManager is created during initialize() and needs schema_registry
-        # for tenant_schema_exists() method
-        if hasattr(instance, 'schema_manager') and instance.schema_manager:
-            instance.schema_manager._schema_registry = schema_registry
+        # Use factory to create backend with all dependencies properly initialized
+        # Factory handles: backend creation, SchemaRegistry creation, injection, and initialize()
+        backend_class = cls._ingestion_backends[name]
+        instance = BackendFactory.create_backend_with_dependencies(
+            backend_class=backend_class,
+            backend_config=backend_config_obj,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+            backend_init_config=backend_init_config,
+        )
 
         # Cache instance with tenant_id
         cls._backend_instances[instance_key] = instance
@@ -249,33 +239,20 @@ class BackendRegistry:
 
         # Create BackendConfig from config_manager
         from cogniverse_core.config.unified_config import BackendConfig
+        from cogniverse_core.factories.backend_factory import BackendFactory
 
         # Get system config for URL and port
         system_config = config_manager.get_system_config(tenant_id)
 
-        # Create BackendConfig object (required by new VespaBackend signature)
+        # Create BackendConfig object
         backend_config_obj = BackendConfig(
             tenant_id=tenant_id,
-            backend_type=name,  # e.g., "vespa"
+            backend_type=name,
             url=system_config.backend_url,
             port=system_config.backend_port,
         )
 
-        # Create backend instance with BackendConfig
-        backend_class = cls._search_backends[name]
-        instance = backend_class(backend_config=backend_config_obj, schema_loader=schema_loader, config_manager=config_manager)
-
-        # Create and inject SchemaRegistry (fixes circular dependency)
-        from cogniverse_core.registries.schema_registry import SchemaRegistry
-        schema_registry = SchemaRegistry(
-            config_manager=config_manager,
-            backend=instance,
-            schema_loader=schema_loader
-        )
-        instance.schema_registry = schema_registry
-
-        # Build backend config dict for initialize() - merge top-level keys with backend section
-        # Start with tenant_id, then add all top-level config keys
+        # Build backend initialization config - merge top-level keys with backend section
         backend_init_config = {"tenant_id": tenant_id}
 
         if config:
@@ -287,7 +264,16 @@ class BackendRegistry:
             if "backend" in config:
                 backend_init_config["backend"] = config["backend"]
 
-        instance.initialize(backend_init_config)
+        # Use factory to create backend with all dependencies properly initialized
+        # Factory handles: backend creation, SchemaRegistry creation, injection, and initialize()
+        backend_class = cls._search_backends[name]
+        instance = BackendFactory.create_backend_with_dependencies(
+            backend_class=backend_class,
+            backend_config=backend_config_obj,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+            backend_init_config=backend_init_config,
+        )
 
         # Cache instance with tenant_id
         cls._backend_instances[instance_key] = instance

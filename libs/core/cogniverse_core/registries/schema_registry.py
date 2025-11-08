@@ -9,6 +9,12 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from cogniverse_core.registries.exceptions import (
+    BackendDeploymentError,
+    RegistryStorageError,
+    SchemaRegistryInitializationError,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -55,7 +61,7 @@ class SchemaRegistry:
         exists = registry.schema_exists("test_tenant", "video_colpali_smol500_mv_frame")
     """
 
-    def __init__(self, config_manager, backend, schema_loader):
+    def __init__(self, config_manager, backend, schema_loader, strict_mode: bool = True):
         """
         Initialize SchemaRegistry with required dependencies.
 
@@ -66,9 +72,12 @@ class SchemaRegistry:
             config_manager: ConfigManager instance (REQUIRED)
             backend: Backend instance for schema deployment (REQUIRED)
             schema_loader: SchemaLoader instance for loading schema definitions (REQUIRED)
+            strict_mode: If True, fail fast on initialization errors (default: True for production)
+                        If False, continue with empty registry on errors (for testing only)
 
         Raises:
             ValueError: If any required parameter is None
+            SchemaRegistryInitializationError: If strict_mode=True and schema loading fails
         """
         if config_manager is None:
             raise ValueError("config_manager is required")
@@ -80,6 +89,7 @@ class SchemaRegistry:
         self._config_manager = config_manager
         self._backend = backend
         self._schema_loader = schema_loader
+        self.strict_mode = strict_mode
 
         # In-memory registry of all deployed schemas
         # Key: (tenant_id, base_schema_name), Value: SchemaInfo
@@ -88,10 +98,22 @@ class SchemaRegistry:
         # Load all previously deployed schemas from persistent storage
         self._load_schemas_from_storage()
 
-        logger.info(f"SchemaRegistry initialized with {len(self._schemas)} schemas loaded")
+        logger.info(
+            f"SchemaRegistry initialized with {len(self._schemas)} schemas loaded "
+            f"(strict_mode={strict_mode})"
+        )
 
     def _load_schemas_from_storage(self):
-        """Load all schemas from ConfigManager into in-memory registry on startup"""
+        """
+        Load all schemas from ConfigManager into in-memory registry on startup.
+
+        Behavior depends on strict_mode:
+        - strict_mode=True: Raise exception if loading fails (production mode)
+        - strict_mode=False: Log warning and continue with empty registry (test mode)
+
+        Raises:
+            SchemaRegistryInitializationError: If strict_mode=True and loading fails
+        """
         try:
             # Load all schemas across all tenants using generic ConfigManager methods
             from cogniverse_core.config.store_interface import ConfigScope
@@ -101,6 +123,7 @@ class SchemaRegistry:
                 service="schema_registry",
             )
 
+            schema_count = 0
             for entry in all_schema_data:
                 schema_data = entry.config_value
                 # Skip deleted schemas
@@ -119,10 +142,30 @@ class SchemaRegistry:
                     config=schema_data.get("config", {}),
                     deployment_time=schema_data["deployment_time"],
                 )
+                schema_count += 1
 
-            logger.info(f"Loaded {len(self._schemas)} schemas from storage")
+            logger.info(f"Loaded {schema_count} schemas from storage")
+
         except Exception as e:
-            logger.warning(f"Failed to load schemas from storage: {e}. Starting with empty registry.")
+            if self.strict_mode:
+                # Production mode - fail fast
+                logger.error(
+                    f"CRITICAL: Failed to load schemas from storage: {e}. "
+                    f"This indicates database corruption or connectivity issues. "
+                    f"Cannot initialize SchemaRegistry in strict mode."
+                )
+                raise SchemaRegistryInitializationError(
+                    f"Cannot initialize SchemaRegistry: schema storage is unavailable. "
+                    f"Error: {e}. "
+                    f"This indicates database corruption or connectivity issues. "
+                    f"Set strict_mode=False to start with empty registry (NOT recommended for production)."
+                )
+            else:
+                # Test mode - continue with warning
+                logger.warning(
+                    f"Failed to load schemas from storage: {e}. "
+                    f"Starting with empty registry (strict_mode=False)."
+                )
 
     def register_schema(
         self,
@@ -231,6 +274,55 @@ class SchemaRegistry:
         if not isinstance(schema_name, str):
             raise TypeError(f"schema_name must be string, got {type(schema_name)}")
 
+    def _rollback_deployment(
+        self,
+        previous_schemas: List[Dict[str, Any]],
+        failed_schema_name: str
+    ) -> None:
+        """
+        Rollback failed schema deployment by re-deploying previous schema set.
+
+        This method is called when backend deployment succeeds but ConfigStore
+        registration fails. It restores the backend to its previous state by
+        re-deploying the old schema list (without the failed schema).
+
+        The rollback uses backend.deploy_schemas() with the old list, which
+        implicitly removes the newly deployed schema. This maintains consistency
+        between backend and ConfigStore.
+
+        Args:
+            previous_schemas: List of schema definitions that existed before deployment
+            failed_schema_name: Name of schema that failed registration (for logging)
+
+        Note:
+            Rollback is best-effort. If rollback fails, manual intervention is required.
+            The system logs detailed error information to aid recovery.
+        """
+        logger.warning(
+            f"Rolling back deployment of '{failed_schema_name}'. "
+            f"Re-deploying {len(previous_schemas)} previous schemas."
+        )
+
+        try:
+            # Re-deploy previous schema set (removes failed schema implicitly)
+            success = self._backend.deploy_schemas(previous_schemas)
+            if success:
+                logger.info(
+                    f"Successfully rolled back '{failed_schema_name}'. "
+                    f"Backend state restored to {len(previous_schemas)} schemas."
+                )
+            else:
+                logger.error(
+                    f"Rollback of '{failed_schema_name}' reported failure. "
+                    f"Backend state may be inconsistent. Manual intervention required."
+                )
+        except Exception as e:
+            logger.error(
+                f"Rollback of '{failed_schema_name}' failed with exception: {e}. "
+                f"Backend state is inconsistent. Manual intervention required. "
+                f"Expected schemas: {[s['name'] for s in previous_schemas]}"
+            )
+
     def deploy_schema(
         self,
         tenant_id: str,
@@ -296,23 +388,23 @@ class SchemaRegistry:
         base_schema_json['name'] = tenant_schema_name
 
         # Collect ALL existing schemas (including from other tenants)
-        # This is critical for backends like Vespa that require all schemas in each deployment
+        # This is critical for backends that require all schemas in each deployment
         import json
 
-        schema_definitions = []
-
-        # Add all existing schemas
+        # Save previous state for rollback (BEFORE adding new schema)
         existing_schemas = self._get_all_schemas()  # Private method
+        previous_schemas = []
         for schema_info in existing_schemas:
-            schema_definitions.append({
+            previous_schemas.append({
                 "name": schema_info.full_schema_name,
                 "definition": schema_info.schema_definition,
                 "tenant_id": schema_info.tenant_id,
                 "base_schema_name": schema_info.base_schema_name,
             })
 
-        # Add the new schema
-        schema_definitions.append({
+        # Build new schema list (existing + new)
+        all_schemas = list(previous_schemas)  # Copy for deployment
+        all_schemas.append({
             "name": tenant_schema_name,
             "definition": json.dumps(base_schema_json),
             "tenant_id": tenant_id,
@@ -320,25 +412,52 @@ class SchemaRegistry:
         })
 
         logger.info(
-            f"Deploying {len(schema_definitions)} schemas "
-            f"({len(existing_schemas)} existing + 1 new)"
+            f"Deploying {len(all_schemas)} schemas "
+            f"({len(previous_schemas)} existing + 1 new)"
         )
 
-        # Deploy all schemas via backend
-        success = self._backend.deploy_schemas(schema_definitions)
-        if not success:
-            raise Exception(f"Backend failed to deploy schema '{tenant_schema_name}'")
+        # TRANSACTION PHASE 1: Deploy to backend (atomic operation)
+        try:
+            success = self._backend.deploy_schemas(all_schemas)
+            if not success:
+                raise BackendDeploymentError(
+                    f"Backend failed to deploy schema '{tenant_schema_name}'"
+                )
+        except Exception as e:
+            # Backend deployment failed - no rollback needed (nothing changed)
+            logger.error(f"Backend deployment failed: {e}")
+            raise BackendDeploymentError(
+                f"Backend deployment failed for schema '{tenant_schema_name}': {e}"
+            )
 
-        # Register the new schema
-        self.register_schema(
-            tenant_id=tenant_id,
-            base_schema_name=base_schema_name,
-            full_schema_name=tenant_schema_name,
-            schema_definition=json.dumps(base_schema_json),
-            config=config,
+        # TRANSACTION PHASE 2: Register in ConfigStore (critical section)
+        try:
+            self.register_schema(
+                tenant_id=tenant_id,
+                base_schema_name=base_schema_name,
+                full_schema_name=tenant_schema_name,
+                schema_definition=json.dumps(base_schema_json),
+                config=config,
+            )
+        except Exception as e:
+            # ConfigStore registration failed AFTER backend succeeded
+            # ROLLBACK: Re-deploy previous schemas to remove new one
+            logger.error(
+                f"ConfigStore registration failed: {e}. "
+                f"Rolling back backend deployment..."
+            )
+            self._rollback_deployment(previous_schemas, tenant_schema_name)
+
+            # Raise with clear error type
+            raise RegistryStorageError(
+                f"Failed to register schema '{tenant_schema_name}' in ConfigStore: {e}. "
+                f"Backend deployment has been rolled back."
+            )
+
+        logger.info(
+            f"Successfully deployed and registered schema '{tenant_schema_name}' "
+            f"for tenant '{tenant_id}'"
         )
-
-        logger.info(f"Successfully deployed and registered schema '{tenant_schema_name}' for tenant '{tenant_id}'")
         return tenant_schema_name
 
     def get_tenant_schemas(self, tenant_id: str) -> List[SchemaInfo]:
