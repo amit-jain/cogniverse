@@ -363,7 +363,7 @@ class VespaSearchBackend(SearchBackend):
         self.vespa_port = config.get("port", 8080)
         base_schema_name = config.get("schema_name")
         tenant_id = config.get("tenant_id")
-        self.profile = config.get("profile")  # Changed from "active_video_profile" to "profile"
+        self.profile = config.get("profile")
         self.query_encoder = None
         self._config_manager = config.get("config_manager")
 

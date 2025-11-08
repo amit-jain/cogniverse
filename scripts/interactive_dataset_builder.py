@@ -19,7 +19,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from cogniverse_agents.search.service import SearchService
 from cogniverse_core.config.manager import ConfigManager
-from cogniverse_core.config.utils import get_config
+from cogniverse_core.config.utils import get_config, create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from src.evaluation.data.datasets import DatasetManager
 
@@ -29,7 +29,7 @@ class InteractiveDatasetBuilder:
 
     def __init__(self, profile: str = "frame_based_colpali", strategy: str = "binary_binary"):
         # Create dependencies for dependency injection
-        config_manager = ConfigManager()
+        config_manager = create_default_config_manager()
         schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
         # Get config for tenant

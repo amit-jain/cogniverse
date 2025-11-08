@@ -137,24 +137,53 @@ class BackendRegistry:
                 f"Available backends: {available}"
             )
 
-        # Create and initialize instance (config_manager and schema_loader are guaranteed to be non-None)
-        backend_class = cls._ingestion_backends[name]
-        instance = backend_class(config_manager=config_manager, schema_loader=schema_loader)
+        # Create BackendConfig from config_manager
+        from cogniverse_core.config.unified_config import BackendConfig
 
-        # Build backend config - merge top-level keys with backend section
+        # Get system config for URL and port
+        system_config = config_manager.get_system_config(tenant_id)
+
+        # Create BackendConfig object (required by new VespaBackend signature)
+        backend_config_obj = BackendConfig(
+            tenant_id=tenant_id,
+            backend_type=name,  # e.g., "vespa"
+            url=system_config.backend_url,
+            port=system_config.backend_port,
+        )
+
+        # Create backend instance with BackendConfig
+        backend_class = cls._ingestion_backends[name]
+        instance = backend_class(backend_config=backend_config_obj, schema_loader=schema_loader, config_manager=config_manager)
+
+        # Create and inject SchemaRegistry (fixes circular dependency)
+        from cogniverse_core.registries.schema_registry import SchemaRegistry
+        schema_registry = SchemaRegistry(
+            config_manager=config_manager,
+            backend=instance,
+            schema_loader=schema_loader
+        )
+        instance.schema_registry = schema_registry
+
+        # Build backend config dict for initialize() - merge top-level keys with backend section
         # Start with tenant_id, then add all top-level config keys
-        backend_config = {"tenant_id": tenant_id}
+        backend_init_config = {"tenant_id": tenant_id}
 
         if config:
-            # Add all top-level keys from config (for backward compatibility)
-            backend_config.update(config)
+            # Merge all top-level config keys into backend initialization config
+            backend_init_config.update(config)
 
-            # If there's a nested backend section, overlay it
+            # Preserve nested backend section for backend-specific configuration
             # This allows backend-specific config to override top-level
             if "backend" in config:
-                backend_config["backend"] = config["backend"]
+                backend_init_config["backend"] = config["backend"]
 
-        instance.initialize(backend_config)
+        instance.initialize(backend_init_config)
+
+        # CRITICAL FIX: Inject schema_registry into schema_manager AFTER initialize()
+        # VespaSchemaManager is created during initialize() and needs schema_registry
+        # for tenant_schema_exists() method
+        if hasattr(instance, 'schema_manager') and instance.schema_manager:
+            instance.schema_manager._schema_registry = schema_registry
 
         # Cache instance with tenant_id
         cls._backend_instances[instance_key] = instance
@@ -218,24 +247,47 @@ class BackendRegistry:
                 f"Available backends: {available}"
             )
 
-        # Create and initialize instance (config_manager and schema_loader are guaranteed to be non-None)
-        backend_class = cls._search_backends[name]
-        instance = backend_class(config_manager=config_manager, schema_loader=schema_loader)
+        # Create BackendConfig from config_manager
+        from cogniverse_core.config.unified_config import BackendConfig
 
-        # Build backend config - merge top-level keys with backend section
+        # Get system config for URL and port
+        system_config = config_manager.get_system_config(tenant_id)
+
+        # Create BackendConfig object (required by new VespaBackend signature)
+        backend_config_obj = BackendConfig(
+            tenant_id=tenant_id,
+            backend_type=name,  # e.g., "vespa"
+            url=system_config.backend_url,
+            port=system_config.backend_port,
+        )
+
+        # Create backend instance with BackendConfig
+        backend_class = cls._search_backends[name]
+        instance = backend_class(backend_config=backend_config_obj, schema_loader=schema_loader, config_manager=config_manager)
+
+        # Create and inject SchemaRegistry (fixes circular dependency)
+        from cogniverse_core.registries.schema_registry import SchemaRegistry
+        schema_registry = SchemaRegistry(
+            config_manager=config_manager,
+            backend=instance,
+            schema_loader=schema_loader
+        )
+        instance.schema_registry = schema_registry
+
+        # Build backend config dict for initialize() - merge top-level keys with backend section
         # Start with tenant_id, then add all top-level config keys
-        backend_config = {"tenant_id": tenant_id}
+        backend_init_config = {"tenant_id": tenant_id}
 
         if config:
-            # Add all top-level keys from config (for backward compatibility)
-            backend_config.update(config)
+            # Merge all top-level config keys into backend initialization config
+            backend_init_config.update(config)
 
-            # If there's a nested backend section, overlay it
+            # Preserve nested backend section for backend-specific configuration
             # This allows backend-specific config to override top-level
             if "backend" in config:
-                backend_config["backend"] = config["backend"]
+                backend_init_config["backend"] = config["backend"]
 
-        instance.initialize(backend_config)
+        instance.initialize(backend_init_config)
 
         # Cache instance with tenant_id
         cls._backend_instances[instance_key] = instance

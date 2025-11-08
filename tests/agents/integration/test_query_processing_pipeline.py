@@ -131,17 +131,19 @@ class TestQueryProcessingPipeline:
     def test_routing_decision_with_real_query(self):
         """Test routing decisions with real queries"""
         import logging
-        from unittest.mock import patch
+        from unittest.mock import Mock, patch
 
         from cogniverse_agents.routing_agent import RoutingConfig
 
         # Mock only external service URLs, not core logic
-        with patch("cogniverse_core.config.utils.get_config") as mock_config:
-            mock_config.return_value = {
+        with patch("cogniverse_core.config.utils.create_default_config_manager") as mock_config_manager:
+            mock_config = Mock()
+            mock_config.get.side_effect = lambda key, default=None: {
                 "video_agent_url": "http://localhost:8002",
                 "summarizer_agent_url": "http://localhost:8003",
                 "detailed_report_agent_url": "http://localhost:8004",
-            }
+            }.get(key, default)
+            mock_config_manager.return_value = mock_config
 
             # Mock RoutingAgent initialization to avoid hangs
             with (
@@ -378,17 +380,7 @@ class TestAgentWorkflowIntegration:
 
     def test_summarizer_agent_functionality(self):
         """Test summarizer agent with real data structures"""
-        from unittest.mock import patch
-
-        with patch("cogniverse_agents.summarizer_agent.get_config") as mock_config:
-            mock_config.return_value = {
-                "llm": {
-                    "model_name": "smollm3:3b",
-                    "base_url": "http://localhost:11434/v1",
-                    "api_key": "dummy",
-                }
-            }
-            summarizer = SummarizerAgent(tenant_id="test_tenant")
+        summarizer = SummarizerAgent(tenant_id="test_tenant")
 
         # Test agent exists and has required interface
         assert summarizer is not None
@@ -399,17 +391,7 @@ class TestAgentWorkflowIntegration:
 
     def test_detailed_report_agent_functionality(self):
         """Test detailed report agent with real data structures"""
-        from unittest.mock import patch
-
-        with patch("cogniverse_agents.detailed_report_agent.get_config") as mock_config:
-            mock_config.return_value = {
-                "llm": {
-                    "model_name": "smollm3:3b",
-                    "base_url": "http://localhost:11434/v1",
-                    "api_key": "dummy",
-                }
-            }
-            reporter = DetailedReportAgent(tenant_id="test_tenant")
+        reporter = DetailedReportAgent(tenant_id="test_tenant")
 
         # Test agent exists and has required interface
         assert reporter is not None
@@ -448,29 +430,9 @@ class TestAgentWorkflowIntegration:
 
     def test_multi_agent_coordination_readiness(self):
         """Test that agents can coordinate in a multi-agent workflow"""
-        from unittest.mock import patch
-
         # Test that we can create multiple agents without conflicts
-        with (
-            patch(
-                "cogniverse_agents.summarizer_agent.get_config"
-            ) as mock_summarizer_config,
-            patch(
-                "cogniverse_agents.detailed_report_agent.get_config"
-            ) as mock_reporter_config,
-        ):
-            config = {
-                "llm": {
-                    "model_name": "smollm3:3b",
-                    "base_url": "http://localhost:11434/v1",
-                    "api_key": "dummy",
-                }
-            }
-            mock_summarizer_config.return_value = config
-            mock_reporter_config.return_value = config
-
-            summarizer = SummarizerAgent(tenant_id="test_tenant")
-            reporter = DetailedReportAgent(tenant_id="test_tenant")
+        summarizer = SummarizerAgent(tenant_id="test_tenant")
+        reporter = DetailedReportAgent(tenant_id="test_tenant")
 
         # Both should coexist without issues
         assert summarizer is not None
@@ -490,8 +452,6 @@ class TestSystemIntegrationReadiness:
     @pytest.mark.ci_fast
     def test_complete_component_stack(self):
         """Test that all major components can be instantiated together"""
-        from unittest.mock import patch
-
         components = {}
 
         try:
@@ -499,27 +459,9 @@ class TestSystemIntegrationReadiness:
             components["extractor"] = RelationshipExtractorTool()
             components["enhancer"] = QueryEnhancementPipeline()
 
-            # Agents with proper mocking
-            with (
-                patch(
-                    "cogniverse_agents.summarizer_agent.get_config"
-                ) as mock_summarizer_config,
-                patch(
-                    "cogniverse_agents.detailed_report_agent.get_config"
-                ) as mock_reporter_config,
-            ):
-                config = {
-                    "llm": {
-                        "model_name": "smollm3:3b",
-                        "base_url": "http://localhost:11434/v1",
-                        "api_key": "dummy",
-                    }
-                }
-                mock_summarizer_config.return_value = config
-                mock_reporter_config.return_value = config
-
-                components["summarizer"] = SummarizerAgent(tenant_id="test_tenant")
-                components["reporter"] = DetailedReportAgent(tenant_id="test_tenant")
+            # Agents
+            components["summarizer"] = SummarizerAgent(tenant_id="test_tenant")
+            components["reporter"] = DetailedReportAgent(tenant_id="test_tenant")
 
             # All should initialize successfully
             for name, component in components.items():
@@ -535,10 +477,12 @@ class TestSystemIntegrationReadiness:
 
     def test_system_configuration_readiness(self):
         """Test system can handle different configuration states"""
-        from cogniverse_core.config.utils import get_config
-        from cogniverse_core.config.manager import ConfigManager
+        from cogniverse_core.config.utils import (
+            create_default_config_manager,
+            get_config,
+        )
 
-        config_manager = ConfigManager()
+        config_manager = create_default_config_manager()
         config = get_config(tenant_id="default", config_manager=config_manager)
 
         # Should return a configuration

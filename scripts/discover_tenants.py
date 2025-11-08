@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from cogniverse_core.common.config_store_interface import ConfigScope
-from cogniverse_core.config.manager import ConfigManager
+from cogniverse_core.config.utils import create_default_config_manager, get_config
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ def discover_tenants() -> list[str]:
         List of tenant IDs
     """
     try:
-        config_manager = ConfigManager()
+        config_manager = create_default_config_manager()
 
         # Get all routing configs across tenants
         configs = config_manager.store.list_configs(

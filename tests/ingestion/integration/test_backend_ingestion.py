@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+from cogniverse_core.config.utils import create_default_config_manager
 
 from tests.system.vespa_test_manager import VespaTestManager
 from tests.utils.markers import (
@@ -160,9 +161,8 @@ class TestVespaBackendIngestion:
             PipelineConfig,
             VideoIngestionPipeline,
         )
-        from cogniverse_core.config.manager import ConfigManager
 
-        config_manager = ConfigManager(db_path=tmp_path / "test_config.db")
+        config_manager = create_default_config_manager(db_path=tmp_path / "test_config.db")
         config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
@@ -193,9 +193,7 @@ class TestVespaBackendIngestion:
             PipelineConfig,
             VideoIngestionPipeline,
         )
-
-        from cogniverse_core.config.manager import ConfigManager
-        config_manager = ConfigManager(db_path=tmp_path / "test_config.db")
+        config_manager = create_default_config_manager(db_path=tmp_path / "test_config.db")
         config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
@@ -223,9 +221,7 @@ class TestVespaBackendIngestion:
             PipelineConfig,
             VideoIngestionPipeline,
         )
-
-        from cogniverse_core.config.manager import ConfigManager
-        config_manager = ConfigManager(db_path=tmp_path / "test_config.db")
+        config_manager = create_default_config_manager(db_path=tmp_path / "test_config.db")
         config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
@@ -252,9 +248,7 @@ class TestVespaBackendIngestion:
             PipelineConfig,
             VideoIngestionPipeline,
         )
-
-        from cogniverse_core.config.manager import ConfigManager
-        config_manager = ConfigManager(db_path=tmp_path / "test_config.db")
+        config_manager = create_default_config_manager(db_path=tmp_path / "test_config.db")
         config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
@@ -306,8 +300,7 @@ class TestComprehensiveIngestion:
         results = {}
         for profile in profiles_to_test:
             try:
-                from cogniverse_core.config.manager import ConfigManager
-                config_manager = ConfigManager(db_path=tmp_path / "test_config.db")
+                config_manager = create_default_config_manager(db_path=tmp_path / "test_config.db")
                 config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
                 config.video_dir = all_test_videos[0].parent
                 config.search_backend = "vespa"
@@ -338,9 +331,7 @@ class TestComprehensiveIngestion:
             PipelineConfig,
             VideoIngestionPipeline,
         )
-
-        from cogniverse_core.config.manager import ConfigManager
-        config_manager = ConfigManager(db_path=tmp_path / "test_config.db")
+        config_manager = create_default_config_manager(db_path=tmp_path / "test_config.db")
         config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
         config.video_dir = all_test_videos[0].parent
         config.search_backend = "vespa"

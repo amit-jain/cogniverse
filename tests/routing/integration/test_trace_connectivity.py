@@ -7,7 +7,6 @@ all user operations use the same project (cogniverse-{tenant}).
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
 
 import pytest
 from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig

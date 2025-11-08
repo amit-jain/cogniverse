@@ -9,8 +9,6 @@ without complex constructor parameters.
 from pathlib import Path
 from typing import Any
 
-from cogniverse_core.config.utils import get_config
-
 from .pipeline import PipelineConfig, VideoIngestionPipeline
 
 # Logging imported where needed
@@ -23,6 +21,7 @@ class VideoIngestionPipelineBuilder:
         """Initialize builder with default values."""
         self._tenant_id: str | None = None
         self._config_manager = None
+        self._schema_loader = None
         self._config: PipelineConfig | None = None
         self._app_config: dict[str, Any] | None = None
         self._schema_name: str | None = None
@@ -41,6 +40,11 @@ class VideoIngestionPipelineBuilder:
     def with_config_manager(self, config_manager) -> "VideoIngestionPipelineBuilder":
         """Set config manager."""
         self._config_manager = config_manager
+        return self
+
+    def with_schema_loader(self, schema_loader) -> "VideoIngestionPipelineBuilder":
+        """Set schema loader."""
+        self._schema_loader = schema_loader
         return self
 
     def with_config(self, config: PipelineConfig) -> "VideoIngestionPipelineBuilder":
@@ -134,6 +138,7 @@ class VideoIngestionPipelineBuilder:
             config=self._config,
             app_config=self._app_config,
             config_manager=self._config_manager,
+            schema_loader=self._schema_loader,
             schema_name=self._schema_name,
             debug_mode=self._debug_mode,
         )

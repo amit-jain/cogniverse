@@ -61,7 +61,7 @@ class A2ARoutingAgent:
         if config_manager is None:
             raise ValueError(
                 "config_manager is required for A2ARoutingAgent. "
-                "Pass ConfigManager() explicitly."
+                "Pass create_default_config_manager() explicitly."
             )
 
 

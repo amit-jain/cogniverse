@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # from cogniverse_agents.tools.query_analyzer import QueryAnalyzer  # Module removed
 import pytest
-from cogniverse_core.config.utils import get_config
+from cogniverse_core.config.utils import create_default_config_manager, get_config
 
 pytestmark = pytest.mark.skip(reason="QueryAnalyzer module removed - test needs rewrite")
 
@@ -70,8 +70,7 @@ class CombinedRoutingTester:
     """Test suite for evaluating both LLM and GLiNER routing and temporal extraction."""
 
     def __init__(self):
-        from cogniverse_core.config.manager import ConfigManager
-        config_manager = ConfigManager()
+        config_manager = create_default_config_manager()
         self.config = get_config(tenant_id="default", config_manager=config_manager)
 
     def load_test_queries(self, filename: str = "test_queries.txt") -> list[TestQuery]:

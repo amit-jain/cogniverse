@@ -41,7 +41,7 @@ class VideoSearchAgent:
         if config_manager is None:
             raise ValueError(
                 "config_manager is required for VideoSearchAgent. "
-                "Pass ConfigManager() explicitly."
+                "Pass create_default_config_manager() explicitly."
             )
 
 

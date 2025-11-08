@@ -11,6 +11,7 @@ from cogniverse_agents.detailed_report_agent import (
     VLMInterface,
 )
 from cogniverse_agents.tools.a2a_utils import A2AMessage, DataPart, Task
+from cogniverse_core.config.utils import create_default_config_manager
 
 
 @pytest.fixture
@@ -104,7 +105,7 @@ class TestVLMInterface:
             }
         }
 
-        vlm = VLMInterface()
+        vlm = VLMInterface(config_manager=create_default_config_manager())
 
         assert vlm.config is not None
         mock_dspy_settings.configure.assert_called_once()
@@ -117,7 +118,7 @@ class TestVLMInterface:
         }  # Missing base_url
 
         with pytest.raises(ValueError, match="LLM configuration missing"):
-            VLMInterface()
+            VLMInterface(config_manager=create_default_config_manager())
 
     @patch("cogniverse_core.common.vlm_interface.get_config")
     @patch("cogniverse_core.common.vlm_interface.dspy.settings")
@@ -146,7 +147,7 @@ class TestVLMInterface:
         mock_predict_instance.return_value = mock_result
         mock_predict.return_value = mock_predict_instance
 
-        vlm = VLMInterface()
+        vlm = VLMInterface(config_manager=create_default_config_manager())
         result = await vlm.analyze_visual_content_detailed(
             ["/path/to/image1.jpg", "/path/to/image2.jpg"], "test query", "test context"
         )
@@ -166,7 +167,7 @@ class TestVLMInterface:
 class TestDetailedReportAgent:
     """Test cases for DetailedReportAgent class"""
 
-    @patch("cogniverse_agents.detailed_report_agent.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     @pytest.mark.ci_fast
     def test_detailed_report_agent_initialization(
@@ -182,7 +183,7 @@ class TestDetailedReportAgent:
         mock_vlm_instance = Mock()
         mock_vlm_class.return_value = mock_vlm_instance
 
-        agent = DetailedReportAgent(tenant_id="test_tenant")
+        agent = DetailedReportAgent(tenant_id="test_tenant", config_manager=create_default_config_manager())
 
         assert agent.config is not None
         assert agent.vlm == mock_vlm_instance
@@ -191,7 +192,7 @@ class TestDetailedReportAgent:
         assert agent.visual_analysis_enabled is True
         assert agent.technical_analysis_enabled is True
 
-    @patch("cogniverse_agents.detailed_report_agent.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     def test_detailed_report_agent_custom_config(self, mock_vlm_class, mock_get_config):
         """Test DetailedReportAgent with custom configuration"""
@@ -203,7 +204,7 @@ class TestDetailedReportAgent:
         }
         mock_vlm_class.return_value = Mock()
 
-        agent = DetailedReportAgent(tenant_id="test_tenant", 
+        agent = DetailedReportAgent(tenant_id="test_tenant", config_manager=create_default_config_manager(),
             max_report_length=1500,
             thinking_enabled=False,
             visual_analysis_enabled=False,
@@ -272,7 +273,7 @@ class TestDetailedReportAgent:
         assert len(result.recommendations) == 2
         assert result.confidence_assessment["overall"] == 0.8
 
-    @patch("cogniverse_agents.detailed_report_agent.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
@@ -288,7 +289,7 @@ class TestDetailedReportAgent:
 
         # Mock the _initialize_vlm_client to avoid DSPy config issues
         with patch.object(DetailedReportAgent, "_initialize_vlm_client"):
-            agent = DetailedReportAgent(tenant_id="test_tenant")
+            agent = DetailedReportAgent(tenant_id="test_tenant", config_manager=create_default_config_manager())
 
         # Create A2A task
         request_data = {
@@ -329,7 +330,7 @@ class TestDetailedReportAgent:
         assert "executive_summary" in result["result"]
         assert "detailed_findings" in result["result"]
 
-    @patch("cogniverse_agents.detailed_report_agent.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     @pytest.mark.asyncio
     async def test_process_a2a_task_no_messages(self, mock_vlm_class, mock_get_config):
@@ -344,7 +345,7 @@ class TestDetailedReportAgent:
 
         # Mock the _initialize_vlm_client to avoid DSPy config issues
         with patch.object(DetailedReportAgent, "_initialize_vlm_client"):
-            agent = DetailedReportAgent(tenant_id="test_tenant")
+            agent = DetailedReportAgent(tenant_id="test_tenant", config_manager=create_default_config_manager())
 
         task = Task(id="test_task", messages=[])
 
@@ -358,7 +359,7 @@ class TestDetailedReportAgent:
 class TestDetailedReportAgentEdgeCases:
     """Test edge cases and error conditions"""
 
-    @patch("cogniverse_agents.detailed_report_agent.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     def test_generate_report_empty_results(self, mock_vlm_class, mock_get_config):
         """Test report generation with empty search results"""
@@ -390,7 +391,7 @@ class TestDetailedReportAgentCoreFunctionality:
     def agent_with_mocks(self):
         """Create agent with properly mocked dependencies"""
         with (
-            patch("cogniverse_agents.detailed_report_agent.get_config") as mock_config,
+            patch("cogniverse_core.config.utils.get_config") as mock_config,
             patch(
                 "cogniverse_agents.detailed_report_agent.VLMInterface"
             ) as mock_vlm_class,
@@ -415,7 +416,7 @@ class TestDetailedReportAgentCoreFunctionality:
             )
             mock_vlm_class.return_value = mock_vlm
 
-            agent = DetailedReportAgent(tenant_id="test_tenant")
+            agent = DetailedReportAgent(tenant_id="test_tenant", config_manager=create_default_config_manager())
             agent.vlm_client = mock_vlm
             return agent
 

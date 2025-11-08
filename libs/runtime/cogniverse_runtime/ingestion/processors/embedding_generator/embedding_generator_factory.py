@@ -20,6 +20,8 @@ class EmbeddingGeneratorFactory:
         config: dict[str, Any],
         logger: logging.Logger | None = None,
         profile_config: dict[str, Any] = None,
+        config_manager=None,
+        schema_loader=None,
     ):
         """
         Create an embedding generator for the specified backend
@@ -30,6 +32,8 @@ class EmbeddingGeneratorFactory:
             config: Configuration dictionary
             logger: Logger instance
             profile_config: Profile configuration containing process_type and model info
+            config_manager: ConfigManager instance for dependency injection (REQUIRED)
+            schema_loader: SchemaLoader instance for dependency injection (REQUIRED)
 
         Returns:
             Embedding generator instance
@@ -42,7 +46,12 @@ class EmbeddingGeneratorFactory:
 
         # Get backend client (singleton per tenant)
         backend_client = BackendFactory.create(
-            backend_type=backend, tenant_id=tenant_id, config=config, logger=logger
+            backend_type=backend,
+            tenant_id=tenant_id,
+            config=config,
+            logger=logger,
+            config_manager=config_manager,
+            schema_loader=schema_loader
         )
 
         return EmbeddingGeneratorImpl(
@@ -57,6 +66,8 @@ def create_embedding_generator(
     schema_name: str,
     tenant_id: str,
     logger: logging.Logger | None = None,
+    config_manager=None,
+    schema_loader=None,
 ):
     """
     Creates an embedding generator for a specific schema and tenant.
@@ -66,6 +77,8 @@ def create_embedding_generator(
         schema_name: Schema/profile name to use
         tenant_id: Tenant identifier (REQUIRED - no default)
         logger: Optional logger
+        config_manager: ConfigManager instance for dependency injection (REQUIRED)
+        schema_loader: SchemaLoader instance for dependency injection (REQUIRED)
 
     Raises:
         ValueError: If tenant_id is empty or None
@@ -95,4 +108,6 @@ def create_embedding_generator(
         config=config,
         logger=logger,
         profile_config=profile_config,
+        config_manager=config_manager,
+        schema_loader=schema_loader,
     )

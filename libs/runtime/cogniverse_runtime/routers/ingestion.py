@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from cogniverse_core.config.manager import ConfigManager
+from cogniverse_core.config.utils import create_default_config_manager, get_config
 from cogniverse_core.interfaces.schema_loader import SchemaLoader
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
@@ -40,69 +41,43 @@ class IngestionStatus(BaseModel):
 # In-memory job tracking (replace with Redis/DB in production)
 ingestion_jobs: Dict[str, IngestionStatus] = {}
 
-# Module-level ConfigManager and SchemaLoader instances for dependency injection
-_config_manager: ConfigManager = None
-_schema_loader: SchemaLoader = None
-
-
-def set_config_manager(config_manager: ConfigManager) -> None:
-    """
-    Set the ConfigManager instance for this router.
-
-    Must be called during application startup before handling requests.
-
-    Args:
-        config_manager: ConfigManager instance to use
-    """
-    global _config_manager
-    _config_manager = config_manager
-
-
-def set_schema_loader(schema_loader: SchemaLoader) -> None:
-    """
-    Set the SchemaLoader instance for this router.
-
-    Must be called during application startup before handling requests.
-
-    Args:
-        schema_loader: SchemaLoader instance to use
-    """
-    global _schema_loader
-    _schema_loader = schema_loader
-
-
-def get_config_manager_dependency() -> ConfigManager:
+# FastAPI dependencies - will be overridden in main.py via app.dependency_overrides
+def get_config_manager_dependency():
     """
     FastAPI dependency for ConfigManager.
+
+    This function should be overridden in main.py using app.dependency_overrides.
+    If not overridden, it raises an error to fail fast.
 
     Returns:
         ConfigManager instance
 
     Raises:
-        RuntimeError: If ConfigManager not initialized via set_config_manager()
+        RuntimeError: If not overridden via app.dependency_overrides
     """
-    if _config_manager is None:
-        raise RuntimeError(
-            "ConfigManager not initialized. Call set_config_manager() during app startup."
-        )
-    return _config_manager
+    raise RuntimeError(
+        "ConfigManager dependency not configured. "
+        "Override this dependency in main.py using app.dependency_overrides."
+    )
 
 
 def get_schema_loader_dependency() -> SchemaLoader:
     """
     FastAPI dependency for SchemaLoader.
 
+    This function should be overridden in main.py using app.dependency_overrides.
+    If not overridden, it raises an error to fail fast.
+
     Returns:
         SchemaLoader instance
 
     Raises:
-        RuntimeError: If SchemaLoader not initialized via set_schema_loader()
+        RuntimeError: If not overridden via app.dependency_overrides
     """
-    if _schema_loader is None:
-        raise RuntimeError(
-            "SchemaLoader not initialized. Call set_schema_loader() during app startup."
-        )
-    return _schema_loader
+    raise RuntimeError(
+        "SchemaLoader dependency not configured. "
+        "Override this dependency in main.py using app.dependency_overrides."
+    )
 
 
 @router.post("/start")
@@ -235,11 +210,9 @@ async def run_ingestion(
 ) -> None:
     """Run ingestion process (background task)."""
     try:
-        from cogniverse_core.config.utils import get_config
-
         from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 
-        config_manager = ConfigManager()
+        config_manager = create_default_config_manager()
         config = get_config(tenant_id=request.tenant_id or "default", config_manager=config_manager)
 
         pipeline = VideoIngestionPipeline(
@@ -260,7 +233,7 @@ async def run_ingestion(
         # Process videos
         for video_path in video_files:
             try:
-                result = pipeline.process_video(
+                _ = pipeline.process_video(
                     video_path=str(video_path),
                     tenant_id=request.tenant_id,
                     org_id=request.org_id,

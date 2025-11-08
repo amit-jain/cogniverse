@@ -18,8 +18,7 @@ import torch
 sys.path.append(str(Path(__file__).parent.parent))
 
 from cogniverse_agents.search.service import SearchService
-from cogniverse_core.config.manager import ConfigManager
-from cogniverse_core.config.utils import get_config
+from cogniverse_core.config.utils import create_default_config_manager, get_config
 from cogniverse_vespa.vespa_search_client import RankingStrategy, VespaVideoSearchClient
 from colpali_engine.models import ColIdefics3, ColIdefics3Processor
 
@@ -34,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 def load_colpali_model():
     """Load ColPali model for embedding generation"""
-    config_manager = ConfigManager()
+    config_manager = create_default_config_manager()
     config = get_config(tenant_id="test_tenant", config_manager=config_manager)
     model_name = config.get("colpali_model", "vidore/colsmol-500m")
 
@@ -203,7 +202,7 @@ def test_ranking_strategies(query=None, table_output=False, show_analysis=True):
 
     # Initialize client (schema will be provided in search params)
     print("Initializing VespaVideoSearchClient...")
-    config_manager = ConfigManager()
+    config_manager = create_default_config_manager()
     client = VespaVideoSearchClient(tenant_id="test_tenant", config_manager=config_manager)
 
     # Schema to use for testing
@@ -544,7 +543,7 @@ def save_results_to_csv(all_results, filename):
 
 def test_default_ranking(query=None):
     """Test default ranking profile (should be 'default' from schema)"""
-    config_manager = ConfigManager()
+    config_manager = create_default_config_manager()
     client = VespaVideoSearchClient(tenant_id="test_tenant", config_manager=config_manager)
 
     logger.info("\n=== Testing Default Ranking Profile ===")

@@ -41,8 +41,8 @@ def shared_system_vespa():
     print("=" * 70)
 
     # CRITICAL: Clear ALL singletons to ensure fresh state with test ports
-    from cogniverse_core.memory.manager import Mem0MemoryManager
     from cogniverse_core.config.manager import ConfigManager
+    from cogniverse_core.memory.manager import Mem0MemoryManager
     from cogniverse_core.registries.backend_registry import get_backend_registry
 
     print("🧹 Clearing all singleton state before setup...")
@@ -96,15 +96,15 @@ def shared_system_vespa():
 
         print("\n" + "=" * 70)
         print("✅ Shared Vespa ready for system tests")
-        print(f"   Search endpoint: http://localhost:{SYSTEM_VESPA_PORT}/search/")
-        print(f"   Document API: http://localhost:{SYSTEM_VESPA_PORT}/document/v1/")
+        print(f"   Search endpoint: http://localhost:{manager.http_port}/search/")
+        print(f"   Document API: http://localhost:{manager.http_port}/document/v1/")
         print("=" * 70 + "\n")
 
         vespa_config = {
-            "http_port": SYSTEM_VESPA_PORT,
-            "config_port": SYSTEM_VESPA_CONFIG_PORT,
-            "container_name": SYSTEM_VESPA_CONTAINER,
-            "base_url": f"http://localhost:{SYSTEM_VESPA_PORT}",
+            "http_port": manager.http_port,  # Use actual port from manager (may differ from requested)
+            "config_port": manager.config_port,
+            "container_name": manager.container_name,
+            "base_url": f"http://localhost:{manager.http_port}",
             "vespa_url": "http://localhost",
             "default_schema": manager.default_test_schema,
             "manager": manager,  # Provide manager for tests that need it
@@ -122,8 +122,8 @@ def shared_system_vespa():
 
         # Clear singleton state to avoid interference with other test modules
         try:
-            from cogniverse_core.memory.manager import Mem0MemoryManager
             from cogniverse_core.config.manager import ConfigManager
+            from cogniverse_core.memory.manager import Mem0MemoryManager
             from cogniverse_core.registries.backend_registry import get_backend_registry
             from cogniverse_core.registries.registry import get_registry
 

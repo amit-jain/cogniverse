@@ -117,7 +117,7 @@ class TestModalityOptimizationIntegration:
     async def test_cross_modal_fusion_workflow(self, temp_model_dir, telemetry_manager_without_phoenix):
         """Test cross-modal fusion recommendation workflow"""
         # Initialize optimizer with telemetry configured
-        fusion_optimizer = CrossModalOptimizer(model_dir=temp_model_dir)
+        fusion_optimizer = CrossModalOptimizer(tenant_id="test-tenant", model_dir=temp_model_dir)
 
         # Test fusion recommendation with high benefit
         recommendations = fusion_optimizer.get_fusion_recommendations(
@@ -279,7 +279,7 @@ class TestModalityOptimizationIntegration:
     def test_fusion_statistics_and_export(self, temp_model_dir, telemetry_manager_without_phoenix):
         """Test fusion statistics collection and export"""
         # Initialize optimizer with telemetry configured
-        fusion_optimizer = CrossModalOptimizer(model_dir=temp_model_dir)
+        fusion_optimizer = CrossModalOptimizer(tenant_id="test-tenant", model_dir=temp_model_dir)
 
         # Record multiple fusion results
         for i in range(5):

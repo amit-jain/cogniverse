@@ -18,6 +18,7 @@ from cogniverse_core.config.unified_config import (
     SystemConfig,
     TelemetryConfigUnified,
 )
+from cogniverse_core.config.utils import create_default_config_manager
 
 
 class TestConfigPersistence:
@@ -33,9 +34,7 @@ class TestConfigPersistence:
     @pytest.fixture
     def config_manager(self, temp_db):
         """Create ConfigManager with temp database"""
-        # Reset singleton
-        ConfigManager._instance = None
-        manager = ConfigManager(db_path=temp_db)
+        manager = create_default_config_manager(db_path=temp_db)
         return manager
 
     def test_system_config_persistence(self, config_manager):
@@ -190,7 +189,7 @@ class TestConfigPersistence:
     def test_config_survives_manager_restart(self, temp_db):
         """Test configuration survives ConfigManager restart"""
         # Create first manager instance
-        manager1 = ConfigManager(db_path=temp_db)
+        manager1 = create_default_config_manager(db_path=temp_db)
         system_config = SystemConfig(
             tenant_id="test_tenant", llm_model="persistent-model"
         )
@@ -201,7 +200,7 @@ class TestConfigPersistence:
         # that data persists in the database
         ConfigManager._instance = None
         ConfigManager._db_path = None
-        manager2 = ConfigManager(db_path=temp_db)
+        manager2 = create_default_config_manager(db_path=temp_db)
 
         # Load config with new instance
         loaded_config = manager2.get_system_config("test_tenant")

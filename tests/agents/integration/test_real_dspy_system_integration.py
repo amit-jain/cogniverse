@@ -142,43 +142,34 @@ class TestDSPySystemIntegration:
     async def test_routing_agent_routing(self):
         """Test enhanced routing agent routing logic"""
         # Mock only external dependencies, not core logic
-        from unittest.mock import patch
 
-        with patch("cogniverse_core.config.utils.get_config") as mock_config:
-            # Provide real config structure
-            mock_config.return_value = {
-                "video_agent_url": "http://localhost:8002",
-                "summarizer_agent_url": "http://localhost:8003",
-                "detailed_report_agent_url": "http://localhost:8004",
-            }
+        telemetry_config = TelemetryConfig(
+            otlp_endpoint="http://localhost:24317",
+            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
 
-            telemetry_config = TelemetryConfig(
-                otlp_endpoint="http://localhost:24317",
-                provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
-                batch_config=BatchExportConfig(use_sync_export=True),
-            )
-            agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        # Test real routing decision logic
+        test_query = "Find videos of robots playing soccer"
 
-            # Test real routing decision logic
-            test_query = "Find videos of robots playing soccer"
+        try:
+            # This tests the actual routing logic
+            routing_decision = await agent.route_query(test_query)
 
-            try:
-                # This tests the actual routing logic
-                routing_decision = await agent.route_query(test_query)
+            # Should return structured routing decision
+            assert routing_decision is not None
 
-                # Should return structured routing decision
-                assert routing_decision is not None
+            # Check if it's a RoutingDecision object or dict with expected fields
+            if hasattr(routing_decision, "search_modality"):
+                assert routing_decision.search_modality is not None
+            elif isinstance(routing_decision, dict):
+                # Should have routing information
+                assert len(routing_decision) > 0
 
-                # Check if it's a RoutingDecision object or dict with expected fields
-                if hasattr(routing_decision, "search_modality"):
-                    assert routing_decision.search_modality is not None
-                elif isinstance(routing_decision, dict):
-                    # Should have routing information
-                    assert len(routing_decision) > 0
-
-            except Exception as e:
-                # Should handle gracefully if external services not available
-                assert "connection" in str(e).lower() or "timeout" in str(e).lower()
+        except Exception as e:
+            # Should handle gracefully if external services not available
+            assert "connection" in str(e).lower() or "timeout" in str(e).lower()
 
     @pytest.mark.ci_fast
     def test_dspy_components_integration(self):
@@ -212,40 +203,23 @@ class TestMultiAgentSystem:
 
     def test_core_agents_initialization(self):
         """Test that core agents can be initialized"""
-        from unittest.mock import patch
-
         from cogniverse_agents.detailed_report_agent import DetailedReportAgent
         from cogniverse_agents.summarizer_agent import SummarizerAgent
+        from cogniverse_core.config.utils import create_default_config_manager
 
-        # Mock config to provide required LLM configuration
-        with (
-            patch(
-                "cogniverse_agents.summarizer_agent.get_config"
-            ) as mock_summarizer_config,
-            patch(
-                "cogniverse_agents.detailed_report_agent.get_config"
-            ) as mock_reporter_config,
-        ):
-            config = {
-                "llm": {
-                    "model_name": "smollm3:3b",
-                    "base_url": "http://localhost:11434/v1",
-                    "api_key": "dummy",
-                }
-            }
-            mock_summarizer_config.return_value = config
-            mock_reporter_config.return_value = config
+        # Use default config manager
+        config_manager = create_default_config_manager()
 
-            # Should initialize with proper config mocking
-            summarizer = SummarizerAgent(tenant_id="test_tenant")
-            reporter = DetailedReportAgent(tenant_id="test_tenant")
+        # Should initialize with proper config
+        summarizer = SummarizerAgent(tenant_id="test_tenant", config_manager=config_manager)
+        reporter = DetailedReportAgent(tenant_id="test_tenant", config_manager=config_manager)
 
-            assert summarizer is not None
-            assert reporter is not None
+        assert summarizer is not None
+        assert reporter is not None
 
-            # Should have required interfaces
-            assert hasattr(summarizer, "summarize")
-            assert hasattr(reporter, "generate_report")
+        # Should have required interfaces
+        assert hasattr(summarizer, "summarize")
+        assert hasattr(reporter, "generate_report")
 
     def test_enhanced_video_search_real_config(self):
         """Test enhanced video search agent with real configuration"""

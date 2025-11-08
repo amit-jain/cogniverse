@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 
 import requests
-from cogniverse_core.config.utils import get_config
+from cogniverse_core.config.utils import create_default_config_manager, get_config
 from phoenix.experiments.evaluators.base import Evaluator
 from phoenix.experiments.types import EvaluationResult
 
@@ -26,8 +26,7 @@ class ConfigurableVisualJudge(Evaluator):
         Args:
             evaluator_name: Name of evaluator config to use
         """
-        from cogniverse_core.config.manager import ConfigManager
-        config_manager = ConfigManager()
+        config_manager = create_default_config_manager()
         config = get_config(tenant_id="default", config_manager=config_manager)
         self.evaluator_name = evaluator_name
 
@@ -78,8 +77,7 @@ class ConfigurableVisualJudge(Evaluator):
         frame_paths = []
 
         # Determine how many frames to extract based on config
-        from cogniverse_core.config.manager import ConfigManager
-        config_manager = ConfigManager()
+        config_manager = create_default_config_manager()
         config = get_config(tenant_id="default", config_manager=config_manager)
         evaluator_config = config.get("evaluators", {}).get(self.evaluator_name, {})
         frames_per_video = evaluator_config.get("frames_per_video", 30)
@@ -222,8 +220,7 @@ class ConfigurableVisualJudge(Evaluator):
             # If sample_all, extract every frame (with limit)
             if sample_all:
                 # Get max_total_frames from config
-                from cogniverse_core.config.manager import ConfigManager
-                config_manager = ConfigManager()
+                config_manager = create_default_config_manager()
                 config = get_config(tenant_id="default", config_manager=config_manager)
                 evaluator_config = config.get("evaluators", {}).get(
                     self.evaluator_name, {}

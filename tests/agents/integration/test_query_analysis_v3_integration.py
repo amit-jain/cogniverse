@@ -10,6 +10,7 @@ from cogniverse_agents.query_analysis_tool_v3 import (
     QueryIntent,
     create_enhanced_query_analyzer,
 )
+from cogniverse_core.config.utils import create_default_config_manager
 
 from .conftest import skip_if_no_ollama
 
@@ -132,37 +133,32 @@ class TestQueryAnalysisV3OllamaIntegration:
         self, ollama_config, mock_ollama_query_client
     ):
         """Test query analysis with SmolLM3 model"""
-        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
-            mock_config.return_value = {
-                **ollama_config,
-                "query_analysis_model": "smollm3:8b",
-            }
+        # Mock routing agent initialization to avoid external dependencies
+        with patch(
+            "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
+        ) as mock_routing_class:
+            mock_routing_class.return_value = None
 
-            # Mock routing agent initialization to avoid external dependencies
-            with patch(
-                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
-            ) as mock_routing_class:
-                mock_routing_class.return_value = None
+            analyzer = QueryAnalysisToolV3(
+                config_manager=create_default_config_manager(),
+                enable_thinking_phase=True,
+                enable_query_expansion=True,
+                enable_agent_integration=False,  # Disable for this test
+            )
 
-                analyzer = QueryAnalysisToolV3(
-                    enable_thinking_phase=True,
-                    enable_query_expansion=True,
-                    enable_agent_integration=False,  # Disable for this test
-                )
+            # Test simple search query
+            result = await analyzer.analyze("find videos about machine learning")
 
-                # Test simple search query
-                result = await analyzer.analyze("find videos about machine learning")
-
-                # Verify basic analysis
-                assert result.original_query == "find videos about machine learning"
-                assert result.cleaned_query == "find videos about machine learning"
-                assert result.primary_intent == QueryIntent.SEARCH
-                assert result.complexity_level == QueryComplexity.SIMPLE
-                assert result.needs_video_search is True
-                assert result.confidence_score > 0.5
-                assert len(result.keywords) > 0
-                assert "machine" in result.keywords
-                assert "learning" in result.keywords
+            # Verify basic analysis
+            assert result.original_query == "find videos about machine learning"
+            assert result.cleaned_query == "find videos about machine learning"
+            assert result.primary_intent == QueryIntent.SEARCH
+            assert result.complexity_level == QueryComplexity.SIMPLE
+            assert result.needs_video_search is True
+            assert result.confidence_score > 0.5
+            assert len(result.keywords) > 0
+            assert "machine" in result.keywords
+            assert "learning" in result.keywords
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -170,18 +166,13 @@ class TestQueryAnalysisV3OllamaIntegration:
         self, ollama_config, mock_ollama_query_client, sample_conversation_context
     ):
         """Test complex query analysis with Qwen model"""
-        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
-            mock_config.return_value = {
-                **ollama_config,
-                "query_analysis_model": "qwen:7b",
-            }
-
-            with patch(
+        with patch(
                 "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
             ) as mock_routing_class:
                 mock_routing_class.return_value = None
 
                 analyzer = QueryAnalysisToolV3(
+                    config_manager=create_default_config_manager(),
                     enable_thinking_phase=True,
                     enable_query_expansion=True,
                     enable_agent_integration=False,
@@ -214,15 +205,15 @@ class TestQueryAnalysisV3OllamaIntegration:
         self, ollama_config, mock_ollama_query_client
     ):
         """Test thinking phase with Ollama-powered reasoning"""
-        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
-            mock_config.return_value = {**ollama_config, "reasoning_model": "qwen:7b"}
-
-            with patch(
+        with patch(
                 "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
             ) as mock_routing_class:
                 mock_routing_class.return_value = None
 
-                analyzer = QueryAnalysisToolV3(enable_thinking_phase=True)
+                analyzer = QueryAnalysisToolV3(
+                    config_manager=create_default_config_manager(),
+                    enable_thinking_phase=True
+                )
 
                 # Test thinking phase for moderate complexity query
                 query = "compare different machine learning frameworks and explain their advantages"
@@ -252,18 +243,13 @@ class TestQueryAnalysisV3OllamaIntegration:
         self, ollama_config, sample_conversation_context
     ):
         """Test query expansion using conversation context"""
-        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
-            mock_config.return_value = {
-                **ollama_config,
-                "expansion_model": "smollm3:8b",
-            }
-
-            with patch(
+        with patch(
                 "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
             ) as mock_routing_class:
                 mock_routing_class.return_value = None
 
                 analyzer = QueryAnalysisToolV3(
+                    config_manager=create_default_config_manager(),
                     enable_query_expansion=True, max_expanded_queries=5
                 )
 
@@ -299,170 +285,166 @@ class TestQueryAnalysisV3OllamaIntegration:
         self, ollama_config, mock_routing_agent
     ):
         """Test integration with routing agent using Ollama"""
-        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
-            mock_config.return_value = ollama_config
+        with patch(
+            "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
+        ) as mock_routing_class:
+            mock_routing_class.return_value = mock_routing_agent
 
-            with patch(
-                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
-            ) as mock_routing_class:
-                mock_routing_class.return_value = mock_routing_agent
+            analyzer = QueryAnalysisToolV3(
+                config_manager=create_default_config_manager(),
+                enable_agent_integration=True
+            )
 
-                analyzer = QueryAnalysisToolV3(enable_agent_integration=True)
+            # Test workflow determination with routing agent
+            query = "create a detailed analysis report of AI ethics research"
 
-                # Test workflow determination with routing agent
-                query = "create a detailed analysis report of AI ethics research"
+            result = await analyzer.analyze(query)
 
-                result = await analyzer.analyze(query)
+            # Verify routing agent integration
+            assert result.recommended_workflow == "detailed_report"
+            assert "video_search" in result.required_agents
+            assert "detailed_report" in result.required_agents
+            assert len(result.workflow_steps) == 2
 
-                # Verify routing agent integration
-                assert result.recommended_workflow == "detailed_report"
-                assert "video_search" in result.required_agents
-                assert "detailed_report" in result.required_agents
-                assert len(result.workflow_steps) == 2
-
-                # Verify routing agent was called with either method
-                # Check which method was called using hasattr to avoid AttributeError
-                if hasattr(mock_routing_agent, 'analyze_and_route') and mock_routing_agent.analyze_and_route.called:
-                    mock_routing_agent.analyze_and_route.assert_called_once()
-                    call_args = mock_routing_agent.analyze_and_route.call_args
-                    assert call_args[0][0] == query  # Query was passed
-                    assert (
-                        "thinking_phase" in call_args[1]["context"]
-                    )  # Context included thinking phase
-                elif hasattr(mock_routing_agent, 'route_query') and mock_routing_agent.route_query.called:
-                    mock_routing_agent.route_query.assert_called_once()
-                else:
-                    # At least one method should have been called
-                    raise AssertionError("Neither analyze_and_route nor route_query was called on the routing agent")
+            # Verify routing agent was called with either method
+            # Check which method was called using hasattr to avoid AttributeError
+            if hasattr(mock_routing_agent, 'analyze_and_route') and mock_routing_agent.analyze_and_route.called:
+                mock_routing_agent.analyze_and_route.assert_called_once()
+                call_args = mock_routing_agent.analyze_and_route.call_args
+                assert call_args[0][0] == query  # Query was passed
+                assert (
+                    "thinking_phase" in call_args[1]["context"]
+                )  # Context included thinking phase
+            elif hasattr(mock_routing_agent, 'route_query') and mock_routing_agent.route_query.called:
+                mock_routing_agent.route_query.assert_called_once()
+            else:
+                # At least one method should have been called
+                raise AssertionError("Neither analyze_and_route nor route_query was called on the routing agent")
 
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_multimodal_query_detection(self, ollama_config):
         """Test detection of multimodal queries"""
-        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
-            mock_config.return_value = ollama_config
+        with patch(
+            "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
+        ) as mock_routing_class:
+            mock_routing_class.return_value = None
 
-            with patch(
-                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
-            ) as mock_routing_class:
-                mock_routing_class.return_value = None
+            analyzer = QueryAnalysisToolV3(
+                config_manager=create_default_config_manager()
+            )
 
-                analyzer = QueryAnalysisToolV3()
+            # Test multimodal query
+            multimodal_query = "show me videos and images about neural networks with detailed visual analysis"
 
-                # Test multimodal query
-                multimodal_query = "show me videos and images about neural networks with detailed visual analysis"
+            result = await analyzer.analyze(multimodal_query)
 
-                result = await analyzer.analyze(multimodal_query)
-
-                # Verify multimodal detection
-                assert (
-                    QueryIntent.MULTIMODAL
-                    in [result.primary_intent] + result.secondary_intents
-                    or QueryIntent.VISUAL
-                    in [result.primary_intent] + result.secondary_intents
-                )
-                assert result.needs_video_search is True
-                assert result.needs_visual_analysis is True
-                assert result.thinking_phase["modality_hints"]["video"] is True
+            # Verify multimodal detection
+            assert (
+                QueryIntent.MULTIMODAL
+                in [result.primary_intent] + result.secondary_intents
+                or QueryIntent.VISUAL
+                in [result.primary_intent] + result.secondary_intents
+            )
+            assert result.needs_video_search is True
+            assert result.needs_visual_analysis is True
+            assert result.thinking_phase["modality_hints"]["video"] is True
 
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_temporal_query_analysis(self, ollama_config):
         """Test analysis of temporal queries"""
-        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
-            mock_config.return_value = ollama_config
+        with patch(
+            "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
+        ) as mock_routing_class:
+            mock_routing_class.return_value = None
 
-            with patch(
-                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
-            ) as mock_routing_class:
-                mock_routing_class.return_value = None
+            analyzer = QueryAnalysisToolV3(
+                config_manager=create_default_config_manager()
+            )
 
-                analyzer = QueryAnalysisToolV3()
+            # Test temporal query
+            temporal_query = "show me recent AI research from last week"
 
-                # Test temporal query
-                temporal_query = "show me recent AI research from last week"
+            result = await analyzer.analyze(temporal_query)
 
-                result = await analyzer.analyze(temporal_query)
-
-                # Verify temporal analysis (could be primary or secondary intent)
-                assert (
-                    QueryIntent.TEMPORAL == result.primary_intent
-                    or QueryIntent.TEMPORAL in result.secondary_intents
-                )
-                assert len(result.temporal_filters) > 0
-                assert "start_date" in result.temporal_filters
-                assert result.temporal_filters["temporal_term"] in [
-                    "recent",
-                    "last week",
-                ]
-                assert result.thinking_phase["temporal_indicators"]
+            # Verify temporal analysis (could be primary or secondary intent)
+            assert (
+                QueryIntent.TEMPORAL == result.primary_intent
+                or QueryIntent.TEMPORAL in result.secondary_intents
+            )
+            assert len(result.temporal_filters) > 0
+            assert "start_date" in result.temporal_filters
+            assert result.temporal_filters["temporal_term"] in [
+                "recent",
+                "last week",
+            ]
+            assert result.thinking_phase["temporal_indicators"]
 
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_entity_and_keyword_extraction(self, ollama_config):
         """Test entity and keyword extraction capabilities"""
-        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
-            mock_config.return_value = ollama_config
+        with patch(
+            "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
+        ) as mock_routing_class:
+            mock_routing_class.return_value = None
 
-            with patch(
-                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
-            ) as mock_routing_class:
-                mock_routing_class.return_value = None
+            analyzer = QueryAnalysisToolV3(
+                config_manager=create_default_config_manager()
+            )
 
-                analyzer = QueryAnalysisToolV3()
+            # Test query with entities and keywords
+            entity_rich_query = 'Find research about "deep learning" and TensorFlow by Google researchers'
 
-                # Test query with entities and keywords
-                entity_rich_query = 'Find research about "deep learning" and TensorFlow by Google researchers'
+            result = await analyzer.analyze(entity_rich_query)
 
-                result = await analyzer.analyze(entity_rich_query)
+            # Verify entity extraction
+            quoted_entities = [
+                e for e in result.entities if e["type"] == "quoted_phrase"
+            ]
+            assert len(quoted_entities) >= 1
+            assert any(e["text"] == "deep learning" for e in quoted_entities)
 
-                # Verify entity extraction
-                quoted_entities = [
-                    e for e in result.entities if e["type"] == "quoted_phrase"
-                ]
-                assert len(quoted_entities) >= 1
-                assert any(e["text"] == "deep learning" for e in quoted_entities)
+            proper_noun_entities = [
+                e for e in result.entities if e["type"] == "proper_noun"
+            ]
+            assert any(
+                e["text"] in ["TensorFlow", "Google"] for e in proper_noun_entities
+            )
 
-                proper_noun_entities = [
-                    e for e in result.entities if e["type"] == "proper_noun"
-                ]
-                assert any(
-                    e["text"] in ["TensorFlow", "Google"] for e in proper_noun_entities
-                )
-
-                # Verify keyword extraction
-                assert "research" in result.keywords
-                assert "researchers" in result.keywords
-                # Stop words should be filtered out
-                assert "about" not in result.keywords
-                assert "by" not in result.keywords
+            # Verify keyword extraction
+            assert "research" in result.keywords
+            assert "researchers" in result.keywords
+            # Stop words should be filtered out
+            assert "about" not in result.keywords
+            assert "by" not in result.keywords
 
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_confidence_scoring_integration(self, ollama_config):
         """Test confidence scoring across different query types"""
-        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
-            mock_config.return_value = ollama_config
+        with patch(
+            "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
+        ) as mock_routing_class:
+            mock_routing_class.return_value = None
 
-            with patch(
-                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
-            ) as mock_routing_class:
-                mock_routing_class.return_value = None
+            analyzer = QueryAnalysisToolV3(
+                config_manager=create_default_config_manager()
+            )
 
-                analyzer = QueryAnalysisToolV3()
+            # Test high-confidence query (clear intent, simple, with entities)
+            high_conf_query = 'search for "machine learning" tutorials'
+            high_result = await analyzer.analyze(high_conf_query)
 
-                # Test high-confidence query (clear intent, simple, with entities)
-                high_conf_query = 'search for "machine learning" tutorials'
-                high_result = await analyzer.analyze(high_conf_query)
+            # Test low-confidence query (ambiguous, complex, no entities)
+            low_conf_query = "find some stuff about things"
+            low_result = await analyzer.analyze(low_conf_query)
 
-                # Test low-confidence query (ambiguous, complex, no entities)
-                low_conf_query = "find some stuff about things"
-                low_result = await analyzer.analyze(low_conf_query)
-
-                # Verify confidence differences
-                assert high_result.confidence_score > low_result.confidence_score
-                assert high_result.confidence_score > 0.7  # Should be high confidence
-                assert low_result.confidence_score < 0.6  # Should be lower confidence
+            # Verify confidence differences
+            assert high_result.confidence_score > low_result.confidence_score
+            assert high_result.confidence_score > 0.7  # Should be high confidence
+            assert low_result.confidence_score < 0.6  # Should be lower confidence
 
 
 @skip_if_no_ollama
@@ -473,33 +455,30 @@ class TestQueryAnalysisV3WorkflowIntegration:
     @pytest.mark.asyncio
     async def test_end_to_end_simple_search_workflow(self, ollama_config):
         """Test complete workflow for simple search query"""
-        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
-            mock_config.return_value = ollama_config
+        with patch(
+            "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
+        ) as mock_routing_class:
+            mock_routing_class.return_value = None
 
-            with patch(
-                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
-            ) as mock_routing_class:
-                mock_routing_class.return_value = None
+            analyzer = create_enhanced_query_analyzer(
+                enable_thinking_phase=True,
+                enable_query_expansion=True,
+                enable_agent_integration=False,
+            )
 
-                analyzer = create_enhanced_query_analyzer(
-                    enable_thinking_phase=True,
-                    enable_query_expansion=True,
-                    enable_agent_integration=False,
-                )
+            # Simulate simple user query
+            query = "show me cats"
 
-                # Simulate simple user query
-                query = "show me cats"
+            result = await analyzer.analyze(query)
 
-                result = await analyzer.analyze(query)
-
-                # Verify complete workflow
-                assert result.primary_intent == QueryIntent.SEARCH
-                assert result.complexity_level == QueryComplexity.SIMPLE
-                assert result.recommended_workflow == "raw_results"
-                assert "video_search" in result.required_agents
-                assert len(result.workflow_steps) >= 1
-                assert result.workflow_steps[0]["agent"] == "video_search"
-                assert result.thinking_phase["reasoning"] is not None
+            # Verify complete workflow
+            assert result.primary_intent == QueryIntent.SEARCH
+            assert result.complexity_level == QueryComplexity.SIMPLE
+            assert result.recommended_workflow == "raw_results"
+            assert "video_search" in result.required_agents
+            assert len(result.workflow_steps) >= 1
+            assert result.workflow_steps[0]["agent"] == "video_search"
+            assert result.thinking_phase["reasoning"] is not None
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -507,87 +486,81 @@ class TestQueryAnalysisV3WorkflowIntegration:
         self, ollama_config, sample_conversation_context
     ):
         """Test complete workflow for analytical query"""
-        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
-            mock_config.return_value = ollama_config
+        with patch(
+            "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
+        ) as mock_routing_class:
+            mock_routing_class.return_value = None
 
-            with patch(
-                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
-            ) as mock_routing_class:
-                mock_routing_class.return_value = None
+            analyzer = create_enhanced_query_analyzer()
 
-                analyzer = create_enhanced_query_analyzer()
+            # Simulate complex analytical query
+            query = "analyze the evolution of artificial intelligence research over the past year and provide comprehensive insights with visual analysis"
 
-                # Simulate complex analytical query
-                query = "analyze the evolution of artificial intelligence research over the past year and provide comprehensive insights with visual analysis"
+            result = await analyzer.analyze(query, sample_conversation_context)
 
-                result = await analyzer.analyze(query, sample_conversation_context)
+            # Verify analytical workflow
+            assert result.primary_intent in [
+                QueryIntent.ANALYZE,
+                QueryIntent.REPORT,
+            ]
+            assert result.complexity_level == QueryComplexity.COMPLEX
+            assert result.recommended_workflow == "detailed_report"
+            assert "detailed_report" in result.required_agents
+            assert result.needs_visual_analysis is True
+            assert len(result.workflow_steps) >= 2
+            assert any(
+                step["agent"] == "detailed_report" for step in result.workflow_steps
+            )
 
-                # Verify analytical workflow
-                assert result.primary_intent in [
-                    QueryIntent.ANALYZE,
-                    QueryIntent.REPORT,
-                ]
-                assert result.complexity_level == QueryComplexity.COMPLEX
-                assert result.recommended_workflow == "detailed_report"
-                assert "detailed_report" in result.required_agents
-                assert result.needs_visual_analysis is True
-                assert len(result.workflow_steps) >= 2
-                assert any(
-                    step["agent"] == "detailed_report" for step in result.workflow_steps
-                )
-
-                # Verify temporal analysis (temporal detection may be inconsistent)
-                # The query mentions "over the past year" so temporal filters should ideally be present
-                # but this depends on the LLM's analysis, so make it more flexible
-                has_temporal_info = (
-                    len(result.temporal_filters) > 0
-                    or QueryIntent.TEMPORAL in result.secondary_intents
-                    or QueryIntent.TEMPORAL == result.primary_intent
-                    or any("year" in str(step) for step in result.workflow_steps)
-                )
-                assert (
-                    has_temporal_info
-                ), "Expected some form of temporal analysis for query mentioning 'past year'"
+            # Verify temporal analysis (temporal detection may be inconsistent)
+            # The query mentions "over the past year" so temporal filters should ideally be present
+            # but this depends on the LLM's analysis, so make it more flexible
+            has_temporal_info = (
+                len(result.temporal_filters) > 0
+                or QueryIntent.TEMPORAL in result.secondary_intents
+                or QueryIntent.TEMPORAL == result.primary_intent
+                or any("year" in str(step) for step in result.workflow_steps)
+            )
+            assert (
+                has_temporal_info
+            ), "Expected some form of temporal analysis for query mentioning 'past year'"
 
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_statistics_and_monitoring_integration(self, ollama_config):
         """Test statistics collection and monitoring"""
-        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
-            mock_config.return_value = ollama_config
+        with patch(
+            "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
+        ) as mock_routing_class:
+            mock_routing_class.return_value = None
 
-            with patch(
-                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
-            ) as mock_routing_class:
-                mock_routing_class.return_value = None
+            analyzer = create_enhanced_query_analyzer()
 
-                analyzer = create_enhanced_query_analyzer()
+            # Perform multiple analyses
+            queries = [
+                "simple search",
+                "compare two things",
+                "analyze complex data and create detailed report",
+            ]
 
-                # Perform multiple analyses
-                queries = [
-                    "simple search",
-                    "compare two things",
-                    "analyze complex data and create detailed report",
-                ]
+            results = []
+            for query in queries:
+                result = await analyzer.analyze(query)
+                results.append(result)
 
-                results = []
-                for query in queries:
-                    result = await analyzer.analyze(query)
-                    results.append(result)
+            # Verify statistics
+            stats = analyzer.get_statistics()
+            assert stats["total_analyses"] == 3
+            assert stats["uptime_seconds"] > 0
+            assert stats["analyses_per_minute"] >= 0
+            assert stats["configuration"]["thinking_phase_enabled"] is True
+            assert stats["configuration"]["query_expansion_enabled"] is True
 
-                # Verify statistics
-                stats = analyzer.get_statistics()
-                assert stats["total_analyses"] == 3
-                assert stats["uptime_seconds"] > 0
-                assert stats["analyses_per_minute"] >= 0
-                assert stats["configuration"]["thinking_phase_enabled"] is True
-                assert stats["configuration"]["query_expansion_enabled"] is True
-
-                # Verify analysis progression
-                assert analyzer.total_analyses == 3
-                for i, result in enumerate(results):
-                    assert result.analysis_time_ms > 0
-                    assert result.routing_method == "enhanced_v3"
+            # Verify analysis progression
+            assert analyzer.total_analyses == 3
+            for i, result in enumerate(results):
+                assert result.analysis_time_ms > 0
+                assert result.routing_method == "enhanced_v3"
 
 
 @skip_if_no_ollama
@@ -598,90 +571,89 @@ class TestQueryAnalysisV3ErrorHandlingIntegration:
     @pytest.mark.asyncio
     async def test_routing_agent_failure_handling(self, ollama_config):
         """Test handling of routing agent failures"""
-        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
-            mock_config.return_value = ollama_config
+        # Mock routing agent that fails
+        mock_failing_agent = Mock()
+        mock_failing_agent.route_query = AsyncMock(
+            side_effect=Exception("Routing failed")
+        )
 
-            # Mock routing agent that fails
-            mock_failing_agent = Mock()
-            mock_failing_agent.route_query = AsyncMock(
-                side_effect=Exception("Routing failed")
+        with patch(
+            "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
+        ) as mock_routing_class:
+            mock_routing_class.return_value = mock_failing_agent
+
+            analyzer = QueryAnalysisToolV3(
+                config_manager=create_default_config_manager(),
+                enable_agent_integration=True
             )
 
-            with patch(
-                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
-            ) as mock_routing_class:
-                mock_routing_class.return_value = mock_failing_agent
+            # Should still complete analysis with fallback workflow
+            result = await analyzer.analyze("test query with routing failure")
 
-                analyzer = QueryAnalysisToolV3(enable_agent_integration=True)
-
-                # Should still complete analysis with fallback workflow
-                result = await analyzer.analyze("test query with routing failure")
-
-                # Verify fallback behavior
-                assert result is not None
-                assert result.recommended_workflow in [
-                    "raw_results",
-                    "summary",
-                    "detailed_report",
-                ]
-                assert len(result.workflow_steps) > 0
+            # Verify fallback behavior
+            assert result is not None
+            assert result.recommended_workflow in [
+                "raw_results",
+                "summary",
+                "detailed_report",
+            ]
+            assert len(result.workflow_steps) > 0
 
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_thinking_phase_error_handling(self, ollama_config):
         """Test handling of thinking phase errors"""
-        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
-            mock_config.return_value = ollama_config
+        with patch(
+            "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
+        ) as mock_routing_class:
+            mock_routing_class.return_value = None
 
-            with patch(
-                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
-            ) as mock_routing_class:
-                mock_routing_class.return_value = None
+            analyzer = QueryAnalysisToolV3(
+                config_manager=create_default_config_manager(),
+                enable_thinking_phase=True
+            )
 
-                analyzer = QueryAnalysisToolV3(enable_thinking_phase=True)
+            # Mock thinking phase to raise exception
+            with patch.object(
+                analyzer,
+                "_thinking_phase",
+                side_effect=Exception("Thinking failed"),
+            ):
+                # Should still fail gracefully
+                with pytest.raises(Exception) as exc_info:
+                    await analyzer.analyze("test thinking error")
 
-                # Mock thinking phase to raise exception
-                with patch.object(
-                    analyzer,
-                    "_thinking_phase",
-                    side_effect=Exception("Thinking failed"),
-                ):
-                    # Should still fail gracefully
-                    with pytest.raises(Exception) as exc_info:
-                        await analyzer.analyze("test thinking error")
-
-                    assert "Thinking failed" in str(exc_info.value)
+                assert "Thinking failed" in str(exc_info.value)
 
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_empty_and_edge_case_queries(self, ollama_config):
         """Test handling of empty and edge case queries"""
-        with patch("cogniverse_agents.query_analysis_tool_v3.get_config") as mock_config:
-            mock_config.return_value = ollama_config
+        with patch(
+            "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
+        ) as mock_routing_class:
+            mock_routing_class.return_value = None
 
-            with patch(
-                "cogniverse_agents.query_analysis_tool_v3.RoutingAgent"
-            ) as mock_routing_class:
-                mock_routing_class.return_value = None
+            analyzer = QueryAnalysisToolV3(
+                config_manager=create_default_config_manager()
+            )
 
-                analyzer = QueryAnalysisToolV3()
+            # Test empty query
+            empty_result = await analyzer.analyze("")
+            assert empty_result.original_query == ""
+            assert empty_result.primary_intent == QueryIntent.SEARCH  # Default
+            assert empty_result.complexity_level == QueryComplexity.SIMPLE
 
-                # Test empty query
-                empty_result = await analyzer.analyze("")
-                assert empty_result.original_query == ""
-                assert empty_result.primary_intent == QueryIntent.SEARCH  # Default
-                assert empty_result.complexity_level == QueryComplexity.SIMPLE
+            # Test very long query
+            long_query = "analyze " + " ".join(["word"] * 100) + " detailed report"
+            long_result = await analyzer.analyze(long_query)
+            assert long_result.thinking_phase["query_length"] > 50
+            assert "Long query" in long_result.thinking_phase["reasoning"]
 
-                # Test very long query
-                long_query = "analyze " + " ".join(["word"] * 100) + " detailed report"
-                long_result = await analyzer.analyze(long_query)
-                assert long_result.thinking_phase["query_length"] > 50
-                assert "Long query" in long_result.thinking_phase["reasoning"]
-
-                # Test special characters
-                special_result = await analyzer.analyze("find @#$% videos!!! ???")
-                assert special_result.primary_intent == QueryIntent.SEARCH
-                assert len(special_result.keywords) >= 1  # Should extract "videos"
+            # Test special characters
+            special_result = await analyzer.analyze("find @#$% videos!!! ???")
+            assert special_result.primary_intent == QueryIntent.SEARCH
+            assert len(special_result.keywords) >= 1  # Should extract "videos"
 
 
 # Integration test configuration for Ollama

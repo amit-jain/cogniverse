@@ -19,7 +19,10 @@ import dspy
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 sys.path.insert(0, os.path.join(project_root, "src"))
 
-from cogniverse_core.config.utils import get_config  # noqa: E402
+from cogniverse_core.config.utils import (
+    create_default_config_manager,  # noqa: E402
+    get_config,
+)
 
 
 class StructuredRoutingSignature(dspy.Signature):
@@ -66,8 +69,7 @@ class OllamaDistillation:
     """Distillation using Ollama models."""
 
     def __init__(self):
-        from cogniverse_core.config.manager import ConfigManager
-        config_manager = ConfigManager()
+        config_manager = create_default_config_manager()
         self.config = get_config(tenant_id="default", config_manager=config_manager)
 
         # Model selection

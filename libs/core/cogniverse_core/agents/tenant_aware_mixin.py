@@ -98,8 +98,8 @@ class TenantAwareAgentMixin:
         self.tenant_id = tenant_id
 
         # Initialize or get config manager
-        from cogniverse_core.config.manager import ConfigManager
-        self.config_manager = ConfigManager()
+        from cogniverse_core.config.utils import create_default_config_manager
+        self.config_manager = create_default_config_manager()
 
         # Store or load configuration
         self.config = config

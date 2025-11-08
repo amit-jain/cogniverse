@@ -109,9 +109,9 @@ class PipelineConfig:
     @classmethod
     def from_profile(cls, profile_name: str) -> "PipelineConfig":
         """Load pipeline config for a specific profile"""
-        from cogniverse_core.config.manager import ConfigManager
+        from cogniverse_core.config.utils import create_default_config_manager
 
-        config_manager = ConfigManager()
+        config_manager = create_default_config_manager()
         config = get_config(tenant_id="default", config_manager=config_manager)
 
         # Get profile-specific config from backend section
@@ -160,6 +160,7 @@ class VideoIngestionPipeline:
         config: PipelineConfig | None = None,
         app_config: dict[str, Any] | None = None,
         config_manager=None,
+        schema_loader=None,
         schema_name: str | None = None,
         debug_mode: bool = False,
     ):
@@ -171,6 +172,7 @@ class VideoIngestionPipeline:
             config: Pipeline configuration
             app_config: Application configuration
             config_manager: ConfigManager instance (required if app_config not provided)
+            schema_loader: SchemaLoader instance (optional, for backend operations)
             schema_name: Schema/profile name
             debug_mode: Enable debug logging
 
@@ -181,6 +183,8 @@ class VideoIngestionPipeline:
             raise ValueError("tenant_id is required - no default tenant")
 
         self.tenant_id = tenant_id
+        self.config_manager = config_manager
+        self.schema_loader = schema_loader
 
         if config is None:
             if config_manager is None:
@@ -412,6 +416,8 @@ class VideoIngestionPipeline:
                 schema_name=self.schema_name,
                 tenant_id=self.tenant_id,
                 logger=self.logger,
+                config_manager=self.config_manager,
+                schema_loader=self.schema_loader,
             )
             self.logger.info(
                 f"Initialized embedding generator for tenant {self.tenant_id} "

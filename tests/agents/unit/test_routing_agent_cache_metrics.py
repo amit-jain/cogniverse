@@ -19,6 +19,10 @@ class TestRoutingAgentCacheMetrics:
     @pytest.fixture(scope="function")
     def routing_agent(self):
         """Create routing agent with test configuration"""
+        # Reset TelemetryManager singleton to avoid conflicts with previous tests
+        from cogniverse_core.telemetry.manager import TelemetryManager
+        TelemetryManager._instance = None
+
         # Create minimal config for testing
         config = RoutingConfig(
             enable_caching=True,
@@ -36,8 +40,12 @@ class TestRoutingAgentCacheMetrics:
         # Use patch.object for dspy.settings.configure to avoid attribute cleanup issues
         with patch.object(RoutingAgent, "_configure_dspy", return_value=None), \
              patch("cogniverse_agents.dspy_a2a_agent_base.FastAPI"), \
-             patch("cogniverse_agents.dspy_a2a_agent_base.A2AClient"):
-            telemetry_config = TelemetryConfig(enabled=False)
+             patch("cogniverse_agents.dspy_a2a_agent_base.A2AClient"), \
+             patch("cogniverse_agents.routing.cross_modal_optimizer.ModalitySpanCollector"):
+            telemetry_config = TelemetryConfig(
+                enabled=False,  # Disable telemetry for unit tests (cache/metrics don't need it)
+                provider_config={}
+            )
             agent = RoutingAgent(tenant_id="test_tenant", config=config, port=8001, telemetry_config=telemetry_config)
 
             # Yield agent for test use
@@ -52,6 +60,10 @@ class TestRoutingAgentCacheMetrics:
             if hasattr(agent, 'metrics_tracker') and agent.metrics_tracker:
                 # Reset all metrics
                 agent.metrics_tracker.reset_all_stats()
+
+            # Reset TelemetryManager singleton after test
+            from cogniverse_core.telemetry.manager import TelemetryManager
+            TelemetryManager._instance = None
 
     def test_cache_metrics_components_initialized(self, routing_agent):
         """Test that cache and metrics components are initialized"""
@@ -88,9 +100,9 @@ class TestRoutingAgentCacheMetrics:
             timestamp=datetime.now()
         )
 
-        # Pre-populate cache (routing uses TEXT modality by default)
+        # Pre-populate cache (video_search_agent maps to VIDEO modality)
         routing_agent.cache_manager.cache_result(
-            query, QueryModality.TEXT, cached_decision
+            query, QueryModality.VIDEO, cached_decision
         )
 
         # Mock the routing module to ensure it's not called on cache hit
@@ -128,8 +140,8 @@ class TestRoutingAgentCacheMetrics:
             assert result.recommended_agent == "video_search_agent"
             assert result.confidence > 0
 
-            # Verify result was cached (routing uses TEXT modality by default)
-            cached = routing_agent.cache_manager.get_cached_result(query, QueryModality.TEXT)
+            # Verify result was cached (video_search_agent maps to VIDEO modality)
+            cached = routing_agent.cache_manager.get_cached_result(query, QueryModality.VIDEO)
             assert cached is not None
             assert cached.query == result.query
             assert cached.recommended_agent == result.recommended_agent
@@ -178,9 +190,9 @@ class TestRoutingAgentCacheMetrics:
         """Test that result is cached after processing"""
         query = "neural networks"
 
-        # Ensure cache is empty (routing uses TEXT modality by default)
+        # Ensure cache is empty (video_search_agent maps to VIDEO modality)
         cached = routing_agent.cache_manager.get_cached_result(
-            query, QueryModality.TEXT
+            query, QueryModality.VIDEO
         )
         assert cached is None
 
@@ -196,8 +208,8 @@ class TestRoutingAgentCacheMetrics:
             # Process query
             result = await routing_agent.route_query(query)
 
-            # Verify result was cached (routing uses TEXT modality by default)
-            cached = routing_agent.cache_manager.get_cached_result(query, QueryModality.TEXT)
+            # Verify result was cached (video_search_agent maps to VIDEO modality)
+            cached = routing_agent.cache_manager.get_cached_result(query, QueryModality.VIDEO)
             assert cached is not None
             assert cached.query == result.query
             assert cached.recommended_agent == result.recommended_agent

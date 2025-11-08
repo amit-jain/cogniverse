@@ -15,14 +15,14 @@ class TestCrossModalOptimizerIntegration:
 
     def test_cross_modal_optimizer_initialization(self):
         """Test CrossModalOptimizer can be initialized"""
-        optimizer = CrossModalOptimizer()
+        optimizer = CrossModalOptimizer(tenant_id="test-tenant")
         assert optimizer is not None
         assert isinstance(optimizer.fusion_history, list)
 
     @pytest.mark.asyncio
     async def test_generate_synthetic_cross_modal_data(self):
         """Test generating synthetic data for CrossModalOptimizer"""
-        optimizer = CrossModalOptimizer()
+        optimizer = CrossModalOptimizer(tenant_id="test-tenant")
 
         # Generate small batch without Vespa (uses mock data)
         count = await optimizer.generate_synthetic_training_data(count=10)
@@ -33,7 +33,7 @@ class TestCrossModalOptimizerIntegration:
     @pytest.mark.asyncio
     async def test_cross_modal_data_structure(self):
         """Test generated data has correct structure"""
-        optimizer = CrossModalOptimizer()
+        optimizer = CrossModalOptimizer(tenant_id="test-tenant")
 
         await optimizer.generate_synthetic_training_data(count=5)
 
@@ -48,7 +48,7 @@ class TestCrossModalOptimizerIntegration:
     @pytest.mark.asyncio
     async def test_cross_modal_training_after_synthetic_generation(self):
         """Test that CrossModalOptimizer can train on synthetic data"""
-        optimizer = CrossModalOptimizer()
+        optimizer = CrossModalOptimizer(tenant_id="test-tenant")
 
         # Generate synthetic data
         await optimizer.generate_synthetic_training_data(count=50)
@@ -136,6 +136,9 @@ class TestWorkflowIntelligenceIntegration:
         """Test generating synthetic data for WorkflowIntelligence"""
         workflow_intel = WorkflowIntelligence()
 
+        # Clear any existing history from previous tests
+        workflow_intel.workflow_history.clear()
+
         # Generate small batch without Vespa (uses mock data)
         count = await workflow_intel.generate_synthetic_training_data(count=10)
 
@@ -183,7 +186,7 @@ class TestMultiOptimizerIntegration:
     @pytest.mark.asyncio
     async def test_all_optimizers_can_generate_data(self, test_generator_config):
         """Test that all optimizers can generate synthetic data"""
-        cross_modal = CrossModalOptimizer()
+        cross_modal = CrossModalOptimizer(tenant_id="test-tenant")
         routing = AdvancedRoutingOptimizer(tenant_id="test_tenant")
         workflow = WorkflowIntelligence()
 
@@ -199,7 +202,7 @@ class TestMultiOptimizerIntegration:
     @pytest.mark.asyncio
     async def test_synthetic_data_is_independent(self, test_generator_config):
         """Test that each optimizer gets independent data"""
-        cross_modal = CrossModalOptimizer()
+        cross_modal = CrossModalOptimizer(tenant_id="test-tenant")
         routing = AdvancedRoutingOptimizer(tenant_id="test_tenant")
 
         # Clear state before testing

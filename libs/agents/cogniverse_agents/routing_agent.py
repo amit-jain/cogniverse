@@ -459,7 +459,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
 
             # Initialize cross-modal optimization
             if self.config.enable_cross_modal_optimization:
-                self.cross_modal_optimizer = CrossModalOptimizer()
+                self.cross_modal_optimizer = CrossModalOptimizer(tenant_id=self.tenant_id)
                 self.logger.info("🔄 Cross-modal optimizer initialized")
             else:
                 self.cross_modal_optimizer = None
@@ -559,6 +559,10 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         """
         self._routing_stats["total_queries"] += 1
         start_time = datetime.now()
+
+        # Default to self.tenant_id if not provided
+        if not tenant_id:
+            tenant_id = self.tenant_id
 
         # Enforce mandatory tenant_id for telemetry isolation
         if not tenant_id:

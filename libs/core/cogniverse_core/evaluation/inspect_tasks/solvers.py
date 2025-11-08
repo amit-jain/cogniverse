@@ -24,13 +24,13 @@ class CogniverseRetrievalSolver(Solver):
     """Custom solver for Cogniverse retrieval evaluation"""
 
     def __init__(self, profiles: list[str], strategies: list[str]):
-        from cogniverse_core.config.manager import ConfigManager
+        from cogniverse_core.config.utils import create_default_config_manager
 
         self.profiles = profiles
         self.strategies = strategies
 
         # Initialize ConfigManager for dependency injection
-        config_manager = ConfigManager()
+        config_manager = create_default_config_manager()
         self.config = get_config(tenant_id="default", config_manager=config_manager)
         self.search_services = {}
 

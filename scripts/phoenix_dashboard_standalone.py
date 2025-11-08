@@ -67,7 +67,7 @@ import asyncio
 
 import httpx
 from cogniverse_agents.tools.a2a_utils import A2AClient
-from cogniverse_core.config.manager import ConfigManager
+from cogniverse_core.config.utils import create_default_config_manager, get_config
 
 
 def run_async_in_streamlit(coro):
@@ -231,7 +231,7 @@ def get_a2a_client():
 @st.cache_data
 def get_agent_config():
     """Get agent endpoints from ConfigManager - no defaults, only what's in config"""
-    config_manager = ConfigManager()
+    config_manager = create_default_config_manager()
     system_config = config_manager.get_system_config()
 
     # Return dict with agent URLs from SystemConfig only

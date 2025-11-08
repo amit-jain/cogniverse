@@ -22,12 +22,12 @@ class TestDynamicConfigIntegration:
     @pytest.fixture
     def fresh_agent(self, tmp_path):
         """Create fresh TextAnalysisAgent instance with clean config"""
-        from cogniverse_core.config.manager import ConfigManager
+        from cogniverse_core.config.utils import create_default_config_manager
         from fastapi import FastAPI
 
         # Create temporary ConfigManager instance
         temp_db = tmp_path / "test_config.db"
-        config_manager = ConfigManager(db_path=temp_db)
+        config_manager = create_default_config_manager(db_path=temp_db)
 
         fresh_app = FastAPI()
         with patch("dspy.LM"):

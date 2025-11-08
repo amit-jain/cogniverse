@@ -47,6 +47,7 @@ from cogniverse_agents.summarizer_agent import SummarizerAgent
 
 # Phase 5 imports for enhanced agent testing
 from cogniverse_agents.video_search_agent import VideoSearchAgent
+from cogniverse_core.config.utils import create_default_config_manager
 
 
 @pytest.mark.unit
@@ -257,7 +258,7 @@ class TestDSPyAgentIntegration:
         assert hasattr(agent, "route_query")
         assert hasattr(agent, "get_routing_statistics")
 
-    @patch("cogniverse_agents.summarizer_agent.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     @patch("cogniverse_agents.summarizer_agent.VLMInterface")
     def test_summarizer_agent_dspy_integration(self, mock_vlm, mock_config):
         """Test DSPy integration in SummarizerAgent."""
@@ -270,7 +271,7 @@ class TestDSPyAgentIntegration:
             }
         }
 
-        agent = SummarizerAgent(tenant_id="test_tenant")
+        agent = SummarizerAgent(tenant_id="test_tenant", config_manager=create_default_config_manager())
 
         # Should have DSPy capabilities
         assert hasattr(agent, "dspy_enabled")
@@ -282,7 +283,7 @@ class TestDSPyAgentIntegration:
         assert "enabled" in metadata
         assert metadata["agent_type"] in ["summary_generation", "query_analysis"]
 
-    @patch("cogniverse_agents.detailed_report_agent.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     def test_detailed_report_agent_dspy_integration(self, mock_vlm, mock_config):
         """Test DSPy integration in DetailedReportAgent."""
@@ -295,7 +296,7 @@ class TestDSPyAgentIntegration:
             }
         }
 
-        agent = DetailedReportAgent(tenant_id="test_tenant")
+        agent = DetailedReportAgent(tenant_id="test_tenant", config_manager=create_default_config_manager())
 
         # Should have DSPy capabilities
         assert hasattr(agent, "dspy_enabled")
@@ -310,9 +311,11 @@ class TestDSPyAgentIntegration:
     @patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent")
     def test_query_analysis_tool_dspy_integration(self, mock_routing_agent):
         """Test DSPy integration in QueryAnalysisToolV3."""
+        from cogniverse_core.config.utils import create_default_config_manager
+
         mock_routing_agent.return_value = Mock()
 
-        tool = QueryAnalysisToolV3(enable_agent_integration=False)
+        tool = QueryAnalysisToolV3(enable_agent_integration=False, config_manager=create_default_config_manager())
 
         # Should have DSPy capabilities
         assert hasattr(tool, "dspy_enabled")
@@ -618,8 +621,10 @@ class TestDSPyEndToEndIntegration:
         }
 
         # Test QueryAnalysisToolV3 with direct prompt setting
+        from cogniverse_core.config.utils import create_default_config_manager
+
         with patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent"):
-            tool = QueryAnalysisToolV3(enable_agent_integration=False)
+            tool = QueryAnalysisToolV3(enable_agent_integration=False, config_manager=create_default_config_manager())
 
             # Manually set the optimization data
             tool.dspy_optimized_prompts = mock_prompts["query_analysis"]
@@ -3083,20 +3088,9 @@ class TestSystemIntegration:
 class TestVideoSearchAgent:
     """Unit tests for Enhanced Video Search Agent"""
 
-    @patch("cogniverse_agents.query_encoders.get_config")
-    @patch("cogniverse_agents.video_search_agent.get_config")
-    def test_video_search_agent_initialization(self, mock_video_config, mock_encoder_config):
+    @patch("cogniverse_core.config.utils.get_config")
+    def test_video_search_agent_initialization(self, mock_video_config):
         """Test Enhanced Video Search Agent initialization"""
-
-        # Mock encoder config
-        mock_encoder_config.return_value = {
-            "video_processing_profiles": {
-                "video_colpali_smol500_mv_frame": {
-                    "embedding_model": "vidore/colsmol-500m",
-                    "embedding_type": "frame_based",
-                }
-            }
-        }
 
         # Mock the required dependencies
         with patch("cogniverse_agents.video_search_agent.get_backend_registry") as mock_registry:
@@ -3121,7 +3115,10 @@ class TestVideoSearchAgent:
                 # Mock encoder factory
                 mock_encoder_factory.create_encoder.return_value = Mock()
 
-                agent = VideoSearchAgent(tenant_id="test_tenant")
+                # Mock schema_loader
+                mock_schema_loader = Mock()
+
+                agent = VideoSearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
                 assert agent is not None
                 assert hasattr(agent, "search_backend")
                 assert hasattr(agent, "config")
@@ -3182,10 +3179,9 @@ class TestVideoSearchAgent:
         assert context.confidence == 0.8
         assert context.routing_metadata["agent"] == "video_search_agent"
 
-    @patch("cogniverse_agents.query_encoders.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     @patch("cogniverse_agents.video_search_agent.get_backend_registry")
-    @patch("cogniverse_agents.video_search_agent.get_config")
-    def test_relevance_score_calculation(self, mock_video_config, mock_registry, mock_encoder_config):
+    def test_relevance_score_calculation(self, mock_registry, mock_encoder_config):
         """Test relevance score calculation with relationship context"""
 
         # Mock encoder config
@@ -3201,17 +3197,6 @@ class TestVideoSearchAgent:
         with patch(
             "cogniverse_agents.video_search_agent.QueryEncoderFactory"
         ) as mock_encoder_factory:
-            # Create a mock config that returns profiles dict
-            mock_video_config.return_value = {
-                "video_processing_profiles": {
-                    "video_colpali_smol500_mv_frame": {
-                        "embedding_model": "vidore/colsmol-500m",
-                        "embedding_type": "frame_based",
-                    }
-                },
-                "vespa_url": "http://localhost:8080"
-            }
-
             # Mock backend registry
             mock_search_backend = Mock()
             mock_registry.return_value.get_search_backend.return_value = mock_search_backend
@@ -3219,7 +3204,10 @@ class TestVideoSearchAgent:
             # Mock encoder factory
             mock_encoder_factory.create_encoder.return_value = Mock()
 
-            agent = VideoSearchAgent(tenant_id="test_tenant")
+            # Mock schema_loader
+            mock_schema_loader = Mock()
+
+            agent = VideoSearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
 
             # Test result with entity matches
             result = {
@@ -3249,10 +3237,9 @@ class TestVideoSearchAgent:
             assert relevance > 0.0
             assert relevance <= 1.0
 
-    @patch("cogniverse_agents.query_encoders.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     @patch("cogniverse_agents.video_search_agent.get_backend_registry")
-    @patch("cogniverse_agents.video_search_agent.get_config")
-    def test_entity_matching_logic(self, mock_video_config, mock_registry, mock_encoder_config):
+    def test_entity_matching_logic(self, mock_registry, mock_encoder_config):
         """Test entity matching in results"""
 
         # Mock encoder config
@@ -3268,17 +3255,6 @@ class TestVideoSearchAgent:
         with patch(
             "cogniverse_agents.video_search_agent.QueryEncoderFactory"
         ) as mock_encoder_factory:
-            # Create a mock config that returns profiles dict
-            mock_video_config.return_value = {
-                "video_processing_profiles": {
-                    "video_colpali_smol500_mv_frame": {
-                        "embedding_model": "vidore/colsmol-500m",
-                        "embedding_type": "frame_based",
-                    }
-                },
-                "vespa_url": "http://localhost:8080"
-            }
-
             # Mock backend registry
             mock_search_backend = Mock()
             mock_registry.return_value.get_search_backend.return_value = mock_search_backend
@@ -3286,7 +3262,10 @@ class TestVideoSearchAgent:
             # Mock encoder factory
             mock_encoder_factory.create_encoder.return_value = Mock()
 
-            agent = VideoSearchAgent(tenant_id="test_tenant")
+            # Mock schema_loader
+            mock_schema_loader = Mock()
+
+            agent = VideoSearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
 
             # Mock the method since it might not exist in the actual implementation
             agent._find_matching_entities = Mock(
@@ -3318,10 +3297,9 @@ class TestVideoSearchAgent:
             assert "robots" in matched_texts
             assert "soccer" in matched_texts
 
-    @patch("cogniverse_agents.query_encoders.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     @patch("cogniverse_agents.video_search_agent.get_backend_registry")
-    @patch("cogniverse_agents.video_search_agent.get_config")
-    def test_search_result_enhancement(self, mock_video_config, mock_registry, mock_encoder_config):
+    def test_search_result_enhancement(self, mock_registry, mock_encoder_config):
         """Test search result enhancement with relationships"""
 
         # Mock encoder config
@@ -3337,17 +3315,6 @@ class TestVideoSearchAgent:
         with patch(
             "cogniverse_agents.video_search_agent.QueryEncoderFactory"
         ) as mock_encoder_factory:
-            # Create a mock config that returns profiles dict
-            mock_video_config.return_value = {
-                "video_processing_profiles": {
-                    "video_colpali_smol500_mv_frame": {
-                        "embedding_model": "vidore/colsmol-500m",
-                        "embedding_type": "frame_based",
-                    }
-                },
-                "vespa_url": "http://localhost:8080"
-            }
-
             # Mock backend registry
             mock_search_backend = Mock()
             mock_registry.return_value.get_search_backend.return_value = mock_search_backend
@@ -3355,7 +3322,10 @@ class TestVideoSearchAgent:
             # Mock encoder factory
             mock_encoder_factory.create_encoder.return_value = Mock()
 
-            agent = VideoSearchAgent(tenant_id="test_tenant")
+            # Mock schema_loader
+            mock_schema_loader = Mock()
+
+            agent = VideoSearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
 
             # Mock the method since it might not exist in the actual implementation
             enhanced_results = [

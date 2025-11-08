@@ -135,11 +135,13 @@ class Mem0MemoryManager:
             raise ValueError("tenant_id must be set before initialize()")
 
         # Get backend instance for memory operations
-        from cogniverse_core.config.manager import ConfigManager
-        from cogniverse_core.config.utils import get_config
+        from cogniverse_core.config.utils import (
+            create_default_config_manager,
+            get_config,
+        )
         from cogniverse_core.registries.backend_registry import get_backend_registry
 
-        config_manager = ConfigManager()
+        config_manager = create_default_config_manager()
         config = get_config(tenant_id="default", config_manager=config_manager)
         backend_type = config.get("backend_type", "vespa")
         registry = get_backend_registry()

@@ -39,8 +39,8 @@ async def main_async():
 
     # Get profiles to process
     from src.common.config_utils import get_config
-    from cogniverse_core.config.manager import ConfigManager
-    config_manager = ConfigManager()
+    from cogniverse_core.config.utils import create_default_config_manager, get_config
+    config_manager = create_default_config_manager()
     app_config = get_config(tenant_id="default", config_manager=config_manager)
     
     if args.profile:

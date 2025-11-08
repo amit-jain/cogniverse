@@ -42,7 +42,7 @@ class SearchService:
         if config_manager is None:
             raise ValueError(
                 "config_manager is required for SearchService. "
-                "Dependency injection is mandatory - pass ConfigManager() explicitly."
+                "Dependency injection is mandatory - pass create_default_config_manager() explicitly."
             )
         self.config_manager = config_manager
 

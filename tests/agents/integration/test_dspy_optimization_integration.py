@@ -14,7 +14,15 @@ from cogniverse_agents.dspy_agent_optimizer import (
 from cogniverse_agents.query_analysis_tool_v3 import QueryAnalysisToolV3
 from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_agents.summarizer_agent import SummarizerAgent
+from cogniverse_core.config.utils import create_default_config_manager
 from cogniverse_core.telemetry.config import TelemetryConfig
+
+
+@pytest.fixture
+def config_manager(tmp_path):
+    """Create ConfigManager with temp database for tests."""
+    db_path = tmp_path / "test_config.db"
+    return create_default_config_manager(db_path=db_path)
 
 
 @pytest.fixture
@@ -376,39 +384,28 @@ class TestDSPyAgentIntegration:
         }
 
         with patch("cogniverse_agents.summarizer_agent.VLMInterface"):
-            with patch("cogniverse_agents.summarizer_agent.get_config") as mock_config:
-                with patch.object(Path, "exists") as mock_exists:
+            with patch.object(Path, "exists") as mock_exists:
+                # Mock path exists to find optimized prompts
+                mock_exists.return_value = True
 
-                    # Mock config
-                    mock_config.return_value = {
-                        "llm": {
-                            "model_name": "smollm3:3b",
-                            "base_url": "http://localhost:11434/v1",
-                            "api_key": "dummy",
-                        }
-                    }
+                # Mock file loading directly
+                with patch(
+                    "builtins.open", mock_open(read_data=json.dumps(mock_prompts))
+                ):
 
-                    # Mock path exists to find optimized prompts
-                    mock_exists.return_value = True
+                    agent = SummarizerAgent(tenant_id="test_tenant")
 
-                    # Mock file loading directly
-                    with patch(
-                        "builtins.open", mock_open(read_data=json.dumps(mock_prompts))
-                    ):
+                # Should have loaded DSPy optimization
+                assert agent.dspy_enabled
+                assert "compiled_prompts" in agent.dspy_optimized_prompts
 
-                        agent = SummarizerAgent(tenant_id="test_tenant")
+                # Test optimized prompt usage
+                summary_prompt = agent.get_optimized_summary_prompt(
+                    "Long content to summarize...", "brief", "executive"
+                )
 
-                    # Should have loaded DSPy optimization
-                    assert agent.dspy_enabled
-                    assert "compiled_prompts" in agent.dspy_optimized_prompts
-
-                    # Test optimized prompt usage
-                    summary_prompt = agent.get_optimized_summary_prompt(
-                        "Long content to summarize...", "brief", "executive"
-                    )
-
-                    assert "Long content to summarize..." in summary_prompt
-                    assert "brief" in summary_prompt
+                assert "Long content to summarize..." in summary_prompt
+                assert "brief" in summary_prompt
 
     def test_detailed_report_agent_with_optimized_prompts(
         self, temp_optimized_prompts_dir
@@ -425,44 +422,31 @@ class TestDSPyAgentIntegration:
         }
 
         with patch("cogniverse_agents.detailed_report_agent.VLMInterface"):
-            with patch(
-                "cogniverse_agents.detailed_report_agent.get_config"
-            ) as mock_config:
-                with patch.object(Path, "exists") as mock_exists:
+            with patch.object(Path, "exists") as mock_exists:
+                # Mock path exists to find optimized prompts
+                mock_exists.return_value = True
 
-                    # Mock config
-                    mock_config.return_value = {
-                        "llm": {
-                            "model_name": "smollm3:3b",
-                            "base_url": "http://localhost:11434/v1",
-                            "api_key": "dummy",
-                        }
-                    }
+                # Mock file loading directly
+                with patch(
+                    "builtins.open", mock_open(read_data=json.dumps(mock_prompts))
+                ):
 
-                    # Mock path exists to find optimized prompts
-                    mock_exists.return_value = True
+                    agent = DetailedReportAgent(tenant_id="test_tenant")
 
-                    # Mock file loading directly
-                    with patch(
-                        "builtins.open", mock_open(read_data=json.dumps(mock_prompts))
-                    ):
+                # Should have loaded DSPy optimization
+                assert agent.dspy_enabled
+                assert "compiled_prompts" in agent.dspy_optimized_prompts
 
-                        agent = DetailedReportAgent(tenant_id="test_tenant")
+                # Test optimized prompt usage
+                report_prompt = agent.get_optimized_report_prompt(
+                    [{"title": "Report data"}], "business context", "comprehensive"
+                )
 
-                    # Should have loaded DSPy optimization
-                    assert agent.dspy_enabled
-                    assert "compiled_prompts" in agent.dspy_optimized_prompts
-
-                    # Test optimized prompt usage
-                    report_prompt = agent.get_optimized_report_prompt(
-                        [{"title": "Report data"}], "business context", "comprehensive"
-                    )
-
-                    assert "business context" in report_prompt
-                    assert "comprehensive" in report_prompt
+                assert "business context" in report_prompt
+                assert "comprehensive" in report_prompt
 
     def test_query_analysis_tool_with_optimized_prompts(
-        self, temp_optimized_prompts_dir
+        self, temp_optimized_prompts_dir, config_manager
     ):
         """Test QueryAnalysisToolV3 with loaded optimized prompts."""
 
@@ -486,7 +470,9 @@ class TestDSPyAgentIntegration:
                     "builtins.open", mock_open(read_data=json.dumps(mock_prompts))
                 ):
 
-                    tool = QueryAnalysisToolV3(enable_agent_integration=False)
+                    tool = QueryAnalysisToolV3(
+                        config_manager=config_manager, enable_agent_integration=False
+                    )
 
                     # Should have loaded DSPy optimization
                     assert tool.dspy_enabled
@@ -507,7 +493,7 @@ class TestDSPyEndToEndOptimization:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_optimization_to_agent_integration_pipeline(
-        self, temp_optimized_prompts_dir, mock_openai_compatible_api
+        self, temp_optimized_prompts_dir, mock_openai_compatible_api, config_manager
     ):
         """Test complete pipeline from optimization to agent integration."""
 
@@ -590,7 +576,9 @@ class TestDSPyEndToEndOptimization:
                         (
                             "query_analysis",
                             QueryAnalysisToolV3,
-                            lambda: QueryAnalysisToolV3(enable_agent_integration=False),
+                            lambda: QueryAnalysisToolV3(
+                                config_manager=config_manager, enable_agent_integration=False
+                            ),
                         ),
                     ]
 
@@ -625,16 +613,20 @@ class TestDSPyEndToEndOptimization:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_performance_comparison_optimized_vs_default(self):
+    async def test_performance_comparison_optimized_vs_default(self, config_manager):
         """Test performance comparison between optimized and default prompts."""
 
         # Create agents with and without optimization
         with patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent"):
             # Agent without optimization
-            agent_default = QueryAnalysisToolV3(enable_agent_integration=False)
+            agent_default = QueryAnalysisToolV3(
+                config_manager=config_manager, enable_agent_integration=False
+            )
 
             # Agent with mock optimization
-            agent_optimized = QueryAnalysisToolV3(enable_agent_integration=False)
+            agent_optimized = QueryAnalysisToolV3(
+                config_manager=config_manager, enable_agent_integration=False
+            )
             agent_optimized.dspy_enabled = True
             agent_optimized.dspy_optimized_prompts = {
                 "compiled_prompts": {

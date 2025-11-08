@@ -9,15 +9,10 @@ Consolidates duplicate code from:
 import logging
 import platform
 import subprocess
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Optional
 
 import requests
-from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-from cogniverse_vespa.metadata_schemas import add_metadata_schemas_to_package
-from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-from vespa.package import ApplicationPackage, Validation
 
 from tests.utils.async_polling import wait_for_vespa_indexing
 from tests.utils.docker_utils import cleanup_vespa_container, generate_unique_ports
@@ -201,21 +196,23 @@ class VespaDockerManager:
         self,
         container_info: Dict[str, any],
         schemas_dir: Optional[Path] = None,
-        include_metadata: bool = True
+        include_metadata: bool = True,
+        tenant_id: str = "test_tenant"
     ):
         """
-        Deploy schemas to Vespa container.
+        Deploy schemas to Vespa container with tenant-aware naming.
 
         Args:
             container_info: Container info dict from start_container()
             schemas_dir: Directory containing schema JSON files.
                         Defaults to configs/schemas/
             include_metadata: If True, add metadata schemas
+            tenant_id: Tenant identifier for schema deployment (default: "test_tenant")
 
         Raises:
             RuntimeError: If schema deployment fails
         """
-        config_port = container_info["config_port"]
+        http_port = container_info["http_port"]
 
         # Default to project schemas directory
         if schemas_dir is None:
@@ -224,51 +221,76 @@ class VespaDockerManager:
         if not schemas_dir.exists():
             raise RuntimeError(f"Schemas directory not found: {schemas_dir}")
 
-        logger.info(f"Deploying schemas from {schemas_dir}...")
+        logger.info(f"Deploying schemas from {schemas_dir} for tenant '{tenant_id}'...")
 
         try:
-            app_package = ApplicationPackage(name="videosearch")
-            parser = JsonSchemaParser()
-
-            # Load base video schemas
-            schema_files = list(schemas_dir.glob("*_schema.json"))
-            if not schema_files:
-                raise RuntimeError(f"No schema files found in {schemas_dir}")
-
-            for schema_file in schema_files:
-                try:
-                    schema = parser.load_schema_from_json_file(str(schema_file))
-                    app_package.add_schema(schema)
-                    logger.info(f"  Added schema: {schema.name}")
-                except Exception as e:
-                    logger.warning(f"  Failed to load {schema_file.name}: {e}")
-
-            # Add metadata schemas
-            if include_metadata:
-                add_metadata_schemas_to_package(app_package)
-                logger.info("  Added metadata schemas")
-
-            # Add validation overrides
-            until_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-            app_package.validations = [
-                Validation(validation_id="schema-removal", until=until_date),
-                Validation(validation_id="content-cluster-removal", until=until_date),
-            ]
-
-            # Deploy schemas - create temporary ConfigManager for test infrastructure
+            # Create temporary ConfigManager and SchemaLoader for test infrastructure
             import tempfile
 
-            from cogniverse_core.config.manager import ConfigManager
+            from cogniverse_core.config.unified_config import BackendConfig
+            from cogniverse_core.config.utils import create_default_config_manager
+            from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
+            # Create temporary database for config
             with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp_db:
-                config_manager = ConfigManager(db_path=Path(tmp_db.name))
-                schema_manager = VespaSchemaManager(
-                    vespa_endpoint="http://localhost",
-                    vespa_port=config_port,
+                config_manager = create_default_config_manager(db_path=Path(tmp_db.name))
+
+                # Create SchemaLoader pointing to test schemas directory
+                schema_loader = FilesystemSchemaLoader(base_path=schemas_dir)
+
+                # Create backend instance with proper dependency injection
+                backend_config = BackendConfig(
+                    tenant_id=tenant_id,
+                    backend_type="vespa",
+                    url="http://localhost",
+                    port=http_port,
+                )
+
+                # Import and instantiate VespaBackend
+                from cogniverse_vespa.backend import VespaBackend
+
+                backend = VespaBackend(
+                    backend_config=backend_config,
+                    schema_loader=schema_loader,
                     config_manager=config_manager
                 )
-                schema_manager._deploy_package(app_package)
-                logger.info("✅ Schemas deployed successfully")
+
+                # Create and inject SchemaRegistry
+                from cogniverse_core.registries.schema_registry import SchemaRegistry
+
+                schema_registry = SchemaRegistry(
+                    config_manager=config_manager,
+                    backend=backend,
+                    schema_loader=schema_loader
+                )
+                backend.schema_registry = schema_registry
+
+                # Initialize backend
+                backend.initialize({"tenant_id": tenant_id})
+
+                # Deploy each schema using SchemaRegistry (automatically handles tenant suffixes)
+                schema_files = list(schemas_dir.glob("*_schema.json"))
+                if not schema_files:
+                    raise RuntimeError(f"No schema files found in {schemas_dir}")
+
+                deployed_schemas = []
+                for schema_file in schema_files:
+                    try:
+                        # Extract base schema name from file (remove _schema.json suffix)
+                        base_schema_name = schema_file.stem.replace("_schema", "")
+
+                        # Use SchemaRegistry to deploy with tenant suffix
+                        tenant_schema_name = schema_registry.deploy_schema(
+                            tenant_id=tenant_id,
+                            base_schema_name=base_schema_name
+                        )
+                        deployed_schemas.append(tenant_schema_name)
+                        logger.info(f"  Deployed tenant schema: {tenant_schema_name}")
+                    except Exception as e:
+                        logger.warning(f"  Failed to deploy {schema_file.name}: {e}")
+                        raise
+
+                logger.info(f"✅ Deployed {len(deployed_schemas)} tenant-scoped schemas")
 
             # Cleanup temporary database
             Path(tmp_db.name).unlink(missing_ok=True)

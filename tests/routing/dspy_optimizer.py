@@ -14,7 +14,6 @@ import dspy
 # Add src directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "src"))
 
-from tools.config import get_config
 from tools.query_analyzer import QueryAnalyzer
 
 
@@ -178,8 +177,11 @@ class GLiNEROptimizer:
     """Optimizer for GLiNER model configuration."""
 
     def __init__(self):
-        from cogniverse_core.config.manager import ConfigManager
-        config_manager = ConfigManager()
+        from cogniverse_core.config.utils import (
+            create_default_config_manager,
+            get_config,
+        )
+        config_manager = create_default_config_manager()
         self.config = get_config(tenant_id="default", config_manager=config_manager)
         self.analyzer = QueryAnalyzer()
 

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 import uvicorn
-from cogniverse_core.config.utils import get_config
+from cogniverse_core.config.utils import create_default_config_manager, get_config
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -161,8 +161,7 @@ class VideoFileServer:
 
 async def main():
     """Main function to start the video file server"""
-    from cogniverse_core.config.manager import ConfigManager
-    config = get_config(tenant_id="default", config_manager=ConfigManager())
+    config = get_config(tenant_id="default", config_manager=create_default_config_manager())
     port = config.get("static_server_port", 8888)
 
     server = VideoFileServer(port=port, config=config)

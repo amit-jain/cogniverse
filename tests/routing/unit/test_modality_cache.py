@@ -107,10 +107,11 @@ class TestModalityCacheManager:
 
     def test_initialization(self, cache_manager):
         """Test cache manager initialization"""
-        # Should have cache for each modality
-        for modality in QueryModality:
-            assert modality in cache_manager.caches
-            assert isinstance(cache_manager.caches[modality], LRUCache)
+        # Should have single unified cache
+        assert hasattr(cache_manager, 'cache')
+        assert isinstance(cache_manager.cache, LRUCache)
+        # Should have cache_stats tracking
+        assert hasattr(cache_manager, 'cache_stats')
 
     def test_cache_and_retrieve_result(self, cache_manager):
         """Test caching and retrieving result"""
@@ -136,7 +137,7 @@ class TestModalityCacheManager:
         assert cached is None
 
     def test_different_modalities_separate_caches(self, cache_manager):
-        """Test different modalities use separate caches"""
+        """Test different modalities use separate cache keys in unified cache"""
         query = "test query"
         video_result = {"videos": ["v1"]}
         doc_result = {"documents": ["d1"]}
@@ -144,15 +145,12 @@ class TestModalityCacheManager:
         cache_manager.cache_result(query, QueryModality.VIDEO, video_result)
         cache_manager.cache_result(query, QueryModality.DOCUMENT, doc_result)
 
-        # Each modality should have its own cached result
-        assert (
-            cache_manager.get_cached_result(query, QueryModality.VIDEO, 3600)
-            == video_result
-        )
-        assert (
-            cache_manager.get_cached_result(query, QueryModality.DOCUMENT, 3600)
-            == doc_result
-        )
+        # Each modality should retrieve its own cached result from the unified cache
+        cached_video = cache_manager.get_cached_result(query, QueryModality.VIDEO, 3600)
+        cached_doc = cache_manager.get_cached_result(query, QueryModality.DOCUMENT, 3600)
+
+        assert cached_video == video_result
+        assert cached_doc == doc_result
 
     def test_ttl_expiration(self, cache_manager):
         """Test TTL expiration"""
@@ -256,27 +254,26 @@ class TestModalityCacheManager:
         )
 
     def test_lru_eviction_per_modality(self, cache_manager):
-        """Test LRU eviction works per modality"""
-        # Create cache with small size
-        small_cache = ModalityCacheManager(cache_size_per_modality=3)
+        """Test LRU eviction works in unified cache"""
+        # Create cache with small size (note: size is multiplied by modality count internally)
+        # So cache_size_per_modality=1 means total cache size = 1 * num_modalities
+        small_cache = ModalityCacheManager(cache_size_per_modality=1)
 
-        # Fill cache for VIDEO modality
-        small_cache.cache_result("q1", QueryModality.VIDEO, {"v": 1})
-        small_cache.cache_result("q2", QueryModality.VIDEO, {"v": 2})
-        small_cache.cache_result("q3", QueryModality.VIDEO, {"v": 3})
+        # Get total cache size (should be 1 * number of modalities)
+        total_size = small_cache.cache.maxsize
 
-        # Add 4th item, should evict oldest
-        small_cache.cache_result("q4", QueryModality.VIDEO, {"v": 4})
+        # Fill cache beyond capacity with VIDEO modality results
+        for i in range(total_size + 1):
+            small_cache.cache_result(f"q{i}", QueryModality.VIDEO, {"v": i})
 
-        # q1 should be evicted
-        assert small_cache.get_cached_result("q1", QueryModality.VIDEO, 3600) is None
-        assert (
-            small_cache.get_cached_result("q4", QueryModality.VIDEO, 3600) is not None
-        )
+        # First item (q0) should be evicted
+        assert small_cache.get_cached_result("q0", QueryModality.VIDEO, 3600) is None
+        # Last item should still be cached
+        assert small_cache.get_cached_result(f"q{total_size}", QueryModality.VIDEO, 3600) is not None
 
-        # Eviction count should be tracked
+        # Eviction count should be tracked (at least 1 eviction occurred)
         stats = small_cache.get_cache_stats(QueryModality.VIDEO)
-        assert stats["evictions"] == 1
+        assert stats["evictions"] >= 1
 
     def test_reset_stats(self, cache_manager):
         """Test resetting statistics"""

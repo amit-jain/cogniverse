@@ -30,14 +30,16 @@ class VisualEvaluatorPlugin:
 
         async def score(state, target=None) -> Score:
             """Score video search results using visual judge."""
-            from cogniverse_core.config.manager import ConfigManager
-            from cogniverse_core.config.utils import get_config
+            from cogniverse_core.config.utils import (
+                create_default_config_manager,
+                get_config,
+            )
             from cogniverse_core.evaluation.evaluators.configurable_visual_judge import (
                 ConfigurableVisualJudge,
             )
 
             # Initialize ConfigManager for dependency injection
-            config_manager = ConfigManager()
+            config_manager = create_default_config_manager()
             config = get_config(tenant_id="default", config_manager=config_manager)
             evaluator_config = config.get("evaluators", {}).get(evaluator_name, {})
 

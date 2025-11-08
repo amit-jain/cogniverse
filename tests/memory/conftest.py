@@ -8,18 +8,17 @@ Provides session-scoped backend container that:
 4. Stops after all tests complete
 """
 
-import json
 import platform
 import subprocess
 from pathlib import Path
 
-import pytest
-import requests
-from cogniverse_core.memory.manager import Mem0MemoryManager
-from cogniverse_core.registries.backend_registry import BackendRegistry
-
 # Import vespa backend to trigger self-registration
 import cogniverse_vespa  # noqa: F401
+import pytest
+import requests
+from cogniverse_core.config.utils import create_default_config_manager
+from cogniverse_core.memory.manager import Mem0MemoryManager
+from cogniverse_core.registries.backend_registry import BackendRegistry
 
 from tests.utils.async_polling import wait_for_service_startup, wait_for_vespa_indexing
 
@@ -63,14 +62,13 @@ def deploy_memory_schema_for_tests(
     Returns:
         Tenant schema name that was deployed
     """
-    from cogniverse_core.config.manager import ConfigManager
-    from cogniverse_core.config.utils import get_config
+    from cogniverse_core.config.utils import create_default_config_manager, get_config
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
     print(f"📦 Deploying {base_schema_name} for {tenant_id}...")
 
     # Create dependencies for backend abstraction
-    config_manager = ConfigManager()
+    config_manager = create_default_config_manager()
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
     # Get backend type from tenant's config (REQUIRED - no fallback)
@@ -218,9 +216,9 @@ def shared_memory_vespa():
     # Give Vespa additional time to fully initialize all services
     # Config port being ready doesn't mean data port is ready for document operations
     import time
-    print(f"⏳ Waiting additional 10 seconds for Vespa services to fully initialize...")
+    print("⏳ Waiting additional 10 seconds for Vespa services to fully initialize...")
     time.sleep(10)
-    print(f"✅ Vespa initialization complete")
+    print("✅ Vespa initialization complete")
 
     # Deploy memory schema using the SAME approach as working backend tests
     print("\n📦 Deploying agent_memories schema...")
@@ -234,12 +232,12 @@ def shared_memory_vespa():
 
     try:
         # Deploy application package with tenant-specific schema (same as working backend tests)
-        from pathlib import Path
-        from vespa.package import ApplicationPackage
-        from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-        from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-        from cogniverse_core.config.manager import ConfigManager
         import tempfile
+        from pathlib import Path
+
+        from cogniverse_vespa.json_schema_parser import JsonSchemaParser
+        from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+        from vespa.package import ApplicationPackage
 
         # Create application package
         app_package = ApplicationPackage(name="memory")
@@ -257,7 +255,7 @@ def shared_memory_vespa():
 
         # Deploy using VespaSchemaManager (same as working tests)
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp_db:
-            config_manager = ConfigManager(db_path=Path(tmp_db.name))
+            config_manager = create_default_config_manager(db_path=Path(tmp_db.name))
             schema_manager = VespaSchemaManager(
                 backend_endpoint="http://localhost",
                 backend_port=MEMORY_BACKEND_CONFIG_PORT,

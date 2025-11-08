@@ -14,6 +14,7 @@ from cogniverse_agents.summarizer_agent import (
     VLMInterface,
 )
 from cogniverse_agents.tools.a2a_utils import A2AMessage, DataPart, Task
+from cogniverse_core.config.utils import create_default_config_manager
 
 
 @pytest.mark.unit
@@ -66,7 +67,7 @@ class TestVLMInterface:
             }
         }
 
-        vlm = VLMInterface()
+        vlm = VLMInterface(config_manager=create_default_config_manager())
 
         assert vlm.config is not None
         mock_dspy_settings.configure.assert_called_once()
@@ -79,7 +80,7 @@ class TestVLMInterface:
         }  # Missing base_url
 
         with pytest.raises(ValueError, match="LLM configuration missing"):
-            VLMInterface()
+            VLMInterface(config_manager=create_default_config_manager())
 
     @patch("cogniverse_core.common.vlm_interface.get_config")
     @patch("cogniverse_core.common.vlm_interface.dspy.settings")
@@ -106,7 +107,7 @@ class TestVLMInterface:
         mock_predict_instance.return_value = mock_result
         mock_predict.return_value = mock_predict_instance
 
-        vlm = VLMInterface()
+        vlm = VLMInterface(config_manager=create_default_config_manager())
         result = await vlm.analyze_visual_content(
             ["/path/to/image1.jpg", "/path/to/image2.jpg"], "test query"
         )
@@ -120,7 +121,7 @@ class TestVLMInterface:
 class TestSummarizerAgent:
     """Test cases for SummarizerAgent class"""
 
-    @patch("cogniverse_agents.summarizer_agent.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     @patch("cogniverse_agents.summarizer_agent.VLMInterface")
     @pytest.mark.ci_fast
     def test_summarizer_agent_initialization(self, mock_vlm_class, mock_get_config):
@@ -172,7 +173,7 @@ class TestSummarizerAgent:
         assert request.summary_type == "comprehensive"
         assert request.include_visual_analysis is True
 
-    @patch("cogniverse_agents.summarizer_agent.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     @patch("cogniverse_agents.summarizer_agent.VLMInterface")
     @patch.object(SummarizerAgent, "_initialize_vlm_client")  # Prevent DSPy LM initialization
     @pytest.mark.asyncio
@@ -222,7 +223,7 @@ class TestSummarizerAgentCoreFunctionality:
     def agent_with_mocks(self):
         """Create agent with properly mocked dependencies"""
         with (
-            patch("cogniverse_agents.summarizer_agent.get_config") as mock_config,
+            patch("cogniverse_core.config.utils.get_config") as mock_config,
             patch("cogniverse_agents.summarizer_agent.VLMInterface") as mock_vlm_class,
             patch.object(SummarizerAgent, "_initialize_vlm_client"),
         ):

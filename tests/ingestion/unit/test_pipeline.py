@@ -83,7 +83,10 @@ class TestPipelineConfig:
         mock_output_manager.get_processing_dir.return_value = Path("/test/output")
         mock_get_output_manager.return_value = mock_output_manager
 
-        config = PipelineConfig.from_config()
+        # Mock config_manager
+        mock_config_manager = Mock()
+
+        config = PipelineConfig.from_config(tenant_id="test_tenant", config_manager=mock_config_manager)
 
         assert config.extract_keyframes is False
         assert config.transcribe_audio is True
@@ -99,18 +102,20 @@ class TestPipelineConfig:
     @patch("cogniverse_runtime.ingestion.pipeline.get_config")
     def test_from_profile_method(self, mock_get_config, mock_get_output_manager):
         """Test PipelineConfig.from_profile method."""
-        # Mock config data with profiles
+        # Mock config data with profiles in backend.profiles structure
         config_data = {
-            "video_processing_profiles": {
-                "test_profile": {
-                    "pipeline_config": {
-                        "extract_keyframes": True,
-                        "transcribe_audio": False,
-                        "generate_descriptions": True,
-                        "generate_embeddings": False,
-                        "keyframe_threshold": 0.99,
-                        "max_frames_per_video": 1500,
-                        "vlm_batch_size": 300,
+            "backend": {
+                "profiles": {
+                    "test_profile": {
+                        "pipeline_config": {
+                            "extract_keyframes": True,
+                            "transcribe_audio": False,
+                            "generate_descriptions": True,
+                            "generate_embeddings": False,
+                            "keyframe_threshold": 0.99,
+                            "max_frames_per_video": 1500,
+                            "vlm_batch_size": 300,
+                        }
                     }
                 }
             },
@@ -138,7 +143,7 @@ class TestPipelineConfig:
     @patch("cogniverse_runtime.ingestion.pipeline.get_config")
     def test_from_profile_method_profile_not_found(self, mock_get_config):
         """Test PipelineConfig.from_profile with non-existent profile."""
-        config_data = {"video_processing_profiles": {}, "search_backend": "byaldi"}
+        config_data = {"backend": {"profiles": {}}, "search_backend": "byaldi"}
         mock_get_config.return_value = config_data
 
         with pytest.raises(

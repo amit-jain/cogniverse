@@ -165,9 +165,11 @@ class ModalModelProvider(ModelProvider):
             try:
                 # Re-get config if not passed in
                 if config is None:
-                    from cogniverse_core.config.manager import ConfigManager
-                    from cogniverse_core.config.utils import get_config
-                    config = get_config(tenant_id="default", config_manager=ConfigManager())
+                    from cogniverse_core.config.utils import (
+                        create_default_config_manager,
+                        get_config,
+                    )
+                    config = get_config(tenant_id="default", config_manager=create_default_config_manager())
 
                 # Update the modal endpoint in config
                 config.set('inference.modal_endpoint', service_urls["inference_endpoint"])

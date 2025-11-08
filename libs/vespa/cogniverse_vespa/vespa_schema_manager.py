@@ -23,30 +23,27 @@ class VespaSchemaManager:
     Supports both native .sd files and JSON schema definitions.
     """
     
-    def __init__(self, backend_endpoint: str, backend_port: int, config_manager, schema_loader=None, schema_registry=None):
+    def __init__(self, backend_endpoint: str, backend_port: int, config_manager=None, schema_loader=None, schema_registry=None):
         """
         Initialize schema manager.
 
         Args:
             backend_endpoint: Backend endpoint URL (REQUIRED)
             backend_port: Backend port number (REQUIRED)
-            config_manager: ConfigManager instance (REQUIRED)
+            config_manager: ConfigManager instance (DEPRECATED - no longer used)
             schema_loader: SchemaLoader instance (optional, needed for tenant schema operations)
             schema_registry: SchemaRegistry instance (optional, needed for tenant schema operations)
 
         Raises:
-            ValueError: If any parameter is None
+            ValueError: If required parameters are None
         """
         if backend_endpoint is None:
             raise ValueError("backend_endpoint is required")
         if backend_port is None:
             raise ValueError("backend_port is required")
-        if config_manager is None:
-            raise ValueError("config_manager is required")
 
         self.backend_endpoint = backend_endpoint
         self.backend_port = backend_port
-        self._config_manager = config_manager
         self._schema_loader = schema_loader
         self._schema_registry = schema_registry
         self._logger = logging.getLogger(self.__class__.__name__)

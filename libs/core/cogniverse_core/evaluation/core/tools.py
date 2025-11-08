@@ -35,11 +35,13 @@ def video_search_tool():
             # Import here to avoid circular dependencies
             from cogniverse_runtime.search.service import SearchService
 
-            from cogniverse_core.config.manager import ConfigManager
-            from cogniverse_core.config.utils import get_config
+            from cogniverse_core.config.utils import (
+                create_default_config_manager,
+                get_config,
+            )
 
             # Initialize ConfigManager for dependency injection
-            config_manager = ConfigManager()
+            config_manager = create_default_config_manager()
             config = get_config(tenant_id="default", config_manager=config_manager)
 
             # Create search service with specified profile

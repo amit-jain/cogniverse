@@ -13,7 +13,7 @@ from typing import Any, Optional
 
 import opentelemetry.trace as trace
 import pandas as pd
-from cogniverse_core.config.utils import get_config
+from cogniverse_core.config.utils import create_default_config_manager, get_config
 from cogniverse_core.telemetry.manager import TelemetryManager
 from cogniverse_core.telemetry.providers.base import TelemetryProvider
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -66,8 +66,7 @@ class PhoenixExperimentRunner:
             provider = telemetry_manager.provider
 
         self.provider = provider
-        from cogniverse_core.config.manager import ConfigManager
-        config_manager = ConfigManager()
+        config_manager = create_default_config_manager()
         self.config = get_config(tenant_id="default", config_manager=config_manager)
         self.experiment_project = experiment_project_name
         self.enable_quality_evaluators = enable_quality_evaluators

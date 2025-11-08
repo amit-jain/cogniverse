@@ -40,9 +40,9 @@ class ConfigLoader:
 
     def __init__(self, tenant_id: str = "default"):
         """Initialize config loader."""
-        from cogniverse_core.config.manager import ConfigManager
+        from cogniverse_core.config.utils import create_default_config_manager
 
-        self.config_manager = ConfigManager()
+        self.config_manager = create_default_config_manager()
         self.backend_registry = BackendRegistry(config_manager=self.config_manager)
         self.agent_registry = AgentRegistry(config_manager=self.config_manager)
         self.config = get_config(tenant_id=tenant_id, config_manager=self.config_manager)
@@ -72,7 +72,7 @@ class ConfigLoader:
 
                 # Import package to trigger auto-registration
                 try:
-                    module = importlib.import_module(package_name)
+                    _ = importlib.import_module(package_name)
                     logger.info(
                         f"✓ Loaded backend package: {package_name} for {backend_name}"
                     )

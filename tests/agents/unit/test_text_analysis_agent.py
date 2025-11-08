@@ -10,7 +10,9 @@ from cogniverse_agents.text_analysis_agent import (
     _agent_instances,
     app,
     get_agent,
+    set_config_manager,
 )
+from cogniverse_core.config.utils import create_default_config_manager
 from fastapi.testclient import TestClient
 
 
@@ -19,12 +21,10 @@ class TestTextAnalysisAgent:
 
     @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
     @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy")
-    @patch("cogniverse_agents.text_analysis_agent.get_config_manager")
-    @patch("cogniverse_agents.text_analysis_agent.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     def test_initialization(
         self,
         mock_get_config,
-        mock_get_config_manager,
         mock_initialize_dspy,
         mock_register_signature,
     ):
@@ -36,45 +36,35 @@ class TestTextAnalysisAgent:
         }
         mock_get_config.return_value = mock_config
 
-        mock_config_manager = MagicMock()
-        mock_config_manager.get_agent_config.return_value = None
-        mock_get_config_manager.return_value = mock_config_manager
-
-        # Initialize agent
-        agent = TextAnalysisAgent(tenant_id="test_tenant")
+        # Initialize agent with config_manager
+        config_manager = create_default_config_manager()
+        agent = TextAnalysisAgent(tenant_id="test_tenant", config_manager=config_manager)
 
         assert agent.tenant_id == "test_tenant"
         assert agent.config is not None
         assert agent.config.agent_name == "text_analysis_agent"
         assert "text_analysis" in agent.config.capabilities
 
-        # Verify config was persisted
-        mock_config_manager.set_agent_config.assert_called_once()
-
         # Verify DSPy was initialized
         mock_initialize_dspy.assert_called_once()
         mock_register_signature.assert_called_once()
 
-    @patch("cogniverse_agents.text_analysis_agent.get_config_manager")
-    @patch("cogniverse_agents.text_analysis_agent.get_config")
-    def test_initialization_without_tenant_id_raises_error(
-        self, mock_get_config, mock_get_config_manager
-    ):
+    def test_initialization_without_tenant_id_raises_error(self):
         """Test that initializing without tenant_id raises ValueError"""
-        with pytest.raises(ValueError, match="tenant_id is required"):
-            TextAnalysisAgent(tenant_id="")
+        config_manager = create_default_config_manager()
 
         with pytest.raises(ValueError, match="tenant_id is required"):
-            TextAnalysisAgent(tenant_id=None)
+            TextAnalysisAgent(tenant_id="", config_manager=config_manager)
+
+        with pytest.raises(ValueError, match="tenant_id is required"):
+            TextAnalysisAgent(tenant_id=None, config_manager=config_manager)
 
     @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
     @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy")
-    @patch("cogniverse_agents.text_analysis_agent.get_config_manager")
-    @patch("cogniverse_agents.text_analysis_agent.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     def test_analyze_text(
         self,
         mock_get_config,
-        mock_get_config_manager,
         mock_initialize_dspy,
         mock_register_signature,
     ):
@@ -86,11 +76,7 @@ class TestTextAnalysisAgent:
         }
         mock_get_config.return_value = mock_config
 
-        mock_config_manager = MagicMock()
-        mock_config_manager.get_agent_config.return_value = None
-        mock_get_config_manager.return_value = mock_config_manager
-
-        agent = TextAnalysisAgent(tenant_id="test_tenant")
+        agent = TextAnalysisAgent(tenant_id="test_tenant", config_manager=create_default_config_manager())
 
         # Mock the get_or_create_module method to return a mock module
         mock_module = MagicMock()
@@ -110,12 +96,10 @@ class TestTextAnalysisAgent:
 
     @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
     @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy")
-    @patch("cogniverse_agents.text_analysis_agent.get_config_manager")
-    @patch("cogniverse_agents.text_analysis_agent.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     def test_get_agent_factory(
         self,
         mock_get_config,
-        mock_get_config_manager,
         mock_initialize_dspy,
         mock_register_signature,
     ):
@@ -127,12 +111,11 @@ class TestTextAnalysisAgent:
         }
         mock_get_config.return_value = mock_config
 
-        mock_config_manager = MagicMock()
-        mock_config_manager.get_agent_config.return_value = None
-        mock_get_config_manager.return_value = mock_config_manager
-
         # Clear cache
         _agent_instances.clear()
+
+        # Set config_manager for factory function
+        set_config_manager(create_default_config_manager())
 
         # First call creates new instance
         agent1 = get_agent("test_tenant_1")
@@ -166,12 +149,10 @@ class TestTextAnalysisEndpoints:
 
     @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
     @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy")
-    @patch("cogniverse_agents.text_analysis_agent.get_config_manager")
-    @patch("cogniverse_agents.text_analysis_agent.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     def test_analyze_endpoint(
         self,
         mock_get_config,
-        mock_get_config_manager,
         mock_initialize_dspy,
         mock_register_signature,
     ):
@@ -182,10 +163,6 @@ class TestTextAnalysisEndpoints:
             "ollama_base_url": "http://localhost:11434",
         }
         mock_get_config.return_value = mock_config
-
-        mock_config_manager = MagicMock()
-        mock_config_manager.get_agent_config.return_value = None
-        mock_get_config_manager.return_value = mock_config_manager
 
         client = TestClient(app)
 
@@ -217,11 +194,8 @@ class TestTextAnalysisEndpoints:
             # Verify analyze_text was called
             mock_analyze.assert_called_once_with("Test text to analyze", "summary")
 
-    @patch("cogniverse_agents.text_analysis_agent.get_config_manager")
-    @patch("cogniverse_agents.text_analysis_agent.get_config")
-    def test_analyze_endpoint_without_tenant_id_fails(
-        self, mock_get_config, mock_get_config_manager
-    ):
+    @patch("cogniverse_core.config.utils.get_config")
+    def test_analyze_endpoint_without_tenant_id_fails(self, mock_get_config):
         """Test that /analyze endpoint requires tenant_id parameter"""
         mock_config = {
             "text_analysis_port": 8005,
@@ -229,10 +203,6 @@ class TestTextAnalysisEndpoints:
             "ollama_base_url": "http://localhost:11434",
         }
         mock_get_config.return_value = mock_config
-
-        mock_config_manager = MagicMock()
-        mock_config_manager.get_agent_config.return_value = None
-        mock_get_config_manager.return_value = mock_config_manager
 
         client = TestClient(app)
 
@@ -253,12 +223,10 @@ class TestTextAnalysisEndpoints:
 
     @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
     @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy")
-    @patch("cogniverse_agents.text_analysis_agent.get_config_manager")
-    @patch("cogniverse_agents.text_analysis_agent.get_config")
+    @patch("cogniverse_core.config.utils.get_config")
     def test_analyze_endpoint_error_handling(
         self,
         mock_get_config,
-        mock_get_config_manager,
         mock_initialize_dspy,
         mock_register_signature,
     ):
@@ -269,10 +237,6 @@ class TestTextAnalysisEndpoints:
             "ollama_base_url": "http://localhost:11434",
         }
         mock_get_config.return_value = mock_config
-
-        mock_config_manager = MagicMock()
-        mock_config_manager.get_agent_config.return_value = None
-        mock_get_config_manager.return_value = mock_config_manager
 
         # Configure TestClient to not re-raise server exceptions
         client = TestClient(app, raise_server_exceptions=False)

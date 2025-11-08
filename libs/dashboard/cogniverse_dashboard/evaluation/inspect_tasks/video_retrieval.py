@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from cogniverse_core.config.utils import get_config
+from cogniverse_core.config.utils import create_default_config_manager, get_config
 from inspect_ai import Task, task
 from inspect_ai.dataset import Dataset, Sample
 
@@ -46,8 +46,7 @@ def video_retrieval_accuracy(
         Inspect AI Task for video retrieval evaluation
     """
     # Load configuration
-    from cogniverse_core.config.manager import ConfigManager
-    config_manager = ConfigManager()
+    config_manager = create_default_config_manager()
     _ = get_config(tenant_id="default", config_manager=config_manager)  # noqa: F841
 
     # Default profiles and strategies if not specified

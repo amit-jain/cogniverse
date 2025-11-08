@@ -11,7 +11,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 from cogniverse_core.memory.manager import Mem0MemoryManager
-from cogniverse_core.config.manager import ConfigManager
+from cogniverse_core.config.utils import create_default_config_manager, get_config
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
 
@@ -58,7 +58,7 @@ def render_memory_management_tab():
             st.info("⚙️ Initializing Mem0 memory manager...")
 
             # Create dependencies for dependency injection
-            config_manager = ConfigManager()
+            config_manager = create_default_config_manager()
             schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
             manager.initialize(

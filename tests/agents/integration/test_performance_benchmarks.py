@@ -12,7 +12,6 @@ Tests performance characteristics of the multi-agent system:
 import asyncio
 import os
 import time
-from unittest.mock import patch
 
 import psutil
 import pytest
@@ -85,62 +84,55 @@ class TestPerformanceBenchmarks:
 
     def test_routing_agent_performance(self):
         """Benchmark routing agent response times"""
-        with patch("cogniverse_core.config.utils.get_config") as mock_config:
-            mock_config.return_value = {
-                "video_agent_url": "http://localhost:8002",
-                "summarizer_agent_url": "http://localhost:8003",
-                "detailed_report_agent_url": "http://localhost:8004",
-            }
+        telemetry_config = TelemetryConfig(
+            otlp_endpoint="http://localhost:24317",
+            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
 
-            telemetry_config = TelemetryConfig(
-                otlp_endpoint="http://localhost:24317",
-                provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
-                batch_config=BatchExportConfig(use_sync_export=True),
+        test_queries = [
+            "Find videos of robots",
+            "Summarize AI research",
+            "Generate detailed report on machine learning",
+            "Search for autonomous vehicle videos",
+            "Analyze computer vision papers",
+        ]
+
+        response_times = []
+
+        for query in test_queries:
+            start_time = time.time()
+            try:
+                asyncio.run(routing_agent.route_query(query))
+                end_time = time.time()
+                response_time = end_time - start_time
+                response_times.append(response_time)
+
+                print(f"Query '{query[:30]}...': {response_time:.3f}s")
+
+            except Exception:
+                end_time = time.time()
+                response_time = end_time - start_time
+                response_times.append(response_time)
+                print(f"Query handled gracefully: {response_time:.3f}s")
+
+        if response_times:
+            avg_response_time = sum(response_times) / len(response_times)
+            max_response_time = max(response_times)
+            min_response_time = min(response_times)
+
+            print(
+                f"Routing performance - Avg: {avg_response_time:.3f}s, Max: {max_response_time:.3f}s, Min: {min_response_time:.3f}s"
             )
-            routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
 
-            test_queries = [
-                "Find videos of robots",
-                "Summarize AI research",
-                "Generate detailed report on machine learning",
-                "Search for autonomous vehicle videos",
-                "Analyze computer vision papers",
-            ]
-
-            response_times = []
-
-            for query in test_queries:
-                start_time = time.time()
-                try:
-                    asyncio.run(routing_agent.route_query(query))
-                    end_time = time.time()
-                    response_time = end_time - start_time
-                    response_times.append(response_time)
-
-                    print(f"Query '{query[:30]}...': {response_time:.3f}s")
-
-                except Exception:
-                    end_time = time.time()
-                    response_time = end_time - start_time
-                    response_times.append(response_time)
-                    print(f"Query handled gracefully: {response_time:.3f}s")
-
-            if response_times:
-                avg_response_time = sum(response_times) / len(response_times)
-                max_response_time = max(response_times)
-                min_response_time = min(response_times)
-
-                print(
-                    f"Routing performance - Avg: {avg_response_time:.3f}s, Max: {max_response_time:.3f}s, Min: {min_response_time:.3f}s"
-                )
-
-                # Performance assertions
-                assert (
-                    avg_response_time < 10.0
-                ), f"Average response time too high: {avg_response_time:.3f}s"
-                assert (
-                    max_response_time < 20.0
-                ), f"Max response time too high: {max_response_time:.3f}s"
+            # Performance assertions
+            assert (
+                avg_response_time < 10.0
+            ), f"Average response time too high: {avg_response_time:.3f}s"
+            assert (
+                max_response_time < 20.0
+            ), f"Max response time too high: {max_response_time:.3f}s"
 
     def test_relationship_extraction_performance(self):
         """Benchmark relationship extraction performance"""
@@ -269,14 +261,7 @@ class TestPerformanceBenchmarks:
 
         # Do one warmup operation to load models
         try:
-            with patch("cogniverse_core.config.utils.get_config") as mock_config:
-                mock_config.return_value = {
-                    "video_agent_url": "http://localhost:8002",
-                    "summarizer_agent_url": "http://localhost:8003",
-                    "detailed_report_agent_url": "http://localhost:8004",
-                }
-
-                asyncio.run(routing_agent.route_query("warmup query"))
+            asyncio.run(routing_agent.route_query("warmup query"))
             asyncio.run(extractor.extract_comprehensive_relationships("warmup query"))
         except Exception:
             pass
@@ -294,15 +279,7 @@ class TestPerformanceBenchmarks:
             try:
                 query = f"Test query {i} for memory leak detection"
 
-                with patch("cogniverse_core.config.utils.get_config") as mock_config:
-                    mock_config.return_value = {
-                        "video_agent_url": "http://localhost:8002",
-                        "summarizer_agent_url": "http://localhost:8003",
-                        "detailed_report_agent_url": "http://localhost:8004",
-                    }
-
-                    asyncio.run(routing_agent.route_query(query))
-
+                asyncio.run(routing_agent.route_query(query))
                 asyncio.run(extractor.extract_comprehensive_relationships(query))
 
                 # Sample memory usage
@@ -350,61 +327,54 @@ class TestPerformanceBenchmarks:
 
     def test_concurrent_request_capacity(self):
         """Test system capacity under concurrent load"""
-        with patch("cogniverse_core.config.utils.get_config") as mock_config:
-            mock_config.return_value = {
-                "video_agent_url": "http://localhost:8002",
-                "summarizer_agent_url": "http://localhost:8003",
-                "detailed_report_agent_url": "http://localhost:8004",
-            }
+        telemetry_config = TelemetryConfig(
+            otlp_endpoint="http://localhost:24317",
+            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
 
-            telemetry_config = TelemetryConfig(
-                otlp_endpoint="http://localhost:24317",
-                provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
-                batch_config=BatchExportConfig(use_sync_export=True),
-            )
-            routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        # Generate concurrent queries
+        num_concurrent = 5
+        queries = [f"Concurrent test query {i}" for i in range(num_concurrent)]
 
-            # Generate concurrent queries
-            num_concurrent = 5
-            queries = [f"Concurrent test query {i}" for i in range(num_concurrent)]
+        async def process_concurrent_load():
+            tasks = []
+            start_time = time.time()
 
-            async def process_concurrent_load():
-                tasks = []
-                start_time = time.time()
-
-                for query in queries:
-                    task = routing_agent.route_query(query)
-                    tasks.append(task)
-
-                try:
-                    results = await asyncio.gather(*tasks, return_exceptions=True)
-                    end_time = time.time()
-                    return results, end_time - start_time
-                except Exception as e:
-                    end_time = time.time()
-                    return [e] * len(queries), end_time - start_time
+            for query in queries:
+                task = routing_agent.route_query(query)
+                tasks.append(task)
 
             try:
-                results, total_time = asyncio.run(process_concurrent_load())
-
-                success_count = sum(1 for r in results if not isinstance(r, Exception))
-                throughput = len(queries) / total_time
-
-                print(f"Concurrent capacity: {success_count}/{len(queries)} successful")
-                print(f"Total time: {total_time:.3f}s")
-                print(f"Throughput: {throughput:.1f} queries/second")
-
-                # Performance assertions
-                assert (
-                    total_time < 30.0
-                ), f"Concurrent processing took too long: {total_time:.3f}s"
-                assert (
-                    success_count >= len(queries) * 0.5
-                ), f"Too many failures: {success_count}/{len(queries)}"
-
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                end_time = time.time()
+                return results, end_time - start_time
             except Exception as e:
-                print(f"Concurrent load handled gracefully: {e}")
-                assert True  # Graceful handling is acceptable
+                end_time = time.time()
+                return [e] * len(queries), end_time - start_time
+
+        try:
+            results, total_time = asyncio.run(process_concurrent_load())
+
+            success_count = sum(1 for r in results if not isinstance(r, Exception))
+            throughput = len(queries) / total_time
+
+            print(f"Concurrent capacity: {success_count}/{len(queries)} successful")
+            print(f"Total time: {total_time:.3f}s")
+            print(f"Throughput: {throughput:.1f} queries/second")
+
+            # Performance assertions
+            assert (
+                total_time < 30.0
+            ), f"Concurrent processing took too long: {total_time:.3f}s"
+            assert (
+                success_count >= len(queries) * 0.5
+            ), f"Too many failures: {success_count}/{len(queries)}"
+
+        except Exception as e:
+            print(f"Concurrent load handled gracefully: {e}")
+            assert True  # Graceful handling is acceptable
 
 
 @pytest.mark.integration

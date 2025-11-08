@@ -6,6 +6,7 @@ Tests that backend instances are properly isolated per tenant.
 
 
 import pytest
+from cogniverse_core.config.utils import create_default_config_manager
 from cogniverse_core.interfaces.backend import IngestionBackend, SearchBackend
 from cogniverse_core.registries.backend_registry import (
     get_backend_registry,
@@ -15,11 +16,14 @@ from cogniverse_core.registries.backend_registry import (
 class MockSearchBackend(SearchBackend):
     """Mock search backend for testing"""
 
-    def __init__(self, config_manager=None, schema_loader=None):
+    def __init__(self, backend_config, schema_loader, config_manager):
         self.initialized = False
         self.config = None
-        self.config_manager = config_manager
+        self.backend_config = backend_config
         self.schema_loader = schema_loader
+        self.config_manager = config_manager
+        # Mock schema_registry attribute (will be injected by BackendRegistry)
+        self.schema_registry = None
 
     def initialize(self, config: dict):
         self.initialized = True
@@ -53,11 +57,12 @@ class MockSearchBackend(SearchBackend):
 class MockIngestionBackend(IngestionBackend):
     """Mock ingestion backend for testing"""
 
-    def __init__(self, config_manager=None, schema_loader=None):
+    def __init__(self, backend_config, schema_loader, config_manager):
         self.initialized = False
         self.config = None
-        self.config_manager = config_manager
+        self.backend_config = backend_config
         self.schema_loader = schema_loader
+        self.config_manager = config_manager
 
     def initialize(self, config: dict):
         self.initialized = True
@@ -88,8 +93,7 @@ class TestBackendRegistryTenantIsolation:
     @pytest.fixture
     def config_manager(self, tmp_path):
         """Create a config_manager for testing"""
-        from cogniverse_core.config.manager import ConfigManager
-        return ConfigManager(db_path=tmp_path / "test_config.db")
+        return create_default_config_manager(db_path=tmp_path / "test_config.db")
 
     @pytest.fixture
     def schema_loader(self):
@@ -251,10 +255,13 @@ class TestBackendRegistryTenantIsolation:
         """Test tenant isolation for full backends (both search and ingestion)"""
 
         class MockFullBackend(SearchBackend, IngestionBackend):
-            def __init__(self, config_manager=None, schema_loader=None):
+            def __init__(self, backend_config, schema_loader, config_manager):
                 self.initialized = False
-                self.config_manager = config_manager
+                self.backend_config = backend_config
                 self.schema_loader = schema_loader
+                self.config_manager = config_manager
+                # Mock schema_registry attribute (will be injected by BackendRegistry)
+                self.schema_registry = None
 
             def initialize(self, config: dict):
                 self.initialized = True
@@ -352,8 +359,7 @@ class TestBackendRegistryEdgeCases:
     @pytest.fixture
     def config_manager(self, tmp_path):
         """Create a config_manager for testing"""
-        from cogniverse_core.config.manager import ConfigManager
-        return ConfigManager(db_path=tmp_path / "test_config.db")
+        return create_default_config_manager(db_path=tmp_path / "test_config.db")
 
     @pytest.fixture
     def schema_loader(self):
@@ -414,8 +420,7 @@ class TestBackendRegistrySingleton:
     @pytest.fixture
     def config_manager(self, tmp_path):
         """Create a config_manager for testing"""
-        from cogniverse_core.config.manager import ConfigManager
-        return ConfigManager(db_path=tmp_path / "test_config.db")
+        return create_default_config_manager(db_path=tmp_path / "test_config.db")
 
     @pytest.fixture
     def schema_loader(self):

@@ -3,7 +3,7 @@
 import logging
 from typing import Any, Dict, Optional
 
-from cogniverse_core.config.manager import ConfigManager
+from cogniverse_core.config.utils import create_default_config_manager, get_config
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -30,9 +30,7 @@ class SearchRequest(BaseModel):
 async def search(request: SearchRequest) -> Dict[str, Any]:
     """Execute a search query."""
     try:
-        from cogniverse_core.config.utils import get_config
-
-        config_manager = ConfigManager()
+        config_manager = create_default_config_manager()
         config = get_config(tenant_id=request.tenant_id or "default", config_manager=config_manager)
 
         # Create search service
@@ -84,9 +82,7 @@ async def list_strategies() -> Dict[str, Any]:
 @router.get("/profiles")
 async def list_profiles() -> Dict[str, Any]:
     """List available search profiles."""
-    from cogniverse_core.config.utils import get_config
-
-    config_manager = ConfigManager()
+    config_manager = create_default_config_manager()
     config = get_config(tenant_id="default", config_manager=config_manager)
 
     backend_config = config.get("backend", {})

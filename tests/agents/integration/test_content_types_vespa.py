@@ -106,7 +106,7 @@ def test_vespa_manager():
     print("\n📤 Uploading all content type schemas for the test suite...")
 
     schema_manager = VespaSchemaManager(
-        vespa_endpoint=test_vespa["config_url"],
+        backend_endpoint=test_vespa["config_url"],
         backend_port=test_vespa["config_port"],
     )
 

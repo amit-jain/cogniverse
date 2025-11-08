@@ -203,11 +203,23 @@ class TestRealVespaIntegration:
         try:
             # Test our actual Enhanced Video Search Agent
             # Pass ports directly - NO environment variables
+            from pathlib import Path
+
             from cogniverse_agents.video_search_agent import VideoSearchAgent
+            from cogniverse_core.config.utils import create_default_config_manager
+            from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
             print("Initializing Enhanced Video Search Agent...")
+            # Create dependencies for agent
+            schema_loader = FilesystemSchemaLoader(
+                base_path=Path("tests/system/resources/schemas")
+            )
+            config_manager = create_default_config_manager()
+
             video_agent = VideoSearchAgent(
                 tenant_id="test_tenant",
+                schema_loader=schema_loader,
+                config_manager=config_manager,
                 backend_url=vespa_url,
                 backend_port=vespa_port,
                 vespa_config_port=shared_system_vespa["config_port"],  # Config port for schema deployment
@@ -808,10 +820,22 @@ class TestRealEndToEndIntegration:
         search_success = False
         try:
             # Pass ports directly - NO environment variables
+            from pathlib import Path
+
             from cogniverse_agents.video_search_agent import VideoSearchAgent
+            from cogniverse_core.config.utils import create_default_config_manager
+            from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+            # Create dependencies for agent
+            schema_loader = FilesystemSchemaLoader(
+                base_path=Path("tests/system/resources/schemas")
+            )
+            config_manager = create_default_config_manager()
 
             video_search_agent = VideoSearchAgent(
                 tenant_id="test_tenant",
+                schema_loader=schema_loader,
+                config_manager=config_manager,
                 backend_url="http://localhost",
                 backend_port=vespa_test_manager.http_port,
                 vespa_config_port=19073,  # Config port for schema deployment

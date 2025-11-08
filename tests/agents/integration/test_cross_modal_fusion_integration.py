@@ -147,7 +147,7 @@ class TestCrossModalFusionIntegration:
         print("-" * 80)
 
         schema_manager = VespaSchemaManager(
-            vespa_endpoint=test_vespa_fusion["config_url"],
+            backend_endpoint=test_vespa_fusion["config_url"],
             backend_port=test_vespa_fusion["config_port"],
         )
 

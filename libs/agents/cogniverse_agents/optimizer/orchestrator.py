@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
-from cogniverse_core.config.utils import get_config
+from cogniverse_core.config.utils import create_default_config_manager, get_config
 from dotenv import load_dotenv
 
 # Import all providers to register them
@@ -235,8 +235,7 @@ class OptimizationOrchestrator:
     """Main orchestrator for the optimization process."""
 
     def __init__(self, config_path: str = "config.json"):
-        from cogniverse_core.config.manager import ConfigManager
-        self.config_instance = get_config(tenant_id="default", config_manager=ConfigManager())
+        self.config_instance = get_config(tenant_id="default", config_manager=create_default_config_manager())
         self.config = self._load_config()
         self.client = ModelClient(self.config)
         

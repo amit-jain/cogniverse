@@ -35,8 +35,9 @@ class SchemaRegistry:
     would inadvertently delete all existing schemas from Vespa.
 
     Usage:
-        config_manager = ConfigManager()
-        registry = SchemaRegistry(config_manager)
+        from cogniverse_core.config.utils import create_default_config_manager
+        config_manager = create_default_config_manager()
+        registry = SchemaRegistry(config_manager, backend, schema_loader)
 
         # Register a newly deployed schema
         registry.register_schema(
@@ -54,22 +55,27 @@ class SchemaRegistry:
         exists = registry.schema_exists("test_tenant", "video_colpali_smol500_mv_frame")
     """
 
-    def __init__(self, config_manager, backend=None, schema_loader=None):
+    def __init__(self, config_manager, backend, schema_loader):
         """
-        Initialize SchemaRegistry with in-memory schema tracking.
+        Initialize SchemaRegistry with required dependencies.
+
+        All parameters are REQUIRED - no optional dependencies.
+        Fail fast at construction if dependencies are missing.
 
         Args:
             config_manager: ConfigManager instance (REQUIRED)
-            backend: Backend instance for schema deployment (optional)
-            schema_loader: SchemaLoader instance for loading schema definitions (optional)
+            backend: Backend instance for schema deployment (REQUIRED)
+            schema_loader: SchemaLoader instance for loading schema definitions (REQUIRED)
 
-        Note:
-            backend and schema_loader are optional and can be configured later
-            using set_deployment_dependencies(). If not provided, deploy_schema()
-            will raise an error.
+        Raises:
+            ValueError: If any required parameter is None
         """
         if config_manager is None:
             raise ValueError("config_manager is required")
+        if backend is None:
+            raise ValueError("backend is required")
+        if schema_loader is None:
+            raise ValueError("schema_loader is required")
 
         self._config_manager = config_manager
         self._backend = backend
@@ -84,28 +90,23 @@ class SchemaRegistry:
 
         logger.info(f"SchemaRegistry initialized with {len(self._schemas)} schemas loaded")
 
-    def set_deployment_dependencies(self, backend, schema_loader):
-        """
-        Set deployment dependencies after initialization.
-
-        This allows configuring backend and schema_loader after the singleton
-        has been created, which is useful when these dependencies have circular
-        references or are created later.
-
-        Args:
-            backend: Backend instance for schema deployment
-            schema_loader: SchemaLoader instance for loading schema definitions
-        """
-        self._backend = backend
-        self._schema_loader = schema_loader
-        logger.info("SchemaRegistry deployment dependencies configured")
-
     def _load_schemas_from_storage(self):
         """Load all schemas from ConfigManager into in-memory registry on startup"""
         try:
-            # Load all schemas across all tenants
-            all_schema_data = self._config_manager.get_deployed_schemas(tenant_id=None)
-            for schema_data in all_schema_data:
+            # Load all schemas across all tenants using generic ConfigManager methods
+            from cogniverse_core.config.store_interface import ConfigScope
+
+            all_schema_data = self._config_manager.store.list_all_configs(
+                scope=ConfigScope.SCHEMA,
+                service="schema_registry",
+            )
+
+            for entry in all_schema_data:
+                schema_data = entry.config_value
+                # Skip deleted schemas
+                if schema_data.get("deleted", False):
+                    continue
+
                 tenant_id = schema_data["tenant_id"]
                 base_schema_name = schema_data["base_schema_name"]
                 key = (tenant_id, base_schema_name)
@@ -150,21 +151,37 @@ class SchemaRegistry:
                 config={"profile": "video_colpali_smol500_mv_frame"}
             )
         """
+        from datetime import datetime, timezone
+
+        from cogniverse_core.config.store_interface import ConfigScope
+
         logger.info(
             f"Registering schema '{base_schema_name}' for tenant '{tenant_id}' "
             f"(full name: '{full_schema_name}')"
         )
 
-        self._config_manager.register_deployed_schema(
+        # Store schema metadata using generic ConfigManager storage
+        config_key = f"schema_{base_schema_name}"
+        deployment_time = datetime.now(timezone.utc).isoformat()
+
+        value = {
+            "tenant_id": tenant_id,
+            "base_schema_name": base_schema_name,
+            "full_schema_name": full_schema_name,
+            "schema_definition": schema_definition,
+            "config": config or {},
+            "deployment_time": deployment_time,
+        }
+
+        self._config_manager.store.set_config(
             tenant_id=tenant_id,
-            base_schema_name=base_schema_name,
-            full_schema_name=full_schema_name,
-            schema_definition=schema_definition,
-            config=config,
+            scope=ConfigScope.SCHEMA,
+            service="schema_registry",
+            config_key=config_key,
+            config_value=value,
         )
 
         # Add to in-memory registry
-        from datetime import datetime, timezone
         key = (tenant_id, base_schema_name)
         self._schemas[key] = SchemaInfo(
             tenant_id=tenant_id,
@@ -172,7 +189,7 @@ class SchemaRegistry:
             full_schema_name=full_schema_name,
             schema_definition=schema_definition,
             config=config or {},
-            deployment_time=datetime.now(timezone.utc).isoformat(),
+            deployment_time=deployment_time,
         )
 
     def _validate_tenant_id(self, tenant_id: str) -> None:
@@ -259,10 +276,7 @@ class SchemaRegistry:
         self._validate_tenant_id(tenant_id)
         self._validate_schema_name(base_schema_name)
 
-        if not self._backend:
-            raise ValueError("Backend required for schema deployment. Initialize SchemaRegistry with backend.")
-        if not self._schema_loader:
-            raise ValueError("SchemaLoader required for schema deployment. Initialize SchemaRegistry with schema_loader.")
+        # No need to check backend/schema_loader - guaranteed to exist (checked at construction)
 
         # Generate tenant-specific schema name
         tenant_schema_name = f"{base_schema_name}_{tenant_id}"
@@ -423,10 +437,37 @@ class SchemaRegistry:
             # Unregister from registry
             registry.unregister_schema("test_tenant", "video_colpali_smol500_mv_frame")
         """
+        from datetime import datetime, timezone
+
+        from cogniverse_core.config.store_interface import ConfigScope
+
         logger.info(
             f"Unregistering schema '{base_schema_name}' for tenant '{tenant_id}'"
         )
-        self._config_manager.unregister_schema(tenant_id, base_schema_name)
+
+        # Mark schema as deleted in persistent storage (preserves audit trail)
+        config_key = f"schema_{base_schema_name}"
+
+        # Get existing entry to mark as deleted
+        entry = self._config_manager.store.get_config(
+            tenant_id=tenant_id,
+            scope=ConfigScope.SCHEMA,
+            service="schema_registry",
+            config_key=config_key,
+        )
+
+        if entry:
+            schema_info = entry.config_value
+            schema_info["deleted"] = True
+            schema_info["deleted_at"] = datetime.now(timezone.utc).isoformat()
+
+            self._config_manager.store.set_config(
+                tenant_id=tenant_id,
+                scope=ConfigScope.SCHEMA,
+                service="schema_registry",
+                config_key=config_key,
+                config_value=schema_info,
+            )
 
         # Remove from in-memory registry
         key = (tenant_id, base_schema_name)

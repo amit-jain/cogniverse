@@ -19,6 +19,46 @@ from cogniverse_agents.search.multi_modal_reranker import (
 
 
 @pytest.fixture
+def mock_config_manager():
+    """Create mock config_manager for dependency injection"""
+    from unittest.mock import Mock
+
+    from cogniverse_core.config.unified_config import (
+        BackendConfig,
+        RoutingConfigUnified,
+        SystemConfig,
+        TelemetryConfigUnified,
+    )
+
+    mock_cm = Mock()
+
+    # Mock get_backend_config to return proper BackendConfig
+    mock_backend_config = BackendConfig(
+        tenant_id="default",
+        backend_type="vespa",
+        url="http://localhost",
+        port=8080,
+        profiles={},  # Empty profiles dict is sufficient for reranker tests
+        metadata={}
+    )
+    mock_cm.get_backend_config.return_value = mock_backend_config
+
+    # Mock get_system_config
+    mock_system_config = SystemConfig(tenant_id="default")
+    mock_cm.get_system_config.return_value = mock_system_config
+
+    # Mock get_routing_config
+    mock_routing_config = RoutingConfigUnified(tenant_id="default")
+    mock_cm.get_routing_config.return_value = mock_routing_config
+
+    # Mock get_telemetry_config
+    mock_telemetry_config = TelemetryConfigUnified(tenant_id="default")
+    mock_cm.get_telemetry_config.return_value = mock_telemetry_config
+
+    return mock_cm
+
+
+@pytest.fixture
 def sample_results():
     """Create sample search results for testing"""
     return [
@@ -54,7 +94,7 @@ class TestLearnedRerankingIntegration:
     """Integration tests with real LiteLLM (if available)"""
 
     @pytest.mark.asyncio
-    async def test_learned_reranker_with_mock_litellm(self, sample_results):
+    async def test_learned_reranker_with_mock_litellm(self, sample_results, mock_config_manager):
         """Test learned reranker with mocked LiteLLM (no API key needed)"""
         from unittest.mock import Mock, patch
 
@@ -69,7 +109,7 @@ class TestLearnedRerankingIntegration:
             mock_response.results = mock_items
             mock_arerank.return_value = mock_response
 
-            reranker = LearnedReranker(model="ollama/qwen2.5:3b")
+            reranker = LearnedReranker(model="ollama/qwen2.5:3b", config_manager=mock_config_manager)
             query = "deep learning tutorial"
 
             reranked = await reranker.rerank(query, sample_results)
@@ -85,7 +125,7 @@ class TestLearnedRerankingIntegration:
             assert reranked[0].metadata["reranker_model"] == "ollama/qwen2.5:3b"
 
     @pytest.mark.asyncio
-    async def test_learned_reranker_with_local_model(self, sample_results):
+    async def test_learned_reranker_with_local_model(self, sample_results, mock_config_manager):
         """Test learned reranker with local Qwen model"""
         from unittest.mock import Mock, patch
 
@@ -98,7 +138,7 @@ class TestLearnedRerankingIntegration:
             ]
             mock_arerank.return_value = mock_response
 
-            reranker = LearnedReranker(model="ollama/qwen2.5:3b")
+            reranker = LearnedReranker(model="ollama/qwen2.5:3b", config_manager=mock_config_manager)
             query = "machine learning tutorial"
 
             reranked = await reranker.rerank(query, sample_results, top_n=2)
@@ -118,7 +158,7 @@ class TestHybridRerankingIntegration:
     """Integration tests for hybrid reranking"""
 
     @pytest.mark.asyncio
-    async def test_hybrid_weighted_ensemble(self, sample_results):
+    async def test_hybrid_weighted_ensemble(self, sample_results, mock_config_manager):
         """Test hybrid reranking with weighted ensemble"""
         from unittest.mock import Mock, patch
 
@@ -133,13 +173,14 @@ class TestHybridRerankingIntegration:
 
             # Create hybrid reranker
             heuristic = MultiModalReranker()
-            learned = LearnedReranker(model="cohere/rerank-english-v3.0")
+            learned = LearnedReranker(model="cohere/rerank-english-v3.0", config_manager=mock_config_manager)
             hybrid = HybridReranker(
                 heuristic_reranker=heuristic,
                 learned_reranker=learned,
                 strategy="weighted_ensemble",
                 learned_weight=0.7,
                 heuristic_weight=0.3,
+                config_manager=mock_config_manager,
             )
 
             query = "deep learning"
@@ -157,7 +198,7 @@ class TestHybridRerankingIntegration:
             )
 
     @pytest.mark.asyncio
-    async def test_hybrid_cascade(self, sample_results):
+    async def test_hybrid_cascade(self, sample_results, mock_config_manager):
         """Test hybrid reranking with cascade strategy"""
         from unittest.mock import Mock, patch
 
@@ -167,11 +208,12 @@ class TestHybridRerankingIntegration:
             mock_arerank.return_value = mock_response
 
             heuristic = MultiModalReranker()
-            learned = LearnedReranker(model="cohere/rerank-english-v3.0")
+            learned = LearnedReranker(model="cohere/rerank-english-v3.0", config_manager=mock_config_manager)
             hybrid = HybridReranker(
                 heuristic_reranker=heuristic,
                 learned_reranker=learned,
                 strategy="cascade",
+                config_manager=mock_config_manager,
             )
 
             query = "python tutorial"
@@ -184,7 +226,7 @@ class TestHybridRerankingIntegration:
             assert all(r.metadata["fusion_strategy"] == "cascade" for r in reranked)
 
     @pytest.mark.asyncio
-    async def test_hybrid_consensus(self, sample_results):
+    async def test_hybrid_consensus(self, sample_results, mock_config_manager):
         """Test hybrid reranking with consensus strategy"""
         from unittest.mock import Mock, patch
 
@@ -197,11 +239,12 @@ class TestHybridRerankingIntegration:
             mock_arerank.return_value = mock_response
 
             heuristic = MultiModalReranker()
-            learned = LearnedReranker(model="cohere/rerank-english-v3.0")
+            learned = LearnedReranker(model="cohere/rerank-english-v3.0", config_manager=mock_config_manager)
             hybrid = HybridReranker(
                 heuristic_reranker=heuristic,
                 learned_reranker=learned,
                 strategy="consensus",
+                config_manager=mock_config_manager,
             )
 
             query = "data science"
@@ -221,7 +264,7 @@ class TestOllamaReranking:
     """Test Ollama reranking via OpenAI-compatible API"""
 
     @pytest.mark.asyncio
-    async def test_ollama_reranker_with_mock_api(self, sample_results):
+    async def test_ollama_reranker_with_mock_api(self, sample_results, mock_config_manager):
         """Test Ollama reranking using LiteLLM OpenAI compatibility"""
         from unittest.mock import Mock, patch
 
@@ -236,7 +279,7 @@ class TestOllamaReranking:
             mock_arerank.return_value = mock_response
 
             # Initialize with Ollama model using OpenAI compatibility
-            reranker = LearnedReranker(model="openai/bge-reranker-v2-m3")
+            reranker = LearnedReranker(model="openai/bge-reranker-v2-m3", config_manager=mock_config_manager)
             reranker.api_base = "http://localhost:11434/v1"
 
             query = "machine learning tutorial"
@@ -261,7 +304,7 @@ class TestConfigurableMultiModalReranker:
     """Test ConfigurableMultiModalReranker with real components"""
 
     @pytest.mark.asyncio
-    async def test_configurable_reranker_disabled(self, sample_results):
+    async def test_configurable_reranker_disabled(self, sample_results, mock_config_manager):
         """Test configurable reranker when disabled in config"""
         from unittest.mock import patch
 
@@ -269,7 +312,7 @@ class TestConfigurableMultiModalReranker:
         with patch("cogniverse_core.config.utils.get_config_value") as mock_config:
             mock_config.return_value = {"enabled": False}
 
-            reranker = ConfigurableMultiModalReranker()
+            reranker = ConfigurableMultiModalReranker(config_manager=mock_config_manager)
             query = "test query"
             modalities = [QueryModality.TEXT]
 
@@ -282,7 +325,7 @@ class TestConfigurableMultiModalReranker:
             assert info["enabled"] is False
 
     @pytest.mark.asyncio
-    async def test_configurable_reranker_heuristic_only(self, sample_results):
+    async def test_configurable_reranker_heuristic_only(self, sample_results, mock_config_manager):
         """Test configurable reranker with heuristic only"""
         from unittest.mock import patch
 
@@ -294,7 +337,7 @@ class TestConfigurableMultiModalReranker:
                 "use_hybrid": False,
             }
 
-            reranker = ConfigurableMultiModalReranker()
+            reranker = ConfigurableMultiModalReranker(config_manager=mock_config_manager)
             query = "machine learning"
             modalities = [QueryModality.TEXT]
 

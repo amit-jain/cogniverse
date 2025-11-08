@@ -46,29 +46,35 @@ class A2ARoutingAgent:
     Provides standardized A2A communication and response aggregation.
     """
 
-    def __init__(self, tenant_id: str = "default", routing_agent: Optional[RoutingAgent] = None, config_manager: "ConfigManager" = None):
+    def __init__(self, routing_agent: RoutingAgent, tenant_id: str = "default", config_manager: "ConfigManager" = None):
         """
         Initialize A2A routing agent.
 
         Args:
+            routing_agent: Routing agent instance (required)
             tenant_id: Tenant identifier for config scoping
-            routing_agent: Optional routing agent instance (will create if not provided)
             config_manager: ConfigManager instance (required for dependency injection)
 
         Raises:
-            ValueError: If config_manager is not provided
+            ValueError: If routing_agent or config_manager is not provided
         """
+        if routing_agent is None:
+            raise ValueError(
+                "routing_agent is required for A2ARoutingAgent. "
+                "Pass a configured RoutingAgent instance."
+            )
+
         if config_manager is None:
             raise ValueError(
                 "config_manager is required for A2ARoutingAgent. "
-                "Pass ConfigManager() explicitly."
+                "Pass create_default_config_manager() explicitly."
             )
 
 
         self.tenant_id = tenant_id
         self.config_manager = config_manager
         self.config = get_config(tenant_id=tenant_id, config_manager=config_manager)
-        self.routing_agent = routing_agent or RoutingAgent(tenant_id=tenant_id, config_manager=config_manager)
+        self.routing_agent = routing_agent
         self.http_client = httpx.AsyncClient(timeout=30.0)
 
         # Initialize agent registry

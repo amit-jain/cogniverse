@@ -9,7 +9,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-import requests
 from fastapi.testclient import TestClient
 
 from tests.system.vespa_test_manager import VespaTestManager
@@ -67,7 +66,9 @@ class TestProfileAPICRUD:
     @pytest.fixture
     def test_client(self, temp_schema_dir: Path, tmp_path: Path):
         """Create test client for profile API with properly configured test instances."""
-        from cogniverse_core.config.manager import ConfigManager
+        from cogniverse_core.config.utils import (
+            create_default_config_manager,
+        )
 
         # Reset registries
         from cogniverse_core.registries.backend_registry import BackendRegistry
@@ -78,7 +79,7 @@ class TestProfileAPICRUD:
 
         # Create temporary database for ConfigManager
         temp_db = tmp_path / "test_config.db"
-        config_manager = ConfigManager(db_path=temp_db)
+        config_manager = create_default_config_manager(db_path=temp_db)
 
         # Set up system config with non-existent Vespa (so schema checks fail)
         from cogniverse_core.config.unified_config import SystemConfig
@@ -105,10 +106,9 @@ class TestProfileAPICRUD:
             yield client
         finally:
             # Reset globals after test
-            admin._config_manager = None
-            admin._schema_loader = None
-            admin._profile_validator_schema_dir_override = None
+            admin.reset_dependencies()
             BackendRegistry._instance = None
+            SchemaRegistry._instance = None
 
     def test_create_profile_minimal(self, test_client: TestClient):
         """Test creating a profile with minimal required fields."""
@@ -489,14 +489,29 @@ class TestProfileAPISchemaDeployment:
 
     @pytest.fixture(scope="class")
     def vespa_backend(self):
-        """Start Vespa Docker container for schema deployment tests."""
+        """Start Vespa Docker container for schema deployment tests (NO schemas pre-deployed)."""
         manager = VespaTestManager(app_name="test-profile-schema", http_port=8085)
 
         if not manager.setup_application_directory():
             pytest.skip("Failed to setup application directory")
 
-        if not manager.deploy_test_application():
-            pytest.skip("Failed to deploy Vespa test application")
+        # CRITICAL FIX: Start Vespa but DON'T deploy schemas
+        # Let tests deploy schemas through SchemaRegistry to avoid registration issues
+        # Call lower-level method that skips schema deployment
+        from tests.utils.vespa_docker import VespaDockerManager
+        docker_mgr = VespaDockerManager()
+        container_info = docker_mgr.start_container(
+            module_name="profile_api_tests",
+            use_module_ports=False  # Use default port 8081
+        )
+        manager.container_name = container_info["container_name"]
+        manager.http_port = container_info["http_port"]
+        manager.config_port = container_info["config_port"]
+        manager.docker_manager = docker_mgr
+
+        # Wait for Vespa to be ready (but don't deploy schemas yet)
+        docker_mgr.wait_for_config_ready(container_info)
+        manager.is_deployed = True
 
         yield manager
         manager.cleanup()
@@ -507,11 +522,20 @@ class TestProfileAPISchemaDeployment:
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         return FilesystemSchemaLoader(Path("configs/schemas"))
 
+    @pytest.fixture(scope="class")
+    def shared_test_db(self, tmp_path_factory):
+        """Create shared database for all tests in this class."""
+        db_dir = tmp_path_factory.mktemp("test_db")
+        db_path = db_dir / "test_config.db"
+        return db_path
+
     @pytest.fixture
-    def test_client(self, vespa_backend, tmp_path: Path):
+    def test_client(self, vespa_backend, tmp_path: Path, shared_test_db: Path):
         """Create test client with Vespa backend."""
 
-        from cogniverse_core.config.manager import ConfigManager
+        from cogniverse_core.config.utils import (
+            create_default_config_manager,
+        )
         from cogniverse_core.registries.backend_registry import BackendRegistry
         from cogniverse_runtime.routers import admin
 
@@ -581,30 +605,9 @@ class TestProfileAPISchemaDeployment:
         with open(schema_file3, "w") as f:
             json.dump(video_schema3, f)
 
-        # CRITICAL: Clean up schema registry database entries for test tenants FIRST
-        # Directly delete from database to ensure no stale schema registrations
-        import os
-        import sqlite3
-
-        db_path = "data/config/config.db"
-        if os.path.exists(db_path):
-            try:
-                conn = sqlite3.connect(db_path)
-                cursor = conn.cursor()
-                # Delete schema registrations for test tenants
-                cursor.execute(
-                    "DELETE FROM configurations WHERE scope='schema' AND "
-                    "(tenant_id='deploy_tenant' OR tenant_id='e2e_tenant' OR tenant_id='already_deployed_tenant')"
-                )
-                deleted_count = cursor.rowcount
-                conn.commit()
-                conn.close()
-                print(f"[FIXTURE DEBUG] Cleaned up {deleted_count} schema entries from database")
-            except Exception as e:
-                print(f"[FIXTURE DEBUG] Database cleanup failed: {e}")
-
-        # Reset singletons AFTER cleanup
+        # Reset singletons
         BackendRegistry._instance = None
+        BackendRegistry._backend_instances.clear()
 
         # Reset SchemaRegistry singleton AND module-level global
         from cogniverse_core.registries import schema_registry as schema_registry_module
@@ -612,15 +615,13 @@ class TestProfileAPISchemaDeployment:
         SchemaRegistry._instance = None
         schema_registry_module._registry_instance = None
 
-        # Create ConfigManager and set system config
-        temp_db = tmp_path / "test_config.db"
+        # CRITICAL: Import VespaBackend to trigger self-registration
+        import cogniverse_vespa.backend  # noqa: F401
 
-        # CRITICAL: Delete database file if it exists to ensure clean state
-        if os.path.exists(temp_db):
-            os.remove(temp_db)
-            print(f"[FIXTURE DEBUG] Deleted existing database at {temp_db}")
-
-        config_manager = ConfigManager(db_path=temp_db)
+        # CRITICAL FIX: Use shared database for all tests in class
+        # This ensures SchemaRegistry persists schema registrations across tests
+        # preventing Vespa "schema removed" errors
+        config_manager = create_default_config_manager(db_path=shared_test_db)
 
         # Set system config for test tenants using ACTUAL Vespa port
         # (vespa_backend.http_port may have changed from initial value after Docker starts)
@@ -670,9 +671,7 @@ class TestProfileAPISchemaDeployment:
             yield client
         finally:
             # Reset globals after test
-            admin._config_manager = None
-            admin._schema_loader = None
-            admin._profile_validator_schema_dir_override = None
+            admin.reset_dependencies()
             BackendRegistry._instance = None
             BackendRegistry._backend_instances.clear()
             SchemaRegistry._instance = None
@@ -828,10 +827,9 @@ class TestProfileAPISchemaDeployment:
 
         # Step 2: Verify schema exists in Vespa
         from cogniverse_runtime.routers import admin
-        from cogniverse_core.config.manager import ConfigManager
 
-        config_manager = ConfigManager()
-        backend_registry = BackendRegistry(config_manager=config_manager)
+        # Use BackendRegistry singleton (don't instantiate with config_manager)
+        backend_registry = BackendRegistry.get_instance()
         vespa_backend_obj = backend_registry.get_ingestion_backend("vespa", tenant_id=tenant_id, config_manager=admin._config_manager, schema_loader=schema_loader)
         assert vespa_backend_obj is not None
 
@@ -846,8 +844,27 @@ class TestProfileAPISchemaDeployment:
         # Wait for Vespa document feed API to be ready
         # ISSUE DISCOVERED: Schema deployment returns success, but document feed API
         # needs additional time to become ready (separate from search API)
-        # Needs more time when running as part of full test suite
-        wait_for_vespa_indexing(delay=15, description="Document feed API readiness after schema deployment")
+        # Needs more time when running as part of full test suite or after multiple schema deployments
+
+        # First wait for application endpoint to become ready (crucial after 5th schema deployment)
+        try:
+            import requests
+            for i in range(30):
+                try:
+                    resp = requests.get(f"http://localhost:{vespa_backend.http_port}/ApplicationStatus", timeout=2)
+                    if resp.status_code == 200:
+                        print(f"Application endpoint ready after {i+1} seconds")
+                        break
+                except Exception:
+                    pass
+                wait_for_vespa_indexing(delay=1)
+            else:
+                print("WARNING: Application endpoint not ready after 30 seconds")
+        except Exception as e:
+            print(f"WARNING: Could not verify application status: {e}")
+
+        # Additional wait for document feed API
+        wait_for_vespa_indexing(delay=5, description="Document feed API readiness after application ready")
 
         # Step 3: Ingest a test document using production ingestion path
         # VespaPyClient requires schema file in configs/schemas/ (hardcoded path issue)

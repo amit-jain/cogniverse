@@ -34,9 +34,10 @@ from cogniverse_core.registries.backend_registry import (
 class MockIngestionBackend(IngestionBackend):
     """Mock ingestion backend for testing."""
 
-    def __init__(self, config_manager=None, schema_loader=None):
+    def __init__(self, config_manager=None, schema_loader=None, backend_config=None):
         self.config_manager = config_manager
         self.schema_loader = schema_loader
+        self.backend_config = backend_config
 
     def initialize(self, config: Dict[str, Any]) -> None:
         self.config = config
@@ -71,9 +72,10 @@ class MockIngestionBackend(IngestionBackend):
 class MockSearchBackend(SearchBackend):
     """Mock search backend for testing."""
 
-    def __init__(self, config_manager=None, schema_loader=None):
+    def __init__(self, config_manager=None, schema_loader=None, backend_config=None):
         self.config_manager = config_manager
         self.schema_loader = schema_loader
+        self.backend_config = backend_config
 
     def initialize(self, config: Dict[str, Any]) -> None:
         self.config = config
@@ -120,10 +122,11 @@ class MockSearchBackend(SearchBackend):
 class MockFullBackend(Backend):
     """Mock full backend for testing."""
 
-    def __init__(self, config_manager=None, schema_loader=None):
+    def __init__(self, config_manager=None, schema_loader=None, backend_config=None):
         super().__init__("mock_full")
         self.config_manager = config_manager
         self.schema_loader = schema_loader
+        self.backend_config = backend_config
         self.documents = {}
     
     def _initialize_backend(self, config: Dict[str, Any]) -> None:
@@ -203,6 +206,10 @@ class MockFullBackend(Backend):
         """Deploy or ensure schema exists for tenant."""
         return True
 
+    def deploy_schemas(self, schema_names: List[str], tenant_id: str, force: bool = False) -> Dict[str, bool]:
+        """Deploy multiple schemas for a tenant."""
+        return {schema_name: True for schema_name in schema_names}
+
     def delete_schema(self, schema_name: str, tenant_id: Optional[str] = None) -> List[str]:
         """Delete tenant schema(s)."""
         return [f"{schema_name}_{tenant_id}" if tenant_id else schema_name]
@@ -243,11 +250,17 @@ class TestBackendRegistry(unittest.TestCase):
         self.registry = BackendRegistry()
         # Create config_manager for tests
         import tempfile
+        from unittest.mock import MagicMock
 
+        from cogniverse_core.common.vespa_config_store import VespaConfigStore
         from cogniverse_core.config.manager import ConfigManager
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         self.temp_dir = tempfile.mkdtemp()
-        self.config_manager = ConfigManager(db_path=Path(self.temp_dir) / "test_config.db")
+        # Create a mock config store for testing
+        mock_store = MagicMock(spec=VespaConfigStore)
+        mock_store.get_config.return_value = None
+        mock_store.set_config.return_value = {"version": 1}
+        self.config_manager = ConfigManager(store=mock_store)
         # Test fixture pattern: Create schema_loader in setUp for use across test methods
         self.schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
         # Save current registry state to restore in tearDown
@@ -453,11 +466,17 @@ class TestBackendIntegration(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         import tempfile
+        from unittest.mock import MagicMock
 
+        from cogniverse_core.common.vespa_config_store import VespaConfigStore
         from cogniverse_core.config.manager import ConfigManager
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         self.temp_dir = tempfile.mkdtemp()
-        self.config_manager = ConfigManager(db_path=Path(self.temp_dir) / "test_config.db")
+        # Create a mock config store for testing
+        mock_store = MagicMock(spec=VespaConfigStore)
+        mock_store.get_config.return_value = None
+        mock_store.set_config.return_value = {"version": 1}
+        self.config_manager = ConfigManager(store=mock_store)
         # Test fixture pattern: Create schema_loader in setUp for use across test methods
         self.schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 

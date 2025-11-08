@@ -337,3 +337,63 @@ def get_config_value(key: str, default: Any = None, tenant_id: str = "default", 
         )
     config = ConfigUtils(tenant_id, config_manager)
     return config.get(key, default)
+
+
+def create_default_config_manager(db_path: Optional[Path] = None, cache_size: int = 100) -> ConfigManager:
+    """
+    Factory function to create ConfigManager with default SQLite store.
+
+    This is a convenience function for creating ConfigManager without needing
+    to explicitly create a ConfigStore. For tests or custom stores, create
+    ConfigManager directly with your store instance.
+
+    Args:
+        db_path: Path to SQLite database (optional, uses default if None)
+        cache_size: LRU cache size (number of configs per tenant)
+
+    Returns:
+        ConfigManager instance with SQLite store
+
+    Example:
+        # Production: Use default database location
+        config_manager = create_default_config_manager()
+
+        # Test: Use temporary database
+        config_manager = create_default_config_manager(db_path=Path("/tmp/test.db"))
+
+        # Custom store: Create ConfigManager directly
+        mock_store = MockConfigStore()
+        config_manager = ConfigManager(store=mock_store)
+    """
+    from cogniverse_core.config.store import SQLiteConfigStore
+
+    store = SQLiteConfigStore(db_path=db_path)
+    return ConfigManager(store=store, cache_size=cache_size)
+
+
+# Singleton instance for convenience (optional, can use factory directly)
+_config_manager_singleton: Optional[ConfigManager] = None
+
+
+def get_config_manager_singleton(db_path: Optional[Path] = None) -> ConfigManager:
+    """
+    Get or create singleton ConfigManager instance.
+
+    This is a convenience function for applications that want a global
+    ConfigManager instance. For better testability, use create_default_config_manager()
+    or explicit dependency injection instead.
+
+    Args:
+        db_path: Path to SQLite database (only used on first call)
+
+    Returns:
+        Singleton ConfigManager instance
+
+    Warning:
+        Using a singleton can make testing harder. Prefer explicit dependency
+        injection where possible.
+    """
+    global _config_manager_singleton
+    if _config_manager_singleton is None:
+        _config_manager_singleton = create_default_config_manager(db_path=db_path)
+    return _config_manager_singleton

@@ -15,6 +15,7 @@ from cogniverse_core.config.agent_config import (
     OptimizerConfig,
     OptimizerType,
 )
+from cogniverse_core.config.utils import create_default_config_manager
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -87,9 +88,8 @@ class TestConfigAPIMixin:
     @pytest.fixture
     def config_manager(self, tmp_path):
         """Create ConfigManager for testing"""
-        from cogniverse_core.config.manager import ConfigManager
         db_path = tmp_path / "test_config.db"
-        return ConfigManager(db_path=db_path)
+        return create_default_config_manager(db_path=db_path)
 
     @pytest.fixture
     def client(self, agent_config, app, config_manager):

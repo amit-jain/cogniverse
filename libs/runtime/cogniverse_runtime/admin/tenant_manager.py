@@ -85,8 +85,8 @@ def get_backend() -> Backend:
     global backend
     if backend is None:
         # Use injected ConfigManager (from tests) or create new one
-        from cogniverse_core.config.manager import ConfigManager
-        config_manager = _config_manager if _config_manager is not None else ConfigManager()
+        from cogniverse_core.config.utils import create_default_config_manager
+        config_manager = _config_manager if _config_manager is not None else create_default_config_manager()
 
         config = get_config(tenant_id="system", config_manager=config_manager)
         backend_type = config.get("backend_type", "vespa")
@@ -715,8 +715,8 @@ async def health_check():
 
 
 if __name__ == "__main__":
-    from cogniverse_core.config.manager import ConfigManager
-    config_manager = ConfigManager()
+    from cogniverse_core.config.utils import create_default_config_manager
+    config_manager = create_default_config_manager()
     config = get_config(tenant_id="default", config_manager=config_manager)
     port = config.get("tenant_manager_port", 9000)
 

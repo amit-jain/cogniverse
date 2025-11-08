@@ -37,55 +37,47 @@ class TestCompleteMultiAgentOrchestration:
     @pytest.mark.ci_fast
     def test_routing_to_video_search_workflow(self):
         """Test routing decision leading to video search workflow"""
-        from unittest.mock import patch
 
-        with patch("cogniverse_core.config.utils.get_config") as mock_config:
-            mock_config.return_value = {
-                "video_agent_url": "http://localhost:8002",
-                "summarizer_agent_url": "http://localhost:8003",
-                "detailed_report_agent_url": "http://localhost:8004",
-            }
+        # Initialize routing agent
+        telemetry_config = TelemetryConfig(
+            otlp_endpoint="http://localhost:24317",
+            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
 
-            # Initialize routing agent
-            telemetry_config = TelemetryConfig(
-                otlp_endpoint="http://localhost:24317",
-                provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
-                batch_config=BatchExportConfig(use_sync_export=True),
-            )
-            routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        # Test video search query
+        video_query = "Find videos of robots playing soccer"
 
-            # Test video search query
-            video_query = "Find videos of robots playing soccer"
+        try:
+            # Step 1: Route the query
+            routing_result = asyncio.run(routing_agent.route_query(video_query))
 
+            # Should return routing decision
+            assert routing_result is not None
+
+            # Step 2: Skip video search agent to avoid Vespa connection hang
             try:
-                # Step 1: Route the query
-                routing_result = asyncio.run(routing_agent.route_query(video_query))
-
-                # Should return routing decision
-                assert routing_result is not None
-
-                # Step 2: Skip video search agent to avoid Vespa connection hang
-                try:
-                    # Skip actual video agent initialization to avoid Vespa timeout
-                    print(
-                        "✅ Complete routing workflow functional (video search skipped)"
-                    )
-
-                except Exception as video_error:
-                    # Expected if Vespa not available
-                    print(f"Video search handled gracefully: {video_error}")
-                    assert (
-                        "vespa" in str(video_error).lower()
-                        or "connection" in str(video_error).lower()
-                    )
-
-            except Exception as routing_error:
-                # Should handle external dependencies gracefully
-                print(f"Routing handled gracefully: {routing_error}")
-                assert (
-                    "connection" in str(routing_error).lower()
-                    or "config" in str(routing_error).lower()
+                # Skip actual video agent initialization to avoid Vespa timeout
+                print(
+                    "✅ Complete routing workflow functional (video search skipped)"
                 )
+
+            except Exception as video_error:
+                # Expected if Vespa not available
+                print(f"Video search handled gracefully: {video_error}")
+                assert (
+                    "vespa" in str(video_error).lower()
+                    or "connection" in str(video_error).lower()
+                )
+
+        except Exception as routing_error:
+            # Should handle external dependencies gracefully
+            print(f"Routing handled gracefully: {routing_error}")
+            assert (
+                "connection" in str(routing_error).lower()
+                or "config" in str(routing_error).lower()
+            )
 
     def test_summarization_workflow(self):
         """Test summarization agent workflow with structured data"""
@@ -167,63 +159,48 @@ class TestCompleteMultiAgentOrchestration:
         from unittest.mock import patch
 
         from cogniverse_agents.routing_agent import RoutingConfig
+        from cogniverse_core.config.utils import create_default_config_manager
 
+        # Use default config manager
+        config_manager = create_default_config_manager()
+
+        # Initialize all core agents with mocked routing agent
         with (
             patch(
-                "cogniverse_agents.summarizer_agent.get_config"
-            ) as mock_summarizer_config,
+                "cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"
+            ),
             patch(
-                "cogniverse_agents.detailed_report_agent.get_config"
-            ) as mock_reporter_config,
+                "cogniverse_agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
+            ),
+            patch(
+                "cogniverse_agents.routing_agent.RoutingAgent._initialize_routing_module"
+            ),
+            patch(
+                "cogniverse_agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
+            ),
+            patch(
+                "cogniverse_agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
+            ),
+            patch(
+                "cogniverse_agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
+                return_value=None,
+            ),
         ):
+            routing_config = RoutingConfig(
+                enable_mlflow_tracking=False,
+                enable_relationship_extraction=False,
+                enable_query_enhancement=False,
+            )
+            # Create a mock routing agent manually
+            routing_agent = object.__new__(RoutingAgent)
+            routing_agent.config = routing_config
+            routing_agent.routing_module = None
+            routing_agent._routing_stats = {}
+            routing_agent.enable_telemetry = False
+            routing_agent.logger = logging.getLogger(__name__)
 
-            config = {
-                "llm": {
-                    "model_name": "smollm3:3b",
-                    "base_url": "http://localhost:11434/v1",
-                    "api_key": "dummy",
-                }
-            }
-            mock_summarizer_config.return_value = config
-            mock_reporter_config.return_value = config
-
-            # Initialize all core agents with mocked routing agent
-            with (
-                patch(
-                    "cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"
-                ),
-                patch(
-                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
-                ),
-                patch(
-                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_routing_module"
-                ),
-                patch(
-                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
-                ),
-                patch(
-                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
-                ),
-                patch(
-                    "cogniverse_agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
-                    return_value=None,
-                ),
-            ):
-                routing_config = RoutingConfig(
-                    enable_mlflow_tracking=False,
-                    enable_relationship_extraction=False,
-                    enable_query_enhancement=False,
-                )
-                # Create a mock routing agent manually
-                routing_agent = object.__new__(RoutingAgent)
-                routing_agent.config = routing_config
-                routing_agent.routing_module = None
-                routing_agent._routing_stats = {}
-                routing_agent.enable_telemetry = False
-                routing_agent.logger = logging.getLogger(__name__)
-
-            summarizer = SummarizerAgent(tenant_id="test_tenant")
-            reporter = DetailedReportAgent(tenant_id="test_tenant")
+        summarizer = SummarizerAgent(tenant_id="test_tenant", config_manager=config_manager)
+        reporter = DetailedReportAgent(tenant_id="test_tenant", config_manager=config_manager)
 
         # Verify agents have expected coordination interfaces
         agents = {
@@ -317,48 +294,33 @@ class TestCompleteMultiAgentOrchestration:
         from unittest.mock import patch
 
         from cogniverse_agents.routing_agent import RoutingConfig
+        from cogniverse_core.config.utils import create_default_config_manager
 
         agents = []
 
         try:
+            # Use default config manager
+            config_manager = create_default_config_manager()
+
+            # Create multiple agents simultaneously with mocked routing agent
             with (
                 patch(
-                    "cogniverse_agents.summarizer_agent.get_config"
-                ) as mock_summarizer_config,
+                    "cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"
+                ),
                 patch(
-                    "cogniverse_agents.detailed_report_agent.get_config"
-                ) as mock_reporter_config,
-            ):
-
-                config = {
-                    "llm": {
-                        "model_name": "smollm3:3b",
-                        "base_url": "http://localhost:11434/v1",
-                        "api_key": "dummy",
-                    }
-                }
-                mock_summarizer_config.return_value = config
-                mock_reporter_config.return_value = config
-
-                # Create multiple agents simultaneously with mocked routing agent
-                with (
-                    patch(
-                        "cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"
-                    ),
-                    patch(
-                        "cogniverse_agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
-                    ),
-                    patch(
-                        "cogniverse_agents.routing_agent.RoutingAgent._initialize_routing_module"
-                    ),
-                    patch(
-                        "cogniverse_agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
-                    ),
-                    patch(
-                        "cogniverse_agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
-                    ),
-                    patch(
-                        "cogniverse_agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
+                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
+                ),
+                patch(
+                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_routing_module"
+                ),
+                patch(
+                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
+                ),
+                patch(
+                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
+                ),
+                patch(
+                    "cogniverse_agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
                         return_value=None,
                     ),
                 ):
@@ -375,8 +337,8 @@ class TestCompleteMultiAgentOrchestration:
                     routing_agent.enable_telemetry = False
                     routing_agent.logger = logging.getLogger(__name__)
                     agents.append(routing_agent)
-                agents.append(SummarizerAgent(tenant_id="test_tenant"))
-                agents.append(DetailedReportAgent(tenant_id="test_tenant"))
+                    agents.append(SummarizerAgent(tenant_id="test_tenant", config_manager=config_manager))
+                    agents.append(DetailedReportAgent(tenant_id="test_tenant", config_manager=config_manager))
 
             # Try to create video agent (may fail due to Vespa) - skip to avoid hanging
             try:
@@ -419,110 +381,90 @@ class TestSystemScalability:
 
         from cogniverse_agents.routing_agent import RoutingConfig
 
-        with patch("cogniverse_core.config.utils.get_config") as mock_config:
-            mock_config.return_value = {
-                "video_agent_url": "http://localhost:8002",
-                "summarizer_agent_url": "http://localhost:8003",
-                "detailed_report_agent_url": "http://localhost:8004",
-            }
+        with (
+            patch(
+                "cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"
+            ),
+            patch(
+                "cogniverse_agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
+            ),
+            patch(
+                "cogniverse_agents.routing_agent.RoutingAgent._initialize_routing_module"
+            ),
+            patch(
+                "cogniverse_agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
+            ),
+            patch(
+                "cogniverse_agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
+            ),
+            patch(
+                "cogniverse_agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
+                return_value=None,
+            ),
+        ):
+            routing_config = RoutingConfig(
+                enable_mlflow_tracking=False,
+                enable_relationship_extraction=False,
+                enable_query_enhancement=False,
+            )
+            # Create a mock routing agent manually
+            routing_agent = object.__new__(RoutingAgent)
+            routing_agent.config = routing_config
+            routing_agent.routing_module = None
+            routing_agent._routing_stats = {}
+            routing_agent.enable_telemetry = False
+            routing_agent.logger = logging.getLogger(__name__)
 
-            with (
-                patch(
-                    "cogniverse_agents.routing_agent.RoutingAgent._configure_dspy"
-                ),
-                patch(
-                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_enhancement_pipeline"
-                ),
-                patch(
-                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_routing_module"
-                ),
-                patch(
-                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_advanced_optimizer"
-                ),
-                patch(
-                    "cogniverse_agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
-                ),
-                patch(
-                    "cogniverse_agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
-                    return_value=None,
-                ),
-            ):
-                routing_config = RoutingConfig(
-                    enable_mlflow_tracking=False,
-                    enable_relationship_extraction=False,
-                    enable_query_enhancement=False,
-                )
-                # Create a mock routing agent manually
-                routing_agent = object.__new__(RoutingAgent)
-                routing_agent.config = routing_config
-                routing_agent.routing_module = None
-                routing_agent._routing_stats = {}
-                routing_agent.enable_telemetry = False
-                routing_agent.logger = logging.getLogger(__name__)
+        queries = [
+            "Find videos of autonomous robots",
+            "Summarize robotics research papers",
+            "Generate report on AI trends",
+            "Search for machine learning videos",
+            "Analyze computer vision papers",
+        ]
 
-            queries = [
-                "Find videos of autonomous robots",
-                "Summarize robotics research papers",
-                "Generate report on AI trends",
-                "Search for machine learning videos",
-                "Analyze computer vision papers",
-            ]
-
-            async def process_concurrent_queries():
-                tasks = [routing_agent.route_query(query) for query in queries]
-                try:
-                    results = await asyncio.gather(*tasks, return_exceptions=True)
-                    return results
-                except Exception as e:
-                    return [e] * len(queries)
-
+        async def process_concurrent_queries():
+            tasks = [routing_agent.route_query(query) for query in queries]
             try:
-                results = asyncio.run(process_concurrent_queries())
-
-                # Should handle concurrent requests
-                assert len(results) == len(queries)
-                print(f"✅ Concurrent routing validated with {len(queries)} requests")
-
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                return results
             except Exception as e:
-                print(f"Concurrent processing handled gracefully: {e}")
-                assert True
+                return [e] * len(queries)
+
+        try:
+            results = asyncio.run(process_concurrent_queries())
+
+            # Should handle concurrent requests
+            assert len(results) == len(queries)
+            print(f"✅ Concurrent routing validated with {len(queries)} requests")
+
+        except Exception as e:
+            print(f"Concurrent processing handled gracefully: {e}")
+            assert True
 
     def test_memory_usage_stability(self):
         """Test that repeated operations don't cause memory issues"""
-        from unittest.mock import patch
+        from cogniverse_core.config.utils import create_default_config_manager
 
-        with patch(
-            "cogniverse_agents.summarizer_agent.get_config"
-        ) as mock_summarizer_config:
-            with patch(
-                "cogniverse_agents.detailed_report_agent.get_config"
-            ) as mock_reporter_config:
-                config = {
-                    "llm": {
-                        "model_name": "smollm3:3b",
-                        "base_url": "http://localhost:11434/v1",
-                        "api_key": "dummy",
-                    }
-                }
-                mock_summarizer_config.return_value = config
-                mock_reporter_config.return_value = config
+        # Use default config manager
+        config_manager = create_default_config_manager()
 
-                summarizer = SummarizerAgent(tenant_id="test_tenant")
-                reporter = DetailedReportAgent(tenant_id="test_tenant")
+        summarizer = SummarizerAgent(tenant_id="test_tenant", config_manager=config_manager)
+        reporter = DetailedReportAgent(tenant_id="test_tenant", config_manager=config_manager)
 
-                # Simulate repeated operations
-                for i in range(10):
-                    try:
-                        # Create and process sample data
+        # Simulate repeated operations
+        for i in range(10):
+            try:
+                # Create and process sample data
 
-                        # Both agents should handle repeated requests
-                        assert summarizer is not None
-                        assert reporter is not None
+                # Both agents should handle repeated requests
+                assert summarizer is not None
+                assert reporter is not None
 
-                    except Exception as e:
-                        print(
-                            f"Memory stability test iteration {i} handled gracefully: {e}"
-                        )
+            except Exception as e:
+                print(
+                    f"Memory stability test iteration {i} handled gracefully: {e}"
+                )
 
         print("✅ Memory usage stability validated")
 

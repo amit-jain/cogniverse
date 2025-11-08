@@ -19,7 +19,7 @@ from cogniverse_core.config.agent_config import (
     ModuleConfig,
 )
 from cogniverse_core.config.manager import ConfigManager
-from cogniverse_core.config.utils import get_config
+from cogniverse_core.config.utils import create_default_config_manager, get_config
 from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
@@ -240,8 +240,7 @@ async def analyze_text_endpoint(
 
 
 if __name__ == "__main__":
-    from cogniverse_core.config.manager import ConfigManager
-    config = get_config(tenant_id="default", config_manager=ConfigManager())
+    config = get_config(tenant_id="default", config_manager=create_default_config_manager())
     port = config.get("text_analysis_port", 8005)
 
     logger.info(f"Starting Text Analysis Agent on port {port}")

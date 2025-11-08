@@ -11,9 +11,8 @@ Tests:
 import json
 
 import pytest
-from cogniverse_core.config.manager import ConfigManager
 from cogniverse_core.config.unified_config import BackendConfig, BackendProfileConfig
-from cogniverse_core.config.utils import ConfigUtils
+from cogniverse_core.config.utils import ConfigUtils, create_default_config_manager
 
 
 class TestBackendConfigDataclasses:
@@ -184,7 +183,7 @@ class TestConfigManagerBackendMethods:
     def config_manager(self, tmp_path):
         """Create ConfigManager with temp database"""
         db_path = tmp_path / "test_config.db"
-        return ConfigManager(db_path=db_path)
+        return create_default_config_manager(db_path=db_path)
 
     def test_get_backend_config_default_empty(self, config_manager):
         """Test getting backend config returns empty config if not set"""
@@ -326,8 +325,7 @@ class TestConfigUtilsBackendConfig:
         # Change to temp directory so configs/config.json can be found
         monkeypatch.chdir(tmp_path)
 
-        from cogniverse_core.config.manager import ConfigManager
-        config_manager = ConfigManager()
+        config_manager = create_default_config_manager()
         config_utils = ConfigUtils(tenant_id="default", config_manager=config_manager)
         backend = config_utils.get("backend")
 
@@ -341,7 +339,7 @@ class TestConfigUtilsBackendConfig:
 
         # Create ConfigManager with tenant-specific profile
         db_path = tmp_path / "test_config.db"
-        config_manager = ConfigManager(db_path=db_path)
+        config_manager = create_default_config_manager(db_path=db_path)
 
         tenant_profile = BackendProfileConfig(
             profile_name="tenant_profile",
@@ -363,7 +361,7 @@ class TestConfigUtilsBackendConfig:
         monkeypatch.chdir(tmp_path)
 
         db_path = tmp_path / "test_config.db"
-        config_manager = ConfigManager(db_path=db_path)
+        config_manager = create_default_config_manager(db_path=db_path)
 
         # Tenant wants to override system_profile
         overridden_profile = BackendProfileConfig(

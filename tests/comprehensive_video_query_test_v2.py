@@ -43,7 +43,7 @@ from tabulate import tabulate
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
 from cogniverse_agents.search.service import SearchService
-from cogniverse_core.config.utils import get_config
+from cogniverse_core.config.utils import create_default_config_manager, get_config
 
 # Enhanced ground truth queries combining frame descriptions, transcripts, and human annotations
 GROUND_TRUTH_QA_QUERIES = [
@@ -477,9 +477,8 @@ def test_profile_with_queries(profile: str, queries: List[Dict], test_multiple_s
     # Get config and create search service
     from pathlib import Path
 
-    from cogniverse_core.config.manager import ConfigManager
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-    config_manager = ConfigManager()
+    config_manager = create_default_config_manager()
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
     config = get_config(tenant_id="default", config_manager=config_manager)
 

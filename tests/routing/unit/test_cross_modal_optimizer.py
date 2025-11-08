@@ -34,9 +34,17 @@ class TestCrossModalOptimizer:
             yield model
 
     @pytest.fixture
-    def optimizer(self, temp_model_dir, mock_fusion_model):
+    def mock_span_collector(self):
+        """Create mocked ModalitySpanCollector"""
+        with patch("cogniverse_agents.routing.cross_modal_optimizer.ModalitySpanCollector") as mock:
+            collector = MagicMock()
+            mock.return_value = collector
+            yield collector
+
+    @pytest.fixture
+    def optimizer(self, temp_model_dir, mock_fusion_model, mock_span_collector):
         """Create optimizer instance"""
-        return CrossModalOptimizer(model_dir=temp_model_dir)
+        return CrossModalOptimizer(tenant_id="test-tenant", model_dir=temp_model_dir)
 
     def test_initialization(self, optimizer, temp_model_dir):
         """Test optimizer initialization"""

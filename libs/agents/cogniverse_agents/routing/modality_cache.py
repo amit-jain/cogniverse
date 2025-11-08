@@ -116,7 +116,7 @@ class ModalityCacheManager:
         ttl_seconds: int = 3600,
     ) -> Optional[Any]:
         """
-        Get cached result with direct O(1) lookup
+        Get cached result with direct O(1) lookup (searches all modalities)
 
         Args:
             query: Query string
@@ -125,23 +125,25 @@ class ModalityCacheManager:
         Returns:
             Cached result if found and fresh, None otherwise
         """
-        cache_key = self._generate_cache_key(query)
+        # Try all modalities to find a cached result
+        for modality in QueryModality:
+            cache_key = self._generate_cache_key(query, modality)
 
-        if cache_key in self.cache:
-            cached_entry = self.cache.get(cache_key)
+            if cache_key in self.cache:
+                cached_entry = self.cache.get(cache_key)
 
-            # Check TTL
-            if time.time() - cached_entry["timestamp"] < ttl_seconds:
-                modality = cached_entry["modality"]
-                self.cache_stats[modality]["hits"] += 1
-                logger.debug(f"✅ Cache HIT: {modality.value} - {query[:50]}...")
-                return cached_entry["result"]
-            else:
-                # Expired
-                logger.debug(f"⏰ Cache EXPIRED: {query[:50]}...")
+                # Check TTL
+                if time.time() - cached_entry["timestamp"] < ttl_seconds:
+                    actual_modality = cached_entry["modality"]
+                    self.cache_stats[actual_modality]["hits"] += 1
+                    logger.debug(f"✅ Cache HIT: {actual_modality.value} - {query[:50]}...")
+                    return cached_entry["result"]
+                else:
+                    # Expired
+                    logger.debug(f"⏰ Cache EXPIRED: {query[:50]}...")
 
-        # Not found or expired
-        logger.debug(f"❌ Cache MISS: {query[:50]}...")
+        # Not found or expired in any modality
+        logger.debug(f"❌ Cache MISS (all modalities): {query[:50]}...")
         return None
 
     def get_cached_result(
@@ -151,20 +153,17 @@ class ModalityCacheManager:
         ttl_seconds: int = 3600,
     ) -> Optional[Any]:
         """
-        Get cached result if available and fresh
-
-        Note: This method is for compatibility with code that knows the modality.
-        Most code should use get_cached_result_any_modality() instead.
+        Get cached result if available and fresh for specific modality
 
         Args:
             query: Query string
-            modality: Expected query modality (for stats tracking)
+            modality: Query modality (part of cache key)
             ttl_seconds: Time-to-live in seconds
 
         Returns:
             Cached result if available and fresh, None otherwise
         """
-        cache_key = self._generate_cache_key(query)
+        cache_key = self._generate_cache_key(query, modality)
 
         if cache_key in self.cache:
             cached_entry = self.cache.get(cache_key)
@@ -198,10 +197,10 @@ class ModalityCacheManager:
 
         Args:
             query: Query string
-            modality: Query modality
+            modality: Query modality (part of cache key)
             result: Result to cache
         """
-        cache_key = self._generate_cache_key(query)
+        cache_key = self._generate_cache_key(query, modality)
 
         # Check if we're about to evict
         if len(self.cache) >= self.cache.maxsize:
@@ -219,21 +218,19 @@ class ModalityCacheManager:
 
         logger.debug(f"💾 Cached: {modality.value} - {query[:50]}...")
 
-    def _generate_cache_key(self, query: str) -> str:
+    def _generate_cache_key(self, query: str, modality: QueryModality) -> str:
         """
-        Generate cache key from query only
+        Generate cache key from query and modality
 
         Args:
             query: Query string
+            modality: Query modality
 
         Returns:
             Cache key (hash)
-
-        Note: Modality is determined by which bucket the result is stored in,
-        not part of the cache key. This allows searching across all buckets.
         """
-        # Create deterministic key from query only
-        key_string = query.lower().strip()
+        # Create deterministic key from query + modality
+        key_string = f"{modality.value}:{query.lower().strip()}"
         return hashlib.sha256(key_string.encode()).hexdigest()
 
     def get_cache_stats(

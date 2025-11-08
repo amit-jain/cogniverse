@@ -18,7 +18,7 @@ import torch
 sys.path.append(str(Path(__file__).parent.parent))
 
 from cogniverse_agents.search.service import SearchService
-from cogniverse_core.config.utils import get_config
+from cogniverse_core.config.utils import create_default_config_manager, get_config
 from colpali_engine.models import ColIdefics3, ColIdefics3Processor
 
 from tests.test_utils import TestResultsFormatter
@@ -61,7 +61,6 @@ def load_test_queries(num_queries=5, seed=42):
 
 def test_colpali_search(output_format="table", save_results=False, num_queries=5):
     """Test ColPali search using the new SearchService"""
-    from cogniverse_core.config.manager import ConfigManager
 
     # Initialize results formatter
     formatter = TestResultsFormatter("colpali_search_service")
@@ -71,7 +70,7 @@ def test_colpali_search(output_format="table", save_results=False, num_queries=5
     from pathlib import Path
 
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-    config_manager = ConfigManager()
+    config_manager = create_default_config_manager()
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
     config = get_config(tenant_id="test_tenant", config_manager=config_manager)
     profile = "frame_based_colpali"
@@ -201,8 +200,7 @@ def test_float_float_search(output_format="table", save_results=False, monkeypat
     formatter = TestResultsFormatter("colpali_float_float")
 
     # Load config
-    from cogniverse_core.config.manager import ConfigManager
-    config_manager = ConfigManager()
+    config_manager = create_default_config_manager()
     config = get_config(tenant_id="test_tenant", config_manager=config_manager)
     model_name = config.get("colpali_model", "vidore/colsmol-500m")
     vespa_url = config.get("vespa_url", "http://localhost")
@@ -319,8 +317,7 @@ def test_hybrid_float_bm25(output_format="table", save_results=False, monkeypatc
     formatter = TestResultsFormatter("colpali_hybrid_float_bm25")
 
     # Load config
-    from cogniverse_core.config.manager import ConfigManager
-    config_manager = ConfigManager()
+    config_manager = create_default_config_manager()
     config = get_config(tenant_id="test_tenant", config_manager=config_manager)
     model_name = config.get("colpali_model", "vidore/colsmol-500m")
     vespa_url = config.get("vespa_url", "http://localhost")
@@ -443,8 +440,7 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
 
-    from cogniverse_core.config.manager import ConfigManager
-    config_manager = ConfigManager()
+    config_manager = create_default_config_manager()
     config = get_config(tenant_id="test_tenant", config_manager=config_manager)
     output_format = config.get("test_output_format", args.format)
     

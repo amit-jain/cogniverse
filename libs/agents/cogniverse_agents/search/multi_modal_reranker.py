@@ -431,7 +431,7 @@ class ConfigurableMultiModalReranker:
         if config_manager is None:
             raise ValueError(
                 "config_manager is required for ConfigurableMultiModalReranker. "
-                "Pass ConfigManager() explicitly."
+                "Pass create_default_config_manager() explicitly."
             )
 
         logger = logging.getLogger(__name__)

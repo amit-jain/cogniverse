@@ -239,13 +239,14 @@ class VideoSearchAgent(MemoryAwareMixin, TenantAwareAgentMixin):
     Enhanced with memory capabilities for learning from search patterns.
     """
 
-    def __init__(self, tenant_id: str, schema_loader=None, **kwargs):
+    def __init__(self, tenant_id: str, schema_loader=None, config_manager=None, **kwargs):
         """
         Initialize enhanced video search agent
 
         Args:
             tenant_id: Tenant identifier (REQUIRED - no default)
             schema_loader: SchemaLoader instance (REQUIRED for dependency injection)
+            config_manager: ConfigManager instance (REQUIRED for dependency injection)
             **kwargs: Additional configuration options
 
         Raises:
@@ -256,9 +257,14 @@ class VideoSearchAgent(MemoryAwareMixin, TenantAwareAgentMixin):
                 "schema_loader is required for VideoSearchAgent. "
                 "Dependency injection is mandatory - pass SchemaLoader instance explicitly."
             )
+        if config_manager is None:
+            # Create default if not provided (for backward compatibility)
+            from cogniverse_core.config.utils import create_default_config_manager
+            config_manager = create_default_config_manager()
 
-        # Store schema_loader for use in backend initialization
+        # Store dependencies for use in initialization
         self.schema_loader = schema_loader
+        self.config_manager = config_manager
 
         # Initialize tenant support via TenantAwareAgentMixin
         # This validates tenant_id and stores it (eliminates duplication)
@@ -315,10 +321,12 @@ class VideoSearchAgent(MemoryAwareMixin, TenantAwareAgentMixin):
         memory_initialized = self.initialize_memory(
             agent_name="video_agent",
             tenant_id=tenant_id,
-            vespa_host=vespa_host,
-            vespa_port=vespa_port,
-            vespa_config_port=vespa_config_port,
+            backend_host=vespa_host,
+            backend_port=vespa_port,
+            backend_config_port=vespa_config_port,
             auto_create_schema=kwargs.get("auto_create_memory_schema", True),
+            config_manager=self.config_manager,
+            schema_loader=self.schema_loader,
         )
         if memory_initialized:
             logger.info(f"✅ Memory initialized for video_agent (tenant: {tenant_id})")
@@ -332,6 +340,9 @@ class VideoSearchAgent(MemoryAwareMixin, TenantAwareAgentMixin):
             or self.config.get("active_video_profile")
             or "video_colpali_smol500_mv_frame"
         )
+
+        # Store active_profile for use in search methods
+        self.active_profile = active_profile
 
         backend_config_data = self.config.get("backend", {})
         profiles = backend_config_data.get("profiles", {})
@@ -392,7 +403,7 @@ class VideoSearchAgent(MemoryAwareMixin, TenantAwareAgentMixin):
         # Initialize query encoder
         try:
             self.query_encoder = QueryEncoderFactory.create_encoder(
-                active_profile, model_name
+                active_profile, model_name, config=self.config
             )
             logger.info(f"Query encoder initialized for profile: {active_profile}")
         except Exception as e:
@@ -442,6 +453,7 @@ class VideoSearchAgent(MemoryAwareMixin, TenantAwareAgentMixin):
                 "top_k": top_k,
                 "filters": None,  # TODO: Add date filter support
                 "strategy": kwargs.get("ranking", "binary_binary"),
+                "profile": self.active_profile,  # Pass active profile for backend
             }
 
             search_results = self.search_backend.search(query_dict)
@@ -524,6 +536,7 @@ class VideoSearchAgent(MemoryAwareMixin, TenantAwareAgentMixin):
                 "top_k": top_k,
                 "filters": None,
                 "strategy": kwargs.get("ranking", "binary_binary"),
+                "profile": self.active_profile,  # Pass active profile for backend
             }
 
             search_results = self.search_backend.search(query_dict)
@@ -611,6 +624,7 @@ class VideoSearchAgent(MemoryAwareMixin, TenantAwareAgentMixin):
                 "top_k": top_k,
                 "filters": None,
                 "strategy": kwargs.get("ranking", "binary_binary"),
+                "profile": self.active_profile,  # Pass active profile for backend
             }
 
             search_results = self.search_backend.search(query_dict)

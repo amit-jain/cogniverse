@@ -18,7 +18,7 @@ from cogniverse_core.config.agent_config import (
     OptimizerConfig,
     OptimizerType,
 )
-from cogniverse_core.config.manager import ConfigManager
+from cogniverse_core.config.utils import create_default_config_manager, get_config
 from cogniverse_core.config.unified_config import (
     RoutingConfigUnified,
     SystemConfig,
@@ -32,7 +32,7 @@ def render_config_management_tab():
 
     # Initialize ConfigManager
     if "config_manager" not in st.session_state:
-        st.session_state.config_manager = ConfigManager()
+        st.session_state.config_manager = create_default_config_manager()
 
     manager = st.session_state.config_manager
 

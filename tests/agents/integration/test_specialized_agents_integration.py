@@ -105,34 +105,31 @@ class TestSummarizerAgentDSPyIntegration:
         self, dspy_config, sample_search_results, real_dspy_lm, mock_ollama_server
     ):
         """Test SummarizerAgent with small model via real DSPy.LM"""
-        with patch("cogniverse_agents.summarizer_agent.get_config") as mock_config:
-            mock_config.return_value = dspy_config
+        # Use dspy.context() for async tasks instead of configure()
+        with dspy.context(lm=real_dspy_lm):
+            # Create agent and set real LM
+            agent = SummarizerAgent(tenant_id="test_tenant")
+            agent.llm = real_dspy_lm
 
-            # Use dspy.context() for async tasks instead of configure()
-            with dspy.context(lm=real_dspy_lm):
-                # Create agent and set real LM
-                agent = SummarizerAgent(tenant_id="test_tenant")
-                agent.llm = real_dspy_lm
+            # Create summary request
+            from cogniverse_agents.summarizer_agent import SummaryRequest
 
-                # Create summary request
-                from cogniverse_agents.summarizer_agent import SummaryRequest
+            request = SummaryRequest(
+                query="machine learning fundamentals",
+                search_results=sample_search_results,
+                summary_type="brief",
+                include_visual_analysis=False,
+            )
 
-                request = SummaryRequest(
-                    query="machine learning fundamentals",
-                    search_results=sample_search_results,
-                    summary_type="brief",
-                    include_visual_analysis=False,
-                )
+            # Generate summary with real DSPy.LM
+            result = await agent.summarize(request)
 
-                # Generate summary with real DSPy.LM
-                result = await agent.summarize(request)
-
-                # Verify results
-                assert result.summary is not None
-                assert len(result.summary) > 10  # Should have actual content
-                assert len(result.key_points) >= 1
-                assert result.confidence_score > 0
-                assert result.metadata["summary_type"] == "brief"
+            # Verify results
+            assert result.summary is not None
+            assert len(result.summary) > 10  # Should have actual content
+            assert len(result.key_points) >= 1
+            assert result.confidence_score > 0
+            assert result.metadata["summary_type"] == "brief"
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -140,35 +137,32 @@ class TestSummarizerAgentDSPyIntegration:
         self, dspy_config, sample_search_results, real_dspy_lm, mock_ollama_server
     ):
         """Test SummarizerAgent A2A processing with real DSPy.LM"""
-        with patch("cogniverse_agents.summarizer_agent.get_config") as mock_config:
-            mock_config.return_value = dspy_config
+        # Use dspy.context() for async tasks instead of configure()
+        with dspy.context(lm=real_dspy_lm):
+            agent = SummarizerAgent(tenant_id="test_tenant")
+            agent.llm = real_dspy_lm
 
-            # Use dspy.context() for async tasks instead of configure()
-            with dspy.context(lm=real_dspy_lm):
-                agent = SummarizerAgent(tenant_id="test_tenant")
-                agent.llm = real_dspy_lm
+            # Create A2A task
+            data_part = DataPart(
+                data={
+                    "query": "summarize AI research",
+                    "search_results": sample_search_results,
+                    "summary_type": "bullet_points",
+                    "include_visual_analysis": False,
+                }
+            )
+            message = A2AMessage(role="user", parts=[data_part])
+            task = Task(id="dspy_summary_test", messages=[message])
 
-                # Create A2A task
-                data_part = DataPart(
-                    data={
-                        "query": "summarize AI research",
-                        "search_results": sample_search_results,
-                        "summary_type": "bullet_points",
-                        "include_visual_analysis": False,
-                    }
-                )
-                message = A2AMessage(role="user", parts=[data_part])
-                task = Task(id="dspy_summary_test", messages=[message])
+            # Process task with real DSPy.LM
+            result = await agent.process_a2a_task(task)
 
-                # Process task with real DSPy.LM
-                result = await agent.process_a2a_task(task)
-
-                # Verify A2A response
-                assert result["task_id"] == "dspy_summary_test"
-                assert result["status"] == "completed"
-                assert result["summary"] is not None
-                assert len(result["summary"]) > 10  # Should have actual content
-                assert result["confidence_score"] > 0
+            # Verify A2A response
+            assert result["task_id"] == "dspy_summary_test"
+            assert result["status"] == "completed"
+            assert result["summary"] is not None
+            assert len(result["summary"]) > 10  # Should have actual content
+            assert result["confidence_score"] > 0
 
 
 @pytest.mark.requires_ollama
@@ -181,50 +175,47 @@ class TestDetailedReportAgentDSPyIntegration:
         self, dspy_config, sample_search_results, real_dspy_lm, mock_ollama_server
     ):
         """Test DetailedReportAgent with real DSPy.LM"""
-        with patch("cogniverse_agents.detailed_report_agent.get_config") as mock_config:
-            mock_config.return_value = dspy_config
+        # Use dspy.context() for async tasks instead of configure()
+        with dspy.context(lm=real_dspy_lm):
+            agent = DetailedReportAgent(tenant_id="test_tenant")
+            agent.llm = real_dspy_lm
 
-            # Use dspy.context() for async tasks instead of configure()
-            with dspy.context(lm=real_dspy_lm):
-                agent = DetailedReportAgent(tenant_id="test_tenant")
-                agent.llm = real_dspy_lm
+            from cogniverse_agents.detailed_report_agent import ReportRequest
 
-                from cogniverse_agents.detailed_report_agent import ReportRequest
+            request = ReportRequest(
+                query="comprehensive analysis of AI trends",
+                search_results=sample_search_results,
+                report_type="comprehensive",
+                include_visual_analysis=True,
+                include_technical_details=True,
+                include_recommendations=True,
+            )
 
-                request = ReportRequest(
-                    query="comprehensive analysis of AI trends",
-                    search_results=sample_search_results,
-                    report_type="comprehensive",
-                    include_visual_analysis=True,
-                    include_technical_details=True,
-                    include_recommendations=True,
-                )
+            # Mock visual analysis for integration test focus on DSPy.LM
+            with patch.object(
+                agent, "_perform_visual_analysis", new_callable=AsyncMock
+            ) as mock_visual:
+                mock_visual.return_value = {
+                    "detailed_descriptions": ["Comprehensive visual analysis"],
+                    "technical_analysis": [
+                        "Technical finding 1",
+                        "Technical finding 2",
+                    ],
+                    "visual_patterns": ["Pattern A", "Pattern B"],
+                    "quality_assessment": {"overall": 0.85, "clarity": 0.9},
+                    "annotations": [{"element": "neural_network", "confidence": 0.9}],
+                }
 
-                # Mock visual analysis for integration test focus on DSPy.LM
-                with patch.object(
-                    agent, "_perform_visual_analysis", new_callable=AsyncMock
-                ) as mock_visual:
-                    mock_visual.return_value = {
-                        "detailed_descriptions": ["Comprehensive visual analysis"],
-                        "technical_analysis": [
-                            "Technical finding 1",
-                            "Technical finding 2",
-                        ],
-                        "visual_patterns": ["Pattern A", "Pattern B"],
-                        "quality_assessment": {"overall": 0.85, "clarity": 0.9},
-                        "annotations": [{"element": "neural_network", "confidence": 0.9}],
-                    }
+                result = await agent.generate_report(request)
 
-                    result = await agent.generate_report(request)
-
-                    # Verify comprehensive report with real DSPy.LM
-                    assert result.executive_summary is not None
-                    assert len(result.executive_summary) > 20  # Should have actual content
-                    assert len(result.detailed_findings) >= 3
-                    assert len(result.visual_analysis) > 0
-                    assert len(result.technical_details) >= 2
-                    assert len(result.recommendations) > 0
-                    assert result.confidence_assessment["overall"] > 0
+                # Verify comprehensive report with real DSPy.LM
+                assert result.executive_summary is not None
+                assert len(result.executive_summary) > 20  # Should have actual content
+                assert len(result.detailed_findings) >= 3
+                assert len(result.visual_analysis) > 0
+                assert len(result.technical_details) >= 2
+                assert len(result.recommendations) > 0
+                assert result.confidence_assessment["overall"] > 0
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -232,49 +223,46 @@ class TestDetailedReportAgentDSPyIntegration:
         self, dspy_config, sample_search_results, real_dspy_lm, mock_ollama_server
     ):
         """Test DetailedReportAgent A2A processing with real DSPy.LM"""
-        with patch("cogniverse_agents.detailed_report_agent.get_config") as mock_config:
-            mock_config.return_value = dspy_config
+        # Use dspy.context() for async tasks instead of configure()
+        with dspy.context(lm=real_dspy_lm):
+            agent = DetailedReportAgent(tenant_id="test_tenant")
+            agent.llm = real_dspy_lm
 
-            # Use dspy.context() for async tasks instead of configure()
-            with dspy.context(lm=real_dspy_lm):
-                agent = DetailedReportAgent(tenant_id="test_tenant")
-                agent.llm = real_dspy_lm
+            # Create A2A task
+            data_part = DataPart(
+                data={
+                    "query": "detailed AI analysis report",
+                    "search_results": sample_search_results,
+                    "report_type": "analytical",
+                    "include_visual_analysis": True,
+                    "include_recommendations": True,
+                }
+            )
+            message = A2AMessage(role="user", parts=[data_part])
+            task = Task(id="dspy_report_test", messages=[message])
 
-                # Create A2A task
-                data_part = DataPart(
-                    data={
-                        "query": "detailed AI analysis report",
-                        "search_results": sample_search_results,
-                        "report_type": "analytical",
-                        "include_visual_analysis": True,
-                        "include_recommendations": True,
-                    }
-                )
-                message = A2AMessage(role="user", parts=[data_part])
-                task = Task(id="dspy_report_test", messages=[message])
+            # Mock visual analysis for A2A test focus on DSPy.LM
+            with patch.object(
+                agent, "_perform_visual_analysis", new_callable=AsyncMock
+            ) as mock_visual:
+                mock_visual.return_value = {
+                    "detailed_descriptions": ["A2A visual analysis"],
+                    "technical_analysis": ["A2A technical finding"],
+                    "quality_assessment": {"overall": 0.8},
+                }
 
-                # Mock visual analysis for A2A test focus on DSPy.LM
-                with patch.object(
-                    agent, "_perform_visual_analysis", new_callable=AsyncMock
-                ) as mock_visual:
-                    mock_visual.return_value = {
-                        "detailed_descriptions": ["A2A visual analysis"],
-                        "technical_analysis": ["A2A technical finding"],
-                        "quality_assessment": {"overall": 0.8},
-                    }
+                result = await agent.process_a2a_task(task)
 
-                    result = await agent.process_a2a_task(task)
-
-                    # Verify A2A response with real DSPy.LM
-                    assert result["task_id"] == "dspy_report_test"
-                    assert result["status"] == "completed"
-                    assert "result" in result
-                    assert result["result"]["executive_summary"] is not None
-                    assert (
-                        len(result["result"]["executive_summary"]) > 20
-                    )  # Should have actual content
-                    assert len(result["result"]["detailed_findings"]) > 0
-                    assert len(result["result"]["recommendations"]) > 0
+                # Verify A2A response with real DSPy.LM
+                assert result["task_id"] == "dspy_report_test"
+                assert result["status"] == "completed"
+                assert "result" in result
+                assert result["result"]["executive_summary"] is not None
+                assert (
+                    len(result["result"]["executive_summary"]) > 20
+                )  # Should have actual content
+                assert len(result["result"]["detailed_findings"]) > 0
+                assert len(result["result"]["recommendations"]) > 0
 
 
 @pytest.mark.requires_ollama
@@ -287,74 +275,66 @@ class TestCrossAgentDSPyIntegration:
         self, dspy_config, sample_search_results, real_dspy_lm, mock_ollama_server
     ):
         """Test workflow from summarizer to detailed report using real DSPy.LM"""
-        with (
-            patch("cogniverse_agents.summarizer_agent.get_config") as mock_config1,
-            patch("cogniverse_agents.detailed_report_agent.get_config") as mock_config2,
-        ):
+        # Use dspy.context() for async tasks instead of configure()
+        with dspy.context(lm=real_dspy_lm):
+            summarizer = SummarizerAgent(tenant_id="test_tenant")
+            summarizer.llm = real_dspy_lm
+            report_agent = DetailedReportAgent(tenant_id="test_tenant")
+            report_agent.llm = real_dspy_lm
 
-            mock_config1.return_value = dspy_config
-            mock_config2.return_value = dspy_config
+            # Step 1: Generate summary with real DSPy.LM
+            from cogniverse_agents.summarizer_agent import SummaryRequest
 
-            # Use dspy.context() for async tasks instead of configure()
-            with dspy.context(lm=real_dspy_lm):
-                summarizer = SummarizerAgent(tenant_id="test_tenant")
-                summarizer.llm = real_dspy_lm
-                report_agent = DetailedReportAgent(tenant_id="test_tenant")
-                report_agent.llm = real_dspy_lm
+            summary_request = SummaryRequest(
+                query="AI research overview",
+                search_results=sample_search_results,
+                summary_type="comprehensive",
+            )
 
-                # Step 1: Generate summary with real DSPy.LM
-                from cogniverse_agents.summarizer_agent import SummaryRequest
+            summary_result = await summarizer.summarize(summary_request)
 
-                summary_request = SummaryRequest(
-                    query="AI research overview",
-                    search_results=sample_search_results,
-                    summary_type="comprehensive",
-                )
+            # Step 2: Use summary for detailed report
+            enhanced_results = sample_search_results.copy()
+            enhanced_results.append(
+                {
+                    "id": "summary_insight",
+                    "title": "Summary Insights",
+                    "description": summary_result.summary,
+                    "score": 1.0,
+                    "content_type": "analysis",
+                }
+            )
 
-                summary_result = await summarizer.summarize(summary_request)
+            from cogniverse_agents.detailed_report_agent import ReportRequest
 
-                # Step 2: Use summary for detailed report
-                enhanced_results = sample_search_results.copy()
-                enhanced_results.append(
-                    {
-                        "id": "summary_insight",
-                        "title": "Summary Insights",
-                        "description": summary_result.summary,
-                        "score": 1.0,
-                        "content_type": "analysis",
-                    }
-                )
+            report_request = ReportRequest(
+                query="comprehensive AI research report based on summary",
+                search_results=enhanced_results,
+                report_type="comprehensive",
+            )
 
-                from cogniverse_agents.detailed_report_agent import ReportRequest
+            with patch.object(
+                report_agent,
+                "_perform_visual_analysis",
+                new_callable=AsyncMock,
+            ) as mock_visual:
+                mock_visual.return_value = {
+                    "detailed_descriptions": ["Cross-agent analysis"],
+                    "technical_analysis": ["Workflow integration finding"],
+                    "quality_assessment": {"overall": 0.9},
+                }
 
-                report_request = ReportRequest(
-                    query="comprehensive AI research report based on summary",
-                    search_results=enhanced_results,
-                    report_type="comprehensive",
-                )
+                report_result = await report_agent.generate_report(report_request)
 
-                with patch.object(
-                    report_agent,
-                    "_perform_visual_analysis",
-                    new_callable=AsyncMock,
-                ) as mock_visual:
-                    mock_visual.return_value = {
-                        "detailed_descriptions": ["Cross-agent analysis"],
-                        "technical_analysis": ["Workflow integration finding"],
-                        "quality_assessment": {"overall": 0.9},
-                    }
-
-                    report_result = await report_agent.generate_report(report_request)
-
-                    # Verify integrated workflow with real DSPy.LM
-                    assert summary_result.summary is not None
-                    assert len(summary_result.summary) > 20  # Should have actual content
-                    assert report_result.executive_summary is not None
-                    assert (
-                        len(report_result.executive_summary) > 20
-                    )  # Should have actual content
-                    assert len(report_result.detailed_findings) > len(sample_search_results)
-                    assert report_result.confidence_assessment["overall"] > 0.0
+                # Verify integrated workflow with real DSPy.LM
+                assert summary_result.summary is not None
+                assert len(summary_result.summary) > 20  # Should have actual content
+                assert report_result.executive_summary is not None
+                assert (
+                    len(report_result.executive_summary) > 20
+                )  # Should have actual content
+                assert len(report_result.detailed_findings) > len(sample_search_results)
+                assert report_result.confidence_assessment["overall"] > 0.0
 
 
 @pytest.mark.requires_ollama
@@ -375,85 +355,70 @@ class TestDSPyLMConfigurationIntegration:
         self, dspy_config, sample_search_results, real_dspy_lm, mock_ollama_server
     ):
         """Test switching between different models via real DSPy.LM"""
-        with patch("cogniverse_agents.summarizer_agent.get_config") as mock_config:
-            mock_config.return_value = dspy_config
+        # Use dspy.context() for async tasks instead of configure()
+        with dspy.context(lm=real_dspy_lm):
+            # Test with different model configurations (both using same LM for testing)
+            agent_small = SummarizerAgent(tenant_id="test_tenant")
+            agent_small.llm = real_dspy_lm
+            agent_medium = SummarizerAgent(tenant_id="test_tenant")
+            agent_medium.llm = real_dspy_lm
 
-            # Use dspy.context() for async tasks instead of configure()
-            with dspy.context(lm=real_dspy_lm):
-                # Test with different model configurations (both using same LM for testing)
-                agent_small = SummarizerAgent(tenant_id="test_tenant")
-                agent_small.llm = real_dspy_lm
-                agent_medium = SummarizerAgent(tenant_id="test_tenant")
-                agent_medium.llm = real_dspy_lm
+            from cogniverse_agents.summarizer_agent import SummaryRequest
 
-                from cogniverse_agents.summarizer_agent import SummaryRequest
+            request = SummaryRequest(
+                query="model comparison test",
+                search_results=sample_search_results[:2],
+                summary_type="brief",
+            )
 
-                request = SummaryRequest(
-                    query="model comparison test",
-                    search_results=sample_search_results[:2],
-                    summary_type="brief",
-                )
+            # Generate summaries with both configurations using real DSPy.LM
+            result_small = await agent_small.summarize(request)
+            result_medium = await agent_medium.summarize(request)
 
-                # Generate summaries with both configurations using real DSPy.LM
-                result_small = await agent_small.summarize(request)
-                result_medium = await agent_medium.summarize(request)
-
-            # Verify both configurations work with real DSPy.LM
-            assert result_small.summary is not None
-            assert len(result_small.summary) > 10  # Should have actual content
-            assert result_medium.summary is not None
-            assert len(result_medium.summary) > 10  # Should have actual content
-            assert result_small.confidence_score > 0
-            assert result_medium.confidence_score > 0
+        # Verify both configurations work with real DSPy.LM
+        assert result_small.summary is not None
+        assert len(result_small.summary) > 10  # Should have actual content
+        assert result_medium.summary is not None
+        assert len(result_medium.summary) > 10  # Should have actual content
+        assert result_small.confidence_score > 0
+        assert result_medium.confidence_score > 0
 
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_agent_error_handling_with_bad_dspy_config(self, mock_ollama_server):
         """Test agent error handling when DSPy.LM configuration fails"""
-        # Test agent initialization with bad DSPy config
-        bad_config = {
-            "llm": {
-                "model_name": "nonexistent:model",
-                "base_url": "http://localhost:11434",
-                "api_key": "ollama",
-            }
-        }
+        # Agent initialization should either:
+        # 1. Fail gracefully with clear error message, or
+        # 2. Initialize but fail on first LLM call
+        try:
+            agent = SummarizerAgent(tenant_id="test_tenant")
 
-        with patch("cogniverse_agents.summarizer_agent.get_config") as mock_config:
-            mock_config.return_value = bad_config
+            # If agent initializes, LLM calls should fail gracefully
+            from cogniverse_agents.summarizer_agent import SummaryRequest
 
-            # Agent initialization should either:
-            # 1. Fail gracefully with clear error message, or
-            # 2. Initialize but fail on first LLM call
-            try:
-                agent = SummarizerAgent(tenant_id="test_tenant")
+            request = SummaryRequest(
+                query="test error handling",
+                search_results=[],
+                summary_type="brief",
+            )
 
-                # If agent initializes, LLM calls should fail gracefully
-                from cogniverse_agents.summarizer_agent import SummaryRequest
+            # This should raise an exception due to bad model config
+            result = await agent.summarize(request)
+            # If it succeeds unexpectedly, that's still valid - agent may have fallbacks
+            assert (
+                result is not None
+            ), "Agent should either fail or return valid result"
 
-                request = SummaryRequest(
-                    query="test error handling",
-                    search_results=[],
-                    summary_type="brief",
-                )
-
-                # This should raise an exception due to bad model config
-                result = await agent.summarize(request)
-                # If it succeeds unexpectedly, that's still valid - agent may have fallbacks
-                assert (
-                    result is not None
-                ), "Agent should either fail or return valid result"
-
-            except Exception as e:
-                # Should fail with meaningful error about model or connection
-                error_msg = str(e).lower()
-                assert (
-                    "model" in error_msg
-                    or "not found" in error_msg
-                    or "connection" in error_msg
-                    or "llm" in error_msg
-                    or "api" in error_msg
-                ), f"Expected meaningful error, got: {str(e)}"
+        except Exception as e:
+            # Should fail with meaningful error about model or connection
+            error_msg = str(e).lower()
+            assert (
+                "model" in error_msg
+                or "not found" in error_msg
+                or "connection" in error_msg
+                or "llm" in error_msg
+                or "api" in error_msg
+            ), f"Expected meaningful error, got: {str(e)}"
 
 
 # Integration test configuration for DSPy.LM + Ollama

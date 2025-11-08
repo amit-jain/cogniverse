@@ -32,11 +32,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("Starting Cogniverse Runtime...")
 
     # 1. Load configuration
-    from cogniverse_core.config.manager import ConfigManager
-    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from pathlib import Path
 
-    config_manager = ConfigManager()
+    from cogniverse_core.config.utils import create_default_config_manager
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+    config_manager = create_default_config_manager()
     config = get_config(tenant_id="default", config_manager=config_manager)
     logger.info(f"Loaded configuration for tenant: {config.tenant_id}")
 
@@ -115,10 +116,10 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
-    from cogniverse_core.config.manager import ConfigManager
+    from cogniverse_core.config.utils import create_default_config_manager
 
     # Load config to get port
-    config_manager = ConfigManager()
+    config_manager = create_default_config_manager()
     config = get_config(tenant_id="default", config_manager=config_manager)
 
     port = config.get("runtime", {}).get("port", 8000)

@@ -238,10 +238,12 @@ class VespaTestManager:
             self.original_cogniverse_config = original_cogniverse_config
 
             # Store original config values for restoration
-            from cogniverse_core.config.utils import get_config
-            from cogniverse_core.config.manager import ConfigManager
+            from cogniverse_core.config.utils import (
+                create_default_config_manager,
+                get_config,
+            )
 
-            config_manager = ConfigManager()
+            config_manager = create_default_config_manager()
             _original_config_values = get_config(tenant_id="default", config_manager=config_manager)
             _original_config_vespa_url = _original_config_values.get("vespa_url")
             _original_config_vespa_port = _original_config_values.get("vespa_port")
@@ -276,10 +278,12 @@ class VespaTestManager:
             print(f"🔧 Loaded {len(profiles)} profiles: {list(profiles.keys())}")
 
             # Verify the config will be loaded from environment
-            from cogniverse_core.config.utils import get_config
-            from cogniverse_core.config.manager import ConfigManager
+            from cogniverse_core.config.utils import (
+                create_default_config_manager,
+                get_config,
+            )
 
-            config_manager = ConfigManager()
+            config_manager = create_default_config_manager()
             current_config = get_config(tenant_id="default", config_manager=config_manager)
             current_backend_config = current_config.get("backend", {})
             loaded_profiles = current_backend_config.get("profiles", {})
@@ -323,6 +327,9 @@ class VespaTestManager:
                     print(f"   - {video.name} ({size_mb:.1f}MB)")
 
                 # Build pipeline with test schema and explicit app_config
+                from cogniverse_core.schemas.filesystem_loader import (
+                    FilesystemSchemaLoader,
+                )
                 from cogniverse_runtime.ingestion.pipeline_builder import (
                     create_config,
                     create_pipeline,
@@ -339,6 +346,9 @@ class VespaTestManager:
                     test_config["backend"]["port"] = self.http_port
                     test_config["backend"]["url"] = "http://localhost"
 
+                # Create schema loader for dependency injection
+                schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
                 config = (
                     create_config()
                     .video_dir(video_files[0].parent)
@@ -350,6 +360,8 @@ class VespaTestManager:
                 pipeline = (
                     create_pipeline()
                     .with_config(config)
+                    .with_config_manager(config_manager)  # Required for dependency injection
+                    .with_schema_loader(schema_loader)  # Required for dependency injection
                     .with_app_config(test_config)  # Pass test_config with correct port!
                     .with_schema(self.default_test_schema)
                     .with_tenant_id(
@@ -396,7 +408,7 @@ class VespaTestManager:
                     print("⏳ Waiting for Vespa indexing to complete...")
                     from tests.utils.async_polling import wait_for_vespa_indexing
                     wait_for_vespa_indexing(
-                        backend_url=f"http://localhost:{self.http_port}",
+                        vespa_url=f"http://localhost:{self.http_port}",
                         delay=5.0,
                         description="Vespa document indexing after ingestion"
                     )
@@ -497,18 +509,21 @@ class VespaTestManager:
 
         try:
             # Use backend abstraction instead of direct HTTP calls
-            from cogniverse_core.config.utils import get_config
-            from cogniverse_core.config.manager import ConfigManager
+            import tempfile
+            from pathlib import Path
+
+            from cogniverse_core.config.utils import (
+                create_default_config_manager,
+                get_config,
+            )
             from cogniverse_core.registries.backend_registry import get_backend_registry
             from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-            from pathlib import Path
-            import tempfile
 
             registry = get_backend_registry()
 
             # Create config_manager and schema_loader for dependency injection
             temp_dir = tempfile.mkdtemp()
-            config_manager = ConfigManager(db_path=Path(temp_dir) / "test_config.db")
+            config_manager = create_default_config_manager(db_path=Path(temp_dir) / "test_config.db")
 
             # Load full config with backend section
             full_config = get_config(tenant_id="default", config_manager=config_manager)

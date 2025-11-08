@@ -20,13 +20,13 @@ def memory_manager(shared_memory_vespa):
 
     from pathlib import Path
 
-    from cogniverse_core.config.manager import ConfigManager
+    from cogniverse_core.config.utils import create_default_config_manager
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
     manager = Mem0MemoryManager(tenant_id="test_tenant")
 
     # Create dependencies for dependency injection
-    config_manager = ConfigManager()
+    config_manager = create_default_config_manager()
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
     # Initialize with shared Vespa backend using Ollama
@@ -393,10 +393,13 @@ class TestMem0MemoryAwareMixinIntegration:
 
     def test_mixin_with_real_memory(self, shared_memory_vespa):
         """Test MemoryAwareMixin with real Mem0 backend"""
-        from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
-        from cogniverse_core.config.manager import ConfigManager
-        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         from pathlib import Path
+
+        from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+        from cogniverse_core.config.utils import (
+            create_default_config_manager,
+        )
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
         # CRITICAL: Clear singletons FIRST before any initialization
         Mem0MemoryManager._instances.clear()
@@ -408,7 +411,7 @@ class TestMem0MemoryAwareMixinIntegration:
         agent = TestAgent()
 
         # Create dependencies for dependency injection
-        config_manager = ConfigManager()
+        config_manager = create_default_config_manager()
         schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
         # Initialize memory with shared Vespa ports

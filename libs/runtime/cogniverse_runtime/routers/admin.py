@@ -31,81 +31,85 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Module-level ConfigManager and SchemaLoader instances for dependency injection
-_config_manager: ConfigManager = None
-_schema_loader: SchemaLoader = None
-_profile_validator_schema_dir_override = None  # For test overrides
+# Module-level instances for dependency injection (can be set by tests)
+_config_manager: ConfigManager | None = None
+_schema_loader: SchemaLoader | None = None
+_profile_validator_schema_dir = None  # Path or None
 
 
+# Test helper methods for dependency injection
 def set_config_manager(config_manager: ConfigManager) -> None:
-    """
-    Set the ConfigManager instance for this router.
-
-    Must be called during application startup before handling requests.
-
-    Args:
-        config_manager: ConfigManager instance to use
-    """
+    """Set ConfigManager for this module (for tests)."""
     global _config_manager
     _config_manager = config_manager
 
 
 def set_schema_loader(schema_loader: SchemaLoader) -> None:
-    """
-    Set the SchemaLoader instance for this router.
-
-    Must be called during application startup before handling requests.
-
-    Args:
-        schema_loader: SchemaLoader instance to use
-    """
+    """Set SchemaLoader for this module (for tests)."""
     global _schema_loader
     _schema_loader = schema_loader
 
 
 def set_profile_validator_schema_dir(schema_dir) -> None:
-    """
-    Set schema directory override for ProfileValidator (for tests).
-
-    Args:
-        schema_dir: Path to schema templates directory
-    """
-    global _profile_validator_schema_dir_override
-    _profile_validator_schema_dir_override = schema_dir
+    """Set ProfileValidator schema directory for this module (for tests)."""
+    from pathlib import Path
+    global _profile_validator_schema_dir
+    _profile_validator_schema_dir = Path(schema_dir) if schema_dir is not None else None
 
 
+def reset_dependencies() -> None:
+    """Reset all module-level dependencies (for tests)."""
+    global _config_manager, _schema_loader, _profile_validator_schema_dir
+    _config_manager = None
+    _schema_loader = None
+    _profile_validator_schema_dir = None
+
+
+# FastAPI dependencies - will be overridden in main.py via app.dependency_overrides
 def get_config_manager_dependency() -> ConfigManager:
     """
     FastAPI dependency for ConfigManager.
+
+    This function should be overridden in main.py using app.dependency_overrides.
+    For tests, use set_config_manager() to inject a test instance.
 
     Returns:
         ConfigManager instance
 
     Raises:
-        RuntimeError: If ConfigManager not initialized via set_config_manager()
+        RuntimeError: If not overridden via app.dependency_overrides or test injection
     """
-    if _config_manager is None:
-        raise RuntimeError(
-            "ConfigManager not initialized. Call set_config_manager() during app startup."
-        )
-    return _config_manager
+    if _config_manager is not None:
+        return _config_manager
+
+    raise RuntimeError(
+        "ConfigManager dependency not configured. "
+        "Override this dependency in main.py using app.dependency_overrides "
+        "or call set_config_manager() in tests."
+    )
 
 
 def get_schema_loader_dependency() -> SchemaLoader:
     """
     FastAPI dependency for SchemaLoader.
 
+    This function should be overridden in main.py using app.dependency_overrides.
+    For tests, use set_schema_loader() to inject a test instance.
+
     Returns:
         SchemaLoader instance
 
     Raises:
-        RuntimeError: If SchemaLoader not initialized via set_schema_loader()
+        RuntimeError: If not overridden via app.dependency_overrides or test injection
     """
-    if _schema_loader is None:
-        raise RuntimeError(
-            "SchemaLoader not initialized. Call set_schema_loader() during app startup."
-        )
-    return _schema_loader
+    if _schema_loader is not None:
+        return _schema_loader
+
+    raise RuntimeError(
+        "SchemaLoader dependency not configured. "
+        "Override this dependency in main.py using app.dependency_overrides "
+        "or call set_schema_loader() in tests."
+    )
 
 
 def get_profile_validator_dependency(
@@ -119,10 +123,12 @@ def get_profile_validator_dependency(
 
     Returns:
         ProfileValidator instance
+
+    Note:
+        For test overrides, use set_profile_validator_schema_dir() to set schema directory,
+        or override this dependency in app.dependency_overrides
     """
-    return ProfileValidator(
-        config_manager, schema_templates_dir=_profile_validator_schema_dir_override
-    )
+    return ProfileValidator(config_manager, schema_templates_dir=_profile_validator_schema_dir)
 
 
 # Tenant management endpoints removed - use standalone tenant_manager app

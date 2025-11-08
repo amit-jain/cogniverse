@@ -44,17 +44,23 @@ class CrossModalOptimizer:
             pass
     """
 
-    def __init__(self, model_dir: Optional[Path] = None, tenant_id: str = "default"):
+    def __init__(self, tenant_id: str, model_dir: Optional[Path] = None):
         """
         Initialize cross-modal optimizer
 
         Args:
+            tenant_id: Tenant identifier for multi-tenancy (REQUIRED)
             model_dir: Directory for saving models (defaults to outputs/models/cross_modal)
-            tenant_id: Tenant identifier for multi-tenancy
+
+        Raises:
+            ValueError: If tenant_id is empty or None
         """
+        if not tenant_id:
+            raise ValueError("tenant_id is required for CrossModalOptimizer - no default allowed")
+
+        self.tenant_id = tenant_id
         self.model_dir = model_dir or Path("outputs/models/cross_modal")
         self.model_dir.mkdir(parents=True, exist_ok=True)
-        self.tenant_id = tenant_id
 
         # Initialize fusion benefit model
         self.fusion_model = FusionBenefitModel(model_dir=self.model_dir)

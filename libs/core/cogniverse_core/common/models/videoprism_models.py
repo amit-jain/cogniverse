@@ -54,10 +54,12 @@ class SimpleVideoPrismModel:
             from pathlib import Path
 
             # Get videoprism path from config or environment
-            from cogniverse_core.config.manager import ConfigManager
-            from cogniverse_core.config.utils import get_config
+            from cogniverse_core.config.utils import (
+                create_default_config_manager,
+                get_config,
+            )
 
-            config_manager = ConfigManager()
+            config_manager = create_default_config_manager()
             config = get_config(tenant_id="default", config_manager=config_manager)
             videoprism_path = config.get("videoprism_repo_path")
 

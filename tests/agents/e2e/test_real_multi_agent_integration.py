@@ -64,10 +64,12 @@ class TestRealQueryAnalysisIntegration:
         """Test real query analysis with local Ollama model."""
 
         # Initialize query analyzer with real LLM
+        from cogniverse_core.config.utils import create_default_config_manager
         analyzer = QueryAnalysisToolV3(
             openai_api_key=TEST_CONFIG["openai_api_key"],
             openai_base_url=TEST_CONFIG["ollama_base_url"],
             model_name=TEST_CONFIG["ollama_model"],
+            config_manager=create_default_config_manager(),
         )
 
         # Test queries with different complexity levels
@@ -400,6 +402,7 @@ class TestRealDSPyOptimizationIntegration:
     @pytest.mark.timeout(TEST_CONFIG["test_timeout"])
     async def test_real_agent_with_dspy_integration(self):
         """Test agents with DSPy optimization integration."""
+        from cogniverse_core.config.utils import create_default_config_manager
 
         # Create agent with DSPy disabled first
         analyzer = QueryAnalysisToolV3(
@@ -407,6 +410,7 @@ class TestRealDSPyOptimizationIntegration:
             openai_base_url=TEST_CONFIG["ollama_base_url"],
             model_name=TEST_CONFIG["ollama_model"],
             enable_dspy=False,
+            config_manager=create_default_config_manager(),
         )
 
         # Test without optimization
@@ -439,12 +443,14 @@ class TestRealEndToEndWorkflow:
         from unittest.mock import patch
 
         from cogniverse_agents.summarizer_agent import SummaryRequest
+        from cogniverse_core.config.utils import create_default_config_manager
 
         # Initialize all agents
         query_analyzer = QueryAnalysisToolV3(
             openai_api_key=TEST_CONFIG["openai_api_key"],
             openai_base_url=TEST_CONFIG["ollama_base_url"],
             model_name=TEST_CONFIG["ollama_model"],
+            config_manager=create_default_config_manager(),
         )
 
         # E2E test - requires real Ollama, works in production
@@ -531,6 +537,7 @@ class TestRealPerformanceComparison:
     @pytest.mark.timeout(TEST_CONFIG["test_timeout"])
     async def test_agent_performance_comparison(self):
         """Compare performance of default vs DSPy-optimized agents."""
+        from cogniverse_core.config.utils import create_default_config_manager
 
         # This test demonstrates the structure for performance comparison
         # In a real environment, you would run actual optimization first
@@ -547,6 +554,7 @@ class TestRealPerformanceComparison:
             openai_base_url=TEST_CONFIG["ollama_base_url"],
             model_name=TEST_CONFIG["ollama_model"],
             enable_dspy=False,
+            config_manager=create_default_config_manager(),
         )
 
         # Initialize agent with DSPy optimization (simulated)
@@ -555,6 +563,7 @@ class TestRealPerformanceComparison:
             openai_base_url=TEST_CONFIG["ollama_base_url"],
             model_name=TEST_CONFIG["ollama_model"],
             enable_dspy=True,  # Would use actual optimized prompts in real scenario
+            config_manager=create_default_config_manager(),
         )
 
         performance_comparison = {"default": [], "optimized": []}

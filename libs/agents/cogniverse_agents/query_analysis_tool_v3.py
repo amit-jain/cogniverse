@@ -1032,6 +1032,12 @@ def create_enhanced_query_analyzer(**kwargs) -> QueryAnalysisToolV3:
     Returns:
         Configured QueryAnalysisToolV3 instance
     """
+    from cogniverse_core.config.utils import create_default_config_manager
+
+    # Provide default config_manager if not specified
+    if 'config_manager' not in kwargs:
+        kwargs['config_manager'] = create_default_config_manager()
+
     return QueryAnalysisToolV3(**kwargs)
 
 

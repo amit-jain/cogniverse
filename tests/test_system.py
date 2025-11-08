@@ -18,15 +18,14 @@ from typing import Any, Dict, List, Optional, Tuple
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from cogniverse_agents.tools.a2a_utils import A2AClient, discover_agents
-from cogniverse_core.config.utils import get_config
+from cogniverse_core.config.utils import create_default_config_manager, get_config
 
 
 class SystemTester:
     """Comprehensive system tester for the multi-agent RAG system."""
 
     def __init__(self):
-        from cogniverse_core.config.manager import ConfigManager
-        config_manager = ConfigManager()
+        config_manager = create_default_config_manager()
         self.config = get_config(tenant_id="default", config_manager=config_manager)
         self.client = A2AClient()
         self.test_results = []

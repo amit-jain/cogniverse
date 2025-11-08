@@ -39,10 +39,12 @@ def video_search_tool():
             try:
                 from cogniverse_common import get_config
             except ImportError:
-                from cogniverse_core.config.utils import get_config
+                from cogniverse_core.config.utils import (
+                    create_default_config_manager,
+                    get_config,
+                )
 
-            from cogniverse_core.config.manager import ConfigManager
-            config_manager = ConfigManager()
+            config_manager = create_default_config_manager()
             config = get_config(tenant_id="default", config_manager=config_manager)
 
             # Create search service with specified profile

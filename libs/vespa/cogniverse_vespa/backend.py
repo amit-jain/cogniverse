@@ -34,21 +34,30 @@ class VespaBackend(Backend):
     a unified interface compatible with the backend registry.
     """
 
-    def __init__(self, config_manager, schema_loader=None):
+    def __init__(self, backend_config, schema_loader=None, config_manager=None):
         """
         Initialize Vespa backend.
 
         Args:
-            config_manager: ConfigManager instance for fetching config (REQUIRED)
+            backend_config: BackendConfig instance with connection details (REQUIRED)
             schema_loader: SchemaLoader instance for loading schemas (REQUIRED)
+            config_manager: ConfigManager instance for configuration access (REQUIRED)
         """
-        if config_manager is None:
-            raise ValueError("config_manager is required for VespaBackend initialization")
+        if backend_config is None:
+            raise ValueError("backend_config is required for VespaBackend initialization")
         if schema_loader is None:
             raise ValueError("schema_loader is required for VespaBackend initialization")
+        if config_manager is None:
+            raise ValueError("config_manager is required for VespaBackend initialization")
+
+        # Validate backend type
+        if backend_config.backend_type != "vespa":
+            raise ValueError(f"VespaBackend requires backend_type='vespa', got '{backend_config.backend_type}'")
+
         super().__init__("vespa")
-        self._config_manager_instance = config_manager
+        self._backend_config = backend_config
         self._schema_loader_instance = schema_loader
+        self._config_manager_instance = config_manager
         self._vespa_search_backend: Optional[VespaSearchBackend] = None
         # Store multiple ingestion clients, one per schema
         self._vespa_ingestion_clients: Dict[str, VespaPyClient] = {}
@@ -57,10 +66,14 @@ class VespaBackend(Backend):
         self._initialized_as_search = False
         self._initialized_as_ingestion = False
         self.use_async_ingestion = False  # Flag to enable async mode
-        # Store only what's needed for creating clients
-        self._url: Optional[str] = None
-        self._port: int = 8080
-        self._tenant_id: Optional[str] = None
+
+        # Extract connection details from BackendConfig
+        self._url: str = backend_config.url
+        self._port: int = backend_config.port
+        self._tenant_id: str = backend_config.tenant_id
+
+        # SchemaRegistry will be injected later (no circular dependency)
+        self.schema_registry = None
     
     def _initialize_backend(self, config: Dict[str, Any]) -> None:
         """
@@ -68,15 +81,19 @@ class VespaBackend(Backend):
 
         Args:
             config: Backend configuration including:
-                - tenant_id: Tenant identifier (REQUIRED for multi-tenancy)
+                - tenant_id: Tenant identifier (optional override)
                 - schema_name: Schema to use
                 - profile: Processing profile
                 - backend: Nested backend section with url, port, profiles, etc.
         """
-        # Extract and store tenant_id from top level
-        self._tenant_id = config.get("tenant_id")
+        # Allow tenant_id override from config (but use BackendConfig tenant_id as default)
+        config_tenant_id = config.get("tenant_id")
+        if config_tenant_id and config_tenant_id != self._tenant_id:
+            logger.debug(f"Overriding tenant_id from {self._tenant_id} to {config_tenant_id}")
+            self._tenant_id = config_tenant_id
+
         if not self._tenant_id:
-            logger.warning("No tenant_id provided in config - backend will use base schemas without tenant isolation")
+            logger.warning("No tenant_id configured - backend will use base schemas without tenant isolation")
 
         # Extract backend section if present, otherwise use config as-is
         backend_section = config.get("backend", config)
@@ -106,19 +123,15 @@ class VespaBackend(Backend):
         # Check if async ingestion is requested (optional feature)
         self.use_async_ingestion = merged_config.get("use_async_ingestion", False) and ASYNC_AVAILABLE
 
-        # Store connection details needed for creating clients
-        # If not provided in config, fetch from ConfigManager
-        self._url = merged_config.get("url")
-        self._port = merged_config.get("port", 8080)
-
-        if not self._url and self._tenant_id:
-            # Fetch from ConfigManager (always available since it's required in __init__)
-            system_config = self._config_manager_instance.get_system_config(self._tenant_id)
-            self._url = system_config.backend_url
-            self._port = system_config.backend_port
-            logger.info(
-                f"Fetched Vespa config from ConfigManager for tenant '{self._tenant_id}': {self._url}:{self._port}"
-            )
+        # Allow config to override URL/port from BackendConfig
+        config_url = merged_config.get("url")
+        config_port = merged_config.get("port")
+        if config_url and config_url != self._url:
+            logger.debug(f"Overriding url from {self._url} to {config_url}")
+            self._url = config_url
+        if config_port and config_port != self._port:
+            logger.debug(f"Overriding port from {self._port} to {config_port}")
+            self._port = config_port
 
         # Mark as ingestion backend if schema_name is provided
         if "schema_name" in config:
@@ -126,35 +139,25 @@ class VespaBackend(Backend):
             # Don't create client yet - will create per-schema on demand
 
         # Initialize schema manager for schema operations
-        url = self._url
-        if not url:
-            raise ValueError("url is required in configuration or ConfigManager")
-        port = self._port
+        if not self._url:
+            raise ValueError("url is required in BackendConfig")
 
         # Get config port (for schema deployment/management)
         config_port = merged_config.get("config_port")
         if not config_port:
-            config_port = calculate_config_port(port)
-            logger.debug(f"Calculated config port {config_port} from data port {port}")
+            config_port = calculate_config_port(self._port)
+            logger.debug(f"Calculated config port {config_port} from data port {self._port}")
 
         # Store config port for schema deployment
         self._config_port = config_port
 
-        # Create schema_registry for tracking tenant schemas
-        # SchemaRegistry requires ConfigManager via dependency injection
-        from cogniverse_core.registries.schema_registry import SchemaRegistry
-        self.schema_registry = SchemaRegistry(
-            config_manager=self._config_manager_instance,
-            backend=self,
-            schema_loader=self._schema_loader_instance
-        )
+        # SchemaRegistry will be injected externally (no circular dependency)
 
         self.schema_manager = VespaSchemaManager(
-            backend_endpoint=url,
+            backend_endpoint=self._url,
             backend_port=config_port,
-            config_manager=self._config_manager_instance,
             schema_loader=self._schema_loader_instance,
-            schema_registry=self.schema_registry
+            schema_registry=None  # Will be set after SchemaRegistry is injected
         )
 
         # Backend is initialized with all profiles available
@@ -617,6 +620,13 @@ class VespaBackend(Backend):
             # Deploy all schemas together in one ApplicationPackage
             logger.info(f"Deploying {len(schemas_to_deploy)} schemas to Vespa")
             app_package = ApplicationPackage(name="videosearch", schema=schemas_to_deploy)
+
+            # Add metadata schemas (Vespa-specific requirement)
+            from cogniverse_vespa.metadata_schemas import (
+                add_metadata_schemas_to_package,
+            )
+            add_metadata_schemas_to_package(app_package)
+            logger.debug("Added metadata schemas to deployment package")
 
             # Deploy package directly via Backend's own method
             self._deploy_package(app_package)
