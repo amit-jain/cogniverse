@@ -192,7 +192,7 @@ class VespaTestManager:
             self.original_cogniverse_config = original_cogniverse_config
 
             # Store original config values for restoration
-            from cogniverse_core.config.utils import (
+            from cogniverse_foundation.config.utils import (
                 create_default_config_manager,
                 get_config,
             )
@@ -253,7 +253,7 @@ class VespaTestManager:
             print(f"🔧 Loaded {len(profiles)} profiles: {list(profiles.keys())}")
 
             # Verify the config will be loaded from environment
-            from cogniverse_core.config.utils import (
+            from cogniverse_foundation.config.utils import (
                 get_config,
             )
 
@@ -485,7 +485,7 @@ class VespaTestManager:
             # Use backend abstraction instead of direct HTTP calls
             from pathlib import Path
 
-            from cogniverse_core.config.utils import get_config
+            from cogniverse_foundation.config.utils import get_config
             from cogniverse_core.registries.backend_registry import get_backend_registry
             from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 

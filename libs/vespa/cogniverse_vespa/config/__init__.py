@@ -1,0 +1,1 @@
+"""Vespa config store implementation."""

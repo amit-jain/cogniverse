@@ -205,7 +205,7 @@ class TestMultiAgentSystem:
         """Test that core agents can be initialized"""
         from cogniverse_agents.detailed_report_agent import DetailedReportAgent
         from cogniverse_agents.summarizer_agent import SummarizerAgent
-        from cogniverse_core.config.utils import create_default_config_manager
+        from cogniverse_foundation.config.utils import create_default_config_manager
 
         # Use default config manager
         config_manager = create_default_config_manager()

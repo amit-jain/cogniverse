@@ -21,7 +21,7 @@ from pathlib import Path
 # Add parent to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from cogniverse_core.config.utils import create_default_config_manager, get_config
+from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 from cogniverse_core.telemetry.manager import get_telemetry_manager
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

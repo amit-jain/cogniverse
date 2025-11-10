@@ -5,7 +5,7 @@ Tests the main service orchestrator end-to-end.
 """
 
 import pytest
-from cogniverse_core.config.unified_config import (
+from cogniverse_foundation.config.unified_config import (
     AgentMappingRule,
     DSPyModuleConfig,
     OptimizerGenerationConfig,
@@ -72,7 +72,7 @@ class TestSyntheticDataService:
     @pytest.mark.asyncio
     async def test_service_with_backend_config(self):
         """Test service with backend configuration"""
-        from cogniverse_core.config.unified_config import BackendConfig
+        from cogniverse_foundation.config.unified_config import BackendConfig
         config = BackendConfig(profiles={})
         service = SyntheticDataService(
             backend_config=config,
@@ -328,7 +328,7 @@ class TestServiceWithBackendConfig:
     @pytest.mark.asyncio
     async def test_service_uses_backend_config_profiles(self):
         """Test that service uses profiles from backend config"""
-        from cogniverse_core.config.unified_config import BackendConfig
+        from cogniverse_foundation.config.unified_config import BackendConfig
         config = BackendConfig(profiles={})
 
         service = SyntheticDataService(

@@ -11,7 +11,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 from cogniverse_core.memory.manager import Mem0MemoryManager
-from cogniverse_core.config.utils import create_default_config_manager, get_config
+from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
 

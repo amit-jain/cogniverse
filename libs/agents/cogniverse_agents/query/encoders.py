@@ -14,7 +14,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 from cogniverse_core.common.models import get_or_load_model
 
 if TYPE_CHECKING:
-    from cogniverse_core.config.system_config import SystemConfig
+    from cogniverse_foundation.config.system_config import SystemConfig
 
 logger = logging.getLogger(__name__)
 

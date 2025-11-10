@@ -12,7 +12,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
-    from cogniverse_core.config.manager import ConfigManager
+    from cogniverse_foundation.config.manager import ConfigManager
 
 
 class QueryModality(Enum):
@@ -423,7 +423,7 @@ class ConfigurableMultiModalReranker:
         """
         import logging
 
-        from cogniverse_core.config.utils import get_config_value
+        from cogniverse_foundation.config.utils import get_config_value
 
         from cogniverse_agents.search.hybrid_reranker import HybridReranker
         from cogniverse_agents.search.learned_reranker import LearnedReranker
@@ -525,7 +525,7 @@ class ConfigurableMultiModalReranker:
         Returns:
             Dictionary with reranker details
         """
-        from cogniverse_core.config.utils import get_config_value
+        from cogniverse_foundation.config.utils import get_config_value
 
         rerank_config = get_config_value("reranking", {}, tenant_id=self.tenant_id, config_manager=self.config_manager)
 

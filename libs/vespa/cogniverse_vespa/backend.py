@@ -11,7 +11,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 from cogniverse_sdk.document import Document
 from cogniverse_sdk.interfaces.backend import Backend
 
-from .config import calculate_config_port
+from .config_utils import calculate_config_port
 from .ingestion_client import VespaPyClient
 from .search_backend import VespaSearchBackend
 from .vespa_schema_manager import VespaSchemaManager

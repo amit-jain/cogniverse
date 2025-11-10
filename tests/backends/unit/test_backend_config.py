@@ -11,8 +11,8 @@ Tests:
 import json
 
 import pytest
-from cogniverse_core.config.unified_config import BackendConfig, BackendProfileConfig
-from cogniverse_core.config.utils import ConfigUtils, create_default_config_manager
+from cogniverse_foundation.config.unified_config import BackendConfig, BackendProfileConfig
+from cogniverse_foundation.config.utils import ConfigUtils, create_default_config_manager
 
 
 class TestBackendConfigDataclasses:

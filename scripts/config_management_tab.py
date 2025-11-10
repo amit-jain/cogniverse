@@ -10,16 +10,16 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
-from cogniverse_core.common.config_store_interface import ConfigScope
-from cogniverse_core.config.agent_config import (
+from cogniverse_sdk.interfaces.config_store import ConfigScope
+from cogniverse_foundation.config.agent_config import (
     AgentConfig,
     DSPyModuleType,
     ModuleConfig,
     OptimizerConfig,
     OptimizerType,
 )
-from cogniverse_core.config.utils import create_default_config_manager, get_config
-from cogniverse_core.config.unified_config import (
+from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+from cogniverse_foundation.config.unified_config import (
     RoutingConfigUnified,
     SystemConfig,
     TelemetryConfigUnified,

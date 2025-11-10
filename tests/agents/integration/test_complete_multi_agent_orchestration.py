@@ -159,7 +159,7 @@ class TestCompleteMultiAgentOrchestration:
         from unittest.mock import patch
 
         from cogniverse_agents.routing_agent import RoutingConfig
-        from cogniverse_core.config.utils import create_default_config_manager
+        from cogniverse_foundation.config.utils import create_default_config_manager
 
         # Use default config manager
         config_manager = create_default_config_manager()
@@ -294,7 +294,7 @@ class TestCompleteMultiAgentOrchestration:
         from unittest.mock import patch
 
         from cogniverse_agents.routing_agent import RoutingConfig
-        from cogniverse_core.config.utils import create_default_config_manager
+        from cogniverse_foundation.config.utils import create_default_config_manager
 
         agents = []
 
@@ -444,7 +444,7 @@ class TestSystemScalability:
 
     def test_memory_usage_stability(self):
         """Test that repeated operations don't cause memory issues"""
-        from cogniverse_core.config.utils import create_default_config_manager
+        from cogniverse_foundation.config.utils import create_default_config_manager
 
         # Use default config manager
         config_manager = create_default_config_manager()

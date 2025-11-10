@@ -8,8 +8,8 @@ Handles tenant ID validation, storage, and context management.
 import logging
 from typing import Any, Dict, Optional
 
-from cogniverse_core.config.unified_config import SystemConfig
-from cogniverse_core.config.utils import get_config
+from cogniverse_foundation.config.unified_config import SystemConfig
+from cogniverse_foundation.config.utils import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +98,7 @@ class TenantAwareAgentMixin:
         self.tenant_id = tenant_id
 
         # Initialize or get config manager
-        from cogniverse_core.config.utils import create_default_config_manager
+        from cogniverse_foundation.config.utils import create_default_config_manager
         self.config_manager = create_default_config_manager()
 
         # Store or load configuration

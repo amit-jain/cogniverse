@@ -12,7 +12,7 @@ import torch
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from cogniverse_core.common.models import get_or_load_model
-from cogniverse_core.config.utils import create_default_config_manager, get_config
+from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 
 logger = logging.getLogger(__name__)
 

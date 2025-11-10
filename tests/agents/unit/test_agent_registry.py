@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from cogniverse_agents.agent_registry import AgentEndpoint, AgentRegistry
-from cogniverse_core.config.utils import create_default_config_manager
+from cogniverse_foundation.config.utils import create_default_config_manager
 
 
 @pytest.mark.unit

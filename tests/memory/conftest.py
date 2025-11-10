@@ -16,7 +16,7 @@ from pathlib import Path
 import cogniverse_vespa  # noqa: F401
 import pytest
 import requests
-from cogniverse_core.config.utils import create_default_config_manager
+from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_core.registries.backend_registry import BackendRegistry
 
@@ -62,7 +62,7 @@ def deploy_memory_schema_for_tests(
     Returns:
         Tenant schema name that was deployed
     """
-    from cogniverse_core.config.utils import create_default_config_manager, get_config
+    from cogniverse_foundation.config.utils import create_default_config_manager, get_config
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
     print(f"📦 Deploying {base_schema_name} for {tenant_id}...")
@@ -235,7 +235,7 @@ def shared_memory_vespa():
         import tempfile
         from pathlib import Path
 
-        from cogniverse_core.config.unified_config import SystemConfig
+        from cogniverse_foundation.config.unified_config import SystemConfig
         from cogniverse_core.registries.backend_registry import BackendRegistry
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 

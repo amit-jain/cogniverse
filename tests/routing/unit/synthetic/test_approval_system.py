@@ -268,7 +268,7 @@ class TestApprovalConfig:
 
     def test_approval_config_creation(self):
         """Test creating ApprovalConfig"""
-        from cogniverse_core.config.unified_config import ApprovalConfig
+        from cogniverse_foundation.config.unified_config import ApprovalConfig
 
         config = ApprovalConfig(
             enabled=True,
@@ -282,7 +282,7 @@ class TestApprovalConfig:
 
     def test_approval_config_from_dict(self):
         """Test creating ApprovalConfig from dict"""
-        from cogniverse_core.config.unified_config import ApprovalConfig
+        from cogniverse_foundation.config.unified_config import ApprovalConfig
 
         data = {
             "enabled": True,
@@ -300,7 +300,7 @@ class TestApprovalConfig:
 
     def test_approval_config_to_dict(self):
         """Test converting ApprovalConfig to dict"""
-        from cogniverse_core.config.unified_config import ApprovalConfig
+        from cogniverse_foundation.config.unified_config import ApprovalConfig
 
         config = ApprovalConfig(
             enabled=True,

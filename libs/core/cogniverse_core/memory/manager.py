@@ -135,7 +135,7 @@ class Mem0MemoryManager:
             raise ValueError("tenant_id must be set before initialize()")
 
         # Get backend instance for memory operations
-        from cogniverse_core.config.utils import (
+        from cogniverse_foundation.config.utils import (
             create_default_config_manager,
             get_config,
         )

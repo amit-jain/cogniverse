@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional
 
 if TYPE_CHECKING:
-    from cogniverse_core.config.manager import ConfigManager
-    from cogniverse_core.config.unified_config import BackendProfileConfig
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import BackendProfileConfig
 
 logger = logging.getLogger(__name__)
 

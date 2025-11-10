@@ -36,7 +36,7 @@ class VespaEmbeddingExporter:
     """Export embeddings from Vespa to Parquet for embedding-atlas"""
 
     def __init__(self, schema_name: str = "video_frame"):
-        from cogniverse_core.config.utils import create_default_config_manager, get_config
+        from cogniverse_foundation.config.utils import create_default_config_manager, get_config
         config_manager = create_default_config_manager()
         config = get_config(tenant_id="default", config_manager=config_manager)
         # Use simpler Vespa client directly for export

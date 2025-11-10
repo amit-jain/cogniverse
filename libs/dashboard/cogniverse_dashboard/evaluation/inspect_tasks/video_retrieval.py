@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from cogniverse_core.config.utils import create_default_config_manager, get_config
+from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 from inspect_ai import Task, task
 from inspect_ai.dataset import Dataset, Sample
 

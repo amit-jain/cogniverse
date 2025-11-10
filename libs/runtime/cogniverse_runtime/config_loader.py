@@ -8,7 +8,7 @@ import importlib
 import logging
 from typing import Any, Dict, Optional
 
-from cogniverse_core.config.utils import get_config
+from cogniverse_foundation.config.utils import get_config
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import BackendRegistry
 
@@ -40,7 +40,7 @@ class ConfigLoader:
 
     def __init__(self, tenant_id: str = "default"):
         """Initialize config loader."""
-        from cogniverse_core.config.utils import create_default_config_manager
+        from cogniverse_foundation.config.utils import create_default_config_manager
 
         self.config_manager = create_default_config_manager()
         self.backend_registry = BackendRegistry(config_manager=self.config_manager)

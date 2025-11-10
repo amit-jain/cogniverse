@@ -9,7 +9,7 @@ Configuration-driven architecture for backend-agnostic operation.
 import logging
 from typing import Any, Dict, List, Optional
 
-from cogniverse_core.config.unified_config import (
+from cogniverse_foundation.config.unified_config import (
     BackendConfig,
     SyntheticGeneratorConfig,
 )
@@ -49,7 +49,7 @@ class SyntheticDataService:
     custom field mappings, query templates, and profile scoring rules.
 
     Example:
-        >>> from cogniverse_core.config.unified_config import BackendConfig, SyntheticGeneratorConfig
+        >>> from cogniverse_foundation.config.unified_config import BackendConfig, SyntheticGeneratorConfig
         >>> backend_config = BackendConfig(...)
         >>> generator_config = SyntheticGeneratorConfig(...)
         >>> service = SyntheticDataService(

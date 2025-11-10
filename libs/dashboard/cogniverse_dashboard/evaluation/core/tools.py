@@ -39,7 +39,7 @@ def video_search_tool():
             try:
                 from cogniverse_common import get_config
             except ImportError:
-                from cogniverse_core.config.utils import (
+                from cogniverse_foundation.config.utils import (
                     create_default_config_manager,
                     get_config,
                 )

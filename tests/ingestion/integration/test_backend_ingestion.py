@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
-from cogniverse_core.config.utils import create_default_config_manager
+from cogniverse_foundation.config.utils import create_default_config_manager
 
 from tests.system.vespa_test_manager import VespaTestManager
 from tests.utils.markers import (

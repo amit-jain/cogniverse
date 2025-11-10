@@ -177,7 +177,7 @@ class GLiNEROptimizer:
     """Optimizer for GLiNER model configuration."""
 
     def __init__(self):
-        from cogniverse_core.config.utils import (
+        from cogniverse_foundation.config.utils import (
             create_default_config_manager,
             get_config,
         )

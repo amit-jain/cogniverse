@@ -20,7 +20,7 @@ def memory_manager(shared_memory_vespa):
     """Initialize and return memory manager for all tests"""
     from pathlib import Path
 
-    from cogniverse_core.config.utils import create_default_config_manager
+    from cogniverse_foundation.config.utils import create_default_config_manager
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
     # Clear singleton to ensure fresh state

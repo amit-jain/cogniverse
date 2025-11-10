@@ -47,7 +47,7 @@ from cogniverse_agents.summarizer_agent import SummarizerAgent
 
 # Phase 5 imports for enhanced agent testing
 from cogniverse_agents.video_search_agent import VideoSearchAgent
-from cogniverse_core.config.utils import create_default_config_manager
+from cogniverse_foundation.config.utils import create_default_config_manager
 
 
 @pytest.mark.unit
@@ -311,7 +311,7 @@ class TestDSPyAgentIntegration:
     @patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent")
     def test_query_analysis_tool_dspy_integration(self, mock_routing_agent):
         """Test DSPy integration in QueryAnalysisToolV3."""
-        from cogniverse_core.config.utils import create_default_config_manager
+        from cogniverse_foundation.config.utils import create_default_config_manager
 
         mock_routing_agent.return_value = Mock()
 
@@ -621,7 +621,7 @@ class TestDSPyEndToEndIntegration:
         }
 
         # Test QueryAnalysisToolV3 with direct prompt setting
-        from cogniverse_core.config.utils import create_default_config_manager
+        from cogniverse_foundation.config.utils import create_default_config_manager
 
         with patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent"):
             tool = QueryAnalysisToolV3(enable_agent_integration=False, config_manager=create_default_config_manager())

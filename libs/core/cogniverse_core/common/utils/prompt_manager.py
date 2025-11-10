@@ -9,10 +9,10 @@ import json
 import os
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from cogniverse_core.config.utils import get_config
+from cogniverse_foundation.config.utils import get_config
 
 if TYPE_CHECKING:
-    from cogniverse_core.config.manager import ConfigManager
+    from cogniverse_foundation.config.manager import ConfigManager
 
 
 class PromptManager:

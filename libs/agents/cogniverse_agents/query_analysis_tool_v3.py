@@ -10,13 +10,13 @@ from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
-from cogniverse_core.config.utils import get_config
+from cogniverse_foundation.config.utils import get_config
 
 from cogniverse_agents.dspy_integration_mixin import DSPyQueryAnalysisMixin
 from cogniverse_agents.routing_agent import RoutingAgent
 
 if TYPE_CHECKING:
-    from cogniverse_core.config.manager import ConfigManager
+    from cogniverse_foundation.config.manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -1032,7 +1032,7 @@ def create_enhanced_query_analyzer(**kwargs) -> QueryAnalysisToolV3:
     Returns:
         Configured QueryAnalysisToolV3 instance
     """
-    from cogniverse_core.config.utils import create_default_config_manager
+    from cogniverse_foundation.config.utils import create_default_config_manager
 
     # Provide default config_manager if not specified
     if 'config_manager' not in kwargs:

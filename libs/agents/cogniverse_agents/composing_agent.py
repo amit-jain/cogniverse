@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # Import our custom utilities
 from cogniverse_core.common.a2a_utils import A2AClient, format_search_results
 from cogniverse_core.common.tools.video_player_tool import VideoPlayerTool
-from cogniverse_core.config.utils import create_default_config_manager, get_config
+from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 
 # Initialize configuration
 config = get_config(tenant_id="default", config_manager=create_default_config_manager())

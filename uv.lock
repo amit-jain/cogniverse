@@ -18,6 +18,7 @@ members = [
     "cogniverse-agents",
     "cogniverse-core",
     "cogniverse-dashboard",
+    "cogniverse-foundation",
     "cogniverse-runtime",
     "cogniverse-sdk",
     "cogniverse-synthetic",
@@ -809,6 +810,7 @@ source = { editable = "libs/core" }
 dependencies = [
     { name = "aiofiles" },
     { name = "arize-phoenix" },
+    { name = "cogniverse-foundation" },
     { name = "cogniverse-sdk" },
     { name = "dspy-ai" },
     { name = "litellm" },
@@ -836,6 +838,7 @@ requires-dist = [
     { name = "aiofiles", specifier = ">=24.1.0" },
     { name = "arize-phoenix", specifier = ">=4.0.0" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=25.1.0" },
+    { name = "cogniverse-foundation", editable = "libs/foundation" },
     { name = "cogniverse-sdk", editable = "libs/sdk" },
     { name = "dspy-ai", specifier = ">=3.0.2" },
     { name = "litellm", specifier = ">=1.73.0" },
@@ -891,6 +894,25 @@ requires-dist = [
     { name = "streamlit", specifier = ">=1.29.0" },
     { name = "tabulate", specifier = ">=0.9.0" },
     { name = "umap-learn", specifier = ">=0.5.0" },
+]
+
+[[package]]
+name = "cogniverse-foundation"
+version = "0.1.0"
+source = { editable = "libs/foundation" }
+dependencies = [
+    { name = "cogniverse-sdk" },
+    { name = "opentelemetry-api" },
+    { name = "pydantic" },
+    { name = "sqlalchemy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cogniverse-sdk", editable = "libs/sdk" },
+    { name = "opentelemetry-api", specifier = ">=1.20.0" },
+    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "sqlalchemy", specifier = ">=2.0.0" },
 ]
 
 [[package]]

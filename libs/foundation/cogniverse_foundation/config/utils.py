@@ -9,8 +9,8 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 
-from cogniverse_core.config.manager import ConfigManager
-from cogniverse_core.config.unified_config import BackendConfig
+from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_foundation.config.unified_config import BackendConfig
 
 logger = logging.getLogger(__name__)
 
@@ -365,7 +365,7 @@ def create_default_config_manager(db_path: Optional[Path] = None, cache_size: in
         mock_store = MockConfigStore()
         config_manager = ConfigManager(store=mock_store)
     """
-    from cogniverse_core.config.store import SQLiteConfigStore
+    from cogniverse_foundation.config.sqlite.config_store import SQLiteConfigStore
 
     store = SQLiteConfigStore(db_path=db_path)
     return ConfigManager(store=store, cache_size=cache_size)

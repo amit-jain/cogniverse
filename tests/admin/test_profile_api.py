@@ -66,7 +66,7 @@ class TestProfileAPICRUD:
     @pytest.fixture
     def test_client(self, temp_schema_dir: Path, tmp_path: Path):
         """Create test client for profile API with properly configured test instances."""
-        from cogniverse_core.config.utils import (
+        from cogniverse_foundation.config.utils import (
             create_default_config_manager,
         )
 
@@ -82,7 +82,7 @@ class TestProfileAPICRUD:
         config_manager = create_default_config_manager(db_path=temp_db)
 
         # Set up system config with non-existent Vespa (so schema checks fail)
-        from cogniverse_core.config.unified_config import SystemConfig
+        from cogniverse_foundation.config.unified_config import SystemConfig
         system_config = SystemConfig(
             tenant_id="test_tenant",
             backend_url="http://nonexistent",
@@ -533,7 +533,7 @@ class TestProfileAPISchemaDeployment:
     def test_client(self, vespa_backend, tmp_path: Path, shared_test_db: Path):
         """Create test client with Vespa backend."""
 
-        from cogniverse_core.config.utils import (
+        from cogniverse_foundation.config.utils import (
             create_default_config_manager,
         )
         from cogniverse_core.registries.backend_registry import BackendRegistry
@@ -625,7 +625,7 @@ class TestProfileAPISchemaDeployment:
 
         # Set system config for test tenants using ACTUAL Vespa port
         # (vespa_backend.http_port may have changed from initial value after Docker starts)
-        from cogniverse_core.config.unified_config import SystemConfig
+        from cogniverse_foundation.config.unified_config import SystemConfig
 
         actual_vespa_port = vespa_backend.http_port
         print(f"Setting up system configs with Vespa port: {actual_vespa_port}")

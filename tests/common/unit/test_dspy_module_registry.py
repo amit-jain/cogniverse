@@ -8,7 +8,7 @@ from cogniverse_core.common.dspy_module_registry import (
     DSPyModuleRegistry,
     DSPyOptimizerRegistry,
 )
-from cogniverse_core.config.agent_config import DSPyModuleType, OptimizerType
+from cogniverse_foundation.config.agent_config import DSPyModuleType, OptimizerType
 
 
 class TestSignature(dspy.Signature):

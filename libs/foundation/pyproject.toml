@@ -1,0 +1,18 @@
+[project]
+name = "cogniverse-foundation"
+version = "0.1.0"
+description = "Cogniverse Foundation - Cross-cutting concerns and shared infrastructure"
+requires-python = ">=3.12"
+dependencies = [
+    "cogniverse-sdk",
+    "opentelemetry-api>=1.20.0",
+    "pydantic>=2.0.0",
+    "sqlalchemy>=2.0.0",
+]
+
+[tool.uv.sources]
+cogniverse-sdk = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

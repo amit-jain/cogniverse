@@ -6,16 +6,16 @@ from unittest.mock import patch
 
 import dspy
 import pytest
-from cogniverse_core.common.config_api_mixin import ConfigAPIMixin
+from cogniverse_foundation.config.api_mixin import ConfigAPIMixin
 from cogniverse_core.common.dynamic_dspy_mixin import DynamicDSPyMixin
-from cogniverse_core.config.agent_config import (
+from cogniverse_foundation.config.agent_config import (
     AgentConfig,
     DSPyModuleType,
     ModuleConfig,
     OptimizerConfig,
     OptimizerType,
 )
-from cogniverse_core.config.utils import create_default_config_manager
+from cogniverse_foundation.config.utils import create_default_config_manager
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 

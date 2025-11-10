@@ -13,13 +13,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 import uvicorn
-from cogniverse_core.config.utils import create_default_config_manager, get_config
+from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 if TYPE_CHECKING:
-    from cogniverse_core.config.system_config import SystemConfig
+    from cogniverse_foundation.config.system_config import SystemConfig
 
 # Configure logging
 logging.basicConfig(

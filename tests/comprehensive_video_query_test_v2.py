@@ -43,7 +43,7 @@ from tabulate import tabulate
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
 from cogniverse_agents.search.service import SearchService
-from cogniverse_core.config.utils import create_default_config_manager, get_config
+from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 
 # Enhanced ground truth queries combining frame descriptions, transcripts, and human annotations
 GROUND_TRUTH_QA_QUERIES = [

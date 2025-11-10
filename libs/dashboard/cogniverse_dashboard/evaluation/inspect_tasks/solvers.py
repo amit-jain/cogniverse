@@ -6,7 +6,7 @@ import logging
 import time
 from typing import Any
 
-from cogniverse_core.config.utils import create_default_config_manager, get_config
+from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 from cogniverse_runtime.search.service import SearchService
 from inspect_ai.solver import Solver, solver
 

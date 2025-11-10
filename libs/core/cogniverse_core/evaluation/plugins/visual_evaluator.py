@@ -30,7 +30,7 @@ class VisualEvaluatorPlugin:
 
         async def score(state, target=None) -> Score:
             """Score video search results using visual judge."""
-            from cogniverse_core.config.utils import (
+            from cogniverse_foundation.config.utils import (
                 create_default_config_manager,
                 get_config,
             )

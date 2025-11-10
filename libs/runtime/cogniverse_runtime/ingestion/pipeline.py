@@ -35,7 +35,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 
 # Cache imports removed - using pipeline_cache directly
 from cogniverse_core.common.cache.pipeline_cache import PipelineArtifactCache
-from cogniverse_core.config.utils import get_config
+from cogniverse_foundation.config.utils import get_config
 
 from cogniverse_runtime.ingestion.exceptions import (
     PipelineException,
@@ -109,7 +109,7 @@ class PipelineConfig:
     @classmethod
     def from_profile(cls, profile_name: str) -> "PipelineConfig":
         """Load pipeline config for a specific profile"""
-        from cogniverse_core.config.utils import create_default_config_manager
+        from cogniverse_foundation.config.utils import create_default_config_manager
 
         config_manager = create_default_config_manager()
         config = get_config(tenant_id="default", config_manager=config_manager)

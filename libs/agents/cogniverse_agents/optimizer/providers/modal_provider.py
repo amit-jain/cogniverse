@@ -14,7 +14,7 @@ import requests
 from .base_provider import ArtifactProvider, ModelProvider, ProviderFactory
 
 if TYPE_CHECKING:
-    from cogniverse_core.config.system_config import SystemConfig
+    from cogniverse_foundation.config.system_config import SystemConfig
 
 
 class ModalModelProvider(ModelProvider):
@@ -165,7 +165,7 @@ class ModalModelProvider(ModelProvider):
             try:
                 # Re-get config if not passed in
                 if config is None:
-                    from cogniverse_core.config.utils import (
+                    from cogniverse_foundation.config.utils import (
                         create_default_config_manager,
                         get_config,
                     )

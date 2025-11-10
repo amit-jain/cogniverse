@@ -23,7 +23,7 @@ def mock_config_manager():
     """Create mock config_manager for dependency injection"""
     from unittest.mock import Mock
 
-    from cogniverse_core.config.unified_config import (
+    from cogniverse_foundation.config.unified_config import (
         BackendConfig,
         RoutingConfigUnified,
         SystemConfig,

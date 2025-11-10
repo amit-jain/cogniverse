@@ -54,7 +54,7 @@ class SimpleVideoPrismModel:
             from pathlib import Path
 
             # Get videoprism path from config or environment
-            from cogniverse_core.config.utils import (
+            from cogniverse_foundation.config.utils import (
                 create_default_config_manager,
                 get_config,
             )

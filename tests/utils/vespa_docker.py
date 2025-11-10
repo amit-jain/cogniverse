@@ -234,8 +234,8 @@ class VespaDockerManager:
             # Create temporary ConfigManager and SchemaLoader for test infrastructure
             import tempfile
 
-            from cogniverse_core.config.unified_config import BackendConfig
-            from cogniverse_core.config.utils import create_default_config_manager
+            from cogniverse_foundation.config.unified_config import BackendConfig
+            from cogniverse_foundation.config.utils import create_default_config_manager
             from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
             # Create temporary database for config

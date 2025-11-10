@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from cogniverse_core.config.utils import get_config
+from cogniverse_foundation.config.utils import get_config
 
 from .base import Evaluator, create_evaluation_result
 
@@ -27,7 +27,7 @@ class ConfigurableVisualJudge(Evaluator):
         Args:
             evaluator_name: Name of evaluator config to use
         """
-        from cogniverse_core.config.utils import create_default_config_manager
+        from cogniverse_foundation.config.utils import create_default_config_manager
 
         # Initialize ConfigManager for dependency injection
         config_manager = create_default_config_manager()
@@ -81,7 +81,7 @@ class ConfigurableVisualJudge(Evaluator):
         frame_paths = []
 
         # Determine how many frames to extract based on config
-        from cogniverse_core.config.utils import create_default_config_manager
+        from cogniverse_foundation.config.utils import create_default_config_manager
 
         # Initialize ConfigManager for dependency injection
         frames_config_manager = create_default_config_manager()
@@ -227,7 +227,7 @@ class ConfigurableVisualJudge(Evaluator):
             # If sample_all, extract every frame (with limit)
             if sample_all:
                 # Get max_total_frames from config
-                from cogniverse_core.config.utils import create_default_config_manager
+                from cogniverse_foundation.config.utils import create_default_config_manager
 
                 # Initialize ConfigManager for dependency injection
                 sample_config_manager = create_default_config_manager()

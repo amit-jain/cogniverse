@@ -138,7 +138,7 @@ class BackendRegistry:
             )
 
         # Create BackendConfig from config_manager
-        from cogniverse_core.config.unified_config import BackendConfig
+        from cogniverse_foundation.config.unified_config import BackendConfig
         from cogniverse_core.factories.backend_factory import BackendFactory
 
         # Get system config for defaults
@@ -255,7 +255,7 @@ class BackendRegistry:
             )
 
         # Create BackendConfig from config_manager
-        from cogniverse_core.config.unified_config import BackendConfig
+        from cogniverse_foundation.config.unified_config import BackendConfig
         from cogniverse_core.factories.backend_factory import BackendFactory
 
         # Get system config for defaults

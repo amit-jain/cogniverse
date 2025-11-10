@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
-    from cogniverse_core.config.manager import ConfigManager
+    from cogniverse_foundation.config.manager import ConfigManager
 
 import httpx
 from cogniverse_core.common.a2a_utils import (
@@ -20,7 +20,7 @@ from cogniverse_core.common.a2a_utils import (
     create_task,
 )
 from cogniverse_core.common.agent_models import AgentEndpoint
-from cogniverse_core.config.utils import get_config
+from cogniverse_foundation.config.utils import get_config
 
 from cogniverse_agents.routing_agent import RoutingAgent
 

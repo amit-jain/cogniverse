@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from cogniverse_agents.tools.a2a_utils import A2AClient, discover_agents
-from cogniverse_core.config.utils import create_default_config_manager, get_config
+from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 
 
 class SystemTester:

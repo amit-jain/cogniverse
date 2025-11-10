@@ -3,7 +3,7 @@
 import logging
 from typing import Any, Dict
 
-from cogniverse_core.config.utils import create_default_config_manager
+from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from fastapi import APIRouter

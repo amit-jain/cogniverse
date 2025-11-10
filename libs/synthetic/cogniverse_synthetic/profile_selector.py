@@ -10,7 +10,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-from cogniverse_core.config.unified_config import SyntheticGeneratorConfig
+from cogniverse_foundation.config.unified_config import SyntheticGeneratorConfig
 
 logger = logging.getLogger(__name__)
 

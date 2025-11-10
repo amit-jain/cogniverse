@@ -85,7 +85,7 @@ def vespa_instance():
 
         # Clear singleton state to avoid interference with other test modules
         try:
-            from cogniverse_core.config.manager import ConfigManager
+            from cogniverse_foundation.config.manager import ConfigManager
             from cogniverse_core.registries.backend_registry import get_backend_registry
 
             # Clear backend registry instances

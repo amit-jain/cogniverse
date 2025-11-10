@@ -4,7 +4,7 @@ Integration tests for all synthetic data generators
 
 
 import pytest
-from cogniverse_core.config.unified_config import (
+from cogniverse_foundation.config.unified_config import (
     AgentMappingRule,
     DSPyModuleConfig,
     OptimizerGenerationConfig,

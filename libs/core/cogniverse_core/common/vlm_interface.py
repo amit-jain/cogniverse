@@ -6,10 +6,10 @@ from typing import TYPE_CHECKING, Any, Dict, List
 
 import dspy
 
-from cogniverse_core.config.utils import get_config
+from cogniverse_foundation.config.utils import get_config
 
 if TYPE_CHECKING:
-    from cogniverse_core.config.manager import ConfigManager
+    from cogniverse_foundation.config.manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 

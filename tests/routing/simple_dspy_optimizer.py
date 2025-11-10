@@ -19,7 +19,7 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 sys.path.insert(0, os.path.join(project_root, "src"))
 
 from cogniverse_agents.tools.query_analyzer import QueryAnalyzer  # noqa: E402
-from cogniverse_core.config.utils import (
+from cogniverse_foundation.config.utils import (
     create_default_config_manager,  # noqa: E402
     get_config,
 )

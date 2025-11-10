@@ -10,7 +10,7 @@ from cogniverse_agents.a2a_routing_agent import (
     AgentEndpoint,
 )
 from cogniverse_agents.tools.a2a_utils import A2AMessage, DataPart, Task, TextPart
-from cogniverse_core.config.utils import create_default_config_manager
+from cogniverse_foundation.config.utils import create_default_config_manager
 
 
 @pytest.mark.unit

@@ -206,7 +206,7 @@ class TestRealVespaIntegration:
             from pathlib import Path
 
             from cogniverse_agents.video_search_agent import VideoSearchAgent
-            from cogniverse_core.config.utils import create_default_config_manager
+            from cogniverse_foundation.config.utils import create_default_config_manager
             from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
             print("Initializing Enhanced Video Search Agent...")
@@ -824,7 +824,7 @@ class TestRealEndToEndIntegration:
             from pathlib import Path
 
             from cogniverse_agents.video_search_agent import VideoSearchAgent
-            from cogniverse_core.config.utils import create_default_config_manager
+            from cogniverse_foundation.config.utils import create_default_config_manager
             from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
             # Create dependencies for agent

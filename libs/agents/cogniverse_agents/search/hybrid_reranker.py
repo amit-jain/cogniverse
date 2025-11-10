@@ -13,9 +13,9 @@ import logging
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 if TYPE_CHECKING:
-    from cogniverse_core.config.manager import ConfigManager
+    from cogniverse_foundation.config.manager import ConfigManager
 
-from cogniverse_core.config.utils import get_config_value
+from cogniverse_foundation.config.utils import get_config_value
 
 from cogniverse_agents.search.learned_reranker import LearnedReranker
 from cogniverse_agents.search.multi_modal_reranker import (

@@ -198,7 +198,7 @@ class VespaVideoSearchClient:
         import sys
         from pathlib import Path
         sys.path.append(str(Path(__file__).parent.parent.parent.parent))
-        from cogniverse_core.config.utils import get_config
+        from cogniverse_foundation.config.utils import get_config
 
         # Require config_manager via dependency injection
         if config_manager is None:

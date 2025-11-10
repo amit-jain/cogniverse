@@ -12,7 +12,7 @@ from cogniverse_agents.query_analysis_tool_v3 import (
     QueryIntent,
     create_enhanced_query_analyzer,
 )
-from cogniverse_core.config.utils import create_default_config_manager
+from cogniverse_foundation.config.utils import create_default_config_manager
 
 
 @pytest.fixture

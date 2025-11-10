@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from cogniverse_core.config.utils import create_default_config_manager, get_config
+from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 
 # Add VideoPrism to path once at module level
 config_manager = create_default_config_manager()

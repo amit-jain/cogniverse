@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 
 import requests
-from cogniverse_core.config.utils import create_default_config_manager, get_config
+from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 from phoenix.experiments.evaluators.base import Evaluator
 from phoenix.experiments.types import EvaluationResult
 

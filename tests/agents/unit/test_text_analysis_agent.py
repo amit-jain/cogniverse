@@ -12,7 +12,7 @@ from cogniverse_agents.text_analysis_agent import (
     get_agent,
     set_config_manager,
 )
-from cogniverse_core.config.utils import create_default_config_manager
+from cogniverse_foundation.config.utils import create_default_config_manager
 from fastapi.testclient import TestClient
 
 

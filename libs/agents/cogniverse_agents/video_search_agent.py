@@ -263,7 +263,7 @@ class VideoSearchAgent(MemoryAwareMixin, TenantAwareAgentMixin):
         if config_manager is None:
             logger_temp.warning("⚠️  VideoSearchAgent received config_manager=None, creating default")
             # Create default if not provided (for backward compatibility)
-            from cogniverse_core.config.utils import create_default_config_manager
+            from cogniverse_foundation.config.utils import create_default_config_manager
             config_manager = create_default_config_manager()
         else:
             db_path = getattr(config_manager.store, 'db_path', 'unknown') if hasattr(config_manager, 'store') else 'no store'

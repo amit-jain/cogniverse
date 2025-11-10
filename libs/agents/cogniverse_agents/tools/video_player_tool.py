@@ -10,12 +10,12 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from cogniverse_core.config.utils import get_config
+from cogniverse_foundation.config.utils import get_config
 from google.adk.tools import BaseTool
 from google.genai.types import Part
 
 if TYPE_CHECKING:
-    from cogniverse_core.config.manager import ConfigManager
+    from cogniverse_foundation.config.manager import ConfigManager
 
 
 class VideoPlayerTool(BaseTool):

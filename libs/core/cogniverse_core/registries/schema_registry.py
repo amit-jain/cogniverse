@@ -41,7 +41,7 @@ class SchemaRegistry:
     would inadvertently delete all existing schemas from Vespa.
 
     Usage:
-        from cogniverse_core.config.utils import create_default_config_manager
+        from cogniverse_foundation.config.utils import create_default_config_manager
         config_manager = create_default_config_manager()
         registry = SchemaRegistry(config_manager, backend, schema_loader)
 

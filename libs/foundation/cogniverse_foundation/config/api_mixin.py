@@ -8,13 +8,13 @@ from typing import Any, Dict, Optional
 from fastapi import HTTPException
 from pydantic import BaseModel
 
-from cogniverse_core.config.agent_config import (
+from cogniverse_foundation.config.agent_config import (
     DSPyModuleType,
     ModuleConfig,
     OptimizerConfig,
     OptimizerType,
 )
-from cogniverse_core.config.manager import ConfigManager
+from cogniverse_foundation.config.manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 

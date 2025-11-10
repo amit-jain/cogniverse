@@ -111,7 +111,7 @@ class TenantAwareVespaSearchClient:
         self._schema_loader = schema_loader
 
         # Get backend via BackendRegistry for schema deployment
-        from cogniverse_vespa.config import calculate_config_port
+        from cogniverse_vespa.config_utils import calculate_config_port
         config_port = calculate_config_port(backend_port)
 
         registry = BackendRegistry.get_instance()

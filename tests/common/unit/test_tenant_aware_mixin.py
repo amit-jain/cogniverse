@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
-from cogniverse_core.config.unified_config import SystemConfig
+from cogniverse_foundation.config.unified_config import SystemConfig
 
 
 class MockAgentWithTenant(TenantAwareAgentMixin):
@@ -247,7 +247,7 @@ class TestTenantAwareAgentMixin:
 
     def test_integration_with_real_system_config(self):
         """Test integration with actual get_config() (if available)"""
-        from cogniverse_core.config.utils import ConfigUtils
+        from cogniverse_foundation.config.utils import ConfigUtils
 
         try:
             # Try to create agent without config (should load system config)

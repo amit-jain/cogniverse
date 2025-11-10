@@ -7,18 +7,18 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from cogniverse_core.config.agent_config import (
+from cogniverse_foundation.config.agent_config import (
     AgentConfig,
     DSPyModuleType,
     ModuleConfig,
 )
-from cogniverse_core.config.manager import ConfigManager
-from cogniverse_core.config.unified_config import (
+from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_foundation.config.unified_config import (
     RoutingConfigUnified,
     SystemConfig,
     TelemetryConfigUnified,
 )
-from cogniverse_core.config.utils import create_default_config_manager
+from cogniverse_foundation.config.utils import create_default_config_manager
 
 
 class TestConfigPersistence:

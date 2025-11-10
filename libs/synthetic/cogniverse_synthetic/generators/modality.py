@@ -10,7 +10,7 @@ import random
 from typing import Any, Dict, List, Optional
 
 import dspy
-from cogniverse_core.config.unified_config import OptimizerGenerationConfig
+from cogniverse_foundation.config.unified_config import OptimizerGenerationConfig
 from pydantic import BaseModel
 
 from cogniverse_synthetic.generators.base import BaseGenerator

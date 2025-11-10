@@ -11,12 +11,12 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import httpx
 from cogniverse_core.common.agent_models import AgentEndpoint
-from cogniverse_core.config.utils import get_config
+from cogniverse_foundation.config.utils import get_config
 
 from cogniverse_agents.tools.a2a_utils import A2AClient
 
 if TYPE_CHECKING:
-    from cogniverse_core.config.manager import ConfigManager
+    from cogniverse_foundation.config.manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 

@@ -252,8 +252,8 @@ class TestBackendRegistry(unittest.TestCase):
         import tempfile
         from unittest.mock import MagicMock
 
-        from cogniverse_core.common.vespa_config_store import VespaConfigStore
-        from cogniverse_core.config.manager import ConfigManager
+        from cogniverse_vespa.config.config_store import VespaConfigStore
+        from cogniverse_foundation.config.manager import ConfigManager
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         self.temp_dir = tempfile.mkdtemp()
         # Create a mock config store for testing
@@ -468,8 +468,8 @@ class TestBackendIntegration(unittest.TestCase):
         import tempfile
         from unittest.mock import MagicMock
 
-        from cogniverse_core.common.vespa_config_store import VespaConfigStore
-        from cogniverse_core.config.manager import ConfigManager
+        from cogniverse_vespa.config.config_store import VespaConfigStore
+        from cogniverse_foundation.config.manager import ConfigManager
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         self.temp_dir = tempfile.mkdtemp()
         # Create a mock config store for testing

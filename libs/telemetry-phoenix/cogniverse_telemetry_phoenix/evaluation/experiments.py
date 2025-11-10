@@ -49,7 +49,7 @@ class PhoenixExperimentPlugin:
 
             # Import search service
             from cogniverse_agents.search.service import SearchService
-            from cogniverse_core.config.utils import (
+            from cogniverse_foundation.config.utils import (
                 create_default_config_manager,
                 get_config,
             )

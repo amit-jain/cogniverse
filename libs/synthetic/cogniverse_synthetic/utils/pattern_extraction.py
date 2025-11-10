@@ -11,7 +11,7 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
-from cogniverse_core.config.unified_config import FieldMappingConfig
+from cogniverse_foundation.config.unified_config import FieldMappingConfig
 
 logger = logging.getLogger(__name__)
 

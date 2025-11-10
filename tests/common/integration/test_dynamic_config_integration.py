@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from cogniverse_agents.text_analysis_agent import TextAnalysisAgent, app
-from cogniverse_core.config.agent_config import DSPyModuleType
+from cogniverse_foundation.config.agent_config import DSPyModuleType
 from fastapi.testclient import TestClient
 
 
@@ -22,7 +22,7 @@ class TestDynamicConfigIntegration:
     @pytest.fixture
     def fresh_agent(self, tmp_path):
         """Create fresh TextAnalysisAgent instance with clean config"""
-        from cogniverse_core.config.utils import create_default_config_manager
+        from cogniverse_foundation.config.utils import create_default_config_manager
         from fastapi import FastAPI
 
         # Create temporary ConfigManager instance
@@ -36,7 +36,7 @@ class TestDynamicConfigIntegration:
             )
 
             # Reset to default PREDICT module for consistent tests
-            from cogniverse_core.config.agent_config import DSPyModuleType, ModuleConfig
+            from cogniverse_foundation.config.agent_config import DSPyModuleType, ModuleConfig
 
             default_module_config = ModuleConfig(
                 module_type=DSPyModuleType.PREDICT,

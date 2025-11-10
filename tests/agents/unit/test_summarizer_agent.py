@@ -14,7 +14,7 @@ from cogniverse_agents.summarizer_agent import (
     VLMInterface,
 )
 from cogniverse_agents.tools.a2a_utils import A2AMessage, DataPart, Task
-from cogniverse_core.config.utils import create_default_config_manager
+from cogniverse_foundation.config.utils import create_default_config_manager
 
 
 @pytest.mark.unit

@@ -18,8 +18,8 @@ import click
 sys.path.append(str(Path(__file__).parent.parent))
 
 from cogniverse_agents.search.service import SearchService
-from cogniverse_core.config.manager import ConfigManager
-from cogniverse_core.config.utils import get_config, create_default_config_manager
+from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_foundation.config.utils import get_config, create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from src.evaluation.data.datasets import DatasetManager
 

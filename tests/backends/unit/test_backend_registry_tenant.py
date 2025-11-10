@@ -6,7 +6,7 @@ Tests that backend instances are properly isolated per tenant.
 
 
 import pytest
-from cogniverse_core.config.utils import create_default_config_manager
+from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_sdk.interfaces.backend import IngestionBackend, SearchBackend
 from cogniverse_core.registries.backend_registry import (
     get_backend_registry,

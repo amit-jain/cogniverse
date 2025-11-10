@@ -41,7 +41,7 @@ def shared_system_vespa():
     print("=" * 70)
 
     # CRITICAL: Clear ALL singletons to ensure fresh state with test ports
-    from cogniverse_core.config.manager import ConfigManager
+    from cogniverse_foundation.config.manager import ConfigManager
     from cogniverse_core.memory.manager import Mem0MemoryManager
     from cogniverse_core.registries.backend_registry import get_backend_registry
 
@@ -121,7 +121,7 @@ def shared_system_vespa():
 
         # Clear singleton state to avoid interference with other test modules
         try:
-            from cogniverse_core.config.manager import ConfigManager
+            from cogniverse_foundation.config.manager import ConfigManager
             from cogniverse_core.memory.manager import Mem0MemoryManager
             from cogniverse_core.registries.backend_registry import get_backend_registry
             from cogniverse_core.registries.registry import get_registry

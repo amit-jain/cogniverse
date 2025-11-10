@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from cogniverse_core.config.agent_config import (
+from cogniverse_foundation.config.agent_config import (
     AgentConfig,
 )
 

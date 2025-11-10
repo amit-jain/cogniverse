@@ -11,7 +11,7 @@ from cogniverse_core.common.dspy_module_registry import (
     DSPyModuleRegistry,
     DSPyOptimizerRegistry,
 )
-from cogniverse_core.config.agent_config import (
+from cogniverse_foundation.config.agent_config import (
     AgentConfig,
     ModuleConfig,
     OptimizerConfig,

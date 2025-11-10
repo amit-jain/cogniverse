@@ -20,7 +20,7 @@ def memory_manager(shared_memory_vespa):
 
     from pathlib import Path
 
-    from cogniverse_core.config.utils import create_default_config_manager
+    from cogniverse_foundation.config.utils import create_default_config_manager
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
     manager = Mem0MemoryManager(tenant_id="test_tenant")
@@ -396,7 +396,7 @@ class TestMem0MemoryAwareMixinIntegration:
         from pathlib import Path
 
         from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
-        from cogniverse_core.config.utils import (
+        from cogniverse_foundation.config.utils import (
             create_default_config_manager,
         )
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader

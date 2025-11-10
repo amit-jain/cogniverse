@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from cogniverse_core.common.config_store_interface import (
+from cogniverse_sdk.interfaces.config_store import (
     ConfigEntry,
     ConfigScope,
     ConfigStore,

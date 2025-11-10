@@ -12,28 +12,23 @@ authors = [
 dependencies = [
     # SDK - Core interfaces
     "cogniverse-sdk",
-
     # Core DSPy and LLM
     "dspy-ai>=3.0.2",
     "litellm>=1.73.0",
-
     # Telemetry and Observability
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-instrumentation>=0.41b0",
     "arize-phoenix>=4.0.0",
-
     # Data validation and serialization
     "pydantic>=2.0.0",
-
     # Configuration and storage
     "pyyaml>=6.0",
-
     # Memory management
     "mem0ai>=0.1.118",
-
     # Utilities
     "aiofiles>=24.1.0",
+    "cogniverse-foundation",
 ]
 
 [project.optional-dependencies]
@@ -49,6 +44,7 @@ dev = [
 
 [tool.uv.sources]
 cogniverse-sdk = { workspace = true }
+cogniverse-foundation = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

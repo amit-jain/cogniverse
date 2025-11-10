@@ -51,7 +51,7 @@ def create_retrieval_solver(
         # Import here to avoid circular dependencies
         from cogniverse_runtime.search.service import SearchService
 
-        from cogniverse_core.config.utils import (
+        from cogniverse_foundation.config.utils import (
             create_default_config_manager,
             get_config,
         )
@@ -206,8 +206,8 @@ def create_batch_solver(
             try:
                 from cogniverse_runtime.search.service import SearchService
 
-                from cogniverse_core.config.manager import ConfigManager
-                from cogniverse_core.config.utils import get_config
+                from cogniverse_foundation.config.manager import ConfigManager
+                from cogniverse_foundation.config.utils import get_config
 
                 # Initialize ConfigManager for dependency injection
                 ground_truth_config_manager = ConfigManager()

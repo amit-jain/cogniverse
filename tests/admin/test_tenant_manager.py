@@ -58,8 +58,8 @@ class TestTenantManagerAPI:
     @pytest.fixture(scope="module")
     def config_manager(self, vespa_backend, shared_test_db):
         """Create class-scoped ConfigManager"""
-        from cogniverse_core.config.utils import create_default_config_manager
-        from cogniverse_core.config.unified_config import SystemConfig
+        from cogniverse_foundation.config.utils import create_default_config_manager
+        from cogniverse_foundation.config.unified_config import SystemConfig
         from cogniverse_core.registries.backend_registry import BackendRegistry
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 

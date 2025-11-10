@@ -7,7 +7,7 @@ import time
 from typing import Any
 
 from cogniverse_agents.search.service import SearchService
-from cogniverse_core.config.utils import get_config
+from cogniverse_foundation.config.utils import get_config
 from inspect_ai.solver import Solver, solver
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ class CogniverseRetrievalSolver(Solver):
     """Custom solver for Cogniverse retrieval evaluation"""
 
     def __init__(self, profiles: list[str], strategies: list[str]):
-        from cogniverse_core.config.utils import create_default_config_manager
+        from cogniverse_foundation.config.utils import create_default_config_manager
 
         self.profiles = profiles
         self.strategies = strategies

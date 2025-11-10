@@ -8,12 +8,13 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from cogniverse_core.common.config_store_interface import (
+from vespa.application import Vespa
+
+from cogniverse_sdk.interfaces.config_store import (
     ConfigEntry,
     ConfigScope,
     ConfigStore,
 )
-from vespa.application import Vespa
 
 logger = logging.getLogger(__name__)
 
@@ -379,6 +380,71 @@ class VespaConfigStore(ConfigStore):
 
         except Exception as e:
             logger.error(f"Failed to list configs from Vespa: {e}")
+            return []
+
+    def list_all_configs(
+        self,
+        scope: Optional[ConfigScope] = None,
+        service: Optional[str] = None,
+    ) -> List[ConfigEntry]:
+        """
+        List all configurations across all tenants.
+
+        Returns only latest versions.
+
+        Args:
+            scope: Filter by scope (None = all scopes)
+            service: Filter by service (None = all services)
+
+        Returns:
+            List of latest version ConfigEntry objects from all tenants
+        """
+        # Build YQL query with filters (no tenant_id filter)
+        conditions = []
+
+        if scope is not None:
+            conditions.append(f"scope = '{scope.value}'")
+
+        if service is not None:
+            conditions.append(f"service = '{service}'")
+
+        where_clause = " and ".join(conditions) if conditions else "true"
+
+        # Query all matching configs, then filter to latest versions
+        yql = f"select * from {self.schema_name} where {where_clause} limit 10000"
+
+        try:
+            response = self.vespa_app.query(yql=yql)
+
+            # Group by config_id and keep only latest version
+            latest_configs: Dict[str, ConfigEntry] = {}
+
+            for hit in response.hits:
+                fields = hit["fields"]
+                config_id = fields["config_id"]
+
+                entry = ConfigEntry(
+                    tenant_id=fields["tenant_id"],
+                    scope=ConfigScope(fields["scope"]),
+                    service=fields["service"],
+                    config_key=fields["config_key"],
+                    config_value=json.loads(fields["config_value"]),
+                    version=fields["version"],
+                    created_at=datetime.fromisoformat(fields["created_at"]),
+                    updated_at=datetime.fromisoformat(fields["updated_at"]),
+                )
+
+                # Keep only latest version for each config_id
+                if (
+                    config_id not in latest_configs
+                    or entry.version > latest_configs[config_id].version
+                ):
+                    latest_configs[config_id] = entry
+
+            return list(latest_configs.values())
+
+        except Exception as e:
+            logger.error(f"Failed to list all configs from Vespa: {e}")
             return []
 
     def delete_config(
