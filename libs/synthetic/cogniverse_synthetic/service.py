@@ -13,7 +13,7 @@ from cogniverse_core.config.unified_config import (
     BackendConfig,
     SyntheticGeneratorConfig,
 )
-from cogniverse_core.interfaces.backend import Backend
+from cogniverse_sdk.interfaces.backend import Backend
 from pydantic import BaseModel
 
 from cogniverse_synthetic.backend_querier import BackendQuerier

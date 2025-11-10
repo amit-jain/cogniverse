@@ -214,15 +214,16 @@ class TestRealVespaIntegration:
             schema_loader = FilesystemSchemaLoader(
                 base_path=Path("tests/system/resources/schemas")
             )
-            config_manager = create_default_config_manager()
+            # Use config_manager from fixture (temp DB with correct ports)
+            config_manager = shared_system_vespa["manager"].config_manager
 
             video_agent = VideoSearchAgent(
                 tenant_id="test_tenant",
                 schema_loader=schema_loader,
                 config_manager=config_manager,
-                backend_url=vespa_url,
-                backend_port=vespa_port,
-                vespa_config_port=shared_system_vespa["config_port"],  # Config port for schema deployment
+                backend_url=vespa_url,  # Backend-agnostic naming
+                backend_port=vespa_port,  # Backend-agnostic naming
+                backend_config_port=shared_system_vespa["config_port"],  # Config port for schema deployment
                 profile=default_schema,
                 auto_create_schema=False,  # Schema already deployed by fixture
             )
@@ -830,7 +831,8 @@ class TestRealEndToEndIntegration:
             schema_loader = FilesystemSchemaLoader(
                 base_path=Path("tests/system/resources/schemas")
             )
-            config_manager = create_default_config_manager()
+            # Use config_manager from fixture (temp DB with correct ports)
+            config_manager = vespa_test_manager.config_manager
 
             video_search_agent = VideoSearchAgent(
                 tenant_id="test_tenant",
@@ -838,7 +840,7 @@ class TestRealEndToEndIntegration:
                 config_manager=config_manager,
                 backend_url="http://localhost",
                 backend_port=vespa_test_manager.http_port,
-                vespa_config_port=19073,  # Config port for schema deployment
+                vespa_config_port=vespa_test_manager.config_port,  # Use actual config port from manager
                 profile="video_colpali_smol500_mv_frame",
                 auto_create_schema=False,  # Schema already deployed by fixture
             )

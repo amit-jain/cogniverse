@@ -94,7 +94,7 @@ def create_tenant_metadata_schema() -> Schema:
                 Field(
                     name="org_id",
                     type="string",
-                    indexing=["summary", "index", "attribute"],
+                    indexing=["summary", "attribute"],
                     attribute=["fast-search"],
                 ),
                 Field(
@@ -133,7 +133,7 @@ def add_metadata_schemas_to_package(app_package) -> None:
 
     Example:
         >>> from vespa.package import ApplicationPackage
-        >>> app_package = ApplicationPackage(name="videosearch")
+        >>> app_package = ApplicationPackage(name="cogniverse")
         >>> add_metadata_schemas_to_package(app_package)
         >>> # Now app_package has organization_metadata and tenant_metadata schemas
     """

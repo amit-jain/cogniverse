@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
-from cogniverse_core.interfaces.schema_loader import (
+from cogniverse_sdk.interfaces.schema_loader import (
     SchemaLoader,
     SchemaLoadError,
     SchemaNotFoundException,

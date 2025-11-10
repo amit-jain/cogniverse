@@ -231,41 +231,53 @@ def shared_memory_vespa():
     BackendRegistry._backend_instances.clear()
 
     try:
-        # Deploy application package with tenant-specific schema (same as working backend tests)
+        # Deploy schema via BackendRegistry + SchemaRegistry (correct pattern)
         import tempfile
         from pathlib import Path
 
-        from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-        from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-        from vespa.package import ApplicationPackage
+        from cogniverse_core.config.unified_config import SystemConfig
+        from cogniverse_core.registries.backend_registry import BackendRegistry
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
-        # Create application package
-        app_package = ApplicationPackage(name="memory")
-        parser = JsonSchemaParser()
-
-        # Load agent_memories schema and rename it to tenant-specific name
-        schema_file = Path("configs/schemas/agent_memories_schema.json")
-        schema = parser.load_schema_from_json_file(str(schema_file))
-
-        # Rename schema to tenant-specific name
-        tenant_schema_name = "agent_memories_test_tenant"
-        schema.name = tenant_schema_name
-        app_package.add_schema(schema)
-        print(f"  Added schema: {schema.name}")
-
-        # Deploy using VespaSchemaManager (same as working tests)
+        # Create persistent ConfigManager for session (not temporary!)
+        # This must persist for the entire test session so SchemaRegistry state is maintained
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp_db:
-            config_manager = create_default_config_manager(db_path=Path(tmp_db.name))
-            schema_manager = VespaSchemaManager(
-                backend_endpoint="http://localhost",
-                backend_port=MEMORY_BACKEND_CONFIG_PORT,
-                config_manager=config_manager
-            )
-            schema_manager._deploy_package(app_package)
-            print("✅ Schema deployment completed")
+            session_db_path = Path(tmp_db.name)
 
-            # Cleanup temporary database
-            Path(tmp_db.name).unlink(missing_ok=True)
+        config_manager = create_default_config_manager(db_path=session_db_path)
+
+        # Set system config pointing to test Vespa
+        system_config = SystemConfig(
+            tenant_id="test_tenant",
+            backend_url="http://localhost",
+            backend_port=MEMORY_BACKEND_PORT,
+        )
+        config_manager.set_system_config(system_config)
+
+        # Create schema loader
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+        # Get backend via BackendRegistry (creates SchemaRegistry automatically)
+        backend = BackendRegistry.get_instance().get_ingestion_backend(
+            name="vespa",
+            tenant_id="test_tenant",
+            config={
+                "backend": {
+                    "url": "http://localhost",
+                    "port": MEMORY_BACKEND_PORT,
+                    "config_port": MEMORY_BACKEND_CONFIG_PORT,
+                }
+            },
+            config_manager=config_manager,
+            schema_loader=schema_loader
+        )
+
+        # Deploy schema via SchemaRegistry (correct pattern)
+        tenant_schema_name = backend.schema_registry.deploy_schema(
+            tenant_id="test_tenant",
+            base_schema_name="agent_memories"
+        )
+        print(f"✅ Schema deployment completed via SchemaRegistry: {tenant_schema_name}")
 
         # Clear backend cache AGAIN after schema deployment
         # This ensures the memory manager gets a fresh backend WITH profiles
@@ -303,3 +315,7 @@ def shared_memory_vespa():
     # Cleanup container after tests
     subprocess.run(["docker", "stop", MEMORY_BACKEND_CONTAINER], capture_output=True)
     subprocess.run(["docker", "rm", MEMORY_BACKEND_CONTAINER], capture_output=True)
+
+    # Cleanup session database
+    if 'session_db_path' in locals():
+        session_db_path.unlink(missing_ok=True)

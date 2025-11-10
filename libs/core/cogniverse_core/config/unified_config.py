@@ -45,6 +45,7 @@ class SystemConfig:
     search_backend: str = "vespa"
     backend_url: str = "http://localhost"
     backend_port: int = 8080
+    application_name: str = "cogniverse"  # Vespa application package name
     elasticsearch_url: Optional[str] = None
 
     # LLM configuration
@@ -76,6 +77,7 @@ class SystemConfig:
             "search_backend": self.search_backend,
             "backend_url": self.backend_url,
             "backend_port": self.backend_port,
+            "application_name": self.application_name,
             "elasticsearch_url": self.elasticsearch_url,
             "llm_model": self.llm_model,
             "base_url": self.base_url,

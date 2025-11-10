@@ -98,11 +98,6 @@ class SchemaRegistry:
         # Load all previously deployed schemas from persistent storage
         self._load_schemas_from_storage()
 
-        logger.info(
-            f"SchemaRegistry initialized with {len(self._schemas)} schemas loaded "
-            f"(strict_mode={strict_mode})"
-        )
-
     def _load_schemas_from_storage(self):
         """
         Load all schemas from ConfigManager into in-memory registry on startup.
@@ -116,7 +111,7 @@ class SchemaRegistry:
         """
         try:
             # Load all schemas across all tenants using generic ConfigManager methods
-            from cogniverse_core.config.store_interface import ConfigScope
+            from cogniverse_sdk.interfaces.config_store import ConfigScope
 
             all_schema_data = self._config_manager.store.list_all_configs(
                 scope=ConfigScope.SCHEMA,
@@ -196,7 +191,7 @@ class SchemaRegistry:
         """
         from datetime import datetime, timezone
 
-        from cogniverse_core.config.store_interface import ConfigScope
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
 
         logger.info(
             f"Registering schema '{base_schema_name}' for tenant '{tenant_id}' "
@@ -349,7 +344,8 @@ class SchemaRegistry:
             force: Force redeployment even if schema exists (default: False)
 
         Returns:
-            Tenant-specific schema name (e.g., 'video_colpali_smol500_mv_frame_acme')
+            Tenant-specific schema name (e.g., 'video_colpali_smol500_mv_frame_acme' or
+            'video_colpali_smol500_mv_frame_acme_prod' for 'acme:prod')
 
         Raises:
             ValueError: If backend or schema_loader not configured, or invalid inputs
@@ -359,10 +355,10 @@ class SchemaRegistry:
         Example:
             registry = SchemaRegistry(backend=vespa_backend, schema_loader=loader)
             schema_name = registry.deploy_schema(
-                tenant_id="acme",
+                tenant_id="acme:prod",
                 base_schema_name="video_colpali_smol500_mv_frame"
             )
-            # Returns: "video_colpali_smol500_mv_frame_acme"
+            # Returns: "video_colpali_smol500_mv_frame_acme_prod" (colon replaced with underscore)
         """
         # Validate inputs
         self._validate_tenant_id(tenant_id)
@@ -371,11 +367,13 @@ class SchemaRegistry:
         # No need to check backend/schema_loader - guaranteed to exist (checked at construction)
 
         # Generate tenant-specific schema name
-        tenant_schema_name = f"{base_schema_name}_{tenant_id}"
+        # Replace colons with underscores since Vespa schema names cannot contain colons
+        safe_tenant_id = tenant_id.replace(":", "_")
+        tenant_schema_name = f"{base_schema_name}_{safe_tenant_id}"
 
         # Check if already deployed (unless force=True)
         if not force and self.schema_exists(tenant_id, base_schema_name):
-            logger.debug(f"Schema '{tenant_schema_name}' already deployed for tenant '{tenant_id}', skipping")
+            logger.debug(f"Schema '{tenant_schema_name}' already deployed for tenant '{tenant_id}'")
             return tenant_schema_name
 
         # Load base schema from schema loader
@@ -411,11 +409,6 @@ class SchemaRegistry:
             "base_schema_name": base_schema_name,
         })
 
-        logger.info(
-            f"Deploying {len(all_schemas)} schemas "
-            f"({len(previous_schemas)} existing + 1 new)"
-        )
-
         # TRANSACTION PHASE 1: Deploy to backend (atomic operation)
         try:
             success = self._backend.deploy_schemas(all_schemas)
@@ -425,13 +418,14 @@ class SchemaRegistry:
                 )
         except Exception as e:
             # Backend deployment failed - no rollback needed (nothing changed)
-            logger.error(f"Backend deployment failed: {e}")
+            logger.error(f"🔍 Backend deployment FAILED: {e}")
             raise BackendDeploymentError(
                 f"Backend deployment failed for schema '{tenant_schema_name}': {e}"
             )
 
         # TRANSACTION PHASE 2: Register in ConfigStore (critical section)
         try:
+            logger.warning(f"🔍 REGISTERING schema {tenant_schema_name} in database")
             self.register_schema(
                 tenant_id=tenant_id,
                 base_schema_name=base_schema_name,
@@ -558,7 +552,7 @@ class SchemaRegistry:
         """
         from datetime import datetime, timezone
 
-        from cogniverse_core.config.store_interface import ConfigScope
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
 
         logger.info(
             f"Unregistering schema '{base_schema_name}' for tenant '{tenant_id}'"

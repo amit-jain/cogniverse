@@ -31,7 +31,9 @@ class VespaDockerManager:
     def start_container(
         self,
         module_name: str,
-        use_module_ports: bool = True
+        use_module_ports: bool = True,
+        http_port: int = None,
+        config_port: int = None
     ) -> Dict[str, any]:
         """
         Start isolated Vespa Docker container with unique ports.
@@ -40,6 +42,8 @@ class VespaDockerManager:
             module_name: Test module name (used for port generation and container naming)
             use_module_ports: If True, generate ports based on module name hash.
                             If False, use sequential ports (8081, 19072)
+            http_port: Explicit HTTP port to use (overrides use_module_ports)
+            config_port: Explicit config port to use (overrides use_module_ports)
 
         Returns:
             dict: Container info with keys:
@@ -51,8 +55,11 @@ class VespaDockerManager:
         Raises:
             RuntimeError: If container fails to start
         """
-        # Generate unique ports
-        if use_module_ports:
+        # Generate unique ports (explicit ports take precedence)
+        if http_port is not None and config_port is not None:
+            # Use explicitly provided ports
+            pass
+        elif use_module_ports:
             http_port, config_port = generate_unique_ports(module_name)
         else:
             # Sequential ports for system tests

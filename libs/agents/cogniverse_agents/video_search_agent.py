@@ -257,10 +257,17 @@ class VideoSearchAgent(MemoryAwareMixin, TenantAwareAgentMixin):
                 "schema_loader is required for VideoSearchAgent. "
                 "Dependency injection is mandatory - pass SchemaLoader instance explicitly."
             )
+        # Debug: Log config_manager state
+        import logging
+        logger_temp = logging.getLogger(__name__)
         if config_manager is None:
+            logger_temp.warning("⚠️  VideoSearchAgent received config_manager=None, creating default")
             # Create default if not provided (for backward compatibility)
             from cogniverse_core.config.utils import create_default_config_manager
             config_manager = create_default_config_manager()
+        else:
+            db_path = getattr(config_manager.store, 'db_path', 'unknown') if hasattr(config_manager, 'store') else 'no store'
+            logger_temp.warning(f"✅ VideoSearchAgent received config_manager with DB: {db_path}")
 
         # Store dependencies for use in initialization
         self.schema_loader = schema_loader
@@ -276,54 +283,54 @@ class VideoSearchAgent(MemoryAwareMixin, TenantAwareAgentMixin):
         # self.config already set by TenantAwareAgentMixin
 
         # Check environment variables first, then kwargs, then defaults
-        vespa_url = kwargs.get("vespa_url") or os.getenv(
-            "VESPA_URL", "http://localhost"
+        backend_url = kwargs.get("backend_url") or os.getenv(
+            "BACKEND_URL", "http://localhost"
         )
 
         # Handle port from env var or kwargs (extract port from URL if needed)
-        env_port = os.getenv("VESPA_PORT")
-        kwargs_port = kwargs.get("vespa_port")
+        env_port = os.getenv("BACKEND_PORT")
+        kwargs_port = kwargs.get("backend_port")
 
         if kwargs_port:
-            vespa_port = int(kwargs_port)
+            backend_port = int(kwargs_port)
         elif env_port:
-            vespa_port = int(env_port)
-            # If we got port from env var, make sure vespa_url doesn't already include it
-            if ":" in vespa_url and vespa_url.count(":") >= 2:
+            backend_port = int(env_port)
+            # If we got port from env var, make sure backend_url doesn't already include it
+            if ":" in backend_url and backend_url.count(":") >= 2:
                 # Remove existing port from URL
-                vespa_url = ":".join(vespa_url.split(":")[:-1])
-        elif ":" in vespa_url and vespa_url.count(":") >= 2:
+                backend_url = ":".join(backend_url.split(":")[:-1])
+        elif ":" in backend_url and backend_url.count(":") >= 2:
             # Extract port from URL like "http://localhost:8081"
-            vespa_port = int(vespa_url.split(":")[-1])
-            # Remove port from URL since VespaVideoSearchClient will add it
-            vespa_url = ":".join(vespa_url.split(":")[:-1])
+            backend_port = int(backend_url.split(":")[-1])
+            # Remove port from URL since backend client will add it
+            backend_url = ":".join(backend_url.split(":")[:-1])
         else:
-            vespa_port = 8080
+            backend_port = 8080
 
-        # Extract vespa_host for memory initialization (strip protocol if present)
-        vespa_host = vespa_url.replace("http://", "").replace("https://", "")
+        # Extract backend_host for memory initialization (strip protocol if present)
+        backend_host = backend_url.replace("http://", "").replace("https://", "")
 
         # Get config port for schema deployment (separate from data port)
         # System tests use config_port = data_port + 10991 (e.g., 8082 data, 19073 config)
         # Production uses default config_port = 19071
-        vespa_config_port = kwargs.get("vespa_config_port")
-        if not vespa_config_port:
+        backend_config_port = kwargs.get("backend_config_port")
+        if not backend_config_port:
             # Calculate config port: if data port is 8080 (default), use 19071 (default)
             # Otherwise, assume pattern: config_port = data_port + 10991
-            if vespa_port == 8080:
-                vespa_config_port = 19071
+            if backend_port == 8080:
+                backend_config_port = 19071
             else:
-                vespa_config_port = vespa_port + 10991
+                backend_config_port = backend_port + 10991
 
-        # Initialize memory for video agent with correct Vespa ports
+        # Initialize memory for video agent with correct backend ports
         # NOTE: Memory schema creation is controlled separately from video schema
         # Default is True so memory always works, but tests can disable if managing schemas themselves
         memory_initialized = self.initialize_memory(
             agent_name="video_agent",
             tenant_id=tenant_id,
-            backend_host=vespa_host,
-            backend_port=vespa_port,
-            backend_config_port=vespa_config_port,
+            backend_host=backend_host,
+            backend_port=backend_port,
+            backend_config_port=backend_config_port,
             auto_create_schema=kwargs.get("auto_create_memory_schema", True),
             config_manager=self.config_manager,
             schema_loader=self.schema_loader,
@@ -335,7 +342,7 @@ class VideoSearchAgent(MemoryAwareMixin, TenantAwareAgentMixin):
 
         # Get model from active profile - check environment variable first
         active_profile = (
-            os.getenv("VESPA_SCHEMA")
+            os.getenv("BACKEND_PROFILE")
             or kwargs.get("profile")
             or self.config.get("active_video_profile")
             or "video_colpali_smol500_mv_frame"
@@ -358,27 +365,31 @@ class VideoSearchAgent(MemoryAwareMixin, TenantAwareAgentMixin):
             model_name = kwargs.get("model_name", "vidore/colsmol-500m")
             self.embedding_type = "frame_based"
 
+        # Get backend type from config or kwargs (default: vespa)
+        backend_type = kwargs.get("backend_type") or self.config.get("backend_type", "vespa")
+
         # Initialize search backend via backend registry
         try:
             logger.info("Enhanced Video Search Agent configuration:")
             logger.info(f"  - Tenant ID: {tenant_id}")
-            logger.info(f"  - Vespa URL: {vespa_url}")
-            logger.info(f"  - Vespa Port: {vespa_port}")
+            logger.info(f"  - Backend Type: {backend_type}")
+            logger.info(f"  - Backend URL: {backend_url}")
+            logger.info(f"  - Backend Port: {backend_port}")
             logger.info(f"  - Active Profile: {active_profile}")
             logger.info(f"  - Model Name: {model_name}")
-            logger.info(f"  - Environment VESPA_URL: {os.getenv('VESPA_URL')}")
-            logger.info(f"  - Environment VESPA_PORT: {os.getenv('VESPA_PORT')}")
-            logger.info(f"  - Environment VESPA_SCHEMA: {os.getenv('VESPA_SCHEMA')}")
+            logger.info(f"  - Environment BACKEND_URL: {os.getenv('BACKEND_URL')}")
+            logger.info(f"  - Environment BACKEND_PORT: {os.getenv('BACKEND_PORT')}")
+            logger.info(f"  - Environment BACKEND_PROFILE: {os.getenv('BACKEND_PROFILE')}")
 
             # Build backend config
             # Pass base schema name - backend will add tenant suffix
             backend_config = {
-                "vespa_url": vespa_url,
-                "vespa_port": vespa_port,
-                "vespa_config_port": vespa_config_port,
+                "url": backend_url,
+                "port": backend_port,
+                "config_port": backend_config_port,
                 "schema_name": active_profile,  # Base schema name, backend adds tenant suffix
                 "tenant_id": tenant_id,
-                "profile": active_profile,  # VespaBackend checks for "profile", not "active_video_profile"
+                "profile": active_profile,
                 "backend": backend_config_data,  # Pass entire backend section with profiles, default_profiles, etc.
             }
 
@@ -387,13 +398,13 @@ class VideoSearchAgent(MemoryAwareMixin, TenantAwareAgentMixin):
             # Use self.config_manager and self.schema_loader from dependency injection
 
             self.search_backend = registry.get_search_backend(
-                "vespa", tenant_id, backend_config,
+                backend_type, tenant_id, backend_config,
                 config_manager=self.config_manager,
                 schema_loader=self.schema_loader
             )
 
             logger.info(
-                f"Search backend initialized at {vespa_url}:{vespa_port} "
+                f"Search backend initialized at {backend_url}:{backend_port} "
                 f"for tenant {tenant_id} with profile {active_profile}"
             )
         except Exception as e:
@@ -1119,8 +1130,8 @@ async def startup_event():
             tenant_id = "test_tenant"
 
     agent_config = {
-        "vespa_url": os.getenv("VESPA_URL", "http://localhost"),
-        "vespa_port": int(os.getenv("VESPA_PORT", 8080)),
+        "backend_url": os.getenv("BACKEND_URL", "http://localhost"),
+        "backend_port": int(os.getenv("BACKEND_PORT", 8080)),
     }
 
     try:

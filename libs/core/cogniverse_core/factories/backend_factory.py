@@ -83,6 +83,10 @@ class BackendFactory:
         # SchemaRegistry needs backend for deployment operations
         from cogniverse_core.registries.schema_registry import SchemaRegistry
 
+        # Debug: Log which DB config_manager is using
+        db_path = getattr(config_manager.store, 'db_path', 'unknown') if config_manager and hasattr(config_manager, 'store') else 'no store'
+        logger.warning(f"🔍 BACKEND_FACTORY creating SchemaRegistry with config_manager DB: {db_path}")
+
         schema_registry = SchemaRegistry(
             config_manager=config_manager,
             backend=backend_instance,

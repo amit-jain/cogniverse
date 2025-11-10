@@ -10,6 +10,7 @@ authors = [
 ]
 
 dependencies = [
+    "cogniverse-sdk",
     # Data validation
     "pydantic>=2.0.0",
 
@@ -22,6 +23,9 @@ dependencies = [
     # DSPy for LLM-driven query generation
     "dspy-ai>=2.4.0",
 ]
+
+[tool.uv.sources]
+cogniverse-sdk = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

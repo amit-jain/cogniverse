@@ -9,9 +9,9 @@ from typing import Any, Dict
 
 from cogniverse_core.config.manager import ConfigManager
 from cogniverse_core.config.unified_config import BackendProfileConfig
-from cogniverse_core.interfaces.schema_loader import SchemaLoader
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.validation.profile_validator import ProfileValidator
+from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 from fastapi import APIRouter, Depends, HTTPException
 
 from cogniverse_runtime.admin.profile_models import (

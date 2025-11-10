@@ -6,7 +6,7 @@ Backend Factory - Creates backend clients
 import logging
 from typing import Any
 
-from cogniverse_core.interfaces.backend import IngestionBackend
+from cogniverse_sdk.interfaces.backend import IngestionBackend
 
 
 class BackendFactory:
@@ -47,8 +47,7 @@ class BackendFactory:
         if not logger:
             logger = logging.getLogger(__name__)
 
-        logger.warning(f"🏭 BACKEND FACTORY: Getting {backend_type} backend for tenant: {tenant_id}")
-        logger.warning(f"   Config keys: {list(config.keys())[:10]}")
+        logger.debug(f"Creating {backend_type} backend for tenant: {tenant_id}")
 
         # Require config_manager via dependency injection
         if config_manager is None:
@@ -69,7 +68,5 @@ class BackendFactory:
         registry = BackendRegistry()
 
         backend = registry.get_ingestion_backend(backend_type, tenant_id, config, config_manager=config_manager, schema_loader=schema_loader)
-
-        logger.warning(f"   Got backend instance for tenant {tenant_id}: {id(backend)}")
 
         return backend

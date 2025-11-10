@@ -128,10 +128,15 @@ class TestVespaBackendIngestion:
 
     @pytest.fixture(scope="class")
     def vespa_backend(self):
-        """Start Vespa Docker container, deploy schemas, yield, cleanup."""
+        """
+        Start Vespa Docker container (schemas deployed by pipeline, not fixture).
+
+        Note: This fixture ONLY starts the container. Schema deployment happens
+        automatically when VideoIngestionPipeline creates backends via BackendRegistry.
+        """
         manager = VespaTestManager(app_name="test-ingestion", http_port=8082)
 
-        # Actually start Vespa and deploy schemas
+        # Start Vespa container (no schema deployment)
         if not manager.setup_application_directory():
             pytest.skip("Failed to setup application directory")
 

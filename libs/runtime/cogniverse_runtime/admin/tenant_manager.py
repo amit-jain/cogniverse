@@ -34,8 +34,8 @@ from typing import Dict, List, Optional
 import uvicorn
 from cogniverse_core.common.tenant_utils import parse_tenant_id
 from cogniverse_core.config.utils import get_config
-from cogniverse_core.interfaces.backend import Backend
-from cogniverse_core.interfaces.schema_loader import SchemaLoader
+from cogniverse_sdk.interfaces.backend import Backend
+from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 from fastapi import FastAPI, HTTPException
 
 from cogniverse_runtime.admin.models import (
@@ -197,7 +197,7 @@ async def create_organization(request: CreateOrganizationRequest) -> Organizatio
         )
 
         # Store via Backend
-        backend.create_metadata_document(
+        success = backend.create_metadata_document(
             schema="organization_metadata",
             doc_id=org.org_id,
             fields={
@@ -209,6 +209,12 @@ async def create_organization(request: CreateOrganizationRequest) -> Organizatio
                 "tenant_count": org.tenant_count,
             },
         )
+
+        if not success:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create organization {org.org_id} in backend"
+            )
 
         logger.info(f"Created organization: {org.org_id}")
         return org
@@ -440,7 +446,7 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
                 tenant_count=0,  # Not used, computed dynamically
             )
 
-            backend.create_metadata_document(
+            success = backend.create_metadata_document(
                 schema="organization_metadata",
                 doc_id=org.org_id,
                 fields={
@@ -452,6 +458,11 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
                     "tenant_count": org.tenant_count,
                 },
             )
+            if not success:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to auto-create organization {org.org_id} in backend"
+                )
             org_created = True
 
         # Deploy schemas for tenant via Backend
@@ -482,7 +493,7 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
         )
 
         # Store via Backend
-        backend.create_metadata_document(
+        success = backend.create_metadata_document(
             schema="tenant_metadata",
             doc_id=tenant_full_id,
             fields={
@@ -495,6 +506,12 @@ async def create_tenant(request: CreateTenantRequest) -> Tenant:
                 "schemas_deployed": tenant.schemas_deployed,
             },
         )
+
+        if not success:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create tenant {tenant_full_id} in backend"
+            )
 
         logger.info(
             f"Created tenant: {tenant_full_id} (org_created: {org_created}, schemas: {len(deployed_schemas)})"

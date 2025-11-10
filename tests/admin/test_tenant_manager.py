@@ -4,11 +4,16 @@ Integration tests for Tenant Management API.
 Tests organization and tenant CRUD operations with Vespa backend.
 """
 
+import logging
+
+import cogniverse_vespa  # noqa: F401 - trigger Vespa backend self-registration
 import pytest
 from fastapi.testclient import TestClient
 
 from tests.system.vespa_test_manager import VespaTestManager
 from tests.utils.async_polling import wait_for_vespa_indexing
+
+logger = logging.getLogger(__name__)
 
 
 @pytest.mark.integration
@@ -16,56 +21,135 @@ from tests.utils.async_polling import wait_for_vespa_indexing
 class TestTenantManagerAPI:
     """Integration tests for tenant management API"""
 
-    @pytest.fixture(scope="class")
+    @pytest.fixture(scope="module")
     def vespa_backend(self):
-        """Start Vespa Docker container, deploy metadata schemas, yield, cleanup"""
+        """Start Vespa Docker container (NO schemas pre-deployed)"""
         manager = VespaTestManager(app_name="test-tenant-manager", http_port=8084)
 
-        # Actually start Vespa and deploy schemas
         if not manager.setup_application_directory():
             pytest.skip("Failed to setup application directory")
 
-        if not manager.deploy_test_application():
-            pytest.skip("Failed to deploy Vespa test application")
+        # Start Vespa WITHOUT deploying schemas - let SchemaRegistry handle it
+        from tests.utils.vespa_docker import VespaDockerManager
+        docker_mgr = VespaDockerManager()
+        container_info = docker_mgr.start_container(
+            module_name="tenant_manager_tests",
+            use_module_ports=False
+        )
+        manager.container_name = container_info["container_name"]
+        manager.http_port = container_info["http_port"]
+        manager.config_port = container_info["config_port"]
+        manager.docker_manager = docker_mgr
 
+        docker_mgr.wait_for_config_ready(container_info)
+        manager.is_deployed = True
+
+        logger.info(f"Vespa ready on port {manager.http_port}")
         yield manager
         manager.cleanup()
 
-    @pytest.fixture
-    def test_client(self, vespa_backend, tmp_path):
-        """Create test client for tenant manager API"""
-        from cogniverse_core.config.manager import ConfigManager
-        from cogniverse_core.config.unified_config import SystemConfig
+    @pytest.fixture(scope="module")
+    def shared_test_db(self, tmp_path_factory):
+        """Create shared database for all tests in this module"""
+        db_dir = tmp_path_factory.mktemp("test_db")
+        db_path = db_dir / "test_tenant_config.db"
+        return db_path
 
-        # VespaTestManager already deployed metadata schemas with video schemas
-        # Just wait a moment for Vespa to be fully ready
+    @pytest.fixture(scope="module")
+    def config_manager(self, vespa_backend, shared_test_db):
+        """Create class-scoped ConfigManager"""
+        from cogniverse_core.config.utils import create_default_config_manager
+        from cogniverse_core.config.unified_config import SystemConfig
+        from cogniverse_core.registries.backend_registry import BackendRegistry
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
         wait_for_vespa_indexing(delay=1, description="Vespa startup")
 
-        # Create ConfigManager with test config
-        temp_db = tmp_path / "test_tenant_config.db"
-        config_manager = ConfigManager(db_path=temp_db)
+        # Create ConfigManager with shared DB (class-scoped for state persistence)
+        config_manager = create_default_config_manager(db_path=shared_test_db)
 
-        # Set system config with correct Vespa port
+        # Set system config pointing to test Vespa
+        logger.info(f"Setting up config with Vespa on port {vespa_backend.http_port} (config port {vespa_backend.config_port})")
         system_config = SystemConfig(
             tenant_id="system",
             backend_url="http://localhost",
             backend_port=vespa_backend.http_port,
         )
         config_manager.set_system_config(system_config)
+        logger.info(f"System config set: backend_port={system_config.backend_port}")
 
-        # Import app and reset globals
+        # Deploy metadata schemas using upload_metadata_schemas()
+        # This uses the old schema definitions that are compatible with existing deployments
+        schema_loader = FilesystemSchemaLoader(vespa_backend.test_schemas_resource_dir)
+        logger.info(f"Creating backend for system tenant on port {vespa_backend.http_port}")
+        backend = BackendRegistry.get_instance().get_ingestion_backend(
+            name="vespa",
+            tenant_id="system",
+            config={
+                "backend": {
+                    "url": "http://localhost",
+                    "port": vespa_backend.http_port,
+                    "config_port": vespa_backend.config_port,
+                }
+            },
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+        logger.info("Backend created successfully")
+
+        # Metadata schemas are now deployed automatically during backend initialization
+        # Wait for Vespa to be ready and for schemas to be fully activated
+        from tests.utils.vespa_health import wait_for_vespa_ready
+        wait_for_vespa_ready(port=vespa_backend.http_port, max_timeout=30)
+
+        # Additional wait for metadata schema activation
+        wait_for_vespa_indexing(delay=3, description="metadata schema activation")
+
+        yield config_manager
+
+    @pytest.fixture
+    def test_client(self, vespa_backend, config_manager):
+        """Create function-scoped test client reusing backend from config_manager"""
+        from cogniverse_core.registries.backend_registry import BackendRegistry
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         from cogniverse_runtime.admin import tenant_manager
 
-        tenant_manager.backend = None  # Reset backend
-        tenant_manager.set_config_manager(config_manager)  # Inject ConfigManager
+        # DO NOT clear BackendRegistry cache - reuse backend with deployed metadata schemas
+        logger.info("Reusing backend from config_manager fixture (with metadata schemas)")
 
-        try:
-            client = TestClient(tenant_manager.app)
-            yield client
-        finally:
-            # Reset globals
-            tenant_manager.backend = None
-            tenant_manager._config_manager = None
+        schema_loader = FilesystemSchemaLoader(vespa_backend.test_schemas_resource_dir)
+
+        # Get existing backend (which already has metadata schemas deployed)
+        backend = BackendRegistry.get_instance().get_ingestion_backend(
+            name="vespa",
+            tenant_id="system",
+            config={
+                "backend": {
+                    "url": "http://localhost",
+                    "port": vespa_backend.http_port,
+                    "config_port": vespa_backend.config_port,
+                }
+            },
+            config_manager=config_manager,
+            schema_loader=schema_loader,
+        )
+
+        # Set up tenant_manager with fresh backend
+        tenant_manager.backend = backend
+        tenant_manager.set_config_manager(config_manager)
+        tenant_manager.set_schema_loader(schema_loader)
+
+        client = TestClient(tenant_manager.app)
+        yield client
+
+        # Cleanup after each test to prevent state leakage
+        logger.info("Cleaning up test_client fixture")
+        tenant_manager.backend = None
+        tenant_manager._config_manager = None
+        tenant_manager._schema_loader = None
+
+        # Small delay to let Vespa settle between tests
+        wait_for_vespa_indexing(delay=1, description="post-test cleanup")
 
     @pytest.mark.ci_fast
     def test_health_check(self):
@@ -95,7 +179,7 @@ class TestTenantManagerAPI:
     def test_create_duplicate_organization(self, test_client):
         """Test creating duplicate organization fails"""
         # Create first org
-        test_client.post(
+        response1 = test_client.post(
             "/admin/organizations",
             json={
                 "org_id": "duporg",
@@ -103,6 +187,10 @@ class TestTenantManagerAPI:
                 "created_by": "test",
             },
         )
+        assert response1.status_code == 200, f"First org creation failed: {response1.status_code} - {response1.text}"
+
+        # Wait for Vespa to index the document
+        wait_for_vespa_indexing(delay=6, description="organization indexing")
 
         # Try to create same org again
         response = test_client.post(
@@ -128,7 +216,7 @@ class TestTenantManagerAPI:
             json={"org_id": "org2", "org_name": "Org 2", "created_by": "test"},
         )
 
-        wait_for_vespa_indexing(delay=1)
+        wait_for_vespa_indexing(delay=7, description="multiple organization documents")
 
         response = test_client.get("/admin/organizations")
         assert response.status_code == 200
@@ -144,7 +232,7 @@ class TestTenantManagerAPI:
             json={"org_id": "getorg", "org_name": "Get Org", "created_by": "test"},
         )
 
-        wait_for_vespa_indexing(delay=1)
+        wait_for_vespa_indexing(delay=4, description="organization indexing")
 
         response = test_client.get("/admin/organizations/getorg")
         assert response.status_code == 200
@@ -163,6 +251,10 @@ class TestTenantManagerAPI:
             "/admin/tenants",
             json={"tenant_id": "acme:production", "created_by": "test"},
         )
+
+        # Wait for schema deployment to complete
+        wait_for_vespa_indexing(delay=3, description="tenant schema deployment")
+
         assert response.status_code == 200
         data = response.json()
         assert data["tenant_full_id"] == "acme:production"
@@ -196,7 +288,8 @@ class TestTenantManagerAPI:
             json={"tenant_id": "duptenant:prod", "created_by": "test"},
         )
 
-        wait_for_vespa_indexing(delay=2, description="tenant indexing")
+        # Wait for Vespa to index both tenant and organization documents
+        wait_for_vespa_indexing(delay=5, description="tenant and organization indexing")
 
         # Try to create same tenant again
         response = test_client.post(

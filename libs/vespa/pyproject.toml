@@ -10,12 +10,14 @@ authors = [
 ]
 
 dependencies = [
+    "cogniverse-sdk",
     "cogniverse-core",
     "pyvespa>=0.59.0",
     "numpy>=1.24.0",
 ]
 
 [tool.uv.sources]
+cogniverse-sdk = { workspace = true }
 cogniverse-core = { workspace = true }
 
 [build-system]

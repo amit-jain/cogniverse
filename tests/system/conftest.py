@@ -117,8 +117,7 @@ def shared_system_vespa():
         print("\n" + "=" * 70)
         print("🧹 Cleaning up Vespa container...")
         print("=" * 70)
-        # TEMPORARILY COMMENTED OUT FOR DEBUGGING - will restore after verifying fix
-        # manager.cleanup()
+        manager.cleanup()
 
         # Clear singleton state to avoid interference with other test modules
         try:

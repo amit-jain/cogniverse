@@ -1,7 +1,6 @@
 """Embedding generation pipeline for video processing."""
 
 # Import new generic Document only
-from cogniverse_core.common.document import ContentType, Document, ProcessingStatus
 from cogniverse_core.common.models import (
     ColPaliModelLoader,
     ColQwenModelLoader,
@@ -10,6 +9,7 @@ from cogniverse_core.common.models import (
     VideoPrismModelLoader,
     get_or_load_model,
 )
+from cogniverse_sdk.document import ContentType, Document, ProcessingStatus
 
 from .backend_factory import BackendFactory
 from .embedding_generator import EmbeddingGenerator, EmbeddingResult, ProcessingConfig

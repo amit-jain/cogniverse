@@ -1021,11 +1021,83 @@ class VespaSchemaManager:
             self._logger.error(f"Failed to deploy package: {str(e)}")
             raise
 
+    def _get_existing_tenant_schemas(self):
+        """
+        Get existing tenant schemas from SchemaRegistry to preserve during metadata deployment.
+
+        This method queries SchemaRegistry for all deployed tenant schemas and converts them
+        to pyvespa Schema objects. This prevents Vespa schema-removal errors when deploying
+        metadata schemas after tenant schemas already exist.
+
+        Returns:
+            List of pyvespa Schema objects for currently deployed tenant schemas.
+            Returns empty list if SchemaRegistry not available or no schemas exist.
+        """
+        if not self._schema_registry:
+            # No SchemaRegistry available (e.g., tests without DI)
+            # Safe to return empty - metadata schemas can be deployed alone
+            self._logger.warning("⚠️  SchemaRegistry not injected, deploying metadata schemas only")
+            return []
+
+        try:
+            # Get all deployed schemas from registry
+            deployed_schemas = self._schema_registry._get_all_schemas()
+            self._logger.warning(f"🔍 SchemaRegistry._get_all_schemas() returned {len(deployed_schemas) if deployed_schemas else 0} schemas")
+
+            if not deployed_schemas:
+                self._logger.warning("⚠️  No tenant schemas in registry, deploying metadata schemas only")
+                return []
+
+            # Convert SchemaInfo objects to pyvespa Schema objects
+            import json
+
+            from cogniverse_vespa.json_schema_parser import JsonSchemaParser
+
+            parser = JsonSchemaParser()
+            pyvespa_schemas = []
+
+            for schema_info in deployed_schemas:
+                self._logger.warning(f"🔄 Converting schema: {schema_info.full_schema_name}")
+                try:
+                    # Parse schema definition JSON to pyvespa Schema
+                    # schema_definition might be a string or already a dict
+                    if isinstance(schema_info.schema_definition, str):
+                        if not schema_info.schema_definition or schema_info.schema_definition.strip() == "":
+                            self._logger.warning(f"⚠️  Skipping schema {schema_info.full_schema_name}: empty definition")
+                            continue
+                        schema_json = json.loads(schema_info.schema_definition)
+                    else:
+                        schema_json = schema_info.schema_definition
+
+                    schema_obj = parser.parse_schema(schema_json)
+                    pyvespa_schemas.append(schema_obj)
+                    self._logger.warning(f"✅ Preserving tenant schema: {schema_info.full_schema_name}")
+                except (json.JSONDecodeError, ValueError) as e:
+                    self._logger.warning(f"⚠️  Skipping schema {schema_info.full_schema_name}: invalid JSON - {e}")
+                    continue
+                except Exception as e:
+                    self._logger.warning(f"⚠️  Skipping schema {schema_info.full_schema_name}: {e}")
+                    continue
+
+            self._logger.warning(f"✅ Found {len(pyvespa_schemas)} tenant schemas to preserve")
+            return pyvespa_schemas
+
+        except Exception as e:
+            # If anything fails, log and return empty (safe fallback)
+            self._logger.error(f"❌ Could not retrieve tenant schemas: {e}. Deploying metadata only.")
+            import traceback
+            self._logger.error(traceback.format_exc())
+            return []
+
     def upload_metadata_schemas(self, app_name: str = "videosearch") -> None:
         """
         Deploy organization and tenant metadata schemas for multi-tenant management.
 
         These schemas store org/tenant metadata and are used by the tenant management API.
+
+        IMPORTANT: This method is schema-aware and preserves existing tenant schemas
+        to avoid Vespa schema-removal errors. It queries SchemaRegistry for deployed
+        schemas and includes them in the deployment package.
 
         Args:
             app_name: Name of the application (default: "videosearch" to match standard app name)
@@ -1126,35 +1198,31 @@ class VespaSchemaManager:
                 )
             )
 
-            # Deploy both schemas together
+            # Get existing tenant schemas from SchemaRegistry
+            existing_schemas = self._get_existing_tenant_schemas()
+
+            # Build complete schema list: metadata + existing tenant schemas
+            # This prevents Vespa schema-removal errors when tenant schemas already exist
+            all_schemas = [
+                organization_metadata_schema,
+                tenant_metadata_schema
+            ] + existing_schemas
+
+            # Deploy all schemas together
             app_package = ApplicationPackage(
                 name=app_name,
-                schema=[organization_metadata_schema, tenant_metadata_schema]
+                schema=all_schemas
             )
-
-            # Add validation overrides to allow schema removal (when deploying metadata schemas separately)
-            from datetime import datetime, timedelta
-
-            from vespa.package import Validation
-
-            until_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-            schema_removal_validation = Validation(
-                validation_id="schema-removal",
-                until=until_date
-            )
-            content_cluster_validation = Validation(
-                validation_id="content-cluster-removal",
-                until=until_date
-            )
-
-            if app_package.validations is None:
-                app_package.validations = []
-            app_package.validations.append(schema_removal_validation)
-            app_package.validations.append(content_cluster_validation)
 
             self._deploy_package(app_package)
 
-            self._logger.info("Successfully deployed organization and tenant metadata schemas")
+            if existing_schemas:
+                self._logger.info(
+                    f"Successfully deployed metadata schemas "
+                    f"(preserved {len(existing_schemas)} tenant schemas)"
+                )
+            else:
+                self._logger.info("Successfully deployed organization and tenant metadata schemas")
 
         except Exception as e:
             self._logger.error(f"Failed to deploy metadata schemas: {str(e)}")

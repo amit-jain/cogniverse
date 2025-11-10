@@ -10,6 +10,9 @@ authors = [
 ]
 
 dependencies = [
+    # SDK - Core interfaces
+    "cogniverse-sdk",
+
     # Core DSPy and LLM
     "dspy-ai>=3.0.2",
     "litellm>=1.73.0",
@@ -43,6 +46,9 @@ dev = [
     "black>=25.1.0",
     "mypy>=1.17.1",
 ]
+
+[tool.uv.sources]
+cogniverse-sdk = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

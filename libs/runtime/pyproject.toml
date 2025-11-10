@@ -10,6 +10,7 @@ authors = [
 ]
 
 dependencies = [
+    "cogniverse-sdk",
     "cogniverse-core",
 
     # FastAPI and server
@@ -44,6 +45,7 @@ agents = ["cogniverse-agents"]
 all = ["cogniverse-vespa", "cogniverse-agents"]
 
 [tool.uv.sources]
+cogniverse-sdk = { workspace = true }
 cogniverse-core = { workspace = true }
 cogniverse-vespa = { workspace = true }
 cogniverse-agents = { workspace = true }

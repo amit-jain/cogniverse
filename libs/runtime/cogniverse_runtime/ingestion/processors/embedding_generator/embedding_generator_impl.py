@@ -13,7 +13,7 @@ from typing import Any
 
 import numpy as np
 import torch
-from cogniverse_core.common.document import ContentType, Document, ProcessingStatus
+from cogniverse_sdk.document import ContentType, Document, ProcessingStatus
 from PIL import Image
 
 from .embedding_generator import EmbeddingGenerator, EmbeddingResult

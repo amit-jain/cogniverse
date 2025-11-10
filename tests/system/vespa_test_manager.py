@@ -113,46 +113,6 @@ class VespaTestManager:
             traceback.print_exc()
             return False
 
-    def deploy_all_schemas(self) -> bool:
-        """Deploy ALL schemas from test directory to isolated Vespa (base + tenant-scoped)"""
-        try:
-            if not hasattr(self, "test_videos_dir"):
-                print(
-                    "❌ Test environment not set up. Call setup_test_environment() first."
-                )
-                return False
-
-            # Use schemas directly from resources directory
-            if not self.test_schemas_resource_dir.exists():
-                print("❌ No schema resources found in tests/system/resources/schemas/")
-                return False
-
-            print("🚀 Deploying schemas to isolated Vespa...")
-
-            # Use VespaDockerManager to deploy schemas from resources directory
-            container_info = {
-                "container_name": self.container_name,
-                "http_port": self.http_port,
-                "config_port": self.config_port,
-                "base_url": f"http://localhost:{self.http_port}",
-            }
-
-            self.docker_manager.deploy_schemas(
-                container_info,
-                schemas_dir=self.test_schemas_resource_dir,
-                include_metadata=True
-            )
-
-            print("✅ All schemas deployed successfully!")
-            self.is_deployed = True
-            return True
-
-        except Exception as e:
-            print(f"❌ Schema deployment failed: {e}")
-            import traceback
-
-            traceback.print_exc()
-            return False
 
     def setup_application_directory(self) -> bool:
         """Just create temp directory for cleanup tracking"""
@@ -172,11 +132,11 @@ class VespaTestManager:
                 f"Starting isolated Vespa Docker container on port {self.http_port}..."
             )
 
-            # Use VespaDockerManager to start container
-            # System tests use sequential ports, not module-based ports
+            # Use VespaDockerManager to start container with configured ports
             container_info = self.docker_manager.start_container(
                 module_name="system_test",
-                use_module_ports=False  # Use sequential ports (8081, 19072)
+                http_port=self.http_port,  # Use port from VespaTestManager init
+                config_port=self.config_port
             )
 
             # Update instance variables from container info
@@ -194,15 +154,9 @@ class VespaTestManager:
                 print("❌ Test environment setup failed")
                 return False
 
-            # Deploy ALL schemas from test directory (must be AFTER config ready)
-            print("Deploying all schemas from test directory...")
-            if not self.deploy_all_schemas():
-                print("❌ Schema deployment failed")
-                return False
-
-            # Wait for application to be ready (must be AFTER schemas deployed)
-            print("Waiting for application endpoint...")
-            self.docker_manager.wait_for_application_ready(container_info)
+            # NOTE: Schema deployment removed - tests should deploy via SchemaRegistry
+            # This ensures proper cross-tenant schema tracking and prevents schema-removal errors
+            # Metadata schemas are auto-deployed by backends on first initialization
 
             print(f"✅ Isolated Vespa ready on port {self.http_port}")
             self.is_deployed = True
@@ -242,8 +196,29 @@ class VespaTestManager:
                 create_default_config_manager,
                 get_config,
             )
+            import tempfile
 
-            config_manager = create_default_config_manager()
+            # Use temporary database for tests (fresh state every run)
+            temp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+            temp_db_path = Path(temp_db.name)
+            temp_db.close()
+            print(f"🔧 Using temporary database: {temp_db_path}")
+
+            # Clear backend registry cache BEFORE creating config_manager
+            # This ensures new backends get fresh SchemaRegistry with temp DB
+            from cogniverse_core.registries.backend_registry import get_backend_registry
+            registry = get_backend_registry()
+            if hasattr(registry, "_backend_instances"):
+                registry._backend_instances.clear()
+                print(f"🔧 Cleared backend cache for fresh SchemaRegistry")
+
+            config_manager = create_default_config_manager(db_path=temp_db_path)
+            actual_db_path = getattr(config_manager.store, 'db_path', 'unknown')
+            print(f"🔧 config_manager created with DB: {actual_db_path}")
+
+            # Store config_manager as instance variable so tests can access it
+            self.config_manager = config_manager
+
             _original_config_values = get_config(tenant_id="default", config_manager=config_manager)
             _original_config_vespa_url = _original_config_values.get("vespa_url")
             _original_config_vespa_port = _original_config_values.get("vespa_port")
@@ -279,11 +254,10 @@ class VespaTestManager:
 
             # Verify the config will be loaded from environment
             from cogniverse_core.config.utils import (
-                create_default_config_manager,
                 get_config,
             )
 
-            config_manager = create_default_config_manager()
+            # IMPORTANT: Reuse temp DB config_manager created above, don't create a new one!
             current_config = get_config(tenant_id="default", config_manager=config_manager)
             current_backend_config = current_config.get("backend", {})
             loaded_profiles = current_backend_config.get("profiles", {})
@@ -509,21 +483,16 @@ class VespaTestManager:
 
         try:
             # Use backend abstraction instead of direct HTTP calls
-            import tempfile
             from pathlib import Path
 
-            from cogniverse_core.config.utils import (
-                create_default_config_manager,
-                get_config,
-            )
+            from cogniverse_core.config.utils import get_config
             from cogniverse_core.registries.backend_registry import get_backend_registry
             from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
             registry = get_backend_registry()
 
-            # Create config_manager and schema_loader for dependency injection
-            temp_dir = tempfile.mkdtemp()
-            config_manager = create_default_config_manager(db_path=Path(temp_dir) / "test_config.db")
+            # Use fixture's config_manager with correct ports
+            config_manager = self.config_manager
 
             # Load full config with backend section
             full_config = get_config(tenant_id="default", config_manager=config_manager)
@@ -534,6 +503,9 @@ class VespaTestManager:
             # Get backend for test tenant with search configuration
             # Explicitly pass profile to avoid relying on dynamic loading
             backend_config = {
+                "url": "http://localhost",  # Backend expects "url"
+                "port": self.http_port,  # Use test instance port
+                "config_port": self.config_port,  # Use test instance config port
                 "tenant_id": "test_tenant",
                 "profile": self.default_test_schema,  # Explicit profile selection (best practice)
                 "backend": full_config.get("backend", {}),  # Pass entire backend section
@@ -632,6 +604,71 @@ class VespaTestManager:
         """Get the base URL for the test Vespa instance"""
         return f"http://localhost:{self.http_port}"
 
+    def get_backend_via_registry(
+        self,
+        tenant_id: str,
+        config_manager,
+        schema_loader=None,
+        backend_type: str = "ingestion"
+    ):
+        """
+        Helper method to get backend instance via BackendRegistry.
+
+        This is the CORRECT way to get backends in tests - ensures proper
+        dependency injection and SchemaRegistry integration.
+
+        Args:
+            tenant_id: Tenant ID for multi-tenant support
+            config_manager: ConfigManager instance for configuration
+            schema_loader: Optional SchemaLoader instance
+            backend_type: "ingestion" or "search"
+
+        Returns:
+            Backend instance with all dependencies injected
+
+        Example:
+            backend = manager.get_backend_via_registry(
+                tenant_id="test_tenant",
+                config_manager=config_manager,
+                schema_loader=schema_loader
+            )
+            # Deploy schemas via backend
+            backend.deploy_schema(tenant_id, "video_colpali_smol500_mv_frame", profile_config)
+        """
+        from cogniverse_core.registries.backend_registry import BackendRegistry
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+        # Create default schema loader if not provided
+        if schema_loader is None:
+            schema_loader = FilesystemSchemaLoader(self.test_schemas_resource_dir)
+
+        backend_config = {
+            "backend": {
+                "url": "http://localhost",
+                "port": self.http_port,
+                "config_port": self.config_port,
+            }
+        }
+
+        registry = BackendRegistry.get_instance()
+
+        if backend_type == "ingestion":
+            return registry.get_ingestion_backend(
+                name="vespa",
+                tenant_id=tenant_id,
+                config=backend_config,
+                config_manager=config_manager,
+                schema_loader=schema_loader,
+            )
+        else:  # search
+            return registry.get_search_backend(
+                name="vespa",
+                tenant_id=tenant_id,
+                config=backend_config,
+                config_manager=config_manager,
+                schema_loader=schema_loader,
+            )
+
     def cleanup(self):
         """Clean up Docker container and temporary files"""
         # Restore original COGNIVERSE_CONFIG
@@ -687,6 +724,8 @@ class VespaTestManager:
                 return False
 
             # Step 3: Ingest test videos
+            # NOTE: Metadata schemas are deployed automatically when pipeline creates backend
+            # Tenant schemas are deployed automatically on first ingestion attempt via backend._get_or_create_ingestion_client()
             if not self.ingest_test_videos():
                 raise RuntimeError("Video ingestion failed - cannot proceed with test")
 

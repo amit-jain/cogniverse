@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-from cogniverse_core.common.document import Document
+from cogniverse_sdk.document import Document
 
 
 class SearchResult:

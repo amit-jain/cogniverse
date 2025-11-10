@@ -10,7 +10,7 @@ import importlib
 import logging
 from typing import Any, Dict, Optional, Type
 
-from cogniverse_core.interfaces.backend import Backend, IngestionBackend, SearchBackend
+from cogniverse_sdk.interfaces.backend import Backend, IngestionBackend, SearchBackend
 
 logger = logging.getLogger(__name__)
 
@@ -141,15 +141,31 @@ class BackendRegistry:
         from cogniverse_core.config.unified_config import BackendConfig
         from cogniverse_core.factories.backend_factory import BackendFactory
 
-        # Get system config for URL and port
+        # Get system config for defaults
         system_config = config_manager.get_system_config(tenant_id)
 
-        # Create BackendConfig object
+        # Generic merge: Start with system config defaults, override with config["backend"] if provided
+        backend_url = system_config.backend_url
+        backend_port = system_config.backend_port
+        backend_profiles = {}
+        backend_metadata = {}
+
+        if config and "backend" in config:
+            backend_section = config["backend"]
+            # Override any BackendConfig field if provided in config["backend"]
+            backend_url = backend_section.get("url", backend_url)
+            backend_port = backend_section.get("port", backend_port)
+            backend_profiles = backend_section.get("profiles", backend_profiles)
+            backend_metadata = backend_section.get("metadata", backend_metadata)
+
+        # Create BackendConfig object with merged values
         backend_config_obj = BackendConfig(
             tenant_id=tenant_id,
             backend_type=name,
-            url=system_config.backend_url,
-            port=system_config.backend_port,
+            url=backend_url,
+            port=backend_port,
+            profiles=backend_profiles,
+            metadata=backend_metadata,
         )
 
         # Build backend initialization config - merge top-level keys with backend section
@@ -167,6 +183,7 @@ class BackendRegistry:
         # Use factory to create backend with all dependencies properly initialized
         # Factory handles: backend creation, SchemaRegistry creation, injection, and initialize()
         backend_class = cls._ingestion_backends[name]
+
         instance = BackendFactory.create_backend_with_dependencies(
             backend_class=backend_class,
             backend_config=backend_config_obj,
@@ -241,15 +258,40 @@ class BackendRegistry:
         from cogniverse_core.config.unified_config import BackendConfig
         from cogniverse_core.factories.backend_factory import BackendFactory
 
-        # Get system config for URL and port
+        # Get system config for defaults
         system_config = config_manager.get_system_config(tenant_id)
 
-        # Create BackendConfig object
+        # Generic merge: Start with system config defaults, override with config["backend"] if provided
+        backend_url = system_config.backend_url
+        backend_port = system_config.backend_port
+        backend_profiles = {}
+        backend_metadata = {}
+
+        if config and "backend" in config:
+            backend_section = config["backend"]
+            # Override any BackendConfig field if provided in config["backend"]
+            backend_url = backend_section.get("url", backend_url)
+            backend_port = backend_section.get("port", backend_port)
+            backend_profiles = backend_section.get("profiles", backend_profiles)
+            backend_metadata = backend_section.get("metadata", backend_metadata)
+
+        # Also check top-level config for direct overrides (takes precedence over backend section)
+        if config:
+            backend_url = config.get("url", backend_url)
+            backend_port = config.get("port", backend_port)
+            if "profiles" in config:
+                backend_profiles = config["profiles"]
+            if "metadata" in config:
+                backend_metadata = config["metadata"]
+
+        # Create BackendConfig object with merged values
         backend_config_obj = BackendConfig(
             tenant_id=tenant_id,
             backend_type=name,
-            url=system_config.backend_url,
-            port=system_config.backend_port,
+            url=backend_url,
+            port=backend_port,
+            profiles=backend_profiles,
+            metadata=backend_metadata,
         )
 
         # Build backend initialization config - merge top-level keys with backend section
@@ -289,19 +331,34 @@ class BackendRegistry:
         Args:
             name: Backend name to import
         """
+        # Try SDK package structure (cogniverse_{name})
         try:
-            # Try standard backend location
+            module_path = f"cogniverse_{name}.backend"
+            importlib.import_module(module_path)
+            logger.info(f"Auto-imported backend module: {module_path}")
+            return
+        except ImportError as e:
+            logger.debug(f"Could not import {module_path}: {e}")
+
+        # Try legacy src structure for backward compatibility
+        try:
             module_path = f"src.backends.{name}"
             importlib.import_module(module_path)
             logger.info(f"Auto-imported backend module: {module_path}")
+            return
         except ImportError:
-            # Try with underscore (e.g., "vespa_backend")
-            try:
-                module_path = f"src.backends.{name}_backend"
-                importlib.import_module(module_path)
-                logger.info(f"Auto-imported backend module: {module_path}")
-            except ImportError:
-                logger.debug(f"Could not auto-import backend: {name}")
+            pass
+
+        # Try with underscore (e.g., "vespa_backend")
+        try:
+            module_path = f"src.backends.{name}_backend"
+            importlib.import_module(module_path)
+            logger.info(f"Auto-imported backend module: {module_path}")
+            return
+        except ImportError:
+            pass
+
+        logger.debug(f"Could not auto-import backend: {name}")
 
     @classmethod
     def list_ingestion_backends(cls) -> list:

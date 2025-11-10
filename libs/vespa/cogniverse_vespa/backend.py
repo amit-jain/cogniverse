@@ -8,8 +8,8 @@ and SearchBackend interfaces, with self-registration to the backend registry.
 import logging
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from cogniverse_core.common.document import Document
-from cogniverse_core.interfaces.backend import Backend
+from cogniverse_sdk.document import Document
+from cogniverse_sdk.interfaces.backend import Backend
 
 from .config import calculate_config_port
 from .ingestion_client import VespaPyClient
@@ -164,6 +164,19 @@ class VespaBackend(Backend):
         # VespaSearchBackend will be created lazily in search() method
         # based on query type and default_profiles
 
+        # Inject schema_registry into schema_manager if available
+        # This happens before metadata schema deployment so schema_manager can preserve existing schemas
+        if self.schema_registry:
+            self.schema_manager._schema_registry = self.schema_registry
+            logger.debug("Injected schema_registry into schema_manager before metadata deployment")
+
+        # Deploy metadata schemas automatically during backend initialization
+        # upload_metadata_schemas() is schema-aware and preserves existing video schemas
+        system_config = self._config_manager_instance.get_system_config()
+        app_name = system_config.application_name
+        self.schema_manager.upload_metadata_schemas(app_name=app_name)
+        logger.info("Automatically deployed metadata schemas during backend initialization")
+
         logger.info(f"Initialized Vespa backend for tenant '{self._tenant_id}' with {len(self.config.get('profiles', {}))} profiles")
     
     # Ingestion methods
@@ -194,6 +207,12 @@ class VespaBackend(Backend):
             )
 
             # Ensure tenant schema exists (auto-deploy if needed)
+            if not self.schema_registry:
+                raise ValueError(
+                    "schema_registry not injected - backend initialization incomplete. "
+                    "This indicates BackendFactory was not used correctly."
+                )
+
             try:
                 self.schema_registry.deploy_schema(
                     tenant_id=self._tenant_id,
@@ -619,7 +638,12 @@ class VespaBackend(Backend):
 
             # Deploy all schemas together in one ApplicationPackage
             logger.info(f"Deploying {len(schemas_to_deploy)} schemas to Vespa")
-            app_package = ApplicationPackage(name="videosearch", schema=schemas_to_deploy)
+
+            # Get application name from system config
+            system_config = self._config_manager_instance.get_system_config()
+            app_name = system_config.application_name
+
+            app_package = ApplicationPackage(name=app_name, schema=schemas_to_deploy)
 
             # Add metadata schemas (Vespa-specific requirement)
             from cogniverse_vespa.metadata_schemas import (
@@ -830,11 +854,19 @@ class VespaBackend(Backend):
             vespa_client = Vespa(url=f"{self._url}:{self._port}")
 
             # Feed metadata document
-            vespa_client.feed_data_point(
+            response = vespa_client.feed_data_point(
                 schema=schema,
                 data_id=doc_id,
                 fields=fields
             )
+
+            # Check response status
+            if response.status_code != 200:
+                logger.error(
+                    f"Failed to create metadata document {schema}/{doc_id}: "
+                    f"HTTP {response.status_code}"
+                )
+                return False
 
             logger.debug(f"Created metadata document: {schema}/{doc_id}")
             return True

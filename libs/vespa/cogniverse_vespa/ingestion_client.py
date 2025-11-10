@@ -18,8 +18,8 @@ import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from cogniverse_core.common.document import Document
 from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
+from cogniverse_sdk.document import Document
 
 from .embedding_processor import VespaEmbeddingProcessor
 from .strategy_aware_processor import StrategyAwareProcessor

@@ -141,7 +141,9 @@ class Mem0MemoryManager:
         )
         from cogniverse_core.registries.backend_registry import get_backend_registry
 
-        config_manager = create_default_config_manager()
+        # Use passed config_manager or create default if not provided
+        if config_manager is None:
+            config_manager = create_default_config_manager()
         config = get_config(tenant_id="default", config_manager=config_manager)
         backend_type = config.get("backend_type", "vespa")
         registry = get_backend_registry()

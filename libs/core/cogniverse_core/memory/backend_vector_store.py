@@ -104,8 +104,7 @@ class BackendVectorStore(VectorStoreBase):
 
         # Prepare Document objects for backend
         import numpy as np
-
-        from cogniverse_core.common.document import Document
+        from cogniverse_sdk.document import Document
 
         documents = []
         for vec_id, vector, payload in zip(ids, vectors, payloads):
@@ -253,8 +252,7 @@ class BackendVectorStore(VectorStoreBase):
         try:
             # VespaBackend.update_document() takes a Document object
             import numpy as np
-
-            from cogniverse_core.common.document import Document
+            from cogniverse_sdk.document import Document
 
             # Build updated document
             content = payload.get("data", "") if payload else ""
