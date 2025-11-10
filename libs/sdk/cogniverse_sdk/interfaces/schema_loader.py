@@ -1,5 +1,5 @@
 """
-Abstract interface for loading Vespa schema definitions.
+Abstract interface for loading backend schema definitions.
 
 This module defines the SchemaLoader interface and related exceptions
 for loading schema templates and ranking strategies from various sources.
@@ -23,7 +23,7 @@ class SchemaLoadError(Exception):
 
 class SchemaLoader(ABC):
     """
-    Abstract interface for loading Vespa schema definitions.
+    Abstract interface for loading backend schema definitions.
 
     Implementations can load schemas from various sources:
     - Filesystem directories (FilesystemSchemaLoader)

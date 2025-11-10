@@ -21,7 +21,7 @@ import numpy as np
 sys.path.append(str(Path(__file__).parent.parent))
 
 from cogniverse_core.common.document import ContentType, Document
-from cogniverse_core.interfaces.backend import Backend, IngestionBackend, SearchBackend
+from cogniverse_sdk.interfaces.backend import Backend, IngestionBackend, SearchBackend
 from cogniverse_core.registries.backend_registry import (
     BackendRegistry,
     get_backend_registry,
@@ -421,8 +421,8 @@ class TestBackendRegistry(unittest.TestCase):
         # Try to get unregistered backend - should trigger auto-import
         self.registry._try_import_backend("test_auto")
 
-        # Should have tried to import from standard backend location
-        mock_import.assert_any_call("src.backends.test_auto")
+        # Should have tried to import from SDK package structure first
+        mock_import.assert_any_call("cogniverse_test_auto.backend")
     
     def test_vespa_backend_registration(self):
         """Test that real Vespa backend registers correctly."""

@@ -19,6 +19,7 @@ members = [
     "cogniverse-core",
     "cogniverse-dashboard",
     "cogniverse-runtime",
+    "cogniverse-sdk",
     "cogniverse-synthetic",
     "cogniverse-telemetry-phoenix",
     "cogniverse-vespa",
@@ -768,6 +769,7 @@ version = "0.1.0"
 source = { editable = "libs/agents" }
 dependencies = [
     { name = "cogniverse-core" },
+    { name = "cogniverse-sdk" },
     { name = "cogniverse-synthetic" },
     { name = "colpali-engine" },
     { name = "gliner" },
@@ -785,6 +787,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "cogniverse-core", editable = "libs/core" },
+    { name = "cogniverse-sdk", editable = "libs/sdk" },
     { name = "cogniverse-synthetic", editable = "libs/synthetic" },
     { name = "colpali-engine", specifier = ">=0.3.12" },
     { name = "gliner", specifier = ">=0.2.21" },
@@ -806,6 +809,7 @@ source = { editable = "libs/core" }
 dependencies = [
     { name = "aiofiles" },
     { name = "arize-phoenix" },
+    { name = "cogniverse-sdk" },
     { name = "dspy-ai" },
     { name = "litellm" },
     { name = "mem0ai" },
@@ -832,6 +836,7 @@ requires-dist = [
     { name = "aiofiles", specifier = ">=24.1.0" },
     { name = "arize-phoenix", specifier = ">=4.0.0" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=25.1.0" },
+    { name = "cogniverse-sdk", editable = "libs/sdk" },
     { name = "dspy-ai", specifier = ">=3.0.2" },
     { name = "litellm", specifier = ">=1.73.0" },
     { name = "mem0ai", specifier = ">=0.1.118" },
@@ -857,6 +862,7 @@ dependencies = [
     { name = "arize-phoenix" },
     { name = "arize-phoenix-evals" },
     { name = "cogniverse-core" },
+    { name = "cogniverse-sdk" },
     { name = "embedding-atlas" },
     { name = "inspect-ai" },
     { name = "plotly" },
@@ -874,6 +880,7 @@ requires-dist = [
     { name = "arize-phoenix", specifier = ">=4.0.0" },
     { name = "arize-phoenix-evals", specifier = ">=0.4.0" },
     { name = "cogniverse-core", editable = "libs/core" },
+    { name = "cogniverse-sdk", editable = "libs/sdk" },
     { name = "embedding-atlas", specifier = ">=0.2.0" },
     { name = "inspect-ai", specifier = ">=0.3.0" },
     { name = "plotly", specifier = ">=6.0.0" },
@@ -892,6 +899,7 @@ version = "0.1.0"
 source = { editable = "libs/runtime" }
 dependencies = [
     { name = "cogniverse-core" },
+    { name = "cogniverse-sdk" },
     { name = "fastapi" },
     { name = "faster-whisper" },
     { name = "jax" },
@@ -924,6 +932,7 @@ requires-dist = [
     { name = "cogniverse-agents", marker = "extra == 'agents'", editable = "libs/agents" },
     { name = "cogniverse-agents", marker = "extra == 'all'", editable = "libs/agents" },
     { name = "cogniverse-core", editable = "libs/core" },
+    { name = "cogniverse-sdk", editable = "libs/sdk" },
     { name = "cogniverse-vespa", marker = "extra == 'all'", editable = "libs/vespa" },
     { name = "cogniverse-vespa", marker = "extra == 'vespa'", editable = "libs/vespa" },
     { name = "fastapi", specifier = ">=0.100.0" },
@@ -943,10 +952,33 @@ requires-dist = [
 provides-extras = ["vespa", "agents", "all"]
 
 [[package]]
+name = "cogniverse-sdk"
+version = "0.1.0"
+source = { editable = "libs/sdk" }
+dependencies = [
+    { name = "numpy" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=1.24.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "cogniverse-synthetic"
 version = "0.1.0"
 source = { editable = "libs/synthetic" }
 dependencies = [
+    { name = "cogniverse-sdk" },
     { name = "dspy-ai" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -955,6 +987,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cogniverse-sdk", editable = "libs/sdk" },
     { name = "dspy-ai", specifier = ">=2.4.0" },
     { name = "fastapi", specifier = ">=0.100.0" },
     { name = "httpx", specifier = ">=0.24.0" },
@@ -984,6 +1017,7 @@ version = "0.1.0"
 source = { editable = "libs/vespa" }
 dependencies = [
     { name = "cogniverse-core" },
+    { name = "cogniverse-sdk" },
     { name = "numpy" },
     { name = "pyvespa" },
 ]
@@ -991,6 +1025,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "cogniverse-core", editable = "libs/core" },
+    { name = "cogniverse-sdk", editable = "libs/sdk" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "pyvespa", specifier = ">=0.59.0" },
 ]

@@ -10,48 +10,7 @@ from typing import Any, Dict, Iterator, List, Optional
 
 import numpy as np
 
-from cogniverse_core.common.document import Document
-
-
-class SearchResult:
-    """Represents a search result with document and score."""
-
-    def __init__(
-        self,
-        document: Document,
-        score: float,
-        highlights: Optional[Dict[str, Any]] = None,
-    ):
-        self.document = document
-        self.score = score
-        self.highlights = highlights or {}
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for API responses."""
-        result = {
-            "document_id": self.document.id,
-            "score": self.score,
-            "metadata": self.document.metadata,
-            "highlights": self.highlights,
-        }
-
-        # Add source_id if present in metadata
-        if "source_id" in self.document.metadata:
-            result["source_id"] = self.document.metadata["source_id"]
-
-        # Add temporal info if present in metadata
-        if (
-            "start_time" in self.document.metadata
-            and "end_time" in self.document.metadata
-        ):
-            result["temporal_info"] = {
-                "start_time": self.document.metadata["start_time"],
-                "end_time": self.document.metadata["end_time"],
-                "duration": self.document.metadata["end_time"]
-                - self.document.metadata["start_time"],
-            }
-
-        return result
+from cogniverse_sdk.document import Document
 
 
 class IngestionBackend(ABC):
@@ -287,8 +246,75 @@ class Backend(IngestionBackend, SearchBackend):
         """
         Backend-specific initialization.
 
+        This method is called once when the backend is first created. Implementations
+        should perform backend-specific setup including connection initialization,
+        client creation, and optionally deploying metadata/system schemas.
+
         Args:
             config: Backend configuration
+
+        Metadata Schema Deployment:
+            Some backends may choose to deploy metadata schemas (e.g.,
+            organization_metadata, tenant_metadata) automatically during
+            initialization. This is backend-specific.
+
+            CRITICAL: For backends that require ALL schemas in a single deployment
+            (e.g., Vespa's ApplicationPackage model), metadata schema deployment MUST:
+
+            1. Query SchemaRegistry for all existing tenant schemas
+            2. Include existing schemas in the deployment alongside metadata schemas
+            3. Deploy all schemas together to prevent schema-removal errors
+
+            Example (Vespa pattern):
+                def _initialize_backend(self, config):
+                    # ... connection setup ...
+
+                    # Deploy metadata schemas (schema-aware)
+                    if self.schema_registry:
+                        self.schema_manager._schema_registry = self.schema_registry
+
+                    # This method queries SchemaRegistry internally:
+                    # - Gets all existing tenant schemas
+                    # - Deploys metadata + existing schemas together
+                    self.schema_manager.upload_metadata_schemas(app_name)
+
+            Backends with incremental schema deployment (e.g., Elasticsearch, MongoDB)
+            do NOT need this pattern - they can deploy metadata schemas independently.
+
+        Schema Coordination:
+            The SchemaRegistry is injected before _initialize_backend() is called,
+            making it available via self.schema_registry. Use it to:
+            - Query existing schemas before deployment
+            - Ensure all backend instances coordinate schema state
+            - Prevent schema-removal errors in multi-backend scenarios
+
+        Multi-Backend Coordination:
+            When multiple backend instances are created (e.g., ingestion backend,
+            then search backend), each initialization triggers metadata deployment.
+            Without querying SchemaRegistry, the second backend would only deploy
+            metadata schemas, causing the backend to believe tenant schemas were
+            intentionally removed.
+
+            Example scenario:
+                1. Ingestion backend deploys tenant schema "video_colpali_tenant_a"
+                2. Search backend created → _initialize_backend() called
+                3. Metadata deployment WITHOUT SchemaRegistry query:
+                   - Deploys ONLY [org_metadata, tenant_metadata]
+                   - Backend sees video_colpali_tenant_a missing
+                   - Interprets as schema removal → ERROR
+                4. Metadata deployment WITH SchemaRegistry query:
+                   - Queries registry:
+                     [org_metadata, tenant_metadata, video_colpali_tenant_a]
+                   - Deploys all 3 schemas together
+                   - No schema removal detected → SUCCESS
+
+        Implementation Requirements:
+            - Initialize backend connections and clients
+            - Set up internal state and caching
+            - Optionally deploy metadata/system schemas (backend-specific)
+            - For all-schemas-at-once backends: query SchemaRegistry before
+              metadata deployment
+            - Ensure idempotency: safe to call initialize() multiple times
         """
         pass
 
