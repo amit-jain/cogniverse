@@ -4,7 +4,7 @@ Unit tests for ModalityMetricsTracker
 
 import pytest
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
-from cogniverse_foundation.telemetry.modality_metrics import ModalityMetricsTracker
+from cogniverse_agents.routing.modality_metrics import ModalityMetricsTracker
 
 from tests.utils.async_polling import simulate_processing_delay
 

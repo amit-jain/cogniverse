@@ -12,7 +12,7 @@ import pytest
 from cogniverse_agents.routing.modality_cache import ModalityCacheManager
 from cogniverse_agents.routing.parallel_executor import ParallelAgentExecutor
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
-from cogniverse_foundation.telemetry.modality_metrics import ModalityMetricsTracker
+from cogniverse_agents.routing.modality_metrics import ModalityMetricsTracker
 
 
 class TestProductionLoadHandling:

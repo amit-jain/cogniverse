@@ -35,7 +35,7 @@ from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
 # Production features from RoutingAgent
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
-from cogniverse_foundation.telemetry.modality_metrics import ModalityMetricsTracker
+from cogniverse_agents.routing.modality_metrics import ModalityMetricsTracker
 from dspy import LM
 
 # Phase 6: Advanced optimization
