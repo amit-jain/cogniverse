@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 import pandas as pd
 
 if TYPE_CHECKING:
-    from cogniverse_core.telemetry.providers.base import TelemetryProvider
+    from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 
 class EvaluatorFramework(ABC):

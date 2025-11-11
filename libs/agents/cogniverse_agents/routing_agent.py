@@ -24,7 +24,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 if TYPE_CHECKING:
-    from cogniverse_core.telemetry.config import TelemetryConfig
+    from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 # DSPy 3.0 imports
 import dspy
@@ -35,7 +35,7 @@ from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
 # Production features from RoutingAgent
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
-from cogniverse_core.telemetry.modality_metrics import ModalityMetricsTracker
+from cogniverse_foundation.telemetry.modality_metrics import ModalityMetricsTracker
 from dspy import LM
 
 # Phase 6: Advanced optimization
@@ -396,7 +396,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         try:
             # Initialize telemetry manager
             if self.telemetry_config.enabled:
-                from cogniverse_core.telemetry.manager import TelemetryManager
+                from cogniverse_foundation.telemetry.manager import TelemetryManager
                 self.telemetry_manager = TelemetryManager(config=self.telemetry_config)
                 self.logger.info("📊 Telemetry manager initialized")
             else:

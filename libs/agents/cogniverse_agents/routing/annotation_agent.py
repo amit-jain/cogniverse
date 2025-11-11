@@ -15,15 +15,15 @@ from enum import Enum
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import pandas as pd
-from cogniverse_core.telemetry.config import SPAN_NAME_ROUTING
-from cogniverse_core.telemetry.manager import get_telemetry_manager
+from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from cogniverse_dashboard.evaluation.evaluators.routing_evaluator import (
     RoutingEvaluator,
     RoutingOutcome,
 )
 
 if TYPE_CHECKING:
-    from cogniverse_core.telemetry.providers.base import TelemetryProvider
+    from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
 

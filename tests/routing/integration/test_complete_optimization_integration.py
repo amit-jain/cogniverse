@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 
 import pytest
 from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
-from cogniverse_core.telemetry.config import (
+from cogniverse_foundation.telemetry.config import (
     SPAN_NAME_ROUTING,
 )
 

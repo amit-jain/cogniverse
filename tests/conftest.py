@@ -203,10 +203,10 @@ def telemetry_manager_without_phoenix():
     without connecting to Phoenix. Use this for unit and integration tests that
     just need telemetry configured but don't export/query real spans.
     """
-    import cogniverse_core.telemetry.manager as telemetry_manager_module
-    from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
-    from cogniverse_core.telemetry.manager import TelemetryManager
-    from cogniverse_core.telemetry.registry import get_telemetry_registry
+    import cogniverse_foundation.telemetry.manager as telemetry_manager_module
+    from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
+    from cogniverse_foundation.telemetry.registry import get_telemetry_registry
 
     # Reset TelemetryManager singleton AND clear provider cache
     TelemetryManager.reset()
@@ -247,7 +247,7 @@ def phoenix_container():
     import subprocess
 
     import requests
-    from cogniverse_core.telemetry.manager import TelemetryManager
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
 
     original_endpoint = os.environ.get("OTLP_ENDPOINT")
     original_sync_export = os.environ.get("TELEMETRY_SYNC_EXPORT")
@@ -365,7 +365,7 @@ def telemetry_config_with_phoenix(phoenix_container):
 
     Depends on phoenix_container to ensure env vars are set.
     """
-    from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
+    from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
     otlp_endpoint = os.getenv("OTLP_ENDPOINT", "localhost:4317")
     config = TelemetryConfig(
@@ -386,9 +386,9 @@ def telemetry_manager_with_phoenix(telemetry_config_with_phoenix):
 
     Sets up telemetry manager as global singleton for the test.
     """
-    import cogniverse_core.telemetry.manager as telemetry_manager_module
-    from cogniverse_core.telemetry.manager import TelemetryManager
-    from cogniverse_core.telemetry.registry import get_telemetry_registry
+    import cogniverse_foundation.telemetry.manager as telemetry_manager_module
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
+    from cogniverse_foundation.telemetry.registry import get_telemetry_registry
 
     TelemetryManager.reset()
     get_telemetry_registry().clear_cache()

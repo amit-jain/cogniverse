@@ -24,7 +24,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
-    from cogniverse_core.telemetry.config import TelemetryConfig
+    from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 # DSPy 3.0 imports
 import dspy

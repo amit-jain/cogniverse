@@ -24,7 +24,7 @@ def phoenix_test_server():
     import tempfile
     import time
 
-    from cogniverse_core.telemetry.manager import TelemetryManager
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
 
     container_name = f"phoenix_eval_test_{int(time.time() * 1000)}"
 

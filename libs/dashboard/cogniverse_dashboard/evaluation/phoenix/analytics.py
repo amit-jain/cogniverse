@@ -16,8 +16,8 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from cogniverse_core.telemetry.manager import TelemetryManager
-from cogniverse_core.telemetry.providers.base import TelemetryProvider
+from cogniverse_foundation.telemetry.manager import TelemetryManager
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 from plotly.subplots import make_subplots
 
 logger = logging.getLogger(__name__)

@@ -74,7 +74,7 @@ def get_evaluator_provider(
                     PhoenixEvaluatorProvider,
                 )
 
-                from cogniverse_core.telemetry.manager import get_telemetry_manager
+                from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
                 # Get telemetry manager and provider
                 telemetry_manager = get_telemetry_manager()

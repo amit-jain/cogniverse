@@ -35,7 +35,7 @@ from cogniverse_foundation.config.unified_config import (
     OptimizerGenerationConfig,
     SyntheticGeneratorConfig,
 )
-from cogniverse_core.telemetry.manager import TelemetryManager
+from cogniverse_foundation.telemetry.manager import TelemetryManager
 from cogniverse_synthetic.approval.confidence_extractor import (
     SyntheticDataConfidenceExtractor,
 )
@@ -264,7 +264,7 @@ def telemetry_manager(phoenix_container):
     """TelemetryManager configured for approval tests"""
     # phoenix_container fixture ensures env vars are set and TelemetryManager singleton is reset
     # Create TelemetryManager which will read OTLP_ENDPOINT and TELEMETRY_SYNC_EXPORT
-    from cogniverse_core.telemetry.manager import TelemetryManager
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
 
     manager = TelemetryManager()
     yield manager

@@ -25,7 +25,7 @@ from cogniverse_agents.routing.relationship_extraction_tools import (
 )
 from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_agents.summarizer_agent import SummarizerAgent
-from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
+from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
 
 @pytest.mark.integration

@@ -335,7 +335,7 @@ class TelemetryManager:
                 "Non-tenant-specific providers are not allowed."
             )
 
-        from cogniverse_core.telemetry.registry import get_telemetry_registry
+        from cogniverse_foundation.telemetry.registry import get_telemetry_registry
 
         registry = get_telemetry_registry()
 

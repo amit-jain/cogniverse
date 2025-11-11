@@ -20,7 +20,7 @@ from cogniverse_agents.routing.orchestration_annotation_storage import (
     OrchestrationAnnotation,
     OrchestrationAnnotationStorage,
 )
-from cogniverse_core.telemetry.manager import get_telemetry_manager
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
 
 def run_async_in_streamlit(coro):

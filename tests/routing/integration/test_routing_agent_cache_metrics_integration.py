@@ -11,7 +11,7 @@ import asyncio
 import pytest
 from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
-from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
+from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
 
 @pytest.mark.asyncio

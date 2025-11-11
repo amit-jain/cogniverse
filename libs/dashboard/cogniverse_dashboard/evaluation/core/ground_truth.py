@@ -566,7 +566,7 @@ class DatasetGroundTruthStrategy(GroundTruthStrategy):
 
         try:
             # Connect to telemetry provider dataset store
-            from cogniverse_core.telemetry.manager import TelemetryManager
+            from cogniverse_foundation.telemetry.manager import TelemetryManager
 
             try:
                 telemetry_manager = TelemetryManager()

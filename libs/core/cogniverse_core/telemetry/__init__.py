@@ -1,15 +1,16 @@
 """
-Multi-tenant telemetry system for Cogniverse.
+Backward compatibility shim for moved telemetry module.
 
-This module provides:
-- Multi-tenant tracer provider management
-- Lazy initialization with caching
-- Batch export with queue management
-- Environment-based configuration
-- Graceful degradation when telemetry unavailable
+Telemetry module has moved to cogniverse_foundation.telemetry.
+This module provides backward compatibility by re-exporting from foundation.
 """
-
-from .config import TelemetryConfig
-from .manager import TelemetryManager
-
-__all__ = ["TelemetryManager", "TelemetryConfig"]
+from cogniverse_foundation.telemetry import *  # noqa: F401, F403
+from cogniverse_foundation.telemetry import (  # noqa: F401
+    config,
+    context,
+    exporter,
+    manager,
+    modality_metrics,
+    providers,
+    registry,
+)

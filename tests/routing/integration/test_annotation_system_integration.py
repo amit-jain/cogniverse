@@ -33,11 +33,11 @@ from cogniverse_agents.routing.llm_auto_annotator import (
     AnnotationLabel,
     LLMAutoAnnotator,
 )
-from cogniverse_core.telemetry.config import (
+from cogniverse_foundation.telemetry.config import (
     SPAN_NAME_ROUTING,
     TelemetryConfig,
 )
-from cogniverse_core.telemetry.manager import TelemetryManager
+from cogniverse_foundation.telemetry.manager import TelemetryManager
 
 from tests.utils.async_polling import (
     simulate_processing_delay,
@@ -200,9 +200,9 @@ def test_tenant_id():
 @pytest.fixture
 def telemetry_manager(phoenix_container):
     """Get telemetry manager with Phoenix HTTP and gRPC endpoints configured"""
-    import cogniverse_core.telemetry.manager as telemetry_manager_module
-    from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
-    from cogniverse_core.telemetry.registry import get_telemetry_registry
+    import cogniverse_foundation.telemetry.manager as telemetry_manager_module
+    from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
+    from cogniverse_foundation.telemetry.registry import get_telemetry_registry
 
     # Reset TelemetryManager singleton AND clear provider cache
     TelemetryManager.reset()

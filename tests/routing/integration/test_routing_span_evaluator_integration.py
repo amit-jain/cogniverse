@@ -19,7 +19,7 @@ import pytest
 import requests
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 from cogniverse_agents.routing.routing_span_evaluator import RoutingSpanEvaluator
-from cogniverse_core.telemetry.manager import TelemetryManager
+from cogniverse_foundation.telemetry.manager import TelemetryManager
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +27,9 @@ logger = logging.getLogger(__name__)
 @pytest.fixture(scope="module", autouse=True)
 def phoenix_container():
     """Start Phoenix Docker container on non-default ports for routing span evaluator tests"""
-    import cogniverse_core.telemetry.manager as telemetry_manager_module
-    from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
-    from cogniverse_core.telemetry.registry import get_telemetry_registry
+    import cogniverse_foundation.telemetry.manager as telemetry_manager_module
+    from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
+    from cogniverse_foundation.telemetry.registry import get_telemetry_registry
 
     # Reset TelemetryManager singleton AND clear provider cache
     TelemetryManager.reset()
@@ -198,7 +198,7 @@ def phoenix_container():
 async def routing_agent_with_spans(phoenix_container):
     """Create routing agent and generate real routing spans"""
     from cogniverse_agents.routing_agent import RoutingAgent
-    from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
+    from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
     telemetry_config = TelemetryConfig(
         otlp_endpoint="http://localhost:24317",
@@ -269,7 +269,7 @@ class TestRoutingSpanEvaluatorIntegration:
         # Query spans via telemetry provider
         logger.info(f"📊 Querying spans from project: {span_evaluator.project_name}")
 
-        from cogniverse_core.telemetry.manager import get_telemetry_manager
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
         telemetry_manager = get_telemetry_manager()
         provider = telemetry_manager.get_provider(tenant_id="test-tenant")
         spans_df = await provider.traces.get_spans(
@@ -313,7 +313,7 @@ class TestRoutingSpanEvaluatorIntegration:
         import tempfile
 
         from cogniverse_agents.routing_agent import RoutingAgent
-        from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
+        from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
         # Create telemetry config
         telemetry_config = TelemetryConfig(
@@ -463,7 +463,7 @@ class TestRoutingSpanEvaluatorIntegration:
     async def test_end_to_end_evaluation_workflow(self, optimizer):
         """Test complete end-to-end workflow from span generation to experience creation"""
         from cogniverse_agents.routing_agent import RoutingAgent
-        from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
+        from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
         # 1. Create telemetry config
         telemetry_config = TelemetryConfig(
@@ -527,7 +527,7 @@ class TestRoutingSpanEvaluatorIntegration:
         _ = routing_agent_with_spans
 
         # Query telemetry directly to inspect span structure
-        from cogniverse_core.telemetry.manager import get_telemetry_manager
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
         telemetry_manager = get_telemetry_manager()
         provider = telemetry_manager.get_provider(tenant_id="test-tenant")
         spans_df = await provider.traces.get_spans(

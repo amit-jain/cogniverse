@@ -14,8 +14,8 @@ from typing import Any, Optional
 import opentelemetry.trace as trace
 import pandas as pd
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
-from cogniverse_core.telemetry.manager import TelemetryManager
-from cogniverse_core.telemetry.providers.base import TelemetryProvider
+from cogniverse_foundation.telemetry.manager import TelemetryManager
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor

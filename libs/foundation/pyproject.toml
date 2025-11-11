@@ -6,8 +6,10 @@ requires-python = ">=3.12"
 dependencies = [
     "cogniverse-sdk",
     "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
     "pydantic>=2.0.0",
     "sqlalchemy>=2.0.0",
+    "pandas>=2.0.0",
 ]
 
 [tool.uv.sources]

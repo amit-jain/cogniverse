@@ -52,7 +52,7 @@ async def evaluation_task(
     if mode == "experiment" and not (profiles and strategies):
         raise ValueError("profiles and strategies required for experiment mode")
 
-    from cogniverse_core.telemetry.manager import TelemetryManager
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
 
     telemetry_manager = TelemetryManager()
     provider = telemetry_manager.provider

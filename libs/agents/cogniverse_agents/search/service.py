@@ -54,7 +54,7 @@ class SearchService:
         self.schema_loader = schema_loader
 
         # Initialize new telemetry system
-        from cogniverse_core.telemetry.manager import get_telemetry_manager
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
         get_telemetry_manager()  # Initialize singleton
 
         # Get profile configuration from backend config
@@ -145,7 +145,7 @@ class SearchService:
             List of SearchResult objects
         """
         # Use new multi-tenant telemetry system
-        from cogniverse_core.telemetry.context import (
+        from cogniverse_foundation.telemetry.context import (
             add_embedding_details_to_span,
             add_search_results_to_span,
             backend_search_span,

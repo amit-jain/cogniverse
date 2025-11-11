@@ -20,7 +20,7 @@ import pandas as pd
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from cogniverse_core.telemetry.manager import get_telemetry_manager
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

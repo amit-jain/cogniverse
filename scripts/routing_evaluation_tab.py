@@ -33,7 +33,7 @@ from cogniverse_agents.routing.llm_auto_annotator import (
     LLMAutoAnnotator,
 )
 from cogniverse_core.evaluation.evaluators.routing_evaluator import RoutingEvaluator
-from cogniverse_core.telemetry.config import SERVICE_NAME_ORCHESTRATION
+from cogniverse_foundation.telemetry.config import SERVICE_NAME_ORCHESTRATION
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ def render_routing_evaluation_tab():
 
     # Initialize evaluator with telemetry provider
     try:
-        from cogniverse_core.telemetry.manager import get_telemetry_manager
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
         telemetry_manager = get_telemetry_manager()
         provider = telemetry_manager.get_provider(tenant_id=tenant_id)
@@ -263,7 +263,7 @@ def _render_confidence_analysis(evaluator, start_time, end_time):
             return
 
         # Filter for routing spans
-        from cogniverse_core.telemetry.config import SPAN_NAME_ROUTING
+        from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
         routing_spans = spans_df[spans_df["name"] == SPAN_NAME_ROUTING]
 
         if routing_spans.empty:
@@ -375,7 +375,7 @@ def _render_temporal_analysis(evaluator, start_time, end_time):
             return
 
         # Filter for routing spans
-        from cogniverse_core.telemetry.config import SPAN_NAME_ROUTING
+        from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
         routing_spans = spans_df[spans_df["name"] == SPAN_NAME_ROUTING]
 
         if routing_spans.empty:

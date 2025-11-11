@@ -11,8 +11,8 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
-from cogniverse_core.telemetry.config import SPAN_NAME_ROUTING
-from cogniverse_core.telemetry.manager import get_telemetry_manager
+from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
 

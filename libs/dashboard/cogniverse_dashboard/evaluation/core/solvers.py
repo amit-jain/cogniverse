@@ -187,7 +187,7 @@ def create_batch_solver(
 
     async def solve(state, generate):
         """Load and evaluate existing traces with ground truth extraction."""
-        from cogniverse_core.telemetry.manager import TelemetryManager
+        from cogniverse_foundation.telemetry.manager import TelemetryManager
 
         telemetry_manager = TelemetryManager()
         provider = telemetry_manager.provider
@@ -319,7 +319,7 @@ def create_live_solver(config: dict[str, Any] | None = None) -> Solver:
 
     async def solve(state, generate):
         """Monitor and evaluate live traces."""
-        from cogniverse_core.telemetry.manager import TelemetryManager
+        from cogniverse_foundation.telemetry.manager import TelemetryManager
 
         telemetry_manager = TelemetryManager()
         provider = telemetry_manager.provider

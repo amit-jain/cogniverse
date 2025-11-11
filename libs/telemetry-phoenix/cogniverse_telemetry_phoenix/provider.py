@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
-from cogniverse_core.telemetry.providers.base import (
+from cogniverse_foundation.telemetry.providers.base import (
     AnalyticsStore,
     AnnotationStore,
     DatasetStore,

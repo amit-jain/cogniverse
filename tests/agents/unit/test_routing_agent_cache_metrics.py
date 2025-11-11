@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingConfig
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
-from cogniverse_core.telemetry.config import TelemetryConfig
+from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 
 class TestRoutingAgentCacheMetrics:
@@ -20,7 +20,7 @@ class TestRoutingAgentCacheMetrics:
     def routing_agent(self):
         """Create routing agent with test configuration"""
         # Reset TelemetryManager singleton to avoid conflicts with previous tests
-        from cogniverse_core.telemetry.manager import TelemetryManager
+        from cogniverse_foundation.telemetry.manager import TelemetryManager
         TelemetryManager._instance = None
 
         # Create minimal config for testing
@@ -62,7 +62,7 @@ class TestRoutingAgentCacheMetrics:
                 agent.metrics_tracker.reset_all_stats()
 
             # Reset TelemetryManager singleton after test
-            from cogniverse_core.telemetry.manager import TelemetryManager
+            from cogniverse_foundation.telemetry.manager import TelemetryManager
             TelemetryManager._instance = None
 
     def test_cache_metrics_components_initialized(self, routing_agent):

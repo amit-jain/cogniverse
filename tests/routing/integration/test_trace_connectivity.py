@@ -9,8 +9,8 @@ import asyncio
 import logging
 
 import pytest
-from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
-from cogniverse_core.telemetry.manager import TelemetryManager
+from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
+from cogniverse_foundation.telemetry.manager import TelemetryManager
 
 logger = logging.getLogger(__name__)
 

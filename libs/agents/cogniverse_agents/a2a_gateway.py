@@ -22,7 +22,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
-    from cogniverse_core.telemetry.config import TelemetryConfig
+    from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 from cogniverse_agents.multi_agent_orchestrator import (
     MultiAgentOrchestrator,

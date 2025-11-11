@@ -17,8 +17,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
-from cogniverse_core.telemetry.manager import TelemetryManager
-from cogniverse_core.telemetry.providers.base import TelemetryProvider
+from cogniverse_foundation.telemetry.manager import TelemetryManager
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
 

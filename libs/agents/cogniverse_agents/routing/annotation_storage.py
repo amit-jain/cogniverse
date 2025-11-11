@@ -10,12 +10,12 @@ import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Dict, List, Optional
 
-from cogniverse_core.telemetry.manager import get_telemetry_manager
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
 from cogniverse_agents.routing.llm_auto_annotator import AnnotationLabel, AutoAnnotation
 
 if TYPE_CHECKING:
-    from cogniverse_core.telemetry.providers.base import TelemetryProvider
+    from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
 

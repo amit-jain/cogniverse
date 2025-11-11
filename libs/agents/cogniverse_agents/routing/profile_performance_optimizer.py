@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import xgboost as xgb
-from cogniverse_core.telemetry.manager import get_telemetry_manager
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 

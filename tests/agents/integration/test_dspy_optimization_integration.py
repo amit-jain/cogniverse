@@ -15,7 +15,7 @@ from cogniverse_agents.query_analysis_tool_v3 import QueryAnalysisToolV3
 from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_agents.summarizer_agent import SummarizerAgent
 from cogniverse_foundation.config.utils import create_default_config_manager
-from cogniverse_core.telemetry.config import TelemetryConfig
+from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 
 @pytest.fixture

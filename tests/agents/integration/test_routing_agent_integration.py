@@ -9,7 +9,7 @@ import tempfile
 
 import pytest
 from cogniverse_agents.routing_agent import RoutingAgent
-from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
+from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
 
 class TestRoutingAgentIntegration:

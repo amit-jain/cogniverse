@@ -22,7 +22,7 @@ from cogniverse_agents.approval.interfaces import (
 )
 
 if TYPE_CHECKING:
-    from cogniverse_core.telemetry.manager import TelemetryManager
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
 
 logger = logging.getLogger(__name__)
 
@@ -85,8 +85,8 @@ class ApprovalStorageImpl(ApprovalStorage):
 
         # Use TelemetryManager for creating spans with proper tenant scoping
         if telemetry_manager is None:
-            from cogniverse_core.telemetry.config import TelemetryConfig
-            from cogniverse_core.telemetry.manager import TelemetryManager
+            from cogniverse_foundation.telemetry.config import TelemetryConfig
+            from cogniverse_foundation.telemetry.manager import TelemetryManager
 
             # Configure telemetry (provider auto-discovered via registry)
             config = TelemetryConfig(

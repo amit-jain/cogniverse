@@ -18,12 +18,12 @@ import pytest
 import requests
 from cogniverse_agents.routing.base import SearchModality
 from cogniverse_agents.routing.router import ComprehensiveRouter
-from cogniverse_core.telemetry.config import (
+from cogniverse_foundation.telemetry.config import (
     SPAN_NAME_ROUTING,
     BatchExportConfig,
     TelemetryConfig,
 )
-from cogniverse_core.telemetry.manager import TelemetryManager
+from cogniverse_foundation.telemetry.manager import TelemetryManager
 
 from tests.utils.async_polling import simulate_processing_delay, wait_for_vespa_indexing
 
@@ -46,7 +46,7 @@ def phoenix_container():
     os.environ["TELEMETRY_SYNC_EXPORT"] = "true"  # Use sync export for tests
 
     # Reset TelemetryManager singleton to force re-initialization with new env var
-    from cogniverse_core.telemetry.manager import TelemetryManager
+    from cogniverse_foundation.telemetry.manager import TelemetryManager
     if hasattr(TelemetryManager, '_instance') and TelemetryManager._instance is not None:
         # Shutdown existing instance
         try:
@@ -197,7 +197,7 @@ def telemetry_config(test_tenant_id, phoenix_container):
 @pytest.fixture
 def telemetry_manager(test_tenant_id, telemetry_config, phoenix_container):
     """Telemetry manager for creating test spans"""
-    import cogniverse_core.telemetry.manager as telemetry_manager_module
+    import cogniverse_foundation.telemetry.manager as telemetry_manager_module
 
     # Depend on phoenix_container to ensure singleton is reset before creating manager
     # TelemetryManager singleton has been reset in phoenix_container fixture

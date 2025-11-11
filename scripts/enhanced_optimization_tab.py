@@ -200,7 +200,7 @@ def _render_search_annotation_tab():
     if st.button("🔍 Fetch Search Results", key="fetch_search_results"):
         with st.spinner("Fetching search results..."):
             try:
-                from cogniverse_core.telemetry.manager import get_telemetry_manager
+                from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
                 # Get telemetry provider
                 telemetry_manager = get_telemetry_manager()
@@ -352,7 +352,7 @@ def _save_search_annotation(
 ):
     """Save search result annotation via telemetry provider"""
     try:
-        from cogniverse_core.telemetry.manager import get_telemetry_manager
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
         # Get telemetry provider
         telemetry_manager = get_telemetry_manager()
@@ -468,7 +468,7 @@ async def _build_golden_dataset_from_phoenix(
     lookback_days: int
 ) -> Dict:
     """Build golden dataset from annotated spans"""
-    from cogniverse_core.telemetry.manager import get_telemetry_manager
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
     # Get telemetry provider
     telemetry_manager = get_telemetry_manager()
@@ -1132,7 +1132,7 @@ def _render_profile_selection_tab():
 
     # Check telemetry provider availability
     try:
-        from cogniverse_core.telemetry.manager import get_telemetry_manager
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
         telemetry_manager = get_telemetry_manager()
         provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
@@ -1163,7 +1163,7 @@ def _render_profile_selection_tab():
     try:
         from datetime import timedelta
 
-        from cogniverse_core.telemetry.manager import get_telemetry_manager
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
         # Get telemetry provider
         tenant_id = st.text_input("Tenant ID", value="default", key="profile_tenant_id")
@@ -1410,7 +1410,7 @@ def _render_metrics_dashboard_tab():
 
     # Check telemetry provider availability
     try:
-        from cogniverse_core.telemetry.manager import get_telemetry_manager
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
         telemetry_manager = get_telemetry_manager()
         provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
@@ -1455,7 +1455,7 @@ def _render_metrics_dashboard_tab():
         from cogniverse_core.evaluation.evaluators.routing_evaluator import (
             RoutingEvaluator,
         )
-        from cogniverse_core.telemetry.manager import get_telemetry_manager
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
         # Get telemetry provider
         telemetry_manager = get_telemetry_manager()

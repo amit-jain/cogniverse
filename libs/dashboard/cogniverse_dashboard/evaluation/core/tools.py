@@ -120,7 +120,7 @@ def phoenix_query_tool():
         Returns:
             Query results
         """
-        from cogniverse_core.telemetry.manager import TelemetryManager
+        from cogniverse_foundation.telemetry.manager import TelemetryManager
 
         telemetry_manager = TelemetryManager()
         provider = telemetry_manager.provider

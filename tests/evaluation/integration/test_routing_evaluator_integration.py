@@ -16,7 +16,7 @@ from cogniverse_core.evaluation.evaluators.routing_evaluator import (
     RoutingMetrics,
     RoutingOutcome,
 )
-from cogniverse_core.telemetry.config import BatchExportConfig, TelemetryConfig
+from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +74,9 @@ class TestRoutingEvaluatorIntegration:
     @pytest.fixture
     def telemetry_provider(self, phoenix_test_server):
         """Create telemetry provider for integration tests"""
-        import cogniverse_core.telemetry.manager as telemetry_manager_module
-        from cogniverse_core.telemetry.manager import TelemetryManager
-        from cogniverse_core.telemetry.registry import get_telemetry_registry
+        import cogniverse_foundation.telemetry.manager as telemetry_manager_module
+        from cogniverse_foundation.telemetry.manager import TelemetryManager
+        from cogniverse_foundation.telemetry.registry import get_telemetry_registry
 
         # Reset TelemetryManager singleton AND clear provider cache
         TelemetryManager.reset()
