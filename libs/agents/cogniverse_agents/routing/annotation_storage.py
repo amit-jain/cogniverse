@@ -3,7 +3,7 @@ Annotation Storage for Telemetry
 
 Stores human and LLM annotations in telemetry backend using annotations API.
 Provides query capabilities for the feedback loop.
-Reuses common evaluation patterns from cogniverse_dashboard.evaluation.span_evaluator.
+Reuses common evaluation patterns from cogniverse_evaluation.span_evaluator.
 """
 
 import logging

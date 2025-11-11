@@ -5,7 +5,7 @@ Unit tests for visual evaluator plugin.
 from unittest.mock import Mock, patch
 
 import pytest
-from cogniverse_core.evaluation.plugins.visual_evaluator import (
+from cogniverse_evaluation.plugins.visual_evaluator import (
     VisualEvaluatorPlugin,
     get_visual_scorers,
 )

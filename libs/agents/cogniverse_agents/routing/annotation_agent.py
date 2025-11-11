@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 import pandas as pd
 from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-from cogniverse_dashboard.evaluation.evaluators.routing_evaluator import (
+from cogniverse_evaluation.evaluators.routing_evaluator import (
     RoutingEvaluator,
     RoutingOutcome,
 )

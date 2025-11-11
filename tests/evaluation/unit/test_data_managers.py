@@ -7,8 +7,8 @@ from unittest.mock import Mock, mock_open, patch
 
 import pandas as pd
 import pytest
-from cogniverse_core.evaluation.data.datasets import DatasetManager
-from cogniverse_core.evaluation.data.traces import TraceManager
+from cogniverse_evaluation.data.datasets import DatasetManager
+from cogniverse_evaluation.data.traces import TraceManager
 
 
 class TestDatasetManager:
@@ -225,7 +225,7 @@ class TestTraceManager:
             mock_provider = Mock()
             mock_provider.telemetry.traces.get_spans = AsyncMock(return_value=mock_phoenix_client.get_spans_dataframe())
             mock_storage.provider = mock_provider
-            from cogniverse_core.evaluation.data.storage import ConnectionState
+            from cogniverse_evaluation.data.storage import ConnectionState
             mock_storage.connection_state = ConnectionState.CONNECTED
             mock_storage_class.return_value = mock_storage
 

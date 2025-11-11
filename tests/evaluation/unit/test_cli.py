@@ -11,7 +11,7 @@ from click.testing import CliRunner
 
 # Import CLI functions directly to avoid import issues
 try:
-    from cogniverse_core.evaluation.cli import (
+    from cogniverse_evaluation.cli import (
         cli,
         create_dataset,
         evaluate,
@@ -519,7 +519,7 @@ class TestCLI:
     def test_main_entry_point(self):
         """Test main entry point."""
         with patch("cogniverse_core.evaluation.cli.cli") as mock_cli:
-            from cogniverse_core.evaluation.cli import main
+            from cogniverse_evaluation.cli import main
 
             main()
             mock_cli.assert_called_once()

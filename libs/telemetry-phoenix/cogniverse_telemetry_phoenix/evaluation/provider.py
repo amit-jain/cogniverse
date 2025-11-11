@@ -6,7 +6,7 @@ Main provider class combining all Phoenix evaluation capabilities.
 
 from typing import TYPE_CHECKING
 
-from cogniverse_core.evaluation.providers.base import (
+from cogniverse_evaluation.providers.base import (
     AnalyticsProvider,
     EvaluatorFramework,
     EvaluatorProvider,

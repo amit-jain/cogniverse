@@ -11,7 +11,7 @@ import os
 from datetime import datetime, timedelta
 
 import pytest
-from cogniverse_core.evaluation.evaluators.routing_evaluator import (
+from cogniverse_evaluation.evaluators.routing_evaluator import (
     RoutingEvaluator,
     RoutingMetrics,
     RoutingOutcome,

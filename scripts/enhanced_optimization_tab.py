@@ -899,7 +899,7 @@ def _render_routing_optimization_tab():
                             try:
                                 import tempfile
 
-                                from cogniverse_core.evaluation.data import (
+                                from cogniverse_evaluation.data import (
                                     DatasetManager,
                                 )
 
@@ -1452,7 +1452,7 @@ def _render_metrics_dashboard_tab():
     try:
         from datetime import timedelta
 
-        from cogniverse_core.evaluation.evaluators.routing_evaluator import (
+        from cogniverse_evaluation.evaluators.routing_evaluator import (
             RoutingEvaluator,
         )
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager

@@ -5,11 +5,11 @@ Unit tests for evaluation evaluators modules.
 from unittest.mock import AsyncMock
 
 import pytest
-from cogniverse_core.evaluation.evaluators.base_evaluator import (
+from cogniverse_evaluation.evaluators.base_evaluator import (
     NoSpanEvaluator,
     no_span,
 )
-from cogniverse_core.evaluation.evaluators.reference_free import (
+from cogniverse_evaluation.evaluators.reference_free import (
     CompositeEvaluator,
     LLMRelevanceEvaluator,
     QueryResultRelevanceEvaluator,

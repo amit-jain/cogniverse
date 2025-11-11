@@ -6,7 +6,7 @@ Provides Phoenix-specific evaluator base classes and result types.
 
 from typing import Any, Dict, Optional
 
-from cogniverse_core.evaluation.providers.base import EvaluatorFramework
+from cogniverse_evaluation.providers.base import EvaluatorFramework
 from phoenix.experiments.evaluators.base import Evaluator as PhoenixEvaluator
 from phoenix.experiments.types import EvaluationResult
 

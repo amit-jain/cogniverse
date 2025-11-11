@@ -4,13 +4,16 @@ requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'darwin'",
     "python_full_version >= '3.13' and platform_machine == 'aarch64' and sys_platform == 'linux'",
-    "(python_full_version >= '3.13' and platform_machine != 'aarch64' and sys_platform == 'linux') or (python_full_version >= '3.13' and sys_platform != 'darwin' and sys_platform != 'linux')",
+    "python_full_version >= '3.13' and sys_platform == 'win32'",
+    "(python_full_version >= '3.13' and platform_machine != 'aarch64' and sys_platform == 'linux') or (python_full_version >= '3.13' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
     "python_full_version >= '3.12.4' and python_full_version < '3.13' and sys_platform == 'darwin'",
     "python_full_version >= '3.12.4' and python_full_version < '3.13' and platform_machine == 'aarch64' and sys_platform == 'linux'",
-    "(python_full_version >= '3.12.4' and python_full_version < '3.13' and platform_machine != 'aarch64' and sys_platform == 'linux') or (python_full_version >= '3.12.4' and python_full_version < '3.13' and sys_platform != 'darwin' and sys_platform != 'linux')",
+    "python_full_version >= '3.12.4' and python_full_version < '3.13' and sys_platform == 'win32'",
+    "(python_full_version >= '3.12.4' and python_full_version < '3.13' and platform_machine != 'aarch64' and sys_platform == 'linux') or (python_full_version >= '3.12.4' and python_full_version < '3.13' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
     "python_full_version < '3.12.4' and sys_platform == 'darwin'",
     "python_full_version < '3.12.4' and platform_machine == 'aarch64' and sys_platform == 'linux'",
-    "(python_full_version < '3.12.4' and platform_machine != 'aarch64' and sys_platform == 'linux') or (python_full_version < '3.12.4' and sys_platform != 'darwin' and sys_platform != 'linux')",
+    "python_full_version < '3.12.4' and sys_platform == 'win32'",
+    "(python_full_version < '3.12.4' and platform_machine != 'aarch64' and sys_platform == 'linux') or (python_full_version < '3.12.4' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
 ]
 
 [manifest]
@@ -18,6 +21,7 @@ members = [
     "cogniverse-agents",
     "cogniverse-core",
     "cogniverse-dashboard",
+    "cogniverse-evaluation",
     "cogniverse-foundation",
     "cogniverse-runtime",
     "cogniverse-sdk",
@@ -248,7 +252,7 @@ wheels = [
 
 [[package]]
 name = "arize-phoenix"
-version = "11.18.0"
+version = "12.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aioitertools" },
@@ -265,6 +269,7 @@ dependencies = [
     { name = "grpcio" },
     { name = "httpx" },
     { name = "jinja2" },
+    { name = "jmespath" },
     { name = "numpy" },
     { name = "openinference-instrumentation" },
     { name = "openinference-semantic-conventions" },
@@ -272,6 +277,7 @@ dependencies = [
     { name = "opentelemetry-proto" },
     { name = "opentelemetry-sdk" },
     { name = "opentelemetry-semantic-conventions" },
+    { name = "orjson" },
     { name = "pandas" },
     { name = "prometheus-client" },
     { name = "protobuf" },
@@ -291,41 +297,47 @@ dependencies = [
     { name = "uvicorn" },
     { name = "wrapt" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/03/79/8fc31af2a38ccffe4478ed4c71c8b6989fa8f086ec1d18a008f05b91afbd/arize_phoenix-11.18.0.tar.gz", hash = "sha256:d87ae31e341e6bd32b8a507ce9b5d13f30eee5096bea9233a5d4622ffeb5ecb7", size = 2191325, upload-time = "2025-08-02T00:01:02.271Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/84/19/e043a32fa81aef70f5922d1b411f486f089ae82d1ceca56eb0cc53542e42/arize_phoenix-12.12.0.tar.gz", hash = "sha256:7dbce0d4d21e8eed37150371176d4a06425dd13543c73575c94cddadc9dcedc4", size = 2343112, upload-time = "2025-11-07T02:55:27.531Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bb/6d/b3f016f8309d454a7077cf55e375838bac3e58dc6069f96147baa73996db/arize_phoenix-11.18.0-py3-none-any.whl", hash = "sha256:35186d9712ba1ce7c21249772c301731ee7915a9eb04201f9994f0f9c5d84d78", size = 2387492, upload-time = "2025-08-02T00:00:59.592Z" },
+    { url = "https://files.pythonhosted.org/packages/bc/03/d08c01b49dbb0cf443b660a20c3614af5f34717807606dd65f64150b3eb4/arize_phoenix-12.12.0-py3-none-any.whl", hash = "sha256:3f74111bb54a5e63808f284b070215affd8741f0b03e45a48badfa889c3e8def", size = 2566897, upload-time = "2025-11-07T02:55:24.931Z" },
 ]
 
 [[package]]
 name = "arize-phoenix-client"
-version = "1.14.1"
+version = "1.22.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
+    { name = "openinference-instrumentation" },
     { name = "openinference-semantic-conventions" },
     { name = "opentelemetry-exporter-otlp" },
     { name = "opentelemetry-sdk" },
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2c/96/c4c3fbc1705f503bc549017751546a8fd6735f328ee9127b48dbd073a9fc/arize_phoenix_client-1.14.1.tar.gz", hash = "sha256:8d1e8bc30b36e513bb7b89073e49772b54d7a7a339d1ce8b5669517403ce3c1b", size = 96981, upload-time = "2025-07-30T21:17:43.48Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/22/9b/3cf002422bbdcfc4f46a58feb5f0d3476e0701c7878c8b3c511259262cf6/arize_phoenix_client-1.22.0.tar.gz", hash = "sha256:e415c8386ee4ef1be8fa6faafe1aef1268f728a562d3fbdfbbd3cb91f81739ae", size = 132554, upload-time = "2025-11-05T19:56:34.291Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1b/d2/4a0b568d823f0dcf2947a82adb851f5cf50e8e5b6f2723d13373cca516f2/arize_phoenix_client-1.14.1-py3-none-any.whl", hash = "sha256:7339c7bb9cae7a9521a65691b59f8a5bca9bb34069220669dd3200a1e0f37dd9", size = 101096, upload-time = "2025-07-30T21:17:42.208Z" },
+    { url = "https://files.pythonhosted.org/packages/65/e8/106f63ae4ee35e569d89eac8e00bdc10d76b8f7274c72dc8ae2fd01dc7ed/arize_phoenix_client-1.22.0-py3-none-any.whl", hash = "sha256:2cc3ac5e589faa6a75f9e0048cabeb4ae36d178bb29423f5cd43bcb2935fc5ae", size = 139453, upload-time = "2025-11-05T19:56:32.797Z" },
 ]
 
 [[package]]
 name = "arize-phoenix-evals"
-version = "0.26.1"
+version = "2.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "jsonpath-ng" },
+    { name = "openinference-instrumentation" },
+    { name = "openinference-semantic-conventions" },
+    { name = "opentelemetry-api" },
     { name = "pandas" },
+    { name = "pydantic" },
     { name = "pystache" },
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/13/22/57f44effefcda036e01f9ba0921885bea3dc16fb5be3a409a664b3697215/arize_phoenix_evals-0.26.1.tar.gz", hash = "sha256:7dcf9e3e51ed744196f29a473ced2bbaadd61bdcaa10a1c4abeedafc807f1067", size = 68247, upload-time = "2025-08-01T22:19:18.678Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/08/51/de7bd0611ee4e9a229a5eca3e7458a3682c159c8ccefe332a54adb25d3ac/arize_phoenix_evals-2.5.0.tar.gz", hash = "sha256:6f7995ee29e401a9df6ead675ea9d5dd005ccd5ffe209924f265e9b80b1cdd81", size = 98136, upload-time = "2025-10-07T15:27:46.612Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/46/d4/aec1f526c3352967619b09a6fd92a239bb4273b36abeadf6799923d9ca42/arize_phoenix_evals-0.26.1-py3-none-any.whl", hash = "sha256:ff3dc9138d0bf03873cbfc772b0a2c16584f5ba5ca5a34339e5198da887ec0a7", size = 93545, upload-time = "2025-08-01T22:19:17.742Z" },
+    { url = "https://files.pythonhosted.org/packages/f0/e7/5126a9c1c9577699d47f852802e1016e0636bff907c0f57f4f23d59607ea/arize_phoenix_evals-2.5.0-py3-none-any.whl", hash = "sha256:ddea69bff74dc5f0417cb13c05920a42bfdc7b36572e96290acdc2875cf6832b", size = 134718, upload-time = "2025-10-07T15:27:45.212Z" },
 ]
 
 [[package]]
@@ -810,6 +822,7 @@ source = { editable = "libs/core" }
 dependencies = [
     { name = "aiofiles" },
     { name = "arize-phoenix" },
+    { name = "cogniverse-evaluation" },
     { name = "cogniverse-foundation" },
     { name = "cogniverse-sdk" },
     { name = "dspy-ai" },
@@ -836,8 +849,9 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiofiles", specifier = ">=24.1.0" },
-    { name = "arize-phoenix", specifier = ">=4.0.0" },
+    { name = "arize-phoenix", specifier = ">=12.9.0" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=25.1.0" },
+    { name = "cogniverse-evaluation", editable = "libs/evaluation" },
     { name = "cogniverse-foundation", editable = "libs/foundation" },
     { name = "cogniverse-sdk", editable = "libs/sdk" },
     { name = "dspy-ai", specifier = ">=3.0.2" },
@@ -865,6 +879,7 @@ dependencies = [
     { name = "arize-phoenix" },
     { name = "arize-phoenix-evals" },
     { name = "cogniverse-core" },
+    { name = "cogniverse-evaluation" },
     { name = "cogniverse-sdk" },
     { name = "embedding-atlas" },
     { name = "inspect-ai" },
@@ -880,9 +895,10 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "arize-phoenix", specifier = ">=4.0.0" },
-    { name = "arize-phoenix-evals", specifier = ">=0.4.0" },
+    { name = "arize-phoenix", specifier = ">=12.9.0" },
+    { name = "arize-phoenix-evals", specifier = ">=0.26.0" },
     { name = "cogniverse-core", editable = "libs/core" },
+    { name = "cogniverse-evaluation", editable = "libs/evaluation" },
     { name = "cogniverse-sdk", editable = "libs/sdk" },
     { name = "embedding-atlas", specifier = ">=0.2.0" },
     { name = "inspect-ai", specifier = ">=0.3.0" },
@@ -894,6 +910,31 @@ requires-dist = [
     { name = "streamlit", specifier = ">=1.29.0" },
     { name = "tabulate", specifier = ">=0.9.0" },
     { name = "umap-learn", specifier = ">=0.5.0" },
+]
+
+[[package]]
+name = "cogniverse-evaluation"
+version = "0.1.0"
+source = { editable = "libs/evaluation" }
+dependencies = [
+    { name = "cogniverse-foundation" },
+    { name = "cogniverse-sdk" },
+    { name = "inspect-ai" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "pillow" },
+    { name = "scikit-learn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cogniverse-foundation", editable = "libs/foundation" },
+    { name = "cogniverse-sdk", editable = "libs/sdk" },
+    { name = "inspect-ai", specifier = ">=0.3.0" },
+    { name = "numpy", specifier = ">=1.24.0" },
+    { name = "pandas", specifier = ">=2.0.0" },
+    { name = "pillow", specifier = ">=10.0.0" },
+    { name = "scikit-learn", specifier = ">=1.3.0" },
 ]
 
 [[package]]
@@ -1027,13 +1068,15 @@ source = { editable = "libs/telemetry-phoenix" }
 dependencies = [
     { name = "arize-phoenix" },
     { name = "cogniverse-core" },
+    { name = "cogniverse-evaluation" },
     { name = "pandas" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "arize-phoenix", specifier = ">=4.0.0" },
+    { name = "arize-phoenix", specifier = ">=12.9.0" },
     { name = "cogniverse-core", editable = "libs/core" },
+    { name = "cogniverse-evaluation", editable = "libs/evaluation" },
     { name = "pandas", specifier = ">=2.0.0" },
 ]
 
@@ -1204,8 +1247,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiofiles", specifier = ">=24.1.0" },
-    { name = "arize-phoenix", specifier = ">=4.0.0" },
-    { name = "arize-phoenix-evals", specifier = ">=0.4.0" },
+    { name = "arize-phoenix", specifier = ">=12.9.0" },
+    { name = "arize-phoenix-evals", specifier = ">=0.26.0" },
     { name = "bandit", marker = "extra == 'dev'", specifier = ">=1.7.5" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=24.0.0" },
     { name = "colpali-engine", specifier = ">=0.3.12" },
@@ -2301,7 +2344,7 @@ name = "gunicorn"
 version = "23.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "packaging" },
+    { name = "packaging", marker = "sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/34/72/9614c465dc206155d93eff0ca20d42e1e35afc533971379482de953521a4/gunicorn-23.0.0.tar.gz", hash = "sha256:f014447a0101dc57e294f6c18ca6b40227a4c90e9bdb586042628030cba004ec", size = 375031, upload-time = "2024-08-10T20:25:27.378Z" }
 wheels = [
@@ -4050,7 +4093,7 @@ name = "nvidia-cudnn-cu12"
 version = "9.1.0.70"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
+    { name = "nvidia-cublas-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9f/fd/713452cd72343f682b1c7b9321e23829f00b842ceaedcda96e742ea0b0b3/nvidia_cudnn_cu12-9.1.0.70-py3-none-manylinux2014_x86_64.whl", hash = "sha256:165764f44ef8c61fcdfdfdbe769d687e06374059fbb388b6c89ecb0e28793a6f", size = 664752741, upload-time = "2024-04-22T15:24:15.253Z" },
@@ -4061,7 +4104,7 @@ name = "nvidia-cufft-cu12"
 version = "11.2.1.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/27/94/3266821f65b92b3138631e9c8e7fe1fb513804ac934485a8d05776e1dd43/nvidia_cufft_cu12-11.2.1.3-py3-none-manylinux2014_x86_64.whl", hash = "sha256:f083fc24912aa410be21fa16d157fed2055dab1cc4b6934a0e03cba69eb242b9", size = 211459117, upload-time = "2024-04-03T20:57:40.402Z" },
@@ -4080,9 +4123,9 @@ name = "nvidia-cusolver-cu12"
 version = "11.6.1.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
-    { name = "nvidia-cusparse-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
-    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
+    { name = "nvidia-cublas-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "nvidia-cusparse-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3a/e1/5b9089a4b2a4790dfdea8b3a006052cfecff58139d5a4e34cb1a51df8d6f/nvidia_cusolver_cu12-11.6.1.9-py3-none-manylinux2014_x86_64.whl", hash = "sha256:19e33fa442bcfd085b3086c4ebf7e8debc07cfe01e11513cc6d332fd918ac260", size = 127936057, upload-time = "2024-04-03T20:58:28.735Z" },
@@ -4093,7 +4136,7 @@ name = "nvidia-cusparse-cu12"
 version = "12.3.1.170"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/db/f7/97a9ea26ed4bbbfc2d470994b8b4f338ef663be97b8f677519ac195e113d/nvidia_cusparse_cu12-12.3.1.170-py3-none-manylinux2014_x86_64.whl", hash = "sha256:ea4f11a2904e2a8dc4b1833cc1b5181cde564edd0d5cd33e3c168eff2d1863f1", size = 207454763, upload-time = "2024-04-03T20:58:59.995Z" },

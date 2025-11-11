@@ -12,14 +12,15 @@ authors = [
 dependencies = [
     "cogniverse-sdk",
     "cogniverse-core",
+    "cogniverse-evaluation",
 
     # Dashboard UI
     "streamlit>=1.29.0",
     "plotly>=6.0.0",
 
     # Phoenix and evaluation
-    "arize-phoenix>=4.0.0",
-    "arize-phoenix-evals>=0.4.0",
+    "arize-phoenix>=12.9.0",
+    "arize-phoenix-evals>=0.26.0",
     "inspect-ai>=0.3.0",
     "ragas>=0.1.0",
 
@@ -37,6 +38,7 @@ dependencies = [
 [tool.uv.sources]
 cogniverse-sdk = { workspace = true }
 cogniverse-core = { workspace = true }
+cogniverse-evaluation = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

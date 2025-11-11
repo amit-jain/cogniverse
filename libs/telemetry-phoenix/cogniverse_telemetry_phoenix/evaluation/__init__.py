@@ -4,6 +4,6 @@ Phoenix-specific evaluation implementations.
 This module contains Phoenix implementations of evaluation provider interfaces.
 """
 
-from .provider import PhoenixEvaluatorProvider
+from .evaluation_provider import PhoenixEvaluationProvider
 
-__all__ = ["PhoenixEvaluatorProvider"]
+__all__ = ["PhoenixEvaluationProvider"]

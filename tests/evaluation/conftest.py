@@ -298,7 +298,7 @@ def mock_get_config():
 @pytest.fixture
 def mock_evaluator_provider(mock_phoenix_client):
     """Mock evaluator provider for testing."""
-    with patch("cogniverse_core.evaluation.providers.get_evaluator_provider") as mock_get_provider:
+    with patch("cogniverse_evaluation.providers.get_evaluation_provider") as mock_get_provider:
         # Create mock provider structure
         mock_provider = MagicMock()
 
@@ -354,7 +354,7 @@ def mock_provider_for_unit_tests(request):
         from unittest.mock import AsyncMock, MagicMock, patch
 
         # Mock the provider to prevent initialization errors
-        with patch("cogniverse_core.evaluation.providers.get_evaluator_provider") as mock_get:
+        with patch("cogniverse_evaluation.providers.get_evaluation_provider") as mock_get:
             mock_provider = MagicMock()
 
             # Mock Phoenix evaluator base class

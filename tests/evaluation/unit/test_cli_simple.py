@@ -25,7 +25,7 @@ class TestCLISimple:
             },
         ):
             # Now we can import the CLI module
-            from cogniverse_core.evaluation import cli as cli_module
+            from cogniverse_evaluation import cli as cli_module
 
             # Check module has expected attributes
             assert hasattr(cli_module, "cli")
@@ -44,7 +44,7 @@ class TestCLISimple:
                 "cogniverse_core.evaluation.data": MagicMock(),
             },
         ):
-            from cogniverse_core.evaluation.cli import evaluate
+            from cogniverse_evaluation.cli import evaluate
 
             # Click decorators wrap the function, check the command has params
             assert hasattr(evaluate, "params")
@@ -68,7 +68,7 @@ class TestCLISimple:
                 "cogniverse_core.evaluation.data": MagicMock(),
             },
         ):
-            from cogniverse_core.evaluation.cli import cli
+            from cogniverse_evaluation.cli import cli
 
             # Check it's a click group
             assert hasattr(cli, "commands")
@@ -84,7 +84,7 @@ class TestCLISimple:
                 "cogniverse_core.evaluation.data": MagicMock(),
             },
         ):
-            from cogniverse_core.evaluation.cli import evaluate
+            from cogniverse_evaluation.cli import evaluate
 
             # Check mode choices are defined
             for param in evaluate.params:
@@ -103,7 +103,7 @@ class TestCLISimple:
                 "cogniverse_core.evaluation.data": MagicMock(),
             },
         ):
-            from cogniverse_core.evaluation.cli import create_dataset
+            from cogniverse_evaluation.cli import create_dataset
 
             # Click decorators wrap the function, check the command has params
             assert hasattr(create_dataset, "params")
@@ -123,7 +123,7 @@ class TestCLISimple:
                 "cogniverse_core.evaluation.data": MagicMock(),
             },
         ):
-            from cogniverse_core.evaluation.cli import list_traces
+            from cogniverse_evaluation.cli import list_traces
 
             # Click decorators wrap the function, check the command has params
             assert hasattr(list_traces, "params")
@@ -168,7 +168,7 @@ class TestCLISimple:
                     mock_json.return_value = {"test": "config"}
 
                     # The evaluate function should handle JSON config
-                    from cogniverse_core.evaluation.cli import evaluate
+                    from cogniverse_evaluation.cli import evaluate
 
                     # Check it can handle config parameter
                     for param in evaluate.params:

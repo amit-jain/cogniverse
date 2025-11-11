@@ -63,7 +63,7 @@ def mock_phoenix_client():
 @pytest.fixture
 def mock_routing_evaluator():
     """Mock RoutingEvaluator for testing"""
-    from cogniverse_dashboard.evaluation.evaluators.routing_evaluator import (
+    from cogniverse_evaluation.evaluators.routing_evaluator import (
         RoutingOutcome,
     )
 
@@ -144,7 +144,7 @@ class TestAnnotationAgent:
         mock_routing_evaluator,
     ):
         """Test that requests are properly prioritized"""
-        from cogniverse_dashboard.evaluation.evaluators.routing_evaluator import (
+        from cogniverse_evaluation.evaluators.routing_evaluator import (
             RoutingOutcome,
         )
 
@@ -197,7 +197,7 @@ class TestLLMAutoAnnotator:
     def test_annotate(self, mock_completion, mock_litellm_response):
         """Test LLM annotation generation"""
         from cogniverse_agents.routing.annotation_agent import AnnotationRequest
-        from cogniverse_dashboard.evaluation.evaluators.routing_evaluator import (
+        from cogniverse_evaluation.evaluators.routing_evaluator import (
             RoutingOutcome,
         )
 
@@ -234,7 +234,7 @@ class TestLLMAutoAnnotator:
     def test_batch_annotate(self, mock_completion, mock_litellm_response):
         """Test batch annotation"""
         from cogniverse_agents.routing.annotation_agent import AnnotationRequest
-        from cogniverse_dashboard.evaluation.evaluators.routing_evaluator import (
+        from cogniverse_evaluation.evaluators.routing_evaluator import (
             RoutingOutcome,
         )
 

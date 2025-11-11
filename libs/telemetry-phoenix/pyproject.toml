@@ -11,15 +11,20 @@ authors = [
 
 dependencies = [
     "cogniverse-core",
-    "arize-phoenix>=4.0.0",
+    "cogniverse-evaluation",
+    "arize-phoenix>=12.9.0",
     "pandas>=2.0.0",
 ]
 
 [project.entry-points."cogniverse.telemetry.providers"]
 phoenix = "cogniverse_telemetry_phoenix:PhoenixProvider"
 
+[project.entry-points."cogniverse.evaluation.providers"]
+phoenix = "cogniverse_telemetry_phoenix.evaluation.evaluation_provider:PhoenixEvaluationProvider"
+
 [tool.uv.sources]
 cogniverse-core = { workspace = true }
+cogniverse-evaluation = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

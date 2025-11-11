@@ -32,7 +32,7 @@ from cogniverse_agents.routing.llm_auto_annotator import (
     AnnotationLabel,
     LLMAutoAnnotator,
 )
-from cogniverse_core.evaluation.evaluators.routing_evaluator import RoutingEvaluator
+from cogniverse_evaluation.evaluators.routing_evaluator import RoutingEvaluator
 from cogniverse_foundation.telemetry.config import SERVICE_NAME_ORCHESTRATION
 
 logger = logging.getLogger(__name__)

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock, mock_open, patch
 
 import pandas as pd
 import pytest
-from cogniverse_core.evaluation.core.experiment_tracker import ExperimentTracker
+from cogniverse_evaluation.core.experiment_tracker import ExperimentTracker
 
 
 class TestExperimentTracker:
@@ -492,7 +492,7 @@ class TestExperimentTracker:
     @pytest.mark.unit
     def test_main_function_with_args(self, mock_dependencies):
         """Test main function with arguments."""
-        from cogniverse_core.evaluation.core.experiment_tracker import main
+        from cogniverse_evaluation.core.experiment_tracker import main
 
         mock_args = Mock()
         mock_args.quality_evaluators = True
@@ -527,7 +527,7 @@ class TestExperimentTracker:
     @pytest.mark.unit
     def test_main_function_no_args(self, mock_dependencies):
         """Test main function with no arguments."""
-        from cogniverse_core.evaluation.core.experiment_tracker import main
+        from cogniverse_evaluation.core.experiment_tracker import main
 
         with patch(
             "cogniverse_core.evaluation.core.experiment_tracker.ExperimentTracker"

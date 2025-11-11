@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 import pytest
-from cogniverse_core.evaluation.data.storage import (
+from cogniverse_evaluation.data.storage import (
     ConnectionConfig,
     ConnectionState,
     TelemetryStorage,

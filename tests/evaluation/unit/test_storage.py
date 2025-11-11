@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pandas as pd
 import pytest
-from cogniverse_core.evaluation.data.storage import (
+from cogniverse_evaluation.data.storage import (
     ConnectionConfig,
     ConnectionState,
     ExportMetrics,

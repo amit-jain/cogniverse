@@ -5,7 +5,7 @@ Unit tests for simple scorers.
 from unittest.mock import Mock
 
 import pytest
-from cogniverse_core.evaluation.core.simple_scorers import (
+from cogniverse_evaluation.core.simple_scorers import (
     get_configured_scorers,
     simple_relevance_scorer,
 )
