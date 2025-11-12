@@ -821,7 +821,6 @@ version = "0.1.0"
 source = { editable = "libs/core" }
 dependencies = [
     { name = "aiofiles" },
-    { name = "arize-phoenix" },
     { name = "cogniverse-evaluation" },
     { name = "cogniverse-foundation" },
     { name = "cogniverse-sdk" },
@@ -849,7 +848,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiofiles", specifier = ">=24.1.0" },
-    { name = "arize-phoenix", specifier = ">=12.9.0" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=25.1.0" },
     { name = "cogniverse-evaluation", editable = "libs/evaluation" },
     { name = "cogniverse-foundation", editable = "libs/foundation" },
