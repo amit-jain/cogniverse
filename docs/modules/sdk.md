@@ -265,7 +265,13 @@ cogniverse_sdk/
 **Purpose**: Universal document model for all content types
 
 **Key Classes:**
-- `ContentType`: Enum for content types (VIDEO, AUDIO, IMAGE, TEXT, DOCUMENT, DATAFRAME)
+- `ContentType`: Enum for content types supporting **multi-modal content**:
+  - `VIDEO`: Video files with frame-based or chunk-based processing
+  - `AUDIO`: Audio files and speech content
+  - `IMAGE`: Images and visual content
+  - `TEXT`: Natural language text and documents
+  - `DOCUMENT`: PDF, DOCX, and structured documents
+  - `DATAFRAME`: Tabular data (CSV, Excel, Pandas DataFrames)
 - `ProcessingStatus`: Enum for processing status (PENDING, PROCESSING, COMPLETED, FAILED, SKIPPED)
 - `Document`: Main document class with metadata, embeddings, and status
 - `DocumentMetadata`: Helper for structured metadata
@@ -525,14 +531,14 @@ result = backend.ingest_documents([doc], "video_frames")
 results = backend.search("tutorial", top_k=10, schema_name="video_frames")
 ```
 
-### Example 2: Working with Documents
+### Example 2: Working with Multi-Modal Documents
 
 ```python
-from cogniverse_sdk.document import Document, ContentType
+from cogniverse_sdk.document import Document, ContentType, ProcessingStatus
 from pathlib import Path
 import numpy as np
 
-# Create video document
+# ===== VIDEO CONTENT =====
 video_doc = Document(
     id="video_123",
     content_type=ContentType.VIDEO,
@@ -546,14 +552,93 @@ video_doc = Document(
     }
 )
 
-# Add embeddings (e.g., from ColPali)
+# Add frame-based embeddings (ColPali)
 colpali_embeddings = np.random.randn(100, 768)  # 100 frames, 768 dims
-video_doc.add_embedding("colpali", colpali_embeddings)
+video_doc.add_embedding("colpali_frame", colpali_embeddings)
 
-# Add embeddings (e.g., from VideoPrism)
+# Add chunk-based embeddings (VideoPrism)
 videoprism_embedding = np.random.randn(768)  # Global video embedding
-video_doc.add_embedding("videoprism", videoprism_embedding)
+video_doc.add_embedding("videoprism_chunk", videoprism_embedding)
 
+# ===== AUDIO CONTENT =====
+audio_doc = Document(
+    id="audio_456",
+    content_type=ContentType.AUDIO,
+    content_path=Path("audio/podcast.mp3"),
+    metadata={
+        "title": "Tech Podcast Episode 42",
+        "duration": 3600.0,
+        "sample_rate": 44100
+    }
+)
+
+# ===== IMAGE CONTENT =====
+image_doc = Document(
+    id="image_789",
+    content_type=ContentType.IMAGE,
+    content_path=Path("images/diagram.png"),
+    metadata={
+        "title": "System Architecture Diagram",
+        "width": 1920,
+        "height": 1080,
+        "format": "PNG"
+    }
+)
+
+# Add image embeddings (ColQwen)
+colqwen_embedding = np.random.randn(768)
+image_doc.add_embedding("colqwen", colqwen_embedding)
+
+# ===== DOCUMENT CONTENT =====
+document_doc = Document(
+    id="doc_101",
+    content_type=ContentType.DOCUMENT,
+    content_path=Path("documents/research_paper.pdf"),
+    metadata={
+        "title": "Multi-Modal RAG Research",
+        "authors": ["Alice", "Bob"],
+        "pages": 25,
+        "format": "PDF"
+    }
+)
+
+# ===== TEXT CONTENT =====
+text_doc = Document(
+    id="text_202",
+    content_type=ContentType.TEXT,
+    content_data="This is a text document about machine learning.",
+    metadata={
+        "title": "ML Introduction",
+        "word_count": 1500,
+        "language": "en"
+    }
+)
+
+# ===== DATAFRAME CONTENT =====
+# Tabular data (CSV, Excel, Pandas DataFrames)
+dataframe_doc = Document(
+    id="df_303",
+    content_type=ContentType.DATAFRAME,
+    content_path=Path("data/sales_data.csv"),
+    metadata={
+        "title": "Q4 Sales Data",
+        "rows": 10000,
+        "columns": 15,
+        "format": "CSV",
+        "schema": {
+            "date": "datetime",
+            "product": "string",
+            "revenue": "float",
+            "units_sold": "int"
+        }
+    }
+)
+
+# Add dataframe embeddings (text-based representation)
+df_text_embedding = np.random.randn(768)
+dataframe_doc.add_embedding("text", df_text_embedding)
+
+# ===== COMMON OPERATIONS =====
 # Update status
 video_doc.set_status(ProcessingStatus.COMPLETED)
 
@@ -567,6 +652,12 @@ with open("document.json", "w") as f:
 
 # Load from dict
 loaded_doc = Document.from_dict(doc_dict)
+
+# Check content type
+if loaded_doc.content_type == ContentType.VIDEO:
+    print(f"Processing video: {loaded_doc.metadata.get('title')}")
+elif loaded_doc.content_type == ContentType.DATAFRAME:
+    print(f"Processing dataframe with {loaded_doc.metadata.get('rows')} rows")
 ```
 
 ### Example 3: Config Store Implementation

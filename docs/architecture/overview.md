@@ -1,7 +1,7 @@
 # Cogniverse System Architecture
 
-**Last Updated:** 2025-10-15
-**Purpose:** Comprehensive architecture guide for the multi-agent RAG system with SDK structure and multi-tenancy
+**Last Updated:** 2025-11-13
+**Purpose:** Comprehensive architecture guide for the multi-agent RAG system with 10-package UV workspace structure and multi-tenancy
 
 ---
 
@@ -20,27 +20,30 @@
 
 ### What is Cogniverse?
 
-Cogniverse is a **multi-agent RAG (Retrieval-Augmented Generation)** system designed for intelligent video content analysis and search with:
-- **SDK Architecture**: Modular UV workspace with 10 packages in layered architecture
-- **Multi-Tenant**: Complete isolation via schema-per-tenant pattern
-- **Production-Ready**: Comprehensive telemetry, caching, and optimization
+Cogniverse is a **multi-agent RAG (Retrieval-Augmented Generation)** system designed for intelligent multi-modal content analysis and search with:
+- **10-Package Architecture**: Modular UV workspace with layered architecture (Foundation, Core, Implementation, Application)
+- **Multi-Tenant**: Complete physical isolation via schema-per-tenant pattern
+- **Multi-Modal**: Support for video, audio, images, documents, text, and dataframes
+- **Production-Ready**: Comprehensive telemetry, caching, optimization, and evaluation
 
 ### Key Capabilities
 
-- **Multi-Modal Search**: Text-to-video, video-to-video, image-to-video search
-- **Intelligent Routing**: DSPy-powered query routing with relationship extraction
-- **Agent Orchestration**: Multi-agent workflows with dependency management
-- **Video Processing**: Configurable keyframe extraction, transcription, embeddings
-- **Tenant Isolation**: Schema-per-tenant with independent configuration, memory, and telemetry
+- **Multi-Modal Search**: Video (frame/chunk/global), audio, images, documents, text with unified document model
+- **Intelligent Routing**: DSPy 3.0-powered query routing with entity extraction and relationship detection
+- **Agent Orchestration**: Multi-agent workflows with A2A protocol, dependency management, and parallel execution
+- **Content Processing**: Frame extraction, audio transcription, embedding generation (ColPali, VideoPrism, ColQwen)
+- **Experience-Guided Optimization**: GEPA optimizer for continuous learning from routing decisions
+- **Tenant Isolation**: Schema-per-tenant with independent configuration, memory, telemetry, and evaluation
 
 ### Technology Stack
 
-- **Framework**: Python 3.12+, UV workspace, FastAPI
-- **AI/ML**: ColPali, VideoPrism, Ollama (local LLMs), DSPy 3.0, GLiNER (NER)
-- **Search Backend**: Vespa (vector database)
-- **Memory**: Mem0 with Vespa backend
-- **Telemetry**: Phoenix (OpenTelemetry)
-- **Optimization**: MLflow, GRPO, GEPA
+- **Framework**: Python 3.12+ (3.11+ for sdk/foundation), UV workspace, FastAPI, Streamlit
+- **AI/ML**: ColPali (vidore/colsmol-500m), VideoPrism (scenic-t5), ColQwen, Ollama, DSPy 3.0 (GEPA, MIPRO, SIMBA, Bootstrap), GLiNER
+- **Search Backend**: Vespa 8.x with 9 ranking strategies (BM25, float, binary, hybrid, phased)
+- **Memory**: Mem0 with Vespa backend for multi-tenant context storage
+- **Telemetry**: OpenTelemetry with Phoenix (Arize) collector
+- **Optimization**: DSPy optimizers (GEPA, MIPRO, SIMBA, Bootstrap) with synthetic data generation
+- **Evaluation**: Provider-agnostic evaluation framework with Phoenix provider implementation
 
 ---
 
@@ -799,6 +802,7 @@ For detailed guides, see:
 
 ---
 
-**Version**: 2.0 (10-Package Layered Architecture + Multi-Tenancy)
-**Last Updated**: 2025-10-15
-**Status**: Production-Ready
+**Version**: 2.0.0
+**Architecture**: UV Workspace (10 Packages - Layered Architecture)
+**Last Updated**: 2025-11-13
+**Status**: Production Ready

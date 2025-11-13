@@ -289,6 +289,14 @@ EOF
 
 **Multi-Tenant Note:** Each tenant uses schema-per-tenant isolation in Vespa. The system automatically creates isolated schemas per tenant.
 
+**Multi-Modal Support:** Cogniverse supports six content types:
+- **VIDEO**: Frame-based (ColPali) and chunk-based (VideoPrism) processing
+- **AUDIO**: Speech and audio analysis extracted from video
+- **IMAGE**: Visual similarity search with ColQwen2 or ColPali
+- **DOCUMENT**: PDF, DOCX processing with vision models
+- **TEXT**: Natural language processing with text embeddings
+- **DATAFRAME**: Tabular data (CSV, Excel) with text representation
+
 ---
 
 ## Post-Installation Setup

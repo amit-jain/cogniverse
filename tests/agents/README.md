@@ -1,6 +1,16 @@
 # Multi-Agent System Testing Guide
 
-This directory contains comprehensive tests for the multi-agent routing system with three distinct testing layers: unit tests, integration tests, and end-to-end (e2e) tests.
+**Last Updated:** 2025-11-13
+
+This directory contains comprehensive tests for the **cogniverse-agents** package (Implementation Layer) in the 10-package layered architecture. Tests validate multi-agent routing, DSPy 3.0 optimization with GEPA, multi-modal search (video, audio, images, documents, text, dataframes), and A2A protocol communication across three testing layers: unit, integration, and end-to-end (e2e).
+
+## 10-Package Architecture Context
+
+**cogniverse-agents** (Implementation Layer) depends on:
+- **Foundation**: cogniverse-sdk (interfaces), cogniverse-foundation (config)
+- **Core**: cogniverse-core (base agents, registries, Mem0 memory), cogniverse-evaluation (metrics)
+
+Tests validate proper usage of layer dependencies and multi-modal processing across all content types.
 
 ## Testing Architecture
 
@@ -92,15 +102,18 @@ class TestDSPyAgentIntegration:
 ```
 
 ### Running Unit Tests
+
+**All agent tests require UV workspace and JAX_PLATFORM_NAME=cpu:**
+
 ```bash
-# Run all unit tests
-JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/unit/ -v
+# Run all unit tests with UV workspace
+JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/ -m unit -v
 
 # Run specific test file
 JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/unit/test_routing_agent.py -v
 
-# Run with coverage
-JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/unit/ --cov=src/app/agents --cov-report=term-missing
+# Run with coverage (UV workspace packages)
+JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/ -v --cov=libs/agents/cogniverse_agents --cov-report=term-missing --cov-report=html
 ```
 
 ## Integration Tests (`tests/agents/integration/`)

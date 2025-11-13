@@ -1,230 +1,261 @@
 # Welcome to Cogniverse
 
-**Version 2.0.0** | **10-Package UV Workspace Architecture** | **Production Ready**
+**Version 2.0.0** | **10-Package UV Workspace Architecture** | **Production Ready** | **Last Updated: 2025-11-13**
 
-## Multi-Agent System for Multi-Modal Content with Complete Multi-Tenant Isolation
+## Multi-Agent RAG System for Multi-Modal Content Analysis and Search
 
-<div align="center">
-
-  [![GitHub Stars](https://img.shields.io/github/stars/cogniverse/cogniverse?style=social)](https://github.com/cogniverse/cogniverse)
-  [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-  [![Python](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-  [![Documentation](https://img.shields.io/badge/docs-mkdocs-blue)](https://cogniverse.github.io/cogniverse/)
-</div>
+Cogniverse is a production-ready multi-agent RAG (Retrieval-Augmented Generation) system for intelligent processing and search across multi-modal content with complete multi-tenant isolation.
 
 ---
 
-## 🚀 What is Cogniverse?
+## What is Cogniverse?
 
-Cogniverse is a production-ready multi-agent system designed for processing and analyzing multi-modal content (video, audio, images, text) with built-in optimization and evaluation frameworks. It orchestrates specialized agents through the A2A (Agent-to-Agent) protocol to deliver intelligent content analysis and search capabilities.
+Cogniverse is a technical framework for building production multi-agent systems that process and search across multi-modal content including:
 
-### Key Capabilities
+- **Video**: Frame-level analysis with ColPali/VideoPrism embeddings, temporal segmentation, keyframe extraction
+- **Audio**: Transcription with Whisper, audio embeddings, speaker detection
+- **Images**: Visual similarity search, content-based retrieval, image embeddings
+- **Documents**: PDF/text processing, semantic search, document chunking
+- **Text**: Natural language understanding, entity extraction, BM25 and dense retrieval
+- **Dataframes**: Structured data analysis and integration with unstructured content
 
-<div class="grid cards" markdown>
+### Core Capabilities
 
-- :material-video-box: **Multi-Modal Processing**
-  Process video, audio, images, and text with specialized agents
+**Multi-Modal Content Processing**
+- Frame-level and chunk-level video segmentation strategies
+- Audio transcription with timestamp alignment
+- Image and document embedding generation
+- Text analysis with entity extraction and relationship detection
+- Unified document model across all modalities
 
-- :material-robot: **Agent Orchestration**
-  A2A protocol-based coordination between specialized agents
+**Multi-Agent Orchestration**
+- Agent-to-Agent (A2A) protocol for inter-agent communication
+- Routing agent with DSPy 3.0 modules for intelligent query routing
+- Video, audio, image, document, and text search agents
+- Composing agent for multi-step workflows with dependency management
+- Parallel agent execution with timeout and circuit breaker patterns
 
-- :material-chart-line: **Automated Optimization**
-  Self-improving system with GEPA, MIPRO, SIMBA, and Bootstrap optimizers
+**Experience-Guided Optimization (GEPA)**
+- Continuous learning from query routing decisions
+- Experience buffer for storing successful routing patterns
+- DSPy-based optimization with GEPA, MIPRO, SIMBA, Bootstrap
+- Synthetic data generation for training optimizers
+- Automated prompt and module optimization
 
-- :material-test-tube: **Evaluation Framework**
-  Built-in Phoenix experiments with reference-free quality metrics
+**Multi-Tenant Architecture**
+- Schema-per-tenant physical isolation in Vespa
+- Tenant-aware configuration and memory systems
+- Independent telemetry streams per tenant
+- JWT-based tenant authentication and authorization
+- Complete data isolation with no cross-tenant leakage
 
-- :material-account-multiple: **Multi-Tenant Support**
-  Complete isolation with schema-per-tenant architecture
+**Production Observability**
+- OpenTelemetry integration with Phoenix
+- Distributed tracing across all agent interactions
+- Experiment tracking with provider-agnostic evaluation framework
+- Metrics collection for latency, accuracy, and resource utilization
+- UMAP visualization of multi-modal embeddings
 
-- :material-telescope: **Observability**
-  Comprehensive telemetry with Phoenix integration
-
-</div>
-
-## ⚡ Quick Start
-
-Get Cogniverse running in minutes:
+## Quick Start
 
 ```bash
-# Clone the repository
-git clone https://github.com/cogniverse/cogniverse.git
+# Clone repository
+git clone <repository-url>
 cd cogniverse
 
-# Install dependencies
-uv sync  # or pip install -r requirements.txt
+# Install UV workspace (all 10 packages)
+uv sync
 
-# Start infrastructure
+# Start infrastructure services
 docker compose up -d
 
-# Run your first ingestion
-uv run python scripts/run_ingestion.py \
-  --video_dir data/videos \
-  --profile video_colpali_smol500_mv_frame
+# Verify services
+curl http://localhost:8080/ApplicationStatus  # Vespa
+curl http://localhost:6006/health             # Phoenix
+curl http://localhost:11434/api/tags          # Ollama
 
-# Start the multi-agent system
-uv run python scripts/run_orchestrator.py
+# Ingest sample videos with ColPali embeddings
+JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
+  --video_dir data/testset/evaluation/sample_videos \
+  --profile video_colpali_smol500_mv_frame \
+  --tenant default
+
+# Run comprehensive multi-agent test
+JAX_PLATFORM_NAME=cpu uv run python tests/comprehensive_video_query_test_v2.py \
+  --profiles video_colpali_smol500_mv_frame \
+  --test-multiple-strategies
 ```
 
-## 🏗️ Architecture Overview
+## 10-Package Layered Architecture
 
-```mermaid
-graph TB
-    subgraph "Input Layer"
-        V[Video Files]
-        A[Audio Files]
-        I[Images]
-        T[Text Documents]
-    end
+Cogniverse uses a UV workspace with 10 packages organized in 4 layers:
 
-    subgraph "Agent Layer"
-        CA[Composing Agent]
-        VA[Video Agent]
-        AA[Audio Agent]
-        IA[Image Agent]
-        TA[Text Agent]
-        RA[Routing Agent]
-    end
-
-    subgraph "Processing Layer"
-        EMB[Embeddings<br/>ColPali/VideoPrism]
-        MEM[Memory System<br/>Mem0]
-        OPT[Optimizer<br/>GEPA/MIPRO]
-    end
-
-    subgraph "Storage Layer"
-        VESPA[Vespa<br/>Vector DB]
-        CONFIG[Configuration<br/>Manager]
-    end
-
-    subgraph "Observability"
-        PHX[Phoenix<br/>Telemetry]
-        EVAL[Evaluation<br/>Framework]
-    end
-
-    V --> VA
-    A --> AA
-    I --> IA
-    T --> TA
-
-    CA --> RA
-    RA --> VA
-    RA --> AA
-    RA --> IA
-    RA --> TA
-
-    VA --> EMB
-    AA --> EMB
-    IA --> EMB
-    TA --> EMB
-
-    EMB --> VESPA
-    CA --> MEM
-    RA --> OPT
-
-    VESPA --> PHX
-    OPT --> EVAL
+```
+┌─────────────────────────────────────────────┐
+│          APPLICATION LAYER                   │
+│  ┌─────────────────┐  ┌─────────────────┐  │
+│  │ cogniverse-     │  │ cogniverse-      │  │
+│  │ runtime         │  │ dashboard        │  │
+│  │ (FastAPI Server)│  │ (Streamlit UI)   │  │
+│  └─────────────────┘  └─────────────────┘  │
+└─────────────────────────────────────────────┘
+               ↓ depends on ↓
+┌─────────────────────────────────────────────┐
+│        IMPLEMENTATION LAYER                  │
+│  ┌─────────┐  ┌────────┐  ┌──────────────┐ │
+│  │ agents  │  │ vespa  │  │ synthetic    │ │
+│  └─────────┘  └────────┘  └──────────────┘ │
+└─────────────────────────────────────────────┘
+               ↓ depends on ↓
+┌─────────────────────────────────────────────┐
+│             CORE LAYER                       │
+│  ┌───────┐ ┌─────────────┐ ┌──────────────┐│
+│  │ core  │ │ evaluation  │ │ telemetry-   ││
+│  │       │ │             │ │ phoenix      ││
+│  └───────┘ └─────────────┘ └──────────────┘│
+└─────────────────────────────────────────────┘
+               ↓ depends on ↓
+┌─────────────────────────────────────────────┐
+│         FOUNDATION LAYER                     │
+│  ┌────────────┐    ┌──────────────────────┐ │
+│  │ sdk        │    │ foundation           │ │
+│  │ (Interfaces)│    │ (Config & Telemetry)│ │
+│  └────────────┘    └──────────────────────┘ │
+└─────────────────────────────────────────────┘
 ```
 
-## 🎯 Use Cases
+**Package Responsibilities:**
 
-### Video Content Analysis
-- Extract and search keyframes
-- Generate frame descriptions
-- Temporal boundary detection
-- Multi-vector embeddings with ColPali
+| Package | Layer | Purpose |
+|---------|-------|---------|
+| **cogniverse-sdk** | Foundation | Backend interfaces, Document model (zero dependencies) |
+| **cogniverse-foundation** | Foundation | Config base, telemetry interfaces |
+| **cogniverse-core** | Core | Base agent classes, registries, memory management |
+| **cogniverse-evaluation** | Core | Provider-agnostic experiments, metrics, datasets |
+| **cogniverse-telemetry-phoenix** | Core | Phoenix telemetry provider (plugin via entry points) |
+| **cogniverse-agents** | Implementation | Routing, video search, orchestration agents |
+| **cogniverse-vespa** | Implementation | Vespa backend, tenant schema management |
+| **cogniverse-synthetic** | Implementation | Synthetic data generation for optimizers |
+| **cogniverse-runtime** | Application | FastAPI server, ingestion pipeline, middleware |
+| **cogniverse-dashboard** | Application | Streamlit UI, Phoenix analytics |
 
-### Document Processing
-- Text extraction and analysis
-- Semantic search across documents
-- Summarization and report generation
+## Technical Use Cases
 
-### Audio Analysis
-- Transcription with timestamps
-- Audio segment search
-- Speaker identification
+### Multi-Modal Video Search
+- Frame-level embeddings with ColPali (multi-vector) for visual document understanding
+- Global video embeddings with VideoPrism for semantic video understanding
+- Chunk-level embeddings with ColQwen for temporal segment retrieval
+- Audio transcription with Whisper for text-based video search
+- Hybrid ranking strategies: BM25 + dense, binary + float, phased ranking
 
-### Image Search
-- Visual similarity search
-- Content-based retrieval
-- Multi-modal queries
+### Intelligent Query Routing
+- DSPy 3.0 modules for structured LLM programming
+- GLiNER for entity extraction (people, places, concepts)
+- Relationship detection between entities for relevance boosting
+- Query modality classification (factual, conceptual, visual, temporal)
+- GEPA optimizer for continuous learning from routing decisions
 
-## 📚 Core Components
+### Multi-Agent Orchestration
+- A2A protocol for structured agent communication
+- Parallel agent execution with timeout handling
+- Task dependency graph resolution
+- Memory-aware agents with Mem0 integration
+- Circuit breaker pattern for fault tolerance
 
-### 🤖 Agent System
-- **Composing Agent**: Orchestrates other agents
-- **Routing Agent**: Intelligent query routing with DSPy optimization
-- **Video Search Agent**: Specialized for video content
-- **Text Analysis Agent**: Document and text processing
-- **Audio Analysis Agent**: Audio content processing
-- **Image Search Agent**: Visual content retrieval
-- **Summarizer Agent**: Content summarization
-- **Report Agent**: Detailed report generation
+### Multi-Tenant Content Management
+- Schema-per-tenant physical isolation in Vespa
+- Per-tenant configuration profiles for video processing
+- Independent telemetry streams and Phoenix projects
+- JWT-based tenant authentication
+- Tenant-specific memory and cache instances
 
-### 🔧 Processing Pipeline
-- **Frame Extraction**: Keyframe detection with scene changes
-- **Embedding Generation**: ColPali, VideoPrism, ColQwen models
-- **Transcription**: Whisper-based audio transcription
-- **Memory System**: Context-aware with Mem0
+## Technical Components
 
-### 📊 Optimization & Evaluation
-- **GEPA Optimizer**: Experience-guided continuous learning
-- **MIPRO/SIMBA**: Instruction optimization
-- **Bootstrap**: Few-shot learning
-- **Phoenix Experiments**: A/B testing and evaluation
-- **Quality Metrics**: Reference-free evaluation
+### Agent System (cogniverse-agents)
+- **RoutingAgent**: DSPy 3.0-based intelligent query routing with entity extraction, relationship detection, and query enhancement
+- **VideoSearchAgent**: Multi-modal video search with ColPali/VideoPrism embeddings and hybrid ranking
+- **ComposingAgent**: Multi-agent orchestration with task dependency resolution and parallel execution
+- **BaseAgent**: Foundation class with health checks, telemetry, and memory awareness mixins
 
-## 🛠️ Technology Stack
+### Backend System (cogniverse-vespa)
+- **TenantSchemaManager**: Schema-per-tenant lifecycle management with lazy creation
+- **VespaSearchClient**: Tenant-aware search client with 9 ranking strategies (BM25, dense, binary, hybrid, phased)
+- **VespaPyClient**: Batch ingestion with connection pooling and retry logic
+- **JSONSchemaParser**: Parses Vespa schema JSON for multi-tenant deployment
 
-- **Languages**: Python 3.12+
-- **Agent Framework**: Custom A2A protocol with DSPy
-- **Vector Database**: Vespa with 9 ranking strategies
-- **Embeddings**: ColPali, VideoPrism, ColQwen
-- **Memory**: Mem0 with Vespa backend
-- **Telemetry**: Phoenix (Arize)
-- **Optimization**: DSPy (Bootstrap, SIMBA, MIPRO, GEPA)
-- **Deployment**: Docker, Kubernetes, Modal
+### Ingestion Pipeline (cogniverse-runtime)
+- **FrameSegmentationStrategy**: Extract keyframes at configurable FPS with scene change detection
+- **ChunkSegmentationStrategy**: Temporal chunking for 30-second segments with overlap
+- **MultiVectorEmbeddingStrategy**: Generate per-frame embeddings with ColPali
+- **GlobalEmbeddingStrategy**: Generate video-level embeddings with VideoPrism
+- **Audio transcription**: Whisper integration with timestamp alignment
 
-## 📖 Documentation
+### Optimization Framework (cogniverse-synthetic + cogniverse-agents)
+- **GEPA Optimizer**: Experience-guided prompt and module optimization with continuous learning
+- **SyntheticDataService**: Generate training data for GEPA/MIPRO/Bootstrap/SIMBA optimizers
+- **ProfileSelector**: LLM-based profile selection from backend content
+- **BackendQuerier**: Sample real content from Vespa for synthetic generation
 
-<div class="grid cards" markdown>
+### Evaluation Framework (cogniverse-evaluation + cogniverse-telemetry-phoenix)
+- **Provider-agnostic metrics**: Accuracy, MRR, NDCG, Precision@K independent of telemetry backend
+- **Phoenix evaluation provider**: Phoenix-specific experiment tracking and annotation
+- **Dataset management**: Load and validate evaluation datasets with ground truth
+- **Experiment tracking**: Track experiments with metadata, parameters, and results
 
-- :material-rocket-launch: [**Getting Started**](getting-started/index.md)
-  Installation, configuration, and quick start guide
+## Technology Stack
 
-- :material-architecture: [**Architecture**](architecture/index.md)
-  System design, components, and data flow
+**Core Technologies:**
+- **Python**: 3.12+ (3.11+ for sdk and foundation packages)
+- **Package Manager**: UV workspace with unified lockfile
+- **Build System**: Hatchling for all packages
 
-- :material-book-open: [**User Guide**](guide/index.md)
-  How to use Cogniverse for your use cases
+**AI/ML Stack:**
+- **LLM Framework**: DSPy 3.0 with declarative modules and optimizers (GEPA, MIPRO, SIMBA, Bootstrap)
+- **Embeddings**: ColPali (vidore/colsmol-500m), VideoPrism (scenic-t5/base, scenic-t5/lvt), ColQwen (vidore/colqwen2-v1.0)
+- **Entity Extraction**: GLiNER for zero-shot NER
+- **Audio Transcription**: OpenAI Whisper (base, small, medium, large-v3)
+- **LLM Inference**: Ollama (local) with Llama 3.2, Llama 3.1, Qwen models
 
-- :material-api: [**API Reference**](api/index.md)
-  Complete API documentation
+**Search & Storage:**
+- **Vector Database**: Vespa 8.x with 9 ranking strategies (BM25, float, binary, hybrid)
+- **Memory System**: Mem0 with Vespa backend for context storage
+- **Document Model**: Universal SDK document model across all backends
 
-- :material-server: [**Deployment**](deployment/index.md)
-  Production deployment guides
+**Observability:**
+- **Telemetry**: OpenTelemetry with Phoenix (Arize) collector
+- **Tracing**: Distributed traces with span collection
+- **Experiments**: Provider-agnostic evaluation framework with Phoenix provider
+- **Visualization**: UMAP embeddings, Streamlit dashboards
 
-- :material-chart-box: [**Observability**](observability/index.md)
-  Monitoring, metrics, and evaluation
+**Deployment:**
+- **Containerization**: Docker with multi-stage builds
+- **Orchestration**: Kubernetes with Helm charts
+- **Serverless**: Modal deployment support
+- **CI/CD**: Automated testing and deployment workflows
 
-</div>
+## Documentation
 
-## 🤝 Contributing
+**For Users:**
+- [User Guide](USER_GUIDE.md) - Complete guide for using Cogniverse
+- [Setup & Installation](operations/setup-installation.md) - Installation and configuration
+- [Configuration Guide](operations/configuration.md) - Multi-tenant configuration
+- [Troubleshooting](operations/troubleshooting.md) - Common issues and solutions
 
-We welcome contributions! See our [Contributing Guide](development/contributing.md) to get started.
+**For Developers:**
+- [Developer Guide](DEVELOPER_GUIDE.md) - Development workflows and best practices
+- [Architecture Overview](architecture/overview.md) - System architecture and design
+- [SDK Architecture](architecture/sdk-architecture.md) - UV workspace and package structure
+- [Module Documentation](modules/) - Package-specific technical documentation
 
-## 📝 License
-
-Cogniverse is released under the [MIT License](https://github.com/cogniverse/cogniverse/blob/main/LICENSE).
-
-## 🌟 Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=cogniverse/cogniverse&type=Date)](https://star-history.com/#cogniverse/cogniverse&Date)
+**For DevOps:**
+- [Deployment Guide](operations/deployment.md) - Production deployment options
+- [Docker Deployment](operations/docker-deployment.md) - Docker Compose setup
+- [Kubernetes Deployment](operations/kubernetes-deployment.md) - K8s with Helm charts
+- [Multi-Tenant Operations](operations/multi-tenant-ops.md) - Tenant lifecycle management
 
 ---
 
-<div align="center">
-  <strong>Ready to transform your content processing?</strong><br>
-  <a href="getting-started/quick-start.md" class="md-button md-button--primary">Get Started</a>
-  <a href="https://github.com/cogniverse/cogniverse" class="md-button">View on GitHub</a>
-</div>
+**Version**: 2.0.0
+**Architecture**: UV Workspace (10 Packages - Layered Architecture)
+**Last Updated**: 2025-11-13
+**Status**: Production Ready

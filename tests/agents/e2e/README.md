@@ -1,6 +1,8 @@
 # End-to-End Integration Tests
 
-This directory contains **real** end-to-end integration tests for the multi-agent system that use actual LLMs, real DSPy optimization, and real backend services without mocks.
+**Last Updated:** 2025-11-13
+
+This directory contains **real** end-to-end integration tests for **cogniverse-agents** (Implementation Layer) that use actual LLMs via Ollama, real DSPy 3.0 optimization with GEPA, and real backend services (Vespa, Phoenix) without mocks. Tests validate the complete 10-package architecture stack and multi-modal processing (video, audio, images, documents, text, dataframes).
 
 ## Test Categories
 
@@ -73,9 +75,12 @@ This directory contains **real** end-to-end integration tests for the multi-agen
 ## Running Tests
 
 ### Run All E2E Tests
+
+**Critical**: Always use `JAX_PLATFORM_NAME=cpu` for DSPy tests and UV workspace:
+
 ```bash
-# Run all end-to-end tests (will skip if services unavailable)
-JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/e2e/ -v
+# Run all end-to-end tests with UV workspace (will skip if services unavailable)
+JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/e2e/ -v
 
 # Run with specific timeout
 JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/e2e/ -v --timeout=600

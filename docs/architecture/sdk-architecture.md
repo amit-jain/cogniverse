@@ -1,6 +1,6 @@
 # Cogniverse SDK Architecture
 
-**Last Updated:** 2025-10-15
+**Last Updated:** 2025-11-13
 **Purpose:** Deep-dive into UV workspace structure, package design, and development workflows
 **Audience:** Developers working on Cogniverse SDK packages
 
@@ -22,13 +22,14 @@
 
 ## Overview
 
-Cogniverse is structured as a **UV workspace monorepo** containing 10 packages in a layered architecture. This architecture provides:
+Cogniverse is structured as a **UV workspace monorepo** containing 10 packages in a layered architecture. This architecture supports multi-modal content processing (video, audio, images, documents, text, dataframes) with multi-agent orchestration and provides:
 
-- **Modular Design**: Clear separation of concerns across packages
-- **Dependency Management**: Explicit package boundaries and dependencies
-- **Independent Testing**: Test packages in isolation or together
-- **Selective Deployment**: Deploy only what's needed for each use case
+- **Modular Design**: Clear separation of concerns across Foundation, Core, Implementation, and Application layers
+- **Dependency Management**: Explicit package boundaries with workspace-based dependency resolution
+- **Independent Testing**: Test packages in isolation or together for unit and integration testing
+- **Selective Deployment**: Deploy only what's needed (e.g., runtime without dashboard, agents without synthetic)
 - **Faster Iteration**: Work on specific packages without full system overhead
+- **Multi-Modal Support**: Unified document model across video, audio, images, documents, text, and dataframes
 
 ### Key Statistics
 
@@ -152,10 +153,10 @@ dependencies = [
 
 #### Key Responsibilities
 
-- **Backend Interface**: Defines contract for all backend implementations
-- **Document Model**: Universal document representation across backends
-- **Configuration Interface**: Config storage abstraction
-- **Schema Loading**: Template loading interface for multi-tenancy
+- **Backend Interface**: Defines contract for all backend implementations (search, ingestion, health)
+- **Document Model**: Universal document representation across backends for video, audio, images, documents, text, dataframes
+- **Configuration Interface**: Config storage abstraction for multi-tenant configuration
+- **Schema Loading**: Template loading interface for multi-tenancy with schema-per-tenant
 
 ---
 
@@ -262,10 +263,10 @@ cogniverse-evaluation = { workspace = true }
 
 #### Key Responsibilities
 
-- **Base Classes**: Abstract agent interfaces and mixins
-- **Registries**: Component registration and discovery
-- **Memory**: Mem0 wrapper with multi-tenant support
-- **Common Utilities**: Shared functionality across packages
+- **Base Classes**: Abstract agent interfaces and mixins (MemoryAwareMixin, HealthCheckMixin)
+- **Registries**: Component registration and discovery for agents, backends, DSPy modules
+- **Memory**: Mem0 wrapper with multi-tenant support and Vespa backend
+- **Common Utilities**: Tenant context management, telemetry, shared functionality across packages
 
 ---
 
@@ -427,10 +428,11 @@ cogniverse-core = { workspace = true }
 
 #### Key Responsibilities
 
-- **Agent Implementations**: Concrete agent classes (routing, search, composing)
-- **Query Processing**: Modality detection and query optimization
-- **Search Enhancement**: Multi-modal reranking and relevance scoring
-- **Parallel Execution**: Concurrent agent execution with timeout handling
+- **Agent Implementations**: Concrete agent classes (routing with DSPy 3.0, video search, composing orchestrator)
+- **Query Processing**: Modality detection, entity extraction with GLiNER, relationship detection, query enhancement
+- **Search Enhancement**: Multi-modal reranking and relevance scoring with relationship boosting
+- **Parallel Execution**: Concurrent agent execution with timeout handling and circuit breaker patterns
+- **GEPA Optimization**: Experience-guided optimization for routing decisions with continuous learning
 
 ---
 
@@ -522,10 +524,11 @@ cogniverse-core = { workspace = true }
 
 #### Key Responsibilities
 
-- **Synthetic Data Generation**: Generate training data for DSPy optimizers
-- **Profile Selection**: LLM-based profile selection logic
-- **Content Sampling**: Sample real content from backends for synthetic generation
-- **Optimizer Support**: Support GEPA, MIPRO, Bootstrap, SIMBA optimizers
+- **Synthetic Data Generation**: Generate training data for DSPy optimizers (GEPA, MIPRO, Bootstrap, SIMBA)
+- **Profile Selection**: LLM-based profile selection logic using backend content
+- **Content Sampling**: Sample real content from Vespa backends for synthetic generation
+- **Optimizer Support**: Support GEPA (experience-guided), MIPRO (instruction optimization), Bootstrap (few-shot), SIMBA optimizers
+- **Training Data Quality**: Generate diverse, representative training examples for routing optimization
 
 ---
 
@@ -591,10 +594,11 @@ cogniverse-synthetic = { workspace = true }
 
 #### Key Responsibilities
 
-- **API Server**: FastAPI endpoints for search, ingestion, health checks
-- **Tenant Middleware**: Extract `tenant_id` from JWT or headers
-- **Ingestion Pipeline**: Process video, audio, documents with configurable profiles
-- **Dynamic Backend Loading**: Load backends (Vespa, agents, synthetic) based on configuration
+- **API Server**: FastAPI endpoints for multi-modal search, ingestion, health checks
+- **Tenant Middleware**: Extract `tenant_id` from JWT (Logto) or headers with validation
+- **Ingestion Pipeline**: Process video (frames/chunks), audio (transcription), images, documents, text with configurable profiles
+- **Dynamic Backend Loading**: Load backends (Vespa, agents, synthetic) based on configuration with optional dependencies
+- **Multi-Modal Processing**: Support video (ColPali, VideoPrism, ColQwen), audio (Whisper), images, documents, text, dataframes
 
 ---
 
@@ -645,10 +649,11 @@ cogniverse-evaluation = { workspace = true }
 
 #### Key Responsibilities
 
-- **Analytics Dashboard**: Visualize experiment results and system metrics
-- **Phoenix Integration**: Embedded Phoenix UI for trace analysis
-- **Experiment Management**: Browse and compare evaluation experiments
-- **Embedding Visualization**: UMAP plots of video embeddings
+- **Analytics Dashboard**: Visualize experiment results, system metrics, and routing decisions
+- **Phoenix Integration**: Embedded Phoenix UI for distributed trace analysis and span collection
+- **Experiment Management**: Browse and compare evaluation experiments with provider-agnostic metrics
+- **Embedding Visualization**: UMAP plots of multi-modal embeddings (video, audio, images, documents, text)
+- **Multi-Tenant Analytics**: Per-tenant dashboards and experiment tracking
 
 ---
 
@@ -1397,31 +1402,35 @@ uv run pytest -v  # Full suite
 
 ## Summary
 
-Cogniverse SDK uses a **UV workspace** with **10 packages in layered architecture**:
+Cogniverse SDK uses a **UV workspace** with **10 packages in layered architecture** for multi-modal content processing:
 
 **Foundation Layer:**
-1. **cogniverse-sdk**: Pure backend interfaces (zero internal dependencies)
-2. **cogniverse-foundation**: Cross-cutting concerns (config, telemetry base)
+1. **cogniverse-sdk**: Pure backend interfaces, universal document model (zero internal dependencies)
+2. **cogniverse-foundation**: Cross-cutting concerns (config base, telemetry interfaces)
 
 **Core Layer:**
-3. **cogniverse-core**: Core functionality (base classes, registries, memory)
-4. **cogniverse-evaluation**: Provider-agnostic evaluation framework
-5. **cogniverse-telemetry-phoenix**: Phoenix telemetry provider (plugin with entry points)
+3. **cogniverse-core**: Core functionality (base agent classes, registries, memory with Mem0, tenant utilities)
+4. **cogniverse-evaluation**: Provider-agnostic evaluation framework (experiments, metrics, datasets)
+5. **cogniverse-telemetry-phoenix**: Phoenix telemetry provider (plugin with entry points for auto-discovery)
 
 **Implementation Layer:**
-6. **cogniverse-agents**: Agent implementations (routing, search, orchestration)
-7. **cogniverse-vespa**: Vespa backend (schemas, search, multi-tenant)
-8. **cogniverse-synthetic**: Synthetic data generation (optimizer training)
+6. **cogniverse-agents**: Agent implementations (routing with DSPy 3.0 + GEPA, video search, orchestration with A2A protocol)
+7. **cogniverse-vespa**: Vespa backend (tenant schema management, 9 ranking strategies, multi-tenant isolation)
+8. **cogniverse-synthetic**: Synthetic data generation (GEPA, MIPRO, Bootstrap, SIMBA optimizer training)
 
 **Application Layer:**
-9. **cogniverse-runtime**: FastAPI server (API, ingestion, middleware)
-10. **cogniverse-dashboard**: Streamlit UI (analytics, experiments, Phoenix)
+9. **cogniverse-runtime**: FastAPI server (multi-modal ingestion, tenant middleware, JWT authentication)
+10. **cogniverse-dashboard**: Streamlit UI (analytics, Phoenix experiments, UMAP visualization)
 
 **Key Characteristics**:
-- Layered architecture with clear dependency flow
-- SDK foundation with zero internal dependencies
-- Plugin architecture for telemetry providers (entry points)
-- UV workspace for unified dependency management
-- Python >= 3.11 (sdk/foundation) or >= 3.12 (others)
-- Hatchling build system
-- Modular design for flexible deployment
+- Layered architecture with clear dependency flow (Foundation → Core → Implementation → Application)
+- Multi-modal support: video, audio, images, documents, text, dataframes with unified document model
+- SDK foundation with zero internal dependencies for maximum flexibility
+- Plugin architecture for telemetry providers via entry points
+- UV workspace for unified dependency management with single lockfile
+- Python >= 3.11 (sdk/foundation) or >= 3.12 (all other packages)
+- Hatchling build system for all packages
+- Modular design for flexible deployment (deploy only what you need)
+- Multi-tenant architecture with schema-per-tenant physical isolation
+- Experience-guided optimization (GEPA) for continuous learning
+- Multi-agent orchestration with A2A protocol
