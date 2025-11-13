@@ -191,7 +191,7 @@ class LocalFSBackend(CacheBackend):
 ## Tiered Cache Manager
 
 ```python
-from cogniverse_core.telemetry.multi_tenant_manager import MultiTenantTelemetryManager
+from cogniverse_foundation.telemetry import TelemetryProvider
 
 class TieredCacheManager:
     """Manages multiple cache tiers with automatic promotion/demotion"""
@@ -201,7 +201,7 @@ class TieredCacheManager:
         hot: Optional[CacheBackend] = None,   # Redis
         warm: Optional[CacheBackend] = None,  # Local FS
         cold: Optional[CacheBackend] = None,  # S3/GCS
-        telemetry: Optional[MultiTenantTelemetryManager] = None
+        telemetry: Optional[TelemetryProvider] = None
     ):
         self.hot = hot
         self.warm = warm
@@ -496,5 +496,17 @@ self.telemetry.increment_counter(
 
 ---
 
-**Last Updated**: 2025-10-04
+**Last Updated**: 2025-11-13
 **Status**: Production Ready
+
+**Package Architecture Note**: The caching system integrates with Cogniverse's 10-package layered architecture:
+- **Foundation Layer**: cogniverse-sdk (interfaces), cogniverse-foundation (telemetry base)
+- **Core Layer**: cogniverse-core (memory, common utilities)
+- **Implementation Layer**: cogniverse-vespa (Vespa backends), cogniverse-agents (agent integration)
+- **Application Layer**: cogniverse-runtime (ingestion pipelines)
+
+Caching components are primarily located in:
+- **libs/foundation/**: Base caching interfaces and telemetry integration
+- **libs/core/**: Cache manager implementations and tenant utilities
+- **libs/vespa/**: Vespa-specific cache backends
+- **libs/runtime/**: Production cache configurations and pipeline integration

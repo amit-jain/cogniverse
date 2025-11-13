@@ -65,7 +65,7 @@ embeddings = await colpali.encode_frames(frames)
 ### DSPy Optimizer Deployment
 
 ```python
-# src/modal/dspy_optimizer_service.py
+# cogniverse_agents/modal/dspy_optimizer_service.py
 import modal
 
 app = modal.App("cogniverse-dspy-optimizer")
@@ -95,13 +95,13 @@ class DSPyOptimizerService:
 
 Deploy:
 ```bash
-modal deploy src/modal/dspy_optimizer_service.py
+modal deploy cogniverse_agents/modal/dspy_optimizer_service.py
 ```
 
 ### VLM Service Deployment
 
 ```python
-# scripts/modal_vlm_service.py (existing)
+# cogniverse_vlm/modal_vlm_service.py
 import modal
 
 app = modal.App("cogniverse-vlm")
@@ -126,7 +126,7 @@ class VLMModel:
 ### Embedding Model Deployment
 
 ```python
-# src/modal/embedding_service.py
+# cogniverse_processing/modal/embedding_service.py
 import modal
 
 app = modal.App("cogniverse-embeddings")
@@ -262,9 +262,9 @@ Agents with Modal LLMs:
 
 ```bash
 # 1. Deploy all Modal services
-modal deploy src/modal/dspy_optimizer_service.py
-modal deploy scripts/modal_vlm_service.py
-modal deploy src/modal/embedding_service.py
+modal deploy cogniverse_agents/modal/dspy_optimizer_service.py
+modal deploy cogniverse_vlm/modal_vlm_service.py
+modal deploy cogniverse_processing/modal/embedding_service.py
 
 # 2. Get endpoints
 modal app list
@@ -407,7 +407,7 @@ modal billing limit set --monthly 100
 ### Phoenix Integration
 ```python
 # Track Modal service calls in Phoenix
-from cogniverse_core.telemetry.multi_tenant_manager import MultiTenantTelemetryManager
+from cogniverse_foundation.telemetry.multi_tenant_manager import MultiTenantTelemetryManager
 
 telemetry = MultiTenantTelemetryManager()
 
@@ -435,5 +435,5 @@ with telemetry.span("modal.vlm.describe", tenant_id) as span:
 
 ---
 
-**Last Updated**: 2025-10-04
-**Status**: Production Ready - Integrated with Multi-Agent Architecture
+**Last Updated**: 2025-11-13
+**Status**: Production Ready - Integrated with 10-Package Architecture

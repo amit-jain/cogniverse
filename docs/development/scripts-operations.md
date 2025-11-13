@@ -1,8 +1,9 @@
 # Cogniverse Study Guide: Scripts & Operations Module
 
-**Last Updated:** 2025-10-15
+**Last Updated:** 2025-11-13
 **Module Path:** `scripts/`
-**SDK Packages:** Uses `cogniverse_core`, `cogniverse_agents`, `cogniverse_vespa`
+**Architecture:** 10-package layered architecture
+**SDK Packages:** Uses all 10 packages (foundation → core → implementation → application)
 **Purpose:** Operational scripts for system deployment, ingestion, optimization, experimentation, and tenant-aware management
 
 ---
@@ -298,7 +299,9 @@ pipeline = (create_pipeline()
 **Multi-Profile Processing (Tenant-Aware):**
 ```python
 # Process with multiple profiles simultaneously for specific tenant
+# Import from agents package (implementation layer)
 from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline
+from cogniverse_core.config import SystemConfig
 
 for profile in ["video_colpali_smol500_mv_frame",
                 "video_videoprism_base_mv_chunk_30s"]:
@@ -340,6 +343,7 @@ schema_file              # Path to JSON schema file (required)
 **Deployment Process (Tenant-Aware):**
 ```python
 def deploy_json_schema(schema_file, tenant_id, vespa_host, config_port, data_port):
+    # Import from vespa package (implementation layer)
     from cogniverse_vespa.backends.json_schema_parser import JsonSchemaParser
     from cogniverse_vespa.backends.vespa_schema_manager import VespaSchemaManager
 
@@ -411,8 +415,10 @@ uv run python scripts/deploy_json_schema.py \
 **Deployment Workflow (Multi-Tenant):**
 ```python
 def main():
+    # Import from vespa package (implementation layer)
     from cogniverse_vespa.backends.vespa_schema_manager import VespaSchemaManager
     from cogniverse_vespa.backends.json_schema_parser import JsonSchemaParser
+    from cogniverse_core.config import SystemConfig
 
     # 1. Get all schema files
     schemas_dir = Path("configs/schemas")
@@ -462,7 +468,10 @@ def main():
 **Setup Steps:**
 ```python
 def main():
+    # Import from implementation layer packages
     from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+    from cogniverse_core.config import SystemConfig
 
     # 1. Check dependencies
     required_modules = [
@@ -540,9 +549,10 @@ http://localhost:8000
 **Step 1: Run Orchestrator**
 ```python
 def run_orchestrator(config_path="config.json"):
+    # Import from agents package (implementation layer)
     from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
 
-    # Run orchestrator using SDK package
+    # Run orchestrator using SDK packages
     orchestrator = OptimizationOrchestrator(config_path=config_path)
 
     result = orchestrator.run_optimization(
@@ -1017,7 +1027,8 @@ python scripts/manage_datasets.py --info golden_eval_v1
 **Implementation:**
 ```python
 def main():
-    from cogniverse_core.evaluation.dataset_manager import DatasetManager
+    # Import from evaluation package (core layer)
+    from cogniverse_evaluation.core.dataset_manager import DatasetManager
 
     dm = DatasetManager()
 
@@ -1054,7 +1065,8 @@ def main():
 
 **1. Analytics Tab** (PhoenixAnalytics):
 ```python
-from cogniverse_core.telemetry.phoenix_analytics import PhoenixAnalytics
+# Import from evaluation package (core layer)
+from cogniverse_evaluation.phoenix.analytics import PhoenixAnalytics
 
 # Performance metrics over time (tenant-aware)
 analytics = PhoenixAnalytics(tenant_id="acme_corp")

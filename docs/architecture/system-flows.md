@@ -1,7 +1,7 @@
 # Cogniverse System Flows & Architecture Scenarios
 
-**Last Updated:** 2025-10-15
-**Purpose:** Comprehensive system flows with SDK architecture and multi-tenant patterns
+**Last Updated:** 2025-11-13
+**Purpose:** Comprehensive system flows with 10-package layered SDK architecture and multi-tenant patterns
 **Format:** Mermaid diagrams showing package boundaries and tenant context
 
 ---
@@ -21,7 +21,66 @@
 
 ## Overall System Architecture
 
-### SDK Package Architecture
+### 10-Package Layered Architecture
+
+```mermaid
+graph TB
+    subgraph "Foundation Layer"
+        SDK[cogniverse-sdk<br/>Interfaces Only]
+        Foundation[cogniverse-foundation<br/>Config & Telemetry Base]
+    end
+
+    subgraph "Core Layer"
+        Core[cogniverse-core<br/>Base Agents & Memory]
+        Evaluation[cogniverse-evaluation<br/>Experiments & Metrics]
+        TelemetryPhoenix[cogniverse-telemetry-phoenix<br/>Phoenix Plugin]
+    end
+
+    subgraph "Implementation Layer"
+        Agents[cogniverse-agents<br/>Routing & Search]
+        Vespa[cogniverse-vespa<br/>Backend & Schema Mgmt]
+        Synthetic[cogniverse-synthetic<br/>Data Generation]
+    end
+
+    subgraph "Application Layer"
+        Runtime[cogniverse-runtime<br/>FastAPI & Ingestion]
+        Dashboard[cogniverse-dashboard<br/>Streamlit Analytics]
+    end
+
+    %% Dependencies
+    Foundation --> SDK
+    Core --> SDK
+    Core --> Foundation
+    Core --> Evaluation
+    Evaluation --> SDK
+    Evaluation --> Foundation
+    TelemetryPhoenix --> Core
+    TelemetryPhoenix --> Evaluation
+
+    Agents --> Core
+    Vespa --> Core
+    Synthetic --> Core
+
+    Runtime --> Core
+    Runtime --> Agents
+    Runtime --> Vespa
+    Runtime --> Synthetic
+    Dashboard --> Core
+    Dashboard --> Evaluation
+
+    style SDK fill:#e1f5ff
+    style Foundation fill:#e1f5ff
+    style Core fill:#ffe1f5
+    style Evaluation fill:#ffe1f5
+    style TelemetryPhoenix fill:#ffe1f5
+    style Agents fill:#fff4e1
+    style Vespa fill:#fff4e1
+    style Synthetic fill:#fff4e1
+    style Runtime fill:#e1ffe1
+    style Dashboard fill:#e1ffe1
+```
+
+### Legacy Package Architecture (for reference)
 
 ```mermaid
 graph TB
@@ -39,9 +98,9 @@ graph TB
 
     subgraph "cogniverse_core Package"
         Memory[Mem0 Memory Manager]
-        Config[Configuration Manager]
-        Telemetry[Phoenix Telemetry]
-        Evaluation[Evaluation Module]
+        Config[Configuration Manager - MOVED to foundation]
+        Telemetry[Phoenix Telemetry - MOVED to telemetry-phoenix]
+        EvalModule[Evaluation - MOVED to evaluation package]
     end
 
     subgraph "cogniverse_vespa Package"
@@ -51,7 +110,7 @@ graph TB
     end
 
     subgraph "cogniverse_dashboard Package"
-        Dashboard[Streamlit UI<br/>Phoenix Dashboard]
+        DashboardUI[Streamlit UI<br/>Phoenix Dashboard]
     end
 
     Runtime --> Orchestrator
@@ -1013,11 +1072,17 @@ sequenceDiagram
 
 ## Key Takeaways
 
-### SDK Architecture Principles
-1. **Package Boundaries**: Clear separation between core, agents, vespa, runtime, dashboard
-2. **Dependency Flow**: Core is foundational → Vespa builds on Core → Agents uses both → Runtime consumes all
-3. **UV Workspace**: Monorepo with independent package versioning
-4. **Import Paths**: All imports use `cogniverse_*` package names
+### 10-Package Architecture Principles
+1. **Layered Structure**: Foundation → Core → Implementation → Application
+2. **Package Boundaries**: Clear separation across 10 packages with explicit dependencies
+3. **Dependency Flow**:
+   - Foundation Layer (sdk, foundation): Zero cross-layer dependencies
+   - Core Layer (core, evaluation, telemetry-phoenix): Depends on Foundation
+   - Implementation Layer (agents, vespa, synthetic): Depends on Core
+   - Application Layer (runtime, dashboard): Depends on all lower layers
+4. **UV Workspace**: Monorepo with independent package versioning
+5. **Import Paths**: All imports use `cogniverse_*` package names
+6. **Plugin Architecture**: telemetry-phoenix is a plugin via entry points
 
 ### Multi-Tenant Design Patterns
 1. **Schema-Per-Tenant**: Physical isolation via dedicated Vespa schemas
@@ -1025,17 +1090,40 @@ sequenceDiagram
 3. **Per-Tenant Singletons**: Mem0MemoryManager maintains isolated instances
 4. **Tenant-Scoped Telemetry**: Phoenix projects per tenant for complete observability
 
-### Critical Integration Points
-1. **Runtime ↔ TenantSchemaManager**: Automatic schema routing and lazy creation
-2. **Agents ↔ Vespa**: Tenant-aware search clients with schema resolution
-3. **Memory ↔ Vespa**: Tenant-specific memory schemas (agent_memories_{tenant_id})
-4. **Phoenix ↔ All Packages**: Tenant-scoped span collection and metrics
+### Critical Integration Points Across 10 Packages
+1. **runtime (Application) ↔ vespa (Implementation)**: Automatic schema routing via TenantSchemaManager
+2. **agents (Implementation) ↔ vespa (Implementation)**: Tenant-aware search clients with schema resolution
+3. **core (Core) ↔ vespa (Implementation)**: Memory using Vespa backend (agent_memories_{tenant_id})
+4. **foundation (Foundation) ↔ telemetry-phoenix (Core Plugin)**: Telemetry provider interface and Phoenix implementation
+5. **evaluation (Core) ↔ telemetry-phoenix (Core Plugin)**: Experiment tracking via Phoenix
+6. **All packages ↔ sdk (Foundation)**: Common interfaces and document models
 
-### Data Flow Patterns
-1. **Request Flow**: User → Runtime (Middleware extracts tenant_id) → Agents (tenant-aware) → Vespa (tenant schema)
-2. **Optimization Flow**: Phoenix (tenant project) → Evaluator → GRPO (tenant-specific) → Agents
-3. **Memory Flow**: Query → Mem0 (tenant singleton) → Vespa (agent_memories_{tenant_id}) → Context
-4. **Ingestion Flow**: Video → Runtime → TenantSchemaManager → Vespa (video_frames_{tenant_id})
+### Data Flow Patterns (10-Package Architecture)
+1. **Request Flow**:
+   - User → runtime (Application)
+   - → Middleware extracts tenant_id
+   - → agents (Implementation, tenant-aware)
+   - → vespa (Implementation, tenant schema)
+
+2. **Optimization Flow**:
+   - telemetry-phoenix (Core Plugin, tenant project)
+   - → evaluation (Core, evaluator)
+   - → agents (Implementation, DSPy optimization tenant-specific)
+
+3. **Memory Flow**:
+   - Query → core (Mem0, tenant singleton)
+   - → vespa (Implementation, agent_memories_{tenant_id})
+   - → Context back to agents (Implementation)
+
+4. **Ingestion Flow**:
+   - Video → runtime (Application, ingestion pipeline)
+   - → vespa (Implementation, TenantSchemaManager)
+   - → Vespa backend (video_frames_{tenant_id})
+
+5. **Config Flow**:
+   - foundation (config base)
+   - → core (config usage)
+   - → All implementation packages read config
 
 ---
 
@@ -1047,8 +1135,8 @@ sequenceDiagram
 
 ---
 
-**Version**: 2.0 (SDK Architecture + Multi-Tenancy)
-**Last Updated**: 2025-10-15
+**Version**: 3.0 (10-Package Layered Architecture + Multi-Tenancy)
+**Last Updated**: 2025-11-13
 **Status**: Production-Ready
 
 **Note:** All diagrams use Mermaid syntax and render in:

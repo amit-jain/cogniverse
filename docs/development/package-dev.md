@@ -1,8 +1,8 @@
 # Cogniverse Study Guide: Package Development
 
-**Last Updated:** 2025-10-15
-**Architecture:** UV Workspace with 5 SDK packages
-**Purpose:** Package development workflows, dependency management, and best practices
+**Last Updated:** 2025-11-13
+**Architecture:** UV Workspace with 10 SDK packages in layered architecture
+**Purpose:** Package development workflows, dependency management, and best practices for layered system
 
 ---
 
@@ -27,46 +27,87 @@ cogniverse/
 ├── uv.lock                # Unified dependency lockfile
 ├── .venv/                 # Shared virtual environment
 ├── libs/
+│   ├── FOUNDATION LAYER (base types and utilities)
+│   ├── sdk/               # cogniverse_sdk
+│   │   ├── pyproject.toml
+│   │   ├── README.md
+│   │   └── cogniverse_sdk/
+│   │       ├── __init__.py
+│   │       ├── types/          # Base types and interfaces
+│   │       └── protocols/      # Shared protocols
+│   ├── foundation/        # cogniverse_foundation
+│   │   ├── pyproject.toml
+│   │   ├── README.md
+│   │   └── cogniverse_foundation/
+│   │       ├── __init__.py
+│   │       ├── telemetry/      # Core telemetry
+│   │       ├── config/         # Base configuration
+│   │       └── utils/          # Common utilities
+│   │
+│   ├── CORE LAYER (business logic and frameworks)
+│   ├── evaluation/        # cogniverse_evaluation
+│   │   ├── pyproject.toml
+│   │   ├── README.md
+│   │   └── cogniverse_evaluation/
+│   │       ├── __init__.py
+│   │       ├── core/           # Evaluation framework
+│   │       ├── phoenix/        # Phoenix analytics
+│   │       └── metrics/        # Metric definitions
 │   ├── core/              # cogniverse_core
 │   │   ├── pyproject.toml
 │   │   ├── README.md
 │   │   └── cogniverse_core/
 │   │       ├── __init__.py
-│   │       ├── config/
-│   │       ├── telemetry/
-│   │       ├── evaluation/
-│   │       └── common/
+│   │       ├── config/         # System configuration
+│   │       ├── memory/         # Memory management
+│   │       └── common/         # Core business logic
+│   │
+│   ├── IMPLEMENTATION LAYER (specific implementations)
+│   ├── telemetry-phoenix/ # cogniverse_telemetry_phoenix
+│   │   ├── pyproject.toml
+│   │   ├── README.md
+│   │   └── cogniverse_telemetry_phoenix/
+│   │       └── __init__.py     # Phoenix telemetry implementation
 │   ├── agents/            # cogniverse_agents
 │   │   ├── pyproject.toml
 │   │   ├── README.md
 │   │   └── cogniverse_agents/
 │   │       ├── __init__.py
-│   │       ├── agents/
-│   │       ├── routing/
-│   │       ├── ingestion/
-│   │       ├── search/
-│   │       └── tools/
+│   │       ├── agents/         # Agent implementations
+│   │       ├── routing/        # Routing strategies
+│   │       ├── ingestion/      # Data ingestion
+│   │       ├── search/         # Search implementations
+│   │       └── tools/          # Agent tools
 │   ├── vespa/             # cogniverse_vespa
 │   │   ├── pyproject.toml
 │   │   ├── README.md
 │   │   └── cogniverse_vespa/
-│   │       └── backends/
+│   │       └── backends/       # Vespa backend integration
+│   ├── synthetic/         # cogniverse_synthetic
+│   │   ├── pyproject.toml
+│   │   ├── README.md
+│   │   └── cogniverse_synthetic/
+│   │       ├── __init__.py
+│   │       └── generators/     # Synthetic data generation
+│   │
+│   ├── APPLICATION LAYER (user-facing applications)
 │   ├── runtime/           # cogniverse_runtime
 │   │   ├── pyproject.toml
 │   │   ├── README.md
 │   │   └── cogniverse_runtime/
-│   │       └── server/
+│   │       └── server/         # FastAPI server
 │   └── dashboard/         # cogniverse_dashboard
 │       ├── pyproject.toml
 │       ├── README.md
 │       └── cogniverse_dashboard/
-│           └── ui/
+│           └── ui/             # Streamlit UI
 ├── tests/                 # Workspace-level tests
 │   ├── agents/
 │   ├── evaluation/
 │   ├── ingestion/
 │   ├── memory/
-│   └── routing/
+│   ├── routing/
+│   └── synthetic/
 └── scripts/               # Operational scripts
 ```
 
@@ -74,33 +115,81 @@ cogniverse/
 
 ```mermaid
 graph TB
-    Core[cogniverse_core<br/>Base utilities, config, telemetry]
-    Agents[cogniverse_agents<br/>Agent implementations]
-    Vespa[cogniverse_vespa<br/>Backend integration]
-    Runtime[cogniverse_runtime<br/>Server runtime]
-    Dashboard[cogniverse_dashboard<br/>Streamlit UI]
+    subgraph Foundation["FOUNDATION LAYER"]
+        SDK[cogniverse_sdk<br/>Base types & protocols]
+        Foundation[cogniverse_foundation<br/>Telemetry, config, utils]
+    end
 
-    Agents --> Core
-    Vespa --> Core
-    Runtime --> Core
+    subgraph Core["CORE LAYER"]
+        Evaluation[cogniverse_evaluation<br/>Evaluation framework]
+        CorePkg[cogniverse_core<br/>Business logic & config]
+    end
+
+    subgraph Implementation["IMPLEMENTATION LAYER"]
+        TelemetryPhoenix[cogniverse_telemetry_phoenix<br/>Phoenix telemetry]
+        Agents[cogniverse_agents<br/>Agent implementations]
+        Vespa[cogniverse_vespa<br/>Backend integration]
+        Synthetic[cogniverse_synthetic<br/>Synthetic data generation]
+    end
+
+    subgraph Application["APPLICATION LAYER"]
+        Runtime[cogniverse_runtime<br/>FastAPI server]
+        Dashboard[cogniverse_dashboard<br/>Streamlit UI]
+    end
+
+    Foundation --> SDK
+    Evaluation --> Foundation
+    CorePkg --> Foundation
+    CorePkg --> SDK
+
+    TelemetryPhoenix --> Foundation
+    TelemetryPhoenix --> Evaluation
+    Agents --> CorePkg
+    Agents --> Evaluation
+    Vespa --> CorePkg
+    Synthetic --> CorePkg
+    Synthetic --> Agents
+
+    Runtime --> CorePkg
     Runtime --> Agents
     Runtime --> Vespa
-    Dashboard --> Core
+    Runtime --> TelemetryPhoenix
+    Runtime --> Synthetic
+    Dashboard --> CorePkg
     Dashboard --> Agents
+    Dashboard --> TelemetryPhoenix
 
-    style Core fill:#e1f5ff
-    style Agents fill:#fff4e1
+    style SDK fill:#e1f5ff
+    style Foundation fill:#e1f5ff
+    style Evaluation fill:#fff4e1
+    style CorePkg fill:#fff4e1
+    style TelemetryPhoenix fill:#ffe1f5
+    style Agents fill:#ffe1f5
     style Vespa fill:#ffe1f5
+    style Synthetic fill:#ffe1f5
     style Runtime fill:#f5e1ff
-    style Dashboard fill:#e1ffe1
+    style Dashboard fill:#f5e1ff
 ```
 
-**Dependency Rules:**
-- `cogniverse_core`: No dependencies on other packages (foundational)
-- `cogniverse_agents`: Depends on `cogniverse_core`
-- `cogniverse_vespa`: Depends on `cogniverse_core`
-- `cogniverse_runtime`: Depends on `core`, `agents`, `vespa`
-- `cogniverse_dashboard`: Depends on `core`, `agents`
+**Layered Dependency Rules:**
+
+**Foundation Layer** (no dependencies on other Cogniverse packages):
+- `cogniverse_sdk`: Base types and protocols
+- `cogniverse_foundation`: Core telemetry, configuration, utilities
+
+**Core Layer** (depends only on foundation):
+- `cogniverse_evaluation`: Depends on `foundation`
+- `cogniverse_core`: Depends on `foundation`, `sdk`
+
+**Implementation Layer** (depends on core and foundation):
+- `cogniverse_telemetry_phoenix`: Depends on `foundation`, `evaluation`
+- `cogniverse_agents`: Depends on `core`, `evaluation`
+- `cogniverse_vespa`: Depends on `core`
+- `cogniverse_synthetic`: Depends on `core`, `agents`
+
+**Application Layer** (depends on all lower layers):
+- `cogniverse_runtime`: Depends on `core`, `agents`, `vespa`, `telemetry_phoenix`, `synthetic`
+- `cogniverse_dashboard`: Depends on `core`, `agents`, `telemetry_phoenix`
 
 ---
 
@@ -122,12 +211,17 @@ uv sync
 
 # Verify installation
 uv pip list | grep cogniverse
-# Expected:
-# cogniverse-core         0.1.0
-# cogniverse-agents       0.1.0
-# cogniverse-vespa        0.1.0
-# cogniverse-runtime      0.1.0
-# cogniverse-dashboard    0.1.0
+# Expected (10 packages in dependency order):
+# cogniverse-sdk                   0.1.0
+# cogniverse-foundation            0.1.0
+# cogniverse-evaluation            0.1.0
+# cogniverse-core                  0.1.0
+# cogniverse-telemetry-phoenix     0.1.0
+# cogniverse-agents                0.1.0
+# cogniverse-vespa                 0.1.0
+# cogniverse-synthetic             0.1.0
+# cogniverse-runtime               0.1.0
+# cogniverse-dashboard             0.1.0
 ```
 
 **2. Activate Virtual Environment:**
@@ -144,10 +238,10 @@ which python
 
 ### Working on Individual Packages
 
-**Scenario 1: Developing Core Package**
+**Scenario 1: Developing Foundation Package (Base Layer)**
 ```bash
-# Navigate to core package
-cd libs/core
+# Navigate to foundation package
+cd libs/foundation
 
 # Add a new dependency
 uv add pydantic
@@ -161,9 +255,12 @@ uv remove pydantic
 # Sync workspace after changes
 cd ../..
 uv sync
+
+# Test foundation package
+uv run pytest tests/telemetry/ -v
 ```
 
-**Scenario 2: Developing Agents Package**
+**Scenario 2: Developing Agents Package (Implementation Layer)**
 ```bash
 # Navigate to agents package
 cd libs/agents
@@ -171,40 +268,79 @@ cd libs/agents
 # Add dependency (will automatically install if needed)
 uv add litellm
 
-# Since agents depends on core, changes to core are immediately available
+# Since agents depends on core and evaluation, changes to those are immediately available
 # Edit code in cogniverse_agents/agents/routing_agent.py
 from cogniverse_core.config import SystemConfig  # Uses editable core
+from cogniverse_evaluation.core.experiment_tracker import ExperimentTracker  # Uses editable evaluation
 
 # Run tests for this package only
-uv run pytest ../../tests/agents/ -v
+uv run pytest tests/agents/ -v
 ```
 
-**Scenario 3: Cross-Package Development**
+**Scenario 2b: Developing Synthetic Package (Implementation Layer)**
 ```bash
-# Scenario: Adding a new feature that spans multiple packages
+# Navigate to synthetic package
+cd libs/synthetic
 
-# 1. Start with core package (foundational change)
-cd libs/core
+# Add dependencies
+uv add faker  # For synthetic data generation
+
+# Since synthetic depends on core and agents, they're immediately available
+from cogniverse_core.config import SystemConfig
+from cogniverse_agents.routing.strategies import RoutingStrategy
+
+# Run tests
+uv run pytest tests/synthetic/ -v
+```
+
+**Scenario 3: Cross-Layer Development**
+```bash
+# Scenario: Adding a new feature that spans multiple layers
+
+# 1. Start with foundation layer (base types/utilities)
+cd libs/foundation
+# Edit cogniverse_foundation/telemetry/manager.py
+# Add new telemetry capability
+
+# 2. Update evaluation package (core layer) to use new telemetry
+cd ../evaluation
+# Edit cogniverse_evaluation/phoenix/analytics.py
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+# Use new telemetry capability
+
+# 3. Update core package (core layer) for business logic
+cd ../core
 # Edit cogniverse_core/config/unified_config.py
 # Add new configuration field for tenant memory settings
 
-# 2. Update agents package to use new config
+# 4. Update agents package (implementation layer) to use new config
 cd ../agents
 # Edit cogniverse_agents/agents/base_agent.py
 from cogniverse_core.config import SystemConfig
+from cogniverse_evaluation.core.experiment_tracker import ExperimentTracker
 # Use new tenant memory config
 
-# 3. Update runtime to expose new feature
+# 5. Update runtime (application layer) to expose new feature
 cd ../runtime
 # Edit cogniverse_runtime/server/api.py
 # Add endpoint for tenant memory configuration
 
-# 4. Sync workspace to ensure all changes are available
+# 6. Sync workspace to ensure all changes are available
 cd ../../..
 uv sync
 
-# 5. Run comprehensive tests
-JAX_PLATFORM_NAME=cpu timeout 7200 uv run pytest tests/ -v
+# 7. Run layer-aware tests
+# Foundation layer tests
+uv run pytest tests/telemetry/ tests/common/ -v
+
+# Core layer tests
+uv run pytest tests/evaluation/ tests/memory/ -v
+
+# Implementation layer tests
+JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ tests/synthetic/ -v
+
+# Application layer tests
+uv run pytest tests/runtime/ -v
 ```
 
 ### Running Scripts and Applications
@@ -229,14 +365,23 @@ uv run python scripts/run_experiments_with_visualization.py \
 **Direct Python Imports (in Scripts):**
 ```python
 # scripts/custom_script.py
+# Import from foundation layer
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+# Import from core layer
 from cogniverse_core.config import SystemConfig
+from cogniverse_evaluation.core.experiment_tracker import ExperimentTracker
+
+# Import from implementation layer
 from cogniverse_agents.routing.strategies import GLiNERRoutingStrategy
 from cogniverse_vespa.backends import VespaBackend
+from cogniverse_synthetic.generators import DataGenerator
 
 # All packages available in editable mode
 config = SystemConfig(tenant_id="acme_corp")
 strategy = GLiNERRoutingStrategy(config)
 backend = VespaBackend(config)
+telemetry = get_telemetry_manager()
 ```
 
 ---
@@ -275,34 +420,60 @@ uv add --dev pytest pytest-cov
 
 ### Managing Inter-Package Dependencies
 
-**Example: Adding New Core Feature Used by Agents**
+**Example: Adding New Foundation Feature Used by Upper Layers**
 
-**Step 1: Update core package:**
+**Step 1: Update foundation package (base layer):**
+```toml
+# libs/foundation/pyproject.toml
+[project]
+name = "cogniverse-foundation"
+version = "0.2.0"  # Increment version
+dependencies = [
+    "cogniverse-sdk>=0.2.0",  # SDK dependency
+    "pydantic>=2.0",
+    "httpx>=0.25.0",
+]
+```
+
+**Step 2: Update evaluation package (core layer) to use new foundation:**
+```toml
+# libs/evaluation/pyproject.toml
+[project]
+name = "cogniverse-evaluation"
+version = "0.2.0"
+dependencies = [
+    "cogniverse-foundation>=0.2.0",  # Update minimum version
+    "arize-phoenix>=4.0.0",
+]
+```
+
+**Step 3: Update core package (core layer):**
 ```toml
 # libs/core/pyproject.toml
 [project]
 name = "cogniverse-core"
-version = "0.2.0"  # Increment version
+version = "0.2.0"
 dependencies = [
-    "pydantic>=2.0",
-    "httpx>=0.25.0",
-    "mem0ai>=0.1.0",  # New dependency
+    "cogniverse-foundation>=0.2.0",  # Foundation dependency
+    "cogniverse-sdk>=0.2.0",         # SDK dependency
+    "mem0ai>=0.1.0",
 ]
 ```
 
-**Step 2: Update agents to use new core version:**
+**Step 4: Update agents (implementation layer) to use new core:**
 ```toml
 # libs/agents/pyproject.toml
 [project]
 name = "cogniverse-agents"
 version = "0.2.0"
 dependencies = [
-    "cogniverse-core>=0.2.0",  # Update minimum version
+    "cogniverse-core>=0.2.0",       # Core dependency
+    "cogniverse-evaluation>=0.2.0",  # Evaluation dependency
     "litellm>=1.0.0",
 ]
 ```
 
-**Step 3: Sync workspace:**
+**Step 5: Sync workspace (propagates changes through all layers):**
 ```bash
 cd /path/to/cogniverse
 uv sync
@@ -312,7 +483,7 @@ uv sync
 
 **Understanding uv.lock:**
 ```bash
-# View lockfile (contains exact versions for all packages)
+# View lockfile (contains exact versions for all 10 packages + dependencies)
 cat uv.lock
 
 # Regenerate lockfile (after pyproject.toml changes)
@@ -325,21 +496,23 @@ uv lock --upgrade
 uv add --upgrade pydantic
 ```
 
-**Resolving Conflicts:**
+**Resolving Conflicts Across Layers:**
 ```bash
-# Scenario: Two packages require different versions of same dependency
+# Scenario: Multiple packages in different layers require different versions of same dependency
 
-# libs/core/pyproject.toml requires: httpx>=0.25.0,<0.26.0
+# libs/foundation/pyproject.toml requires: httpx>=0.25.0,<0.26.0
 # libs/agents/pyproject.toml requires: httpx>=0.24.0
+# libs/runtime/pyproject.toml requires: httpx>=0.25.0
 
-# uv will resolve to: httpx==0.25.x (satisfies both)
+# uv will resolve to: httpx==0.25.x (satisfies all layers)
 
 # If incompatible, uv will report error:
 # ERROR: Cannot resolve dependencies:
-#   cogniverse-core requires httpx>=0.25.0,<0.26.0
+#   cogniverse-foundation requires httpx>=0.25.0,<0.26.0
 #   cogniverse-agents requires httpx>=0.27.0
 
-# Solution: Align version constraints in pyproject.toml files
+# Solution: Align version constraints across layers in pyproject.toml files
+# Start with foundation layer and propagate upward
 ```
 
 ---
@@ -348,20 +521,39 @@ uv add --upgrade pydantic
 
 ### Building Distribution Packages
 
-**Build All Packages:**
+**Build All Packages (in dependency order):**
 ```bash
-# Build all SDK packages for distribution
-for dir in libs/*/; do
+# Build all 10 SDK packages for distribution (order matters!)
+# Foundation layer first
+for dir in libs/sdk libs/foundation; do
+  echo "Building $(basename $dir)..."
+  (cd "$dir" && uv build)
+done
+
+# Core layer
+for dir in libs/evaluation libs/core; do
+  echo "Building $(basename $dir)..."
+  (cd "$dir" && uv build)
+done
+
+# Implementation layer
+for dir in libs/telemetry-phoenix libs/agents libs/vespa libs/synthetic; do
+  echo "Building $(basename $dir)..."
+  (cd "$dir" && uv build)
+done
+
+# Application layer
+for dir in libs/runtime libs/dashboard; do
   echo "Building $(basename $dir)..."
   (cd "$dir" && uv build)
 done
 
 # Output (in each libs/*/dist/):
-# cogniverse_core-0.1.0-py3-none-any.whl
-# cogniverse_core-0.1.0.tar.gz
-# cogniverse_agents-0.1.0-py3-none-any.whl
-# cogniverse_agents-0.1.0.tar.gz
-# ...
+# cogniverse_sdk-0.1.0-py3-none-any.whl
+# cogniverse_sdk-0.1.0.tar.gz
+# cogniverse_foundation-0.1.0-py3-none-any.whl
+# cogniverse_foundation-0.1.0.tar.gz
+# ... (all 10 packages)
 ```
 
 **Build Individual Package:**
@@ -397,16 +589,30 @@ pip install libs/agents/dist/cogniverse_agents-0.1.0-py3-none-any.whl
 python -c "from cogniverse_core.config import SystemConfig; print('Success!')"
 ```
 
-**Installation Order Matters:**
+**Installation Order Matters (Layer-Aware):**
 ```bash
-# CORRECT: Install in dependency order
+# CORRECT: Install in layer dependency order
+
+# Foundation layer
+pip install dist/cogniverse_sdk-0.1.0-py3-none-any.whl
+pip install dist/cogniverse_foundation-0.1.0-py3-none-any.whl
+
+# Core layer
+pip install dist/cogniverse_evaluation-0.1.0-py3-none-any.whl
 pip install dist/cogniverse_core-0.1.0-py3-none-any.whl
-pip install dist/cogniverse_vespa-0.1.0-py3-none-any.whl
+
+# Implementation layer
+pip install dist/cogniverse_telemetry_phoenix-0.1.0-py3-none-any.whl
 pip install dist/cogniverse_agents-0.1.0-py3-none-any.whl
+pip install dist/cogniverse_vespa-0.1.0-py3-none-any.whl
+pip install dist/cogniverse_synthetic-0.1.0-py3-none-any.whl
+
+# Application layer
 pip install dist/cogniverse_runtime-0.1.0-py3-none-any.whl
+pip install dist/cogniverse_dashboard-0.1.0-py3-none-any.whl
 
 # INCORRECT: May fail due to missing dependencies
-pip install dist/cogniverse_runtime-0.1.0-py3-none-any.whl  # Needs core, agents, vespa
+pip install dist/cogniverse_runtime-0.1.0-py3-none-any.whl  # Needs all lower layers
 ```
 
 ### Build Verification
@@ -429,21 +635,46 @@ pip show cogniverse-core
 # Required-by: cogniverse-agents, cogniverse-vespa
 ```
 
-**Test Installed Package:**
+**Test Installed Packages (Layer-by-Layer):**
 ```python
 # test_package_install.py
+
+# Test foundation layer
+import cogniverse_sdk
+import cogniverse_foundation
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+# Test core layer
+import cogniverse_evaluation
 import cogniverse_core
 from cogniverse_core.config import SystemConfig
-from cogniverse_core.telemetry import TelemetryManager
+from cogniverse_evaluation.core.experiment_tracker import ExperimentTracker
 
-# Verify version
+# Test implementation layer
+import cogniverse_telemetry_phoenix
+import cogniverse_agents
+import cogniverse_vespa
+import cogniverse_synthetic
+from cogniverse_agents.routing.strategies import GLiNERRoutingStrategy
+
+# Test application layer
+import cogniverse_runtime
+import cogniverse_dashboard
+
+# Verify versions
+assert cogniverse_sdk.__version__ == "0.1.0"
+assert cogniverse_foundation.__version__ == "0.1.0"
 assert cogniverse_core.__version__ == "0.1.0"
+# ... verify all 10 packages
 
 # Test basic functionality
 config = SystemConfig(tenant_id="test")
 assert config.tenant_id == "test"
 
-print("✅ Package installation verified")
+telemetry = get_telemetry_manager()
+assert telemetry is not None
+
+print("✅ All 10 packages installed and verified")
 ```
 
 ---
@@ -991,27 +1222,37 @@ jobs:
 
 ## Summary
 
-This guide covers comprehensive UV workspace package development:
+This guide covers comprehensive UV workspace package development with 10-package layered architecture:
 
-1. **Package Architecture**: 5-package structure with clear dependency hierarchy
-2. **Development Workflows**: Editable installs, cross-package development
-3. **Dependency Management**: Package-level and workspace-level dependencies
-4. **Building**: Distribution packages with wheels and source distributions
-5. **Testing**: Per-package and integration testing strategies
-6. **Versioning**: Semantic versioning and release process
-7. **Best Practices**: Organization, imports, documentation, CI/CD
+1. **Package Architecture**: 10-package structure with 4-layer dependency hierarchy
+2. **Development Workflows**: Layer-aware editable installs, cross-layer development
+3. **Dependency Management**: Layer-specific dependencies and workspace-level dependencies
+4. **Building**: Distribution packages with wheels and source distributions in dependency order
+5. **Testing**: Per-layer and integration testing strategies
+6. **Versioning**: Semantic versioning and release process for all 10 packages
+7. **Best Practices**: Layer organization, imports, documentation, CI/CD
 
-**Key Principles:**
-- Packages depend on `core`, not vice versa
-- Use `uv sync` for workspace-wide changes
-- Test thoroughly before releases
+**Key Principles for Layered Architecture:**
+- **Foundation Layer** (sdk, foundation): No dependencies on other Cogniverse packages
+- **Core Layer** (evaluation, core): Depends only on foundation layer
+- **Implementation Layer** (telemetry-phoenix, agents, vespa, synthetic): Depends on core and foundation
+- **Application Layer** (runtime, dashboard): Depends on all lower layers
+- Use `uv sync` for workspace-wide changes across all layers
+- Test layer-by-layer before releases
 - Maintain backward compatibility in minor versions
-- Document all public APIs
+- Document all public APIs with layer information
+
+**Layer-Aware Development:**
+- Start changes in lower layers (foundation) and propagate upward
+- Test each layer independently before integration testing
+- Build and publish in dependency order: foundation → core → implementation → application
+- Version bumps should be coordinated across dependent layers
 
 **Next Steps:**
 - [Scripts & Operations](scripts-operations.md) - Operational scripts
-- [Testing Guide](../testing/testing-guide.md) - Comprehensive testing strategies
+- [Testing Guide](../testing/testing-guide.md) - Layer-aware testing strategies
 - [Deployment Guide](../operations/deployment.md) - Production deployment
+- [Publishing Guide](publishing-guide.md) - 10-package publishing workflow
 
 ---
 

@@ -1,8 +1,8 @@
 # Evaluation Module Study Guide
 
-**Last Updated:** 2025-10-07
-**Package:** `cogniverse_core`
-**Module Location:** `libs/core/cogniverse_core/evaluation/`
+**Package:** `cogniverse_evaluation` (Core Layer)
+**Module Location:** `libs/evaluation/cogniverse_evaluation/`
+**Last Updated:** 2025-11-13
 **Purpose:** Experiment tracking, routing evaluation, and Phoenix analytics for performance measurement and optimization feedback
 
 ---
@@ -10,7 +10,7 @@
 ## Package Structure
 
 ```
-libs/core/cogniverse_core/evaluation/
+libs/evaluation/cogniverse_evaluation/
 ├── __init__.py                          # Package initialization
 ├── core/
 │   ├── experiment_tracker.py            # ExperimentTracker main class

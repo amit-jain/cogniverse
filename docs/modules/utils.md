@@ -1,8 +1,8 @@
 # Utils Module - Comprehensive Study Guide
 
-**Package:** `cogniverse_core`
+**Package:** `cogniverse_core` (Core Layer)
 **Module Location:** `libs/core/cogniverse_core/common/utils/`
-**Last Updated:** 2025-10-07
+**Last Updated:** 2025-11-13
 **Purpose:** Production utilities for retry logic, logging, query processing, and configuration management
 
 ---

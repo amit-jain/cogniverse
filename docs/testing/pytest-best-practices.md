@@ -1,7 +1,7 @@
 # Pytest Best Practices
 
-**Last Updated:** 2025-10-15
-**Architecture:** UV Workspace with 5 SDK packages and multi-tenant support
+**Last Updated:** 2025-11-13
+**Architecture:** UV Workspace with 10-package layered architecture and multi-tenant support
 **Purpose:** Guide for writing and running tests in the Cogniverse project
 
 ---
@@ -175,13 +175,14 @@ pytest tests/agents/
 uv run pytest tests/agents/
 ```
 
-**SDK Import Patterns:**
+**Package Import Patterns:**
 ```python
-# ✅ Good: Absolute imports from SDK packages
+# ✅ Good: Absolute imports from workspace packages
+from cogniverse_sdk.interfaces import AgentInterface
+from cogniverse_foundation.telemetry import TelemetryManager
 from cogniverse_core.config import SystemConfig
-from cogniverse_core.telemetry import TelemetryManager
 from cogniverse_agents.routing_agent import RoutingAgent
-from cogniverse_vespa.backend import VespaBackend
+from cogniverse_retrieval.vespa_backend import VespaBackend
 
 # ❌ Bad: Old src-style imports (deprecated)
 from src.agents.routing_agent import RoutingAgent  # ❌ Will fail
@@ -189,42 +190,70 @@ from src.agents.routing_agent import RoutingAgent  # ❌ Will fail
 
 ---
 
-## SDK Package Testing
+## Package Testing
 
 ### Testing Package Imports
 
-**Verify SDK Package Structure:**
+**Verify Package Structure:**
 ```python
 # tests/test_imports.py
 import pytest
 
+def test_sdk_package_imports():
+    """Verify cogniverse_sdk package imports work"""
+    from cogniverse_sdk.interfaces import AgentInterface, SearchBackend
+    from cogniverse_sdk.types import QueryResult, SearchResponse
+
+    assert AgentInterface is not None
+    assert SearchBackend is not None
+
+def test_foundation_package_imports():
+    """Verify cogniverse_foundation package imports work"""
+    from cogniverse_foundation.telemetry import TelemetryManager
+    from cogniverse_foundation.logging import get_logger
+
+    assert TelemetryManager is not None
+    assert get_logger is not None
+
 def test_core_package_imports():
     """Verify cogniverse_core package imports work"""
     from cogniverse_core.config import SystemConfig
-    from cogniverse_core.telemetry import TelemetryManager
-    from cogniverse_core.evaluation import ExperimentTracker
-    from cogniverse_core.common.cache import CacheManager
+    from cogniverse_core.orchestration import Orchestrator
 
-    # Verify classes are available
     assert SystemConfig is not None
-    assert TelemetryManager is not None
+    assert Orchestrator is not None
 
 def test_agents_package_imports():
     """Verify cogniverse_agents package imports work"""
-    from cogniverse_agents.agents import RoutingAgent, VideoSearchAgent
-    from cogniverse_agents.routing.strategies import GLiNERRoutingStrategy
-    from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline
+    from cogniverse_agents.routing_agent import RoutingAgent
+    from cogniverse_agents.video_search_agent import VideoSearchAgent
 
     assert RoutingAgent is not None
-    assert VideoIngestionPipeline is not None
+    assert VideoSearchAgent is not None
 
-def test_vespa_package_imports():
-    """Verify cogniverse_vespa package imports work"""
-    from cogniverse_vespa.backends import VespaBackend
-    from cogniverse_vespa.backends.vespa_schema_manager import VespaSchemaManager
+def test_retrieval_package_imports():
+    """Verify cogniverse_retrieval package imports work"""
+    from cogniverse_retrieval.vespa_backend import VespaBackend
+    from cogniverse_retrieval.vespa_schema_manager import VespaSchemaManager
 
     assert VespaBackend is not None
     assert VespaSchemaManager is not None
+
+def test_processing_package_imports():
+    """Verify cogniverse_processing package imports work"""
+    from cogniverse_processing.video_pipeline import VideoIngestionPipeline
+    from cogniverse_processing.frame_extractor import FrameExtractor
+
+    assert VideoIngestionPipeline is not None
+    assert FrameExtractor is not None
+
+def test_evaluation_package_imports():
+    """Verify cogniverse_evaluation package imports work"""
+    from cogniverse_evaluation.experiment_tracker import ExperimentTracker
+    from cogniverse_evaluation.metrics import calculate_metrics
+
+    assert ExperimentTracker is not None
+    assert calculate_metrics is not None
 ```
 
 ### Package Dependency Testing
@@ -233,33 +262,46 @@ def test_vespa_package_imports():
 ```python
 # tests/test_package_dependencies.py
 import pytest
+from cogniverse_sdk.interfaces import AgentInterface
+from cogniverse_foundation.telemetry import TelemetryManager
 from cogniverse_core.config import SystemConfig
 from cogniverse_agents.routing_agent import RoutingAgent
 
-def test_agents_depends_on_core():
-    """Verify agents package can use core package"""
+def test_agents_depends_on_foundation_and_core():
+    """Verify agents package can use foundation and core packages"""
     config = SystemConfig(tenant_id="test")
+    telemetry = TelemetryManager(config)
 
     # RoutingAgent from agents package should accept SystemConfig from core
-    agent = RoutingAgent(config)
+    agent = RoutingAgent(config, telemetry_manager=telemetry)
 
     assert agent.config is config
     assert agent.tenant_id == "test"
 
-def test_runtime_depends_on_all():
-    """Verify runtime package can use all dependencies"""
-    from cogniverse_runtime.server.api import create_app
+def test_services_depends_on_all():
+    """Verify services package can use all dependencies"""
+    from cogniverse_services.api import create_app
     from cogniverse_core.config import SystemConfig
-    from cogniverse_agents.agents import RoutingAgent
-    from cogniverse_vespa.backends import VespaBackend
+    from cogniverse_agents.routing_agent import RoutingAgent
+    from cogniverse_retrieval.vespa_backend import VespaBackend
 
-    # Runtime should be able to import and use all packages
+    # Services should be able to import and use all packages
     config = SystemConfig(tenant_id="test")
     agent = RoutingAgent(config)
     backend = VespaBackend(config)
 
     assert agent is not None
     assert backend is not None
+
+def test_layered_architecture_dependencies():
+    """Verify proper layering - lower layers don't import higher layers"""
+    # SDK should not import from other packages
+    # Foundation can import SDK
+    # Core can import SDK and Foundation
+    # Agents can import SDK, Foundation, and Core
+    # Implementation can import SDK, Foundation, and Core
+    # Services can import all
+    pass
 ```
 
 ---
@@ -325,8 +367,8 @@ def test_tenant_phoenix_project_isolation():
 # tests/integration/test_multi_tenant_isolation.py
 import pytest
 from cogniverse_core.config import SystemConfig
-from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline
-from cogniverse_vespa.backends import VespaBackend
+from cogniverse_processing.video_pipeline import VideoIngestionPipeline
+from cogniverse_retrieval.vespa_backend import VespaBackend
 
 @pytest.mark.integration
 async def test_tenant_data_isolation(sample_video):
@@ -356,7 +398,7 @@ async def test_tenant_data_isolation(sample_video):
 @pytest.mark.integration
 def test_tenant_memory_isolation():
     """Verify tenant memories are isolated"""
-    from cogniverse_core.common.memory.mem0_memory_manager import Mem0MemoryManager
+    from cogniverse_foundation.memory.mem0_memory_manager import Mem0MemoryManager
 
     config_a = SystemConfig(tenant_id="acme_corp")
     config_b = SystemConfig(tenant_id="globex_inc")
@@ -580,21 +622,29 @@ This guide covers comprehensive testing for Cogniverse multi-agent system:
 **Test Organization by Package:**
 ```
 tests/
+├── sdk/                 # cogniverse_sdk tests
+├── foundation/          # cogniverse_foundation tests
+│   ├── telemetry/
+│   └── memory/
+├── core/                # cogniverse_core tests
+│   └── config/
 ├── agents/              # cogniverse_agents tests
 │   ├── unit/
 │   └── integration/
-├── common/              # cogniverse_core.common tests
-├── evaluation/          # cogniverse_core.evaluation tests
-├── ingestion/           # cogniverse_agents.ingestion tests
-├── memory/              # cogniverse_core.common.memory tests
-├── routing/             # cogniverse_agents.routing tests
-└── telemetry/           # cogniverse_core.telemetry tests
+├── retrieval/           # cogniverse_retrieval tests
+│   └── vespa/
+├── processing/          # cogniverse_processing tests
+│   └── video/
+├── synthetic/           # cogniverse_synthetic tests
+├── vlm/                 # cogniverse_vlm tests
+├── services/            # cogniverse_services tests
+└── evaluation/          # cogniverse_evaluation tests
 ```
 
 **Related Documentation:**
-- [SDK Architecture](../architecture/sdk-architecture.md)
+- [10-Package Architecture](../ARCHITECTURE.md)
 - [Multi-Tenant Architecture](../architecture/multi-tenant.md)
-- [Package Development](../development/package-dev.md)
+- [Package Development Guide](../development/package-development.md)
 
 ---
 

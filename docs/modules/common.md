@@ -1,7 +1,8 @@
 # Common Module Study Guide
 
-**Package:** `cogniverse_core`
+**Package:** `cogniverse_core` (Core Layer)
 **Location:** `libs/core/cogniverse_core/common/` and `libs/core/cogniverse_core/config/`
+**Last Updated:** 2025-11-13
 **Purpose:** Foundational infrastructure for configuration, memory, DSPy integration, and tenant utilities
 
 ---

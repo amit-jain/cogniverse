@@ -1,8 +1,8 @@
 # Search & Reranking Module Study Guide
 
-**Package:** `cogniverse_agents`
+**Package:** `cogniverse_agents` (Implementation Layer)
 **Module Location:** `libs/agents/cogniverse_agents/search/`
-**Last Updated:** 2025-10-07
+**Last Updated:** 2025-11-13
 **Purpose:** Comprehensive guide to the search and reranking system for multi-modal result optimization
 
 ---
@@ -854,7 +854,7 @@ await cache.set(cache_key, reranked, ttl=3600)
 
 ```python
 # Track reranking performance
-from cogniverse_core.telemetry.context import rerank_span
+from cogniverse_foundation.telemetry.context import rerank_span
 
 with rerank_span(
     tenant_id="user_123",

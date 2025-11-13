@@ -1,7 +1,8 @@
 # Multi-Tenant Management Guide
 
-**Last Updated:** 2025-10-09
-**Purpose:** Comprehensive guide for Phase 7 multi-tenant architecture
+**Last Updated:** 2025-11-13
+**Architecture:** UV Workspace with 10 packages in layered architecture
+**Purpose:** Comprehensive guide for multi-tenant architecture with schema-per-tenant isolation
 
 ---
 
@@ -513,7 +514,7 @@ sequenceDiagram
 
 ### TenantSchemaManager
 
-**Location**: `src/backends/vespa/tenant_schema_manager.py`
+**Location**: `libs/vespa/cogniverse_vespa/schema/` (implementation layer)
 
 **Purpose**: Manages the lifecycle of tenant-specific Vespa schemas with lazy creation and automatic tenant isolation.
 
@@ -534,10 +535,10 @@ Examples:
 
 **Usage**:
 ```python
-from src.backends.vespa.tenant_schema_manager import TenantSchemaManager
+from cogniverse_vespa.schema.json_schema_parser import JSONSchemaParser  # Implementation layer
 
-# Initialize manager
-schema_manager = TenantSchemaManager()
+# Initialize schema parser
+schema_parser = JSONSchemaParser()
 
 # Register tenant (creates schemas lazily)
 schema_manager.register_tenant("acme:production")
@@ -552,7 +553,7 @@ schema_name = schema_manager.get_schema_name(
 
 ### TenantAwareVespaSearchClient
 
-**Location**: `src/backends/vespa/tenant_aware_vespa_search_client.py`
+**Location**: `libs/vespa/cogniverse_vespa/backends/` (implementation layer)
 
 **Purpose**: Automatic tenant-aware query routing ensuring all search operations are isolated to the correct tenant schema.
 
@@ -564,11 +565,13 @@ schema_name = schema_manager.get_schema_name(
 
 **Usage**:
 ```python
-from src.backends.vespa.tenant_aware_vespa_search_client import TenantAwareVespaSearchClient
+from cogniverse_vespa.backends.vespa_search_client import VespaSearchClient  # Implementation layer
 
-# Initialize client
-search_client = TenantAwareVespaSearchClient(
-    profile="video_colpali_smol500_mv_frame"
+# Initialize client with tenant awareness
+search_client = VespaSearchClient(
+    vespa_url="http://localhost",
+    vespa_port=8080,
+    tenant_id="acme:production"
 )
 
 # Search with tenant isolation
@@ -583,7 +586,7 @@ results = search_client.search(
 
 ### parse_tenant_id() Utility
 
-**Location**: `src/common/tenant_utils.py`
+**Location**: `libs/core/cogniverse_core/utils/tenant_utils.py` (core layer)
 
 **Purpose**: Parse and validate org:tenant format.
 
@@ -606,7 +609,7 @@ def parse_tenant_id(tenant_id: str) -> tuple[str, str]:
 
 **Usage**:
 ```python
-from src.common.tenant_utils import parse_tenant_id
+from cogniverse_core.utils.tenant_utils import parse_tenant_id  # Core layer
 
 # Parse tenant ID
 org_id, tenant_name = parse_tenant_id("acme:production")
@@ -624,20 +627,18 @@ parse_tenant_id("a:b:c")    # ValueError: must contain exactly one colon
 All agents implement a factory function for tenant-aware instantiation:
 
 ```python
-# Video Search Agent
-from src.app.agents.video_search_agent import get_agent
+# Video Search Agent (implementation layer)
+from cogniverse_agents.search.video_search_agent import VideoSearchAgent
 
-agent = get_agent(tenant_id="acme:production")
+agent = VideoSearchAgent(
+    tenant_id="acme:production",
+    profile="video_colpali_smol500_mv_frame"
+)
 
-# Routing Agent
-from src.app.agents.routing_agent import get_agent
+# Routing Agent (implementation layer)
+from cogniverse_agents.routing.routing_agent import RoutingAgent
 
-agent = get_agent(tenant_id="acme:production")
-
-# Text Analysis Agent
-from src.app.agents.text_analysis_agent import get_agent
-
-agent = get_agent(tenant_id="acme:production")
+agent = RoutingAgent(tenant_id="acme:production")
 ```
 
 **Caching**: Agents are cached per tenant_id to avoid re-initialization overhead.
@@ -670,7 +671,7 @@ curl -X POST http://localhost:8001/tenants \
 ### Video Ingestion with Tenant Isolation
 
 ```python
-from src.app.ingestion import VideoIngestionPipeline
+from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline  # Implementation layer
 
 # Initialize pipeline for tenant
 pipeline = VideoIngestionPipeline(
@@ -688,10 +689,13 @@ result = await pipeline.process_video(
 ### Video Search with Tenant Isolation
 
 ```python
-from src.app.agents.video_search_agent import get_agent
+from cogniverse_agents.search.video_search_agent import VideoSearchAgent  # Implementation layer
 
 # Get tenant-specific agent
-agent = get_agent(tenant_id="acme:production")
+agent = VideoSearchAgent(
+    tenant_id="acme:production",
+    profile="video_colpali_smol500_mv_frame"
+)
 
 # Search (automatically isolated to acme:production)
 results = await agent.search(
@@ -759,6 +763,6 @@ curl -X DELETE http://localhost:8001/tenants/acme:staging
 ## Related Documentation
 
 - [Deployment Guide](deployment.md) - Multi-tenant deployment procedures
-- [Configuration Guide](configuration.md) - Multi-tenant configuration
-- [Backends Documentation](../modules/backends.md) - TenantSchemaManager and TenantAwareVespaSearchClient details
-- [Agents Documentation](../modules/agents.md) - Tenant-aware agent initialization
+- [Configuration Guide](configuration.md) - Multi-tenant configuration spanning foundation and core layers
+- [Multi-Tenant Operations](multi-tenant-ops.md) - Day-to-day tenant operations
+- [Architecture Documentation](../architecture/sdk-architecture.md) - 10-package layered architecture

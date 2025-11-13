@@ -1,7 +1,8 @@
 # Cogniverse Study Guide: Instrumentation & Observability Module
 
-**Last Updated:** 2025-10-19
-**Module Path:** `libs/core/cogniverse_core/telemetry/`, `libs/core/cogniverse_core/evaluation/phoenix/`
+**Last Updated:** 2025-11-13
+**Module Path:** `libs/foundation/cogniverse_foundation/telemetry/`, `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/`, `libs/evaluation/cogniverse_evaluation/phoenix/`
+**Architecture:** 10-package layered architecture (foundation → evaluation/telemetry-phoenix)
 **Purpose:** Phoenix-powered observability and multi-tenant telemetry
 
 ---
@@ -122,7 +123,9 @@ graph TB
 
 ### 1. TelemetryManager
 
-**File:** `libs/core/cogniverse_core/telemetry/manager.py`
+**File:** `libs/foundation/cogniverse_foundation/telemetry/manager.py`
+
+**Package:** `cogniverse-foundation` (foundation layer)
 
 The singleton manager for all telemetry operations.
 
@@ -135,7 +138,7 @@ The singleton manager for all telemetry operations.
 #### Usage
 
 ```python
-from cogniverse_core.telemetry.manager import get_telemetry_manager
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
 # Get singleton instance
 telemetry = get_telemetry_manager()
@@ -161,7 +164,7 @@ with telemetry.span(
 #### Configuration
 
 ```python
-from cogniverse_core.telemetry.config import TelemetryConfig, TelemetryLevel
+from cogniverse_foundation.telemetry.config import TelemetryConfig, TelemetryLevel
 
 config = TelemetryConfig(
     enabled=True,
@@ -193,7 +196,9 @@ TELEMETRY_SYNC_EXPORT=true  # Synchronous export for tests
 
 ### 2. TelemetryConfig
 
-**File:** `libs/core/cogniverse_core/telemetry/config.py`
+**File:** `libs/foundation/cogniverse_foundation/telemetry/config.py`
+
+**Package:** `cogniverse-foundation` (foundation layer)
 
 Configuration for telemetry system with multi-tenant support.
 
@@ -251,7 +256,9 @@ class BatchExportConfig:
 
 ### 3. ModalityMetricsTracker
 
-**File:** `libs/core/cogniverse_core/telemetry/modality_metrics.py`
+**File:** `libs/agents/cogniverse_agents/telemetry/modality_metrics.py`
+
+**Package:** `cogniverse-agents` (implementation layer - moved from foundation to agents package)
 
 Tracks per-modality performance metrics with rolling windows.
 
@@ -264,7 +271,7 @@ Tracks per-modality performance metrics with rolling windows.
 #### Usage
 
 ```python
-from cogniverse_core.telemetry.modality_metrics import ModalityMetricsTracker
+from cogniverse_agents.telemetry.modality_metrics import ModalityMetricsTracker
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 tracker = ModalityMetricsTracker(window_size=1000)
@@ -323,7 +330,9 @@ for entry in error_prone:
 
 ### 4. PhoenixAnalytics
 
-**File:** `libs/core/cogniverse_core/evaluation/phoenix/analytics.py`
+**File:** `libs/evaluation/cogniverse_evaluation/phoenix/analytics.py`
+
+**Package:** `cogniverse-evaluation` (core layer)
 
 Analytics and visualization engine for Phoenix traces.
 
@@ -338,7 +347,7 @@ Analytics and visualization engine for Phoenix traces.
 
 ```python
 from datetime import datetime, timedelta
-from cogniverse_core.evaluation.phoenix.analytics import PhoenixAnalytics
+from cogniverse_evaluation.phoenix.analytics import PhoenixAnalytics
 
 analytics = PhoenixAnalytics(phoenix_url="http://localhost:6006")
 
@@ -386,7 +395,7 @@ class TraceMetrics:
 ### 1. Agent Instrumentation
 
 ```python
-from cogniverse_core.telemetry.manager import get_telemetry_manager
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
 class VideoSearchAgent:
     def __init__(self, config):
@@ -430,8 +439,8 @@ class VideoSearchAgent:
 ### 2. Routing Agent with Phoenix Projects
 
 ```python
-from cogniverse_core.telemetry.manager import get_telemetry_manager
-from cogniverse_core.telemetry.config import SERVICE_NAME_ORCHESTRATION
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+from cogniverse_foundation.telemetry.config import SERVICE_NAME_ORCHESTRATION
 
 class RoutingAgent:
     def __init__(self, config):
@@ -469,7 +478,7 @@ class RoutingAgent:
 ### 3. Error Handling with Spans
 
 ```python
-from cogniverse_core.telemetry.manager import get_telemetry_manager
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from opentelemetry.trace import Status, StatusCode
 
 class SearchService:
@@ -512,8 +521,8 @@ class SearchService:
 
 ```python
 import pytest
-from cogniverse_core.telemetry.manager import TelemetryManager
-from cogniverse_core.telemetry.config import TelemetryConfig
+from cogniverse_foundation.telemetry.manager import TelemetryManager
+from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 @pytest.fixture
 def telemetry_manager():
@@ -770,14 +779,19 @@ def test_multi_tenant_span_isolation():
 
 ## Key Files Reference
 
-### Telemetry Module
-- `libs/core/cogniverse_core/telemetry/manager.py` - TelemetryManager singleton (376 lines)
-- `libs/core/cogniverse_core/telemetry/config.py` - Configuration and settings (113 lines)
-- `libs/core/cogniverse_core/telemetry/modality_metrics.py` - Performance metrics tracking (355 lines)
+### Foundation Layer - Telemetry Core
+- `libs/foundation/cogniverse_foundation/telemetry/manager.py` - TelemetryManager singleton
+- `libs/foundation/cogniverse_foundation/telemetry/config.py` - Configuration and settings
 
-### Phoenix Analytics
-- `libs/core/cogniverse_core/evaluation/phoenix/analytics.py` - Analytics and visualization (150+ lines)
-- `libs/core/cogniverse_core/evaluation/core/experiment_tracker.py` - Experiment tracking (See Guide 06)
+### Implementation Layer - Phoenix Integration
+- `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/` - Phoenix-specific telemetry implementation
+
+### Core Layer - Evaluation & Analytics
+- `libs/evaluation/cogniverse_evaluation/phoenix/analytics.py` - Analytics and visualization
+- `libs/evaluation/cogniverse_evaluation/core/experiment_tracker.py` - Experiment tracking
+
+### Implementation Layer - Agent Metrics
+- `libs/agents/cogniverse_agents/telemetry/modality_metrics.py` - Performance metrics tracking
 
 ### Tests
 - `tests/telemetry/integration/test_multi_tenant_telemetry.py` - Multi-tenant integration tests

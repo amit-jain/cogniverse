@@ -1,7 +1,9 @@
 # Cogniverse Study Guide: UI/Dashboard Module
 
-**Last Updated:** 2025-10-21
+**Last Updated:** 2025-11-13
 **Module Path:** `scripts/*_tab.py`
+**Architecture:** 10-package layered architecture
+**SDK Packages:** Uses dashboard (application layer) + agents, telemetry-phoenix (implementation layer) + core, evaluation (core layer) + foundation (foundation layer)
 **Purpose:** Interactive Streamlit dashboards for system monitoring, configuration management, optimization, and visualization
 
 ---
@@ -30,9 +32,14 @@ The UI/Dashboard module provides interactive web-based interfaces for:
 - **Quick Setup**: Fast tenant creation and video ingestion from sidebar
 
 ### Technology Stack
-- **Framework**: Streamlit 1.30+
+- **Framework**: Streamlit 1.30+ (dashboard package - application layer)
 - **Visualization**: Plotly (interactive charts), Pandas (data manipulation)
-- **Data**: Phoenix (telemetry), Vespa (embeddings), Mem0 (memories)
+- **Data Sources**:
+  - Phoenix telemetry (telemetry-phoenix package - implementation layer)
+  - Vespa embeddings (vespa package - implementation layer)
+  - Mem0 memories (core package - core layer)
+  - Evaluation metrics (evaluation package - core layer)
+- **Configuration**: SystemConfig (core package - core layer)
 - **Styling**: Custom CSS with dark theme support
 
 ### Dashboard Structure
@@ -1158,6 +1165,9 @@ audio            2     1      4
 @st.cache_data(ttl=300)  # 5 minute TTL
 def get_phoenix_metrics(time_range):
     """Fetch metrics from Phoenix"""
+    # Import from evaluation package (core layer)
+    from cogniverse_evaluation.phoenix.analytics import PhoenixAnalytics
+    analytics = PhoenixAnalytics()
     # Expensive API call
     return analytics.get_performance_metrics(time_range)
 
@@ -1165,6 +1175,8 @@ def get_phoenix_metrics(time_range):
 @st.cache_resource
 def get_vespa_client():
     """Singleton Vespa client"""
+    # Import from vespa package (implementation layer)
+    from cogniverse_vespa.backends import VespaSearchBackend
     return VespaSearchBackend(url=vespa_url, port=vespa_port)
 
 # Manual cache invalidation
@@ -1207,6 +1219,8 @@ if "embeddings" in st.session_state:
 ```python
 try:
     # Attempt Phoenix connection
+    # Import from evaluation package (core layer)
+    from cogniverse_evaluation.phoenix.analytics import PhoenixAnalytics
     analytics = PhoenixAnalytics()
     metrics = analytics.get_performance_metrics("24h")
     plot_metrics(metrics)
@@ -1377,32 +1391,63 @@ progress.empty()  # Remove progress bar when done
 
 ## Summary
 
-The UI/Dashboard module provides comprehensive web-based interfaces for:
+The UI/Dashboard module provides comprehensive web-based interfaces leveraging the 10-package layered architecture:
 
-1. **Analytics**: Phoenix telemetry visualization with performance metrics
-2. **Configuration**: Full CRUD for multi-tenant system configuration
-3. **Memory**: Mem0 agent memory inspection and management
-4. **Embeddings**: High-dimensional embedding visualization in 2D/3D
-5. **Routing**: Routing decision analysis and evaluation
-6. **Orchestration**: Multi-agent workflow visualization
+**Layer Integration:**
+- **Foundation Layer**: Telemetry foundations from `cogniverse-foundation`
+- **Core Layer**:
+  - Business logic and configuration from `cogniverse-core`
+  - Evaluation metrics and Phoenix analytics from `cogniverse-evaluation`
+- **Implementation Layer**:
+  - Phoenix telemetry implementation from `cogniverse-telemetry-phoenix`
+  - Agent operations from `cogniverse-agents`
+  - Vespa backend access from `cogniverse-vespa`
+- **Application Layer**: UI components from `cogniverse-dashboard`
+
+**Dashboard Capabilities:**
+1. **Analytics**: Phoenix telemetry visualization with performance metrics (evaluation + telemetry-phoenix)
+2. **Configuration**: Full CRUD for multi-tenant system configuration (core)
+3. **Memory**: Mem0 agent memory inspection and management (core)
+4. **Embeddings**: High-dimensional embedding visualization in 2D/3D (vespa + evaluation)
+5. **Routing**: Routing decision analysis and evaluation (agents + evaluation)
+6. **Orchestration**: Multi-agent workflow visualization (agents)
+7. **Optimization**: Comprehensive optimization framework (agents + evaluation + synthetic)
 
 **Key Features**:
 - Interactive Streamlit dashboards with real-time updates
 - Multi-tenant support with tenant isolation
 - Plotly visualizations for metrics and embeddings
-- Caching for performance optimization
+- Layer-aware caching for performance optimization
 - Form-based CRUD operations with validation
 - Export/import capabilities for data portability
 
 **Production Features**:
-- Health checks for all backend services
-- Error handling with graceful degradation
+- Health checks for all backend services across all layers
+- Error handling with graceful degradation per layer
 - Authentication and authorization (optional)
 - Usage tracking and audit logging
 - Responsive design for various screen sizes
 - Auto-refresh with configurable intervals
 
-This module serves as the primary user interface for system monitoring, configuration management, and data exploration in the Cogniverse platform.
+**Package Dependencies (Layer-Aware):**
+```python
+# Foundation layer
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+# Core layer
+from cogniverse_core.config import SystemConfig
+from cogniverse_evaluation.phoenix.analytics import PhoenixAnalytics
+
+# Implementation layer
+from cogniverse_telemetry_phoenix import PhoenixClient
+from cogniverse_agents.routing.strategies import GLiNERRoutingStrategy
+from cogniverse_vespa.backends import VespaSearchBackend
+
+# Application layer (dashboard package itself)
+from cogniverse_dashboard.ui.components import render_metrics_tab
+```
+
+This module serves as the primary user interface for system monitoring, configuration management, and data exploration in the Cogniverse platform, demonstrating clean separation of concerns across the 10-package layered architecture.
 
 ---
 

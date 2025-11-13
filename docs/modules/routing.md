@@ -1,7 +1,8 @@
 # Routing Module Study Guide
 
-**Package:** `cogniverse_agents`
+**Package:** `cogniverse_agents` (Implementation Layer)
 **Location:** `libs/agents/cogniverse_agents/routing/`
+**Last Updated:** 2025-11-13
 **Purpose:** Comprehensive guide to intelligent query routing strategies and optimization
 
 ---

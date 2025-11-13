@@ -1,7 +1,7 @@
 # Multi-Tenant Operations Guide
 
-**Last Updated:** 2025-10-15
-**Architecture:** Schema-per-Tenant Isolation
+**Last Updated:** 2025-11-13
+**Architecture:** UV Workspace with 10 packages - Schema-per-Tenant Isolation
 **Purpose:** Comprehensive guide for multi-tenant deployment, operations, and management
 
 ---
@@ -25,16 +25,15 @@ Cogniverse implements **schema-per-tenant isolation** to provide complete data s
 ### 1. Tenant Creation
 
 ```python
-from cogniverse_core.config.manager import get_config_manager
-from cogniverse_core.config.unified_config import SystemConfig
-from cogniverse_vespa.backends.vespa_schema_manager import VespaSchemaManager
+# Imports from layered architecture
+from cogniverse_foundation.config.unified_config import BaseConfig  # Foundation layer
+from cogniverse_core.config.unified_config import SystemConfig  # Core layer
+from cogniverse_core.config.manager import get_config_manager  # Core layer
+from cogniverse_vespa.schema.json_schema_parser import JSONSchemaParser  # Implementation layer
 
 # Initialize managers
 config_manager = get_config_manager()
-schema_manager = VespaSchemaManager(
-    vespa_url="http://localhost:8080",
-    vespa_config_port=19071
-)
+schema_parser = JSONSchemaParser()
 
 # Create new tenant
 tenant_id = "acme_corp"
@@ -65,7 +64,7 @@ for schema_name in schemas:
     )
 
 # 3. Initialize tenant memory
-from cogniverse_core.common.memory.mem0_memory_manager import Mem0MemoryManager
+from cogniverse_core.memory.mem0_memory_manager import Mem0MemoryManager  # Core layer
 
 memory_manager = Mem0MemoryManager.get_instance(tenant_id)
 await memory_manager.initialize(
@@ -90,7 +89,7 @@ print(f"   Memory: Initialized with Vespa isolation")
 ### 2. Tenant Configuration
 
 ```python
-from cogniverse_core.config.unified_config import RoutingConfigUnified
+from cogniverse_core.config.unified_config import RoutingConfigUnified  # Core layer
 
 # Configure routing for tenant
 routing_config = RoutingConfigUnified(
@@ -211,9 +210,9 @@ echo "✅ All schemas deployed for all tenants"
 ### List Tenant Schemas
 
 ```python
-from cogniverse_vespa.backends.vespa_schema_manager import VespaSchemaManager
+from cogniverse_vespa.schema.json_schema_parser import JSONSchemaParser  # Implementation layer
 
-schema_manager = VespaSchemaManager()
+schema_parser = JSONSchemaParser()
 
 # List all schemas
 all_schemas = schema_manager.list_all_schemas()
@@ -258,7 +257,7 @@ curl "http://localhost:8080/document/v1/video_colpali_smol500_mv_frame_acme_corp
 ### Bulk Tenant Ingestion
 
 ```python
-from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline
+from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline  # Implementation layer
 from pathlib import Path
 
 async def ingest_tenant_videos(tenant_id: str, video_dir: Path):
@@ -293,7 +292,7 @@ await ingest_tenant_videos("globex_inc", Path("data/videos/globex_inc"))
 ### Tenant-Isolated Search
 
 ```python
-from cogniverse_agents.agents.video_search_agent import VideoSearchAgent
+from cogniverse_agents.search.video_search_agent import VideoSearchAgent  # Implementation layer
 
 async def search_tenant_videos(
     tenant_id: str,
@@ -336,7 +335,8 @@ assert acme_results[0].tenant_id == "acme_corp"
 Each tenant gets an isolated Phoenix project:
 
 ```python
-from cogniverse_core.telemetry import TelemetryManager, TelemetryConfig
+from cogniverse_telemetry_phoenix.provider import PhoenixProvider  # Core layer (telemetry-phoenix package)
+from cogniverse_foundation.telemetry.config import TelemetryConfig  # Foundation layer
 
 # Initialize telemetry for tenant
 telemetry = TelemetryManager(
@@ -373,7 +373,7 @@ open http://localhost:6006
 ### Cross-Tenant Analytics (Admin Only)
 
 ```python
-from cogniverse_core.telemetry.phoenix_analytics import PhoenixAnalytics
+from cogniverse_evaluation.analytics.phoenix_analytics import PhoenixAnalytics  # Core layer (evaluation package)
 
 # Admin can view aggregated metrics across tenants
 analytics = PhoenixAnalytics(admin_mode=True)
@@ -400,7 +400,7 @@ for tenant_id, metrics in tenant_metrics.items():
 Each tenant has isolated Mem0 memory:
 
 ```python
-from cogniverse_core.common.memory.mem0_memory_manager import Mem0MemoryManager
+from cogniverse_core.memory.mem0_memory_manager import Mem0MemoryManager  # Core layer
 
 # Get tenant-specific memory manager
 memory_acme = Mem0MemoryManager.get_instance("acme_corp")
@@ -605,7 +605,7 @@ async def search_acme_videos(query: str, caller_tenant_id: str):
 ### Per-Tenant Performance Metrics
 
 ```python
-from cogniverse_core.telemetry.modality_metrics import ModalityMetricsTracker
+from cogniverse_agents.telemetry.modality_metrics import ModalityMetricsTracker  # Implementation layer
 
 # Track performance per tenant
 metrics = ModalityMetricsTracker(tenant_id="acme_corp")
@@ -624,7 +624,7 @@ print(f"  P99 Latency: {stats['p99_latency_ms']}ms")
 ### Tenant-Specific Optimization
 
 ```python
-from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
+from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator  # Implementation layer
 
 # Run optimization per tenant
 orchestrator = OptimizationOrchestrator(

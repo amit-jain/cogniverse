@@ -1,7 +1,9 @@
 # Human-in-the-Loop Approval Workflow
 
-**Package**: `libs/agents` (cogniverse-agents)
-**Modules**: `cogniverse_agents.approval.*`, `cogniverse_synthetic.approval.*`
+**Package**: `cogniverse_agents` (Implementation Layer)
+**Location**: `libs/agents/cogniverse_agents/approval/`
+**Related Package**: `cogniverse_synthetic` (Application Layer)
+**Last Updated:** 2025-11-13
 
 The human-in-the-loop approval workflow enables quality control for synthetically generated training data by allowing humans to review and approve/reject examples before they're used for model optimization.
 
@@ -494,9 +496,9 @@ await storage.update_item(item, batch_id="batch_001")  # batch_id required
 
 ## Related Documentation
 
-- [Synthetic Data Generation](../synthetic-data-generation.md) - Generates data for approval
-- [Telemetry](telemetry.md) - Phoenix integration details
-- [Module Optimization](optimization.md) - Uses approved data for training
+- [Synthetic Data Generation](../synthetic-data-generation.md) - Generates data for approval (cogniverse_runtime)
+- [Telemetry Module](telemetry.md) - Phoenix integration details (cogniverse_foundation)
+- [Optimization Module](optimization.md) - Uses approved data for training (cogniverse_agents)
 
 ## API Reference
 
