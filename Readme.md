@@ -2,11 +2,11 @@
 
 **Version:** 2.0.0 | **Last Updated:** 2025-10-15 | **Status:** Production Ready
 
-Production-ready multi-agent system built with **UV workspace architecture** (5 SDK packages) for multi-modal content analysis and search with automated optimization, evaluation, and complete multi-tenant isolation.
+Production-ready multi-agent system built with **UV workspace architecture** (10 packages in layered architecture) for multi-modal content analysis and search with automated optimization, evaluation, and complete multi-tenant isolation.
 
 ## 🎯 Key Features
 
-- **UV Workspace Architecture**: 5 independent SDK packages (`cogniverse_core`, `cogniverse_agents`, `cogniverse_vespa`, `cogniverse_runtime`, `cogniverse_dashboard`)
+- **UV Workspace Architecture**: 10 packages in layered architecture (Foundation: `cogniverse_sdk`, `cogniverse_foundation`; Core: `cogniverse_core`, `cogniverse_evaluation`, `cogniverse_telemetry_phoenix`; Implementation: `cogniverse_agents`, `cogniverse_vespa`, `cogniverse_synthetic`; Application: `cogniverse_runtime`, `cogniverse_dashboard`)
 - **Multi-Agent Orchestration**: A2A protocol-based coordination of specialized agents
 - **Advanced Embeddings**: ColPali frame-level, VideoPrism global, and ColQwen multi-modal embeddings
 - **DSPy Optimization**: GEPA experience-guided optimization with Bootstrap, SIMBA, and MIPRO fallbacks
@@ -91,52 +91,84 @@ uv run streamlit run scripts/phoenix_dashboard_standalone.py
 
 ```
 cogniverse/
-├── libs/                    # SDK Packages (UV workspace)
-│   ├── core/                # cogniverse_core
+├── libs/                         # SDK Packages (UV workspace - 10 packages)
+│   ├── sdk/                      # cogniverse_sdk (Foundation Layer)
+│   │   └── cogniverse_sdk/
+│   │       ├── interfaces/       # Backend interfaces
+│   │       └── document.py       # Universal document model
+│   ├── foundation/               # cogniverse_foundation (Foundation Layer)
+│   │   └── cogniverse_foundation/
+│   │       ├── config/           # Configuration base
+│   │       └── telemetry/        # Telemetry interfaces
+│   ├── core/                     # cogniverse_core (Core Layer)
 │   │   └── cogniverse_core/
-│   │       ├── config/      # Configuration management
-│   │       ├── telemetry/   # Phoenix telemetry (tenant-aware)
-│   │       ├── evaluation/  # Experiment tracking
-│   │       └── common/      # Cache, memory, utilities
-│   ├── agents/              # cogniverse_agents
+│   │       ├── agents/           # Agent base classes
+│   │       ├── registries/       # Component registries
+│   │       └── common/           # Shared utilities
+│   ├── evaluation/               # cogniverse_evaluation (Core Layer)
+│   │   └── cogniverse_evaluation/
+│   │       ├── experiments/      # Experiment management
+│   │       ├── metrics/          # Provider-agnostic metrics
+│   │       └── datasets/         # Dataset handling
+│   ├── telemetry-phoenix/        # cogniverse_telemetry_phoenix (Core Layer - Plugin)
+│   │   └── cogniverse_telemetry_phoenix/
+│   │       ├── provider.py       # Phoenix telemetry provider
+│   │       └── evaluation/       # Phoenix evaluation provider
+│   ├── agents/                   # cogniverse_agents (Implementation Layer)
 │   │   └── cogniverse_agents/
-│   │       ├── agents/      # Agent implementations
-│   │       ├── routing/     # DSPy routing & optimization
-│   │       ├── ingestion/   # Video processing pipeline
-│   │       ├── search/      # Multi-modal search & reranking
-│   │       └── tools/       # A2A tools
-│   ├── vespa/               # cogniverse_vespa
+│   │       ├── routing/          # DSPy routing & optimization
+│   │       ├── search/           # Multi-modal search & reranking
+│   │       └── tools/            # A2A tools
+│   ├── vespa/                    # cogniverse_vespa (Implementation Layer)
 │   │   └── cogniverse_vespa/
-│   │       └── backends/    # Vespa backend (tenant schemas)
-│   ├── runtime/             # cogniverse_runtime
+│   │       ├── backends/         # Vespa backend (tenant schemas)
+│   │       └── schema/           # Schema management
+│   ├── synthetic/                # cogniverse_synthetic (Implementation Layer)
+│   │   └── cogniverse_synthetic/
+│   │       ├── generators/       # Synthetic data generators
+│   │       └── service.py        # Synthetic data service
+│   ├── runtime/                  # cogniverse_runtime (Application Layer)
 │   │   └── cogniverse_runtime/
-│   │       └── server/      # FastAPI server
-│   └── dashboard/           # cogniverse_dashboard
+│   │       ├── server/           # FastAPI server
+│   │       └── ingestion/        # Video processing pipeline
+│   └── dashboard/                # cogniverse_dashboard (Application Layer)
 │       └── cogniverse_dashboard/
-│           └── ui/          # Streamlit dashboard
-├── docs/                    # Comprehensive documentation
-│   ├── architecture/        # System architecture
-│   ├── modules/             # Module documentation
-│   ├── operations/          # Deployment & configuration
-│   ├── development/         # Development guides
-│   ├── diagrams/            # Architecture diagrams
-│   └── testing/             # Testing guides
-├── scripts/                 # Operational scripts
-├── tests/                   # Test suite (by package)
-├── configs/                 # Configuration & schemas
-├── pyproject.toml           # Workspace root
-└── uv.lock                  # Unified lockfile
+│           ├── phoenix/          # Phoenix dashboards
+│           └── streamlit/        # Streamlit UI
+├── docs/                         # Comprehensive documentation
+│   ├── architecture/             # System architecture
+│   ├── modules/                  # Module documentation
+│   ├── operations/               # Deployment & configuration
+│   ├── development/              # Development guides
+│   ├── diagrams/                 # Architecture diagrams
+│   └── testing/                  # Testing guides
+├── scripts/                      # Operational scripts
+├── tests/                        # Test suite (by package)
+├── configs/                      # Configuration & schemas
+├── pyproject.toml                # Workspace root
+└── uv.lock                       # Unified lockfile
 ```
 
-**Package Dependencies:**
+**Package Dependencies (Layered Architecture):**
 ```
-cogniverse_core (foundation)
-    ↑
-    ├── cogniverse_agents (depends on core)
-    ├── cogniverse_vespa (depends on core)
-    ↑
-    ├── cogniverse_runtime (depends on core, agents, vespa)
-    └── cogniverse_dashboard (depends on core, agents)
+Foundation Layer:
+  cogniverse_sdk (zero internal dependencies)
+    ↓
+  cogniverse_foundation (depends on sdk)
+
+Core Layer:
+  cogniverse_core (depends on sdk, foundation, evaluation)
+  cogniverse_evaluation (depends on sdk, foundation)
+  cogniverse_telemetry_phoenix (plugin - depends on core, evaluation)
+
+Implementation Layer:
+  cogniverse_agents (depends on core)
+  cogniverse_vespa (depends on core)
+  cogniverse_synthetic (depends on core)
+
+Application Layer:
+  cogniverse_runtime (depends on core, agents, vespa, synthetic)
+  cogniverse_dashboard (depends on core, evaluation)
 ```
 
 ## 🏗️ Architecture
@@ -256,7 +288,7 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ -v
 
 ### Architecture
 - [Architecture Overview](docs/architecture/overview.md) - System design and multi-tenant architecture
-- [SDK Architecture](docs/architecture/sdk-architecture.md) - UV workspace and 5 SDK packages
+- [SDK Architecture](docs/architecture/sdk-architecture.md) - UV workspace and 10-package layered architecture
 - [Multi-Tenant Architecture](docs/architecture/multi-tenant.md) - Complete tenant isolation patterns
 - [System Flows](docs/architecture/system-flows.md) - 20+ architectural diagrams
 
@@ -356,6 +388,6 @@ curl https://your-app.modal.run/search \
 ---
 
 **Version**: 2.0.0
-**Architecture**: UV Workspace (5 SDK Packages)
+**Architecture**: UV Workspace (10 Packages - Layered Architecture)
 **Last Updated**: 2025-10-15
 **Status**: Production Ready with Complete Multi-Tenant Isolation

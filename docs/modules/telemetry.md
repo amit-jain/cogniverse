@@ -1,22 +1,44 @@
 # Telemetry Module Study Guide
 
-**Last Updated:** 2025-10-07
-**Package:** `cogniverse_core`
-**Module Location:** `libs/core/cogniverse_core/telemetry/`
+**Last Updated:** 2025-10-15
+**Package:** `cogniverse_core` (base infrastructure) + `cogniverse_telemetry_phoenix` (Phoenix provider plugin)
+**Module Location:**
+- Base: `libs/core/cogniverse_core/telemetry/` (telemetry infrastructure)
+- Phoenix Provider: `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/` (Phoenix-specific implementation)
 **Purpose:** Multi-tenant observability with Phoenix integration for distributed tracing, performance tracking, and modality-specific metrics
+
+**Architecture Note:** As of the phase3-telemetry-foundation branch, Phoenix-specific telemetry is now provided as a **plugin package** (`cogniverse-telemetry-phoenix`) that implements the telemetry interfaces defined in `cogniverse-foundation`. The plugin is auto-discovered via Python entry points, enabling clean separation between telemetry infrastructure (in `cogniverse-core` and `cogniverse-foundation`) and provider-specific implementations (in `cogniverse-telemetry-phoenix`).
 
 ---
 
 ## Package Structure
 
+### Core Telemetry Infrastructure (cogniverse_core)
 ```
 libs/core/cogniverse_core/telemetry/
 ├── __init__.py              # Package initialization
 ├── manager.py               # TelemetryManager singleton
 ├── config.py                # TelemetryConfig and BatchExportConfig
 ├── modality_metrics.py      # ModalityMetricsTracker
-├── context.py               # Span context helpers
-└── phoenix_client.py        # Phoenix client utilities
+└── context.py               # Span context helpers
+```
+
+### Phoenix Telemetry Plugin (cogniverse_telemetry_phoenix)
+```
+libs/telemetry-phoenix/cogniverse_telemetry_phoenix/
+├── __init__.py              # Package initialization & PhoenixProvider
+├── provider.py              # Phoenix telemetry provider implementation
+├── traces.py                # Phoenix trace query utilities
+├── annotations.py           # Phoenix annotation management
+└── evaluation/              # Phoenix evaluation provider
+    ├── __init__.py
+    └── evaluation_provider.py
+```
+
+**Plugin Registration:** The Phoenix provider is auto-discovered via entry points defined in `pyproject.toml`:
+```toml
+[project.entry-points."cogniverse.telemetry.providers"]
+phoenix = "cogniverse_telemetry_phoenix:PhoenixProvider"
 ```
 
 ---

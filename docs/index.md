@@ -1,6 +1,8 @@
 # Welcome to Cogniverse
 
-## Multi-Agent System for Multi-Modal Content with Automated Optimization and Evaluation
+**Version 2.0.0** | **10-Package UV Workspace Architecture** | **Production Ready**
+
+## Multi-Agent System for Multi-Modal Content with Complete Multi-Tenant Isolation
 
 <div align="center">
 
