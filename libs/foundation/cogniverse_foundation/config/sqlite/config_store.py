@@ -50,8 +50,18 @@ class SQLiteConfigStore(ConfigStore):
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # Enable WAL mode for better concurrency
+        self._enable_wal_mode()
+
         self.initialize()
         logger.info(f"SQLiteConfigStore initialized at {self.db_path}")
+
+    def _enable_wal_mode(self):
+        """Enable Write-Ahead Logging for better concurrent access"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA busy_timeout=30000")  # 30 second timeout
 
     def initialize(self) -> None:
         """Initialize the configuration store (implements ConfigStore interface)"""
@@ -59,7 +69,7 @@ class SQLiteConfigStore(ConfigStore):
 
     def _init_database(self):
         """Initialize database schema"""
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
             cursor = conn.cursor()
 
             # Create configurations table
@@ -151,10 +161,14 @@ class SQLiteConfigStore(ConfigStore):
         Returns:
             ConfigEntry with new version
         """
-        with sqlite3.connect(self.db_path) as conn:
+        # Use timeout for concurrent access handling
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
+        try:
+            # Start IMMEDIATE transaction to prevent race conditions
+            conn.execute("BEGIN IMMEDIATE")
             cursor = conn.cursor()
 
-            # Get current version
+            # Get current version (now protected by exclusive lock)
             cursor.execute(
                 """
                 SELECT MAX(version) FROM configurations
@@ -188,19 +202,25 @@ class SQLiteConfigStore(ConfigStore):
 
             conn.commit()
 
-        entry = ConfigEntry(
-            tenant_id=tenant_id,
-            scope=scope,
-            service=service,
-            config_key=config_key,
-            config_value=config_value,
-            version=new_version,
-            created_at=datetime.fromisoformat(now),
-            updated_at=datetime.fromisoformat(now),
-        )
+            entry = ConfigEntry(
+                tenant_id=tenant_id,
+                scope=scope,
+                service=service,
+                config_key=config_key,
+                config_value=config_value,
+                version=new_version,
+                created_at=datetime.fromisoformat(now),
+                updated_at=datetime.fromisoformat(now),
+            )
 
-        logger.info(f"Set config {entry.get_config_id()} v{new_version}")
-        return entry
+            logger.info(f"Set config {entry.get_config_id()} v{new_version}")
+            return entry
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to set config: {e}")
+            raise
+        finally:
+            conn.close()
 
     def get_config(
         self,
@@ -226,7 +246,7 @@ class SQLiteConfigStore(ConfigStore):
         # Handle both enum and string scope
         scope_value = scope.value if isinstance(scope, ConfigScope) else scope
 
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
             cursor = conn.cursor()
 
             if version is None:
@@ -289,7 +309,7 @@ class SQLiteConfigStore(ConfigStore):
         Returns:
             List of ConfigEntry ordered by version descending
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -338,7 +358,7 @@ class SQLiteConfigStore(ConfigStore):
         Returns:
             List of current ConfigEntry objects
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
             cursor = conn.cursor()
 
             # Build query based on filters
@@ -419,7 +439,7 @@ class SQLiteConfigStore(ConfigStore):
         Returns:
             List of current ConfigEntry objects from all tenants
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
             cursor = conn.cursor()
 
             # Build query based on filters
@@ -498,7 +518,10 @@ class SQLiteConfigStore(ConfigStore):
         Returns:
             True if deleted, False if not found
         """
-        with sqlite3.connect(self.db_path) as conn:
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
+        try:
+            # Use IMMEDIATE transaction for exclusive lock
+            conn.execute("BEGIN IMMEDIATE")
             cursor = conn.cursor()
 
             cursor.execute(
@@ -512,12 +535,18 @@ class SQLiteConfigStore(ConfigStore):
             deleted = cursor.rowcount > 0
             conn.commit()
 
-        if deleted:
-            logger.info(
-                f"Deleted config {tenant_id}:{scope.value}:{service}:{config_key}"
-            )
+            if deleted:
+                logger.info(
+                    f"Deleted config {tenant_id}:{scope.value}:{service}:{config_key}"
+                )
 
-        return deleted
+            return deleted
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to delete config: {e}")
+            raise
+        finally:
+            conn.close()
 
     def get_stats(self) -> Dict[str, Any]:
         """
@@ -526,7 +555,7 @@ class SQLiteConfigStore(ConfigStore):
         Returns:
             Dictionary with storage statistics
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
             cursor = conn.cursor()
 
             # Total configs
@@ -583,7 +612,7 @@ class SQLiteConfigStore(ConfigStore):
         """
         if include_history:
             # Get all versions
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
@@ -678,7 +707,7 @@ class SQLiteConfigStore(ConfigStore):
             True if healthy, False otherwise
         """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT 1")
                 return cursor.fetchone()[0] == 1

@@ -25,6 +25,8 @@ from cogniverse_foundation.config.unified_config import (
     TelemetryConfigUnified,
 )
 
+from backend_profile_tab import render_backend_profile_tab
+
 
 def render_config_management_tab():
     """Render the configuration management UI"""
@@ -60,11 +62,12 @@ def render_config_management_tab():
             st.error("✗ Unhealthy")
 
     # Main tabs
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "🖥️ System Config",
         "🤖 Agent Configs",
         "🔀 Routing Config",
         "📊 Telemetry Config",
+        "🔧 Backend Profiles",
         "📜 History",
         "💾 Import/Export",
     ])
@@ -82,9 +85,12 @@ def render_config_management_tab():
         render_telemetry_config_ui(manager, tenant_id)
 
     with tab5:
-        render_config_history_ui(manager, tenant_id)
+        render_backend_profile_tab()
 
     with tab6:
+        render_config_history_ui(manager, tenant_id)
+
+    with tab7:
         render_import_export_ui(manager, tenant_id)
 
 

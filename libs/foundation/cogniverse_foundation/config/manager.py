@@ -4,6 +4,7 @@ Provides unified interface for all configuration operations with caching.
 """
 
 import logging
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -58,6 +59,7 @@ class ConfigManager:
 
         self.store = store
         self.cache_size = cache_size
+        self._backend_lock = threading.Lock()
 
         logger.info(
             f"ConfigManager initialized with {type(self.store).__name__}, cache size: {cache_size}"
@@ -423,14 +425,15 @@ class ConfigManager:
         Returns:
             Updated BackendProfileConfig
         """
-        backend_config = self.get_backend_config(tenant_id=tenant_id, service=service)
-        backend_config.add_profile(profile)
-        self.set_backend_config(backend_config, tenant_id=tenant_id, service=service)
+        with self._backend_lock:
+            backend_config = self.get_backend_config(tenant_id=tenant_id, service=service)
+            backend_config.add_profile(profile)
+            self.set_backend_config(backend_config, tenant_id=tenant_id, service=service)
 
-        logger.info(
-            f"Added backend profile '{profile.profile_name}' for {tenant_id}:{service}"
-        )
-        return profile
+            logger.info(
+                f"Added backend profile '{profile.profile_name}' for {tenant_id}:{service}"
+            )
+            return profile
 
     def update_backend_profile(
         self,
@@ -471,20 +474,21 @@ class ConfigManager:
         if target_tenant_id is None:
             target_tenant_id = base_tenant_id
 
-        # Get base profile (may be from default tenant or another tenant)
-        base_config = self.get_backend_config(tenant_id=base_tenant_id, service=service)
-        merged_profile = base_config.merge_profile(profile_name, overrides)
+        with self._backend_lock:
+            # Get base profile (may be from default tenant or another tenant)
+            base_config = self.get_backend_config(tenant_id=base_tenant_id, service=service)
+            merged_profile = base_config.merge_profile(profile_name, overrides)
 
-        # Save to target tenant
-        target_config = self.get_backend_config(tenant_id=target_tenant_id, service=service)
-        target_config.add_profile(merged_profile)
-        self.set_backend_config(target_config, tenant_id=target_tenant_id, service=service)
+            # Save to target tenant
+            target_config = self.get_backend_config(tenant_id=target_tenant_id, service=service)
+            target_config.add_profile(merged_profile)
+            self.set_backend_config(target_config, tenant_id=target_tenant_id, service=service)
 
-        logger.info(
-            f"Updated backend profile '{profile_name}' for {target_tenant_id}:{service} "
-            f"(based on {base_tenant_id})"
-        )
-        return merged_profile
+            logger.info(
+                f"Updated backend profile '{profile_name}' for {target_tenant_id}:{service} "
+                f"(based on {base_tenant_id})"
+            )
+            return merged_profile
 
     def list_backend_profiles(
         self, tenant_id: str = "default", service: str = "backend"
@@ -519,25 +523,26 @@ class ConfigManager:
         Example:
             manager.delete_backend_profile("custom_profile", tenant_id="acme")
         """
-        backend_config = self.get_backend_config(tenant_id=tenant_id, service=service)
+        with self._backend_lock:
+            backend_config = self.get_backend_config(tenant_id=tenant_id, service=service)
 
-        # Check if profile exists
-        if profile_name not in backend_config.profiles:
-            logger.warning(
-                f"Profile '{profile_name}' not found for {tenant_id}:{service}"
+            # Check if profile exists
+            if profile_name not in backend_config.profiles:
+                logger.warning(
+                    f"Profile '{profile_name}' not found for {tenant_id}:{service}"
+                )
+                return False
+
+            # Remove profile
+            del backend_config.profiles[profile_name]
+
+            # Save updated config
+            self.set_backend_config(backend_config, tenant_id=tenant_id, service=service)
+
+            logger.info(
+                f"Deleted backend profile '{profile_name}' from {tenant_id}:{service}"
             )
-            return False
-
-        # Remove profile
-        del backend_config.profiles[profile_name]
-
-        # Save updated config
-        self.set_backend_config(backend_config, tenant_id=tenant_id, service=service)
-
-        logger.info(
-            f"Deleted backend profile '{profile_name}' from {tenant_id}:{service}"
-        )
-        return True
+            return True
 
     # ========== Generic Configuration Access ==========
 

@@ -517,11 +517,21 @@ async def update_profile(
             service="backend",
         )
 
+        # Get the actual version from the store after update
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+        config_entry = config_manager.store.get_config(
+            tenant_id=request.tenant_id,
+            scope=ConfigScope.BACKEND,
+            service="backend",
+            config_key="backend_config",
+        )
+        actual_version = config_entry.version if config_entry else 1
+
         return ProfileUpdateResponse(
             profile_name=profile_name,
             tenant_id=request.tenant_id,
             updated_fields=updated_fields,
-            version=2,  # TODO: Get actual incremented version
+            version=actual_version,
         )
 
     except HTTPException:

@@ -7,16 +7,32 @@ with different processing profiles.
 """
 
 import streamlit as st
+from cogniverse_foundation.config.utils import create_default_config_manager
 
 
 def render_ingestion_testing_tab(agent_status: dict):
     """Render the ingestion testing tab interface."""
     st.header("📥 Ingestion Pipeline Testing")
     st.markdown("Interactive testing and configuration of video ingestion pipelines with different processing profiles.")
-    
+
+    # Initialize ConfigManager
+    if "config_manager" not in st.session_state:
+        st.session_state.config_manager = create_default_config_manager()
+
+    manager = st.session_state.config_manager
+    tenant_id = st.session_state.get("current_tenant", "default")
+
+    # Load available profiles dynamically
+    try:
+        profiles_dict = manager.list_backend_profiles(tenant_id, service="video_processing")
+        available_profiles = sorted(profiles_dict.keys()) if profiles_dict else []
+    except Exception as e:
+        st.error(f"Failed to load profiles: {e}")
+        available_profiles = []
+
     # Video Upload Section
     st.subheader("🎬 Video Upload & Processing")
-    
+
     col1, col2 = st.columns([2, 1])
     with col1:
         uploaded_video = st.file_uploader(
@@ -24,16 +40,19 @@ def render_ingestion_testing_tab(agent_status: dict):
             type=['mp4', 'mov', 'avi'],
             help="Upload a video file to test different ingestion configurations"
         )
-    
+
     with col2:
         st.markdown("**Processing Profiles:**")
-        selected_profiles = st.multiselect(
-            "Select profiles to test",
-            ["video_colpali_smol500_mv_frame", "video_colqwen_omni_mv_chunk_30s", 
-             "video_videoprism_base_mv_chunk_30s", "video_videoprism_large_mv_chunk_30s",
-             "video_videoprism_lvt_base_sv_chunk_6s", "video_videoprism_lvt_large_sv_chunk_6s"],
-            default=["video_colpali_smol500_mv_frame"]
-        )
+        if available_profiles:
+            selected_profiles = st.multiselect(
+                "Select profiles to test",
+                available_profiles,
+                default=available_profiles[0:1],  # Select first profile by default
+                help=f"Dynamically loaded from tenant '{tenant_id}'"
+            )
+        else:
+            st.warning(f"No profiles found for tenant '{tenant_id}'. Create profiles in the 'Backend Profiles' tab.")
+            selected_profiles = []
     
     # Pipeline Configuration
     if uploaded_video:
