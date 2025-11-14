@@ -1,6 +1,10 @@
 # Vespa Search Strategies
 
-This document describes the 13 ranking strategies available in the Vespa search backend.
+**Last Updated**: 2025-11-13
+**Package**: cogniverse-vespa (Implementation Layer)
+**Related**: cogniverse-core (backend configuration)
+
+This document describes the 13 ranking strategies available in the Vespa search backend. These strategies are implemented in the `cogniverse-vespa` package and configured through the backend profile system in `cogniverse-core`.
 
 ## Strategy Categories
 
@@ -134,6 +138,39 @@ All BM25 strategies use fieldsets to search across:
 - **Second phase**: Reranking top candidates (default: top 100)
 - **Hybrid**: Different models for each phase
 
+## Architecture Integration
+
+### Package Roles
+- **cogniverse-vespa** (Implementation Layer): Implements all 13 search strategies and VespaSearchClient
+- **cogniverse-core** (Core Layer): Manages backend configuration and profile selection
+- **cogniverse-foundation** (Foundation Layer): Provides configuration management and telemetry interfaces
+
+### Configuration
+Strategies are selected via backend profiles in `config.json`:
+```json
+{
+  "backend": {
+    "type": "vespa",
+    "profiles": {
+      "frame_based_colpali": {
+        "ranking_strategy": "hybrid_float_bm25",
+        "embedding_model": "colpali",
+        "embedding_dim": 128
+      }
+    }
+  }
+}
+```
+
+### Multi-Modal Support
+These strategies support all content types:
+- VIDEO: Frame-level visual search with temporal context
+- AUDIO: Transcript-based text search with BM25
+- IMAGE: Visual embedding search (ColPali, VideoPrism)
+- DOCUMENT: Text + visual content search
+- TEXT: Pure BM25 text search
+- DATAFRAME: Structured data with text search
+
 ## Performance Characteristics (Estimated)
 
 <!-- TODO: Benchmark and update with actual measured performance -->
@@ -153,7 +190,13 @@ All BM25 strategies use fieldsets to search across:
 ### Automatic Recommendation
 The search client provides automatic strategy selection:
 ```python
-client.recommend_strategy(
+from cogniverse_vespa.search_client import VespaSearchClient
+
+# Initialize client with backend configuration
+client = VespaSearchClient(backend_config)
+
+# Get recommended strategy based on query characteristics
+strategy = client.recommend_strategy(
     query_text="your query",
     has_embeddings=True,
     speed_priority=False
