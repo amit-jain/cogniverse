@@ -1,13 +1,18 @@
-# Cogniverse Testing Suite
+# Cogniverse Routing Testing Suite
 
-This directory contains comprehensive tests for the Cogniverse query routing and analysis system.
+**Last Updated:** 2025-11-13
+
+This directory contains comprehensive tests for query routing and analysis in the **cogniverse-agents** package (Implementation Layer). Tests validate DSPy 3.0 routing with GEPA optimization, GLiNER entity extraction, multi-modal query classification (video, audio, images, documents, text, dataframes), and relationship-based relevance boosting.
 
 ## 🚀 Quick Start
 
 ### Run All Tests (Recommended)
+
+**Critical**: Always use `JAX_PLATFORM_NAME=cpu` for DSPy routing tests and UV workspace:
+
 ```bash
-# Run comprehensive test with all models and modes
-python tests/test_comprehensive_routing.py
+# Run comprehensive test with all models and modes (UV workspace)
+JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py
 
 # Quick test with limited models (faster)
 python tests/test_comprehensive_routing.py quick

@@ -1,8 +1,9 @@
 # Cogniverse Study Guide: Configuration Management
 
-**Last Updated:** 2025-10-15
-**Package:** `cogniverse_core`
-**Module Path:** `libs/core/cogniverse_core/config/`
+**Last Updated:** 2025-11-13
+**Architecture:** UV Workspace with 10 packages in layered architecture
+**Packages:** `cogniverse_sdk`, `cogniverse_foundation`, `cogniverse_core`
+**Module Path:** `libs/foundation/cogniverse_foundation/config/` and `libs/core/cogniverse_core/config/`
 **Purpose:** Multi-tenant, versioned configuration system with pluggable storage backends and schema-per-tenant isolation
 
 ---
@@ -19,10 +20,11 @@ The configuration system provides centralized management for all system configur
 - **DSPy integration**: Dynamic optimizer and module configuration
 
 ### Key Components
-- **ConfigManager**: Singleton access to configuration
-- **ConfigStore**: Interface for storage backends
-- **UnifiedConfig**: Type-safe configuration dataclasses
-- **ConfigWatcher**: Hot reload support
+- **ConfigStore** (sdk): Interface for storage backends (foundation layer)
+- **BaseConfig** (foundation): Base configuration classes
+- **SystemConfig** (core): System-wide configuration (extends BaseConfig)
+- **ConfigManager** (core): Singleton access to configuration
+- **ConfigWatcher** (core): Hot reload support
 
 ---
 
@@ -204,15 +206,15 @@ curl http://localhost:8080/ApplicationStatus | jq '.schemas'
 
 ### Custom Backend Implementation
 
-Create custom storage backends by implementing the ConfigStore interface:
+Create custom storage backends by implementing the ConfigStore interface from the sdk layer:
 
 ```python
-from cogniverse_core.common.config_store_interface import ConfigStore, ConfigEntry, ConfigScope
+from cogniverse_sdk.interfaces.config_store import ConfigStore
 from typing import Dict, Any, Optional, List
 import datetime
 
 class RedisConfigStore(ConfigStore):
-    """Redis-based configuration storage"""
+    """Redis-based configuration storage - implements sdk interface"""
 
     def __init__(self, redis_url: str):
         self.redis_client = redis.from_url(redis_url)

@@ -1,5 +1,7 @@
 # Deploy Modal VLM Service for Video Processing
 
+**Package**: `cogniverse-vlm` (Implementation Layer)
+
 This guide walks you through deploying the Modal VLM service for image description generation in your video processing pipeline.
 
 **Note**: There's also an automated setup script available at `docs/modal/setup_modal_vlm.py` that handles all these steps automatically.

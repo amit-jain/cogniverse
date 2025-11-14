@@ -1,19 +1,41 @@
 # Cogniverse Study Guide: System Integration Module
 
-**Last Updated:** 2025-10-07
+**Last Updated:** 2025-11-13
 **Module Path:** `tests/system/`, `tests/agents/e2e/`
-**Purpose:** End-to-end integration testing and system validation
+**Purpose:** End-to-end integration testing and system validation across the 10-package layered architecture
 
 ---
 
 ## Module Overview
 
 ### Purpose
-The System Integration module validates:
-- **End-to-End Workflows**: Complete user query to result flows
+The System Integration module validates Cogniverse's 10-package layered architecture:
+- **End-to-End Workflows**: Complete user query to result flows across all layers
 - **Component Integration**: Multi-agent communication and coordination
 - **Backend Integration**: Vespa, Phoenix, Mem0 connectivity
+- **Package Isolation**: Each package's integration with dependencies
 - **Real System Testing**: Production-like environment validation
+
+### Package Architecture Integration Testing
+```
+Foundation Layer:
+├── cogniverse-sdk: Interface contracts and document models
+└── cogniverse-foundation: Config and telemetry base classes
+
+Core Layer:
+├── cogniverse-core: Agent base classes, memory, common utilities
+├── cogniverse-evaluation: Experiment management and metrics
+└── cogniverse-telemetry-phoenix: Phoenix telemetry provider (plugin)
+
+Implementation Layer:
+├── cogniverse-agents: Routing, search agents, orchestration
+├── cogniverse-vespa: Vespa backend and tenant schema management
+└── cogniverse-synthetic: Synthetic data generation
+
+Application Layer:
+├── cogniverse-runtime: FastAPI server and ingestion pipelines
+└── cogniverse-dashboard: Streamlit analytics UI
+```
 
 ### Test Categories
 ```
@@ -36,8 +58,10 @@ class TestRealEndToEndIntegration:
     """End-to-end system validation"""
 
     def test_comprehensive_agentic_system_test(self):
-        # 1. Setup: Initialize all components
+        # 1. Setup: Initialize all components across packages
+        # cogniverse-vespa package
         vespa_client = VespaSearchBackend(url, port, schema)
+        # cogniverse-agents package
         routing_agent = RoutingAgent(config)
         video_agent = VideoSearchAgent(config)
 
@@ -314,4 +338,122 @@ def test_agent_failure_recovery():
 
 ---
 
-**Next**: [17_INSTRUMENTATION.md](./17_INSTRUMENTATION.md)
+## Package-Level Integration Tests
+
+### Testing Foundation Layer
+```python
+def test_sdk_interfaces():
+    """Verify SDK interfaces are properly implemented"""
+    from cogniverse_sdk.interfaces import BackendInterface
+    from cogniverse_vespa import VespaSearchBackend
+
+    # Verify Vespa implements SDK interface
+    assert issubclass(VespaSearchBackend, BackendInterface)
+
+def test_foundation_config():
+    """Verify foundation config is usable by core"""
+    from cogniverse_foundation.config import SystemConfig
+    from cogniverse_core.agents import BaseAgent
+
+    config = SystemConfig(tenant_id="test")
+    agent = BaseAgent(config)
+    assert agent.config.tenant_id == "test"
+```
+
+### Testing Core Layer
+```python
+def test_core_evaluation_integration():
+    """Verify core works with evaluation package"""
+    from cogniverse_core.agents import RoutingAgent
+    from cogniverse_evaluation.experiments import ExperimentTracker
+
+    agent = RoutingAgent(tenant_id="test")
+    tracker = ExperimentTracker(experiment_id="test_exp")
+
+    # Record routing decision
+    result = agent.route("test query")
+    tracker.log_prediction(query="test query", result=result)
+
+def test_telemetry_phoenix_plugin():
+    """Verify Phoenix telemetry plugin integration"""
+    from cogniverse_foundation.telemetry import TelemetryProvider
+    from cogniverse_telemetry_phoenix import PhoenixTelemetryProvider
+
+    # Verify plugin registration
+    provider = TelemetryProvider.get_provider("phoenix")
+    assert isinstance(provider, PhoenixTelemetryProvider)
+```
+
+### Testing Implementation Layer
+```python
+def test_agents_vespa_integration():
+    """Verify agents work with Vespa backend"""
+    from cogniverse_agents.search import VideoSearchAgent
+    from cogniverse_vespa import VespaSearchBackend
+    from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+
+    # Setup tenant schemas
+    schema_mgr = TenantSchemaManager()
+    schema_mgr.ensure_tenant_schema_exists("test", "video")
+
+    # Initialize agent with Vespa backend
+    agent = VideoSearchAgent(
+        tenant_id="test",
+        backend=VespaSearchBackend(schema="video_frames_test")
+    )
+
+    results = agent.search("test query")
+    assert len(results) >= 0
+
+def test_agents_synthetic_integration():
+    """Verify agents work with synthetic data"""
+    from cogniverse_agents.routing import RoutingAgent
+    from cogniverse_synthetic.generators import QueryGenerator
+
+    generator = QueryGenerator()
+    synthetic_queries = generator.generate_routing_queries(n=10)
+
+    agent = RoutingAgent(tenant_id="test")
+    for query in synthetic_queries:
+        result = agent.route(query["text"])
+        assert result is not None
+```
+
+### Testing Application Layer
+```python
+def test_runtime_integration():
+    """Verify runtime integrates all layers"""
+    from cogniverse_runtime.server import create_app
+    from fastapi.testclient import TestClient
+
+    app = create_app()
+    client = TestClient(app)
+
+    # Test end-to-end request
+    response = client.post(
+        "/search",
+        json={"query": "cooking videos"},
+        headers={"X-Tenant-ID": "test"}
+    )
+
+    assert response.status_code == 200
+    assert "results" in response.json()
+
+def test_dashboard_integration():
+    """Verify dashboard accesses evaluation data"""
+    from cogniverse_dashboard.analytics import ExperimentDashboard
+    from cogniverse_evaluation.experiments import ExperimentTracker
+
+    # Create experiment data
+    tracker = ExperimentTracker(experiment_id="dash_test")
+    tracker.log_prediction(query="q1", result={"modality": "video"})
+
+    # Verify dashboard can read
+    dashboard = ExperimentDashboard()
+    data = dashboard.load_experiment("dash_test")
+    assert len(data) > 0
+```
+
+---
+
+**Next**: For detailed instrumentation and telemetry patterns, see [Phoenix Telemetry Integration](../modules/telemetry-phoenix.md)

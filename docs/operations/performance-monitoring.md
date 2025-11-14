@@ -1,6 +1,7 @@
 # Cogniverse Study Guide: Performance & Monitoring
 
-**Last Updated:** 2025-10-08
+**Last Updated:** 2025-11-13
+**Architecture:** UV Workspace with 10 packages in layered architecture
 **Module Path:** System-wide
 **Purpose:** Performance benchmarks, targets, monitoring, and optimization strategies
 

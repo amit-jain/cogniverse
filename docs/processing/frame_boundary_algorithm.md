@@ -10,7 +10,7 @@ The system combines visual scene change detection with audio transcription to cr
 
 ### 1. Visual Keyframe Extraction
 
-**Location**: `archive/src/processing/video_ingestion_pipeline.py` (lines 148-196)
+**Location**: `packages/cogniverse-processing/cogniverse_processing/video_ingestion_pipeline.py`
 
 The keyframe extraction uses histogram comparison to detect visual scene changes:
 
@@ -53,7 +53,7 @@ def extract_keyframes(video_path: str, threshold: float = 0.98) -> List[Tuple[Im
 
 ### 2. Audio Transcription Mapping
 
-**Location**: `archive/src/processing/video_ingestion_pipeline.py` (lines 398-400)
+**Location**: `packages/cogniverse-processing/cogniverse_processing/video_ingestion_pipeline.py`
 
 Audio transcripts are mapped TO the existing keyframe boundaries:
 
@@ -103,16 +103,18 @@ The 16.8-second keyframe represents a coherent visual scene where the speaker di
 - **Long durations (5-20s)**: Stable visual scenes with extended dialogue/narration
 - **Very long durations (>20s)**: May indicate processing errors or very static content
 
-## Current Implementation vs Archive
+## Current Implementation
 
-### Archive Implementation (Sophisticated)
+### Sophisticated Implementation (cogniverse-processing)
+Location: `packages/cogniverse-processing/cogniverse_processing/`
+
 - Visual scene change detection with histogram comparison
 - Precise temporal boundaries based on actual scene changes
 - Audio mapped to visual boundaries
 - Supports variable frame durations based on content
 
-### Current Implementation (Simplified)
-Location: `src/processing/pipeline_steps/embedding_generator.py` (lines 245-246)
+### Legacy Implementation (Simplified)
+Location: `archive/src/processing/pipeline_steps/embedding_generator.py`
 
 ```python
 "start_time": float(timestamp),

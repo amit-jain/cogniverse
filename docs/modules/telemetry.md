@@ -1,23 +1,87 @@
-# Telemetry Module Study Guide
+# Telemetry Module Documentation
 
-**Last Updated:** 2025-10-07
-**Package:** `cogniverse_core`
-**Module Location:** `libs/core/cogniverse_core/telemetry/`
-**Purpose:** Multi-tenant observability with Phoenix integration for distributed tracing, performance tracking, and modality-specific metrics
+**Last Updated:** 2025-11-13
+**Packages:**
+- **Foundation Interfaces**: `cogniverse-foundation` (libs/foundation/cogniverse_foundation/telemetry/)
+- **Core Infrastructure**: `cogniverse-core` (libs/core/cogniverse_core/telemetry/)
+- **Phoenix Plugin**: `cogniverse-telemetry-phoenix` (libs/telemetry-phoenix/)
+**Layer:** Foundation Layer (interfaces) + Core Layer (infrastructure) + Plugin (Phoenix provider)
+**Purpose:** Multi-tenant observability with pluggable telemetry providers, distributed tracing, performance tracking, and modality-specific metrics for multi-modal content (video, audio, images, documents, text, dataframes)
+
+**Architecture Note:** Cogniverse uses a **plugin-based telemetry architecture** with three layers:
+1. **Foundation Layer** (`cogniverse-foundation`): Pure telemetry provider interfaces with zero dependencies
+2. **Core Layer** (`cogniverse-core`): Telemetry infrastructure, manager, and configuration
+3. **Plugin Layer** (`cogniverse-telemetry-phoenix`): Phoenix-specific implementation auto-discovered via Python entry points
+
+This design enables clean separation between telemetry infrastructure and provider-specific implementations, allowing easy swapping of telemetry backends (Phoenix, Datadog, New Relic, etc.).
 
 ---
 
 ## Package Structure
 
+### 1. Foundation Layer: Telemetry Interfaces (cogniverse-foundation)
+```
+libs/foundation/cogniverse_foundation/telemetry/
+├── __init__.py                  # Package initialization
+├── providers/
+│   ├── __init__.py              # Provider interface exports
+│   └── base.py                  # TelemetryProvider abstract base class
+├── config.py                    # TelemetryConfig base class
+└── interfaces.py                # Core telemetry interfaces (Span, Tracer, etc.)
+```
+
+**Purpose:** Pure interfaces for telemetry providers with **zero dependencies** on specific telemetry backends. Defines the contract that all telemetry plugins must implement.
+
+**Key Classes:**
+- `TelemetryProvider`: Abstract base class for all telemetry providers
+- `TelemetryConfig`: Base configuration for telemetry systems
+- Provider-agnostic span, tracer, and context interfaces
+
+### 2. Core Layer: Telemetry Infrastructure (cogniverse-core)
 ```
 libs/core/cogniverse_core/telemetry/
 ├── __init__.py              # Package initialization
 ├── manager.py               # TelemetryManager singleton
 ├── config.py                # TelemetryConfig and BatchExportConfig
-├── modality_metrics.py      # ModalityMetricsTracker
-├── context.py               # Span context helpers
-└── phoenix_client.py        # Phoenix client utilities
+├── modality_metrics.py      # ModalityMetricsTracker (for video, audio, images, etc.)
+└── context.py               # Span context helpers
 ```
+
+**Purpose:** Core telemetry infrastructure built on foundation interfaces. Provides multi-tenant telemetry management, configuration, and modality-specific metrics.
+
+**Key Classes:**
+- `TelemetryManager`: Singleton manager for multi-tenant tracer providers
+- `ModalityMetricsTracker`: Performance tracking per content type (VIDEO, AUDIO, IMAGE, TEXT, DATAFRAME, DOCUMENT)
+- Context helpers for common operations (search, encode, backend)
+
+### 3. Plugin Layer: Phoenix Telemetry Provider (cogniverse-telemetry-phoenix)
+```
+libs/telemetry-phoenix/cogniverse_telemetry_phoenix/
+├── __init__.py              # Package initialization & PhoenixProvider
+├── provider.py              # PhoenixProvider implementation (implements TelemetryProvider)
+├── traces.py                # Phoenix trace query utilities
+├── annotations.py           # Phoenix annotation management
+└── evaluation/              # Phoenix evaluation provider
+    ├── __init__.py
+    └── evaluation_provider.py  # PhoenixEvaluationProvider
+```
+
+**Purpose:** Phoenix-specific implementation of telemetry interfaces. Auto-discovered via Python entry points.
+
+**Plugin Registration:** The Phoenix provider is auto-discovered via entry points defined in `pyproject.toml`:
+```toml
+[project.entry-points."cogniverse.telemetry.providers"]
+phoenix = "cogniverse_telemetry_phoenix:PhoenixProvider"
+
+[project.entry-points."cogniverse.evaluation.providers"]
+phoenix = "cogniverse_telemetry_phoenix.evaluation:PhoenixEvaluationProvider"
+```
+
+**Benefits of Plugin Architecture:**
+- **Swappable Providers**: Easy to add Datadog, New Relic, Jaeger, or custom providers
+- **Zero Core Dependencies**: Core package doesn't depend on Phoenix SDK
+- **Auto-discovery**: Providers automatically registered via entry points
+- **Clean Separation**: Provider-specific code isolated in plugins
 
 ---
 

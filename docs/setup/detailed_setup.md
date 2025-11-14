@@ -1,6 +1,9 @@
-# Getting Started with the Multi-Agent RAG System
+# Getting Started with Cogniverse
 
-Welcome to the Multi-Modal, Multi-Agent Retrieval System! This guide will help you get your sophisticated AI system up and running quickly.
+**Architecture**: 10-Package Layered System
+**Last Updated**: 2025-11-13
+
+Welcome to Cogniverse! This guide will help you get your sophisticated multi-agent video search system up and running quickly.
 
 ## 🚀 Quick Start
 
@@ -182,10 +185,15 @@ You can also use the system programmatically:
 ```python
 import asyncio
 from cogniverse_agents.composing_agent import run_query_programmatically
+from cogniverse_core.config import SystemConfig
 
 async def search_example():
+    # Initialize configuration
+    config = SystemConfig(tenant_id="default")
+
+    # Run query
     query = "Find information about system architecture"
-    result = await run_query_programmatically(query)
+    result = await run_query_programmatically(query, config)
     print(result["final_response"])
 
 asyncio.run(search_example())
@@ -379,4 +387,34 @@ Once you have the system running:
 4. **Scale up** with production backends (Vespa, Elasticsearch)
 5. **Integrate** with your existing workflows
 
-Your sophisticated multi-agent RAG system is now ready to help you find information across text documents and video content with natural language queries! 
+## Package Architecture Overview
+
+Cogniverse uses a 10-package layered architecture:
+
+### SDK Layer
+- `cogniverse-sdk`: Interfaces and type contracts
+
+### Foundation Layer
+- `cogniverse-foundation`: Telemetry, logging, base utilities
+
+### Core Layer
+- `cogniverse-core`: System configuration, orchestration
+
+### Agent Layer
+- `cogniverse-agents`: Agent implementations (routing, search, etc.)
+
+### Implementation Layer
+- `cogniverse-retrieval`: Search backends (Vespa, Elasticsearch)
+- `cogniverse-processing`: Video processing pipeline
+- `cogniverse-synthetic`: Synthetic data generation
+- `cogniverse-vlm`: VLM services
+
+### Application Layer
+- `cogniverse-services`: Web services, APIs
+
+### Evaluation Layer
+- `cogniverse-evaluation`: Metrics, experiments, Phoenix integration
+
+For detailed architecture documentation, see [ARCHITECTURE.md](../ARCHITECTURE.md).
+
+Your sophisticated multi-agent video search system is now ready to help you find information across video content with natural language queries!

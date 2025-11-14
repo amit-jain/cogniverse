@@ -1,7 +1,7 @@
 # Deployment Guide
 
-**Last Updated:** 2025-10-15
-**Architecture:** UV Workspace with 5 SDK packages
+**Last Updated:** 2025-11-13
+**Architecture:** UV Workspace with 10 packages in layered architecture
 **Purpose:** Deployment patterns for Cogniverse multi-agent system with multi-tenant support
 
 ---
@@ -289,15 +289,15 @@ import modal
 
 app = modal.App("cogniverse")
 
-# GPU-optimized image with SDK packages
+# GPU-optimized image with all 10 SDK packages
 image = (
     modal.Image.debian_slim()
     .pip_install("uv")
-    .copy_local_dir("libs", "/app/libs")  # Copy SDK packages
+    .copy_local_dir("libs", "/app/libs")  # Copy all 10 packages
     .workdir("/app")
     .run_commands(
         "apt-get update && apt-get install -y ffmpeg git",
-        "uv sync",  # Install all SDK packages
+        "uv sync",  # Install all 10 workspace packages
         "huggingface-cli download vidore/colsmol-500m",
     )
 )
@@ -557,16 +557,25 @@ docker exec ollama ollama pull llama3.2
 ### Building Distribution Packages
 
 ```bash
-# Build all SDK packages for distribution
+# Build all 10 SDK packages for distribution
 for dir in libs/*/; do
   echo "Building $(basename $dir)..."
   (cd "$dir" && uv build)
 done
 
-# Packages created in dist/ directory:
+# Packages created in dist/ directory (all 10 packages):
+# Foundation Layer:
+# - cogniverse_sdk-0.1.0-py3-none-any.whl
+# - cogniverse_foundation-0.1.0-py3-none-any.whl
+# Core Layer:
 # - cogniverse_core-0.1.0-py3-none-any.whl
+# - cogniverse_evaluation-0.1.0-py3-none-any.whl
+# - cogniverse_telemetry_phoenix-0.1.0-py3-none-any.whl
+# Implementation Layer:
 # - cogniverse_agents-0.1.0-py3-none-any.whl
 # - cogniverse_vespa-0.1.0-py3-none-any.whl
+# - cogniverse_synthetic-0.1.0-py3-none-any.whl
+# Application Layer:
 # - cogniverse_runtime-0.1.0-py3-none-any.whl
 # - cogniverse_dashboard-0.1.0-py3-none-any.whl
 ```

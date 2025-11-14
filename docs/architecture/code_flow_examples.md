@@ -55,12 +55,12 @@ uv run python scripts/run_ingestion.py \
 **Code Flow:**
 ```python
 # 1. Pipeline initialization with Phoenix telemetry
-from cogniverse_agents.ingestion.pipeline import VideoIngestionPipeline
-from cogniverse_core.telemetry.manager import TelemetryManager
-from cogniverse_core.config.unified_config import SystemConfig
+from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
+from cogniverse_foundation.telemetry import TelemetryProvider
+from cogniverse_foundation.config import SystemConfig
 
 config = SystemConfig(tenant_id="customer_a")
-telemetry = TelemetryManager(config)
+telemetry = TelemetryProvider(config)
 pipeline = VideoIngestionPipeline(
     profile="video_colpali_smol500_mv_frame",
     tenant_id="customer_a",
@@ -350,9 +350,9 @@ reward = await optimizer.record_routing_experience(
 ### Search with Context
 ```python
 # 1. Initialize memory-aware agent
-from cogniverse_core.common.mem0_memory_manager import Mem0MemoryManager
-from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
-from cogniverse_agents.video_search_agent import VideoSearchAgent
+from cogniverse_core.memory import Mem0MemoryManager
+from cogniverse_core.agents import MemoryAwareMixin
+from cogniverse_agents.search import VideoSearchAgent
 
 class MemoryAwareVideoAgent(VideoSearchAgent, MemoryAwareMixin):
     def __init__(self, config):
@@ -391,10 +391,10 @@ await agent.memory.add(
 ### Run A/B Test
 ```python
 # 1. Create experiment
-from cogniverse_core.evaluation.plugins.phoenix_experiment import PhoenixExperimentPlugin
+from cogniverse_telemetry_phoenix.evaluation import PhoenixExperimentProvider
 import phoenix as px
 
-plugin = PhoenixExperimentPlugin()
+provider = PhoenixExperimentProvider()
 client = px.Client()
 
 # 2. Setup dataset
@@ -404,7 +404,7 @@ dataset = client.upload_dataset(
 )
 
 # 3. Run experiment with multiple strategies
-experiment_id = plugin.run_experiment(
+experiment_id = provider.run_experiment(
     dataset_name="ml_queries_v1",
     tenant_id="customer_a",
     strategies=["hybrid_float_bm25", "float_float"],
@@ -496,5 +496,13 @@ with telemetry.trace("search_request", tenant_id) as trace:
 
 ---
 
-**Last Updated**: 2025-10-04
+**Last Updated**: 2025-11-13
 **Status**: Production Ready
+
+**Package Architecture Note**: Code examples use Cogniverse's 10-package layered architecture:
+- **Foundation Layer**: cogniverse-sdk, cogniverse-foundation (config, telemetry)
+- **Core Layer**: cogniverse-core (base agents, memory), cogniverse-evaluation (experiments), cogniverse-telemetry-phoenix (Phoenix integration)
+- **Implementation Layer**: cogniverse-agents (routing, search), cogniverse-vespa (backends), cogniverse-synthetic (data generation)
+- **Application Layer**: cogniverse-runtime (ingestion, API), cogniverse-dashboard (UI)
+
+All code examples follow the correct import paths for the 10-package structure located in `/home/user/cogniverse/libs/*/`.

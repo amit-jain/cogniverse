@@ -1,6 +1,8 @@
 # Ingestion Module Test Suite
 
-This directory contains comprehensive unit and integration tests for the video ingestion pipeline with smart environment-aware execution.
+**Last Updated:** 2025-11-13
+
+This directory contains comprehensive unit and integration tests for **cogniverse-runtime** (Application Layer) multi-modal ingestion pipeline with smart environment-aware execution. Tests validate processing of all content modalities: video, audio, images, documents, text, and dataframes with ColPali, VideoPrism, ColQwen embeddings and Vespa backend integration.
 
 ## Structure
 
@@ -74,12 +76,15 @@ python scripts/test_ingestion.py --integration
 ```
 
 ### **Unit Tests (80%+ Coverage)**
+
+**Use UV workspace for all tests:**
+
 ```bash
 # CI-safe unit tests (always work)
-python scripts/test_ingestion.py --unit --ci-safe
+uv run python scripts/test_ingestion.py --unit --ci-safe
 
-# Direct pytest for unit tests
-uv run python -m pytest tests/ingestion/unit/test_*_real.py -v --cov=src/app/ingestion/processors
+# Direct pytest for unit tests with UV workspace
+uv run pytest tests/ingestion/unit/test_*_real.py -v --cov=libs/runtime/cogniverse_runtime/ingestion
 ```
 
 ### **Integration Tests (Environment-Aware)**

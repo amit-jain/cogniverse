@@ -1,6 +1,8 @@
 # Troubleshooting Guide
 
-Common issues and solutions for the Cogniverse multi-agent RAG system.
+**Last Updated:** 2025-11-13
+**Architecture:** UV Workspace with 10 packages in layered architecture
+**Purpose:** Common issues and solutions for the Cogniverse multi-agent RAG system
 
 ---
 
@@ -165,7 +167,8 @@ def _register_vespa_provider():
 ```
 
 **Affected Files:**
-- `libs/core/cogniverse_core/common/mem0_memory_manager.py` (fixed in commit 28c8e45)
+- Configuration and memory management modules in core package
+- Note: With 10-package architecture, ensure imports from correct layers (sdk, foundation, core)
 
 **Prevention:**
 - Import system modules (`sys`, `os`, `logging`) at module level
@@ -498,4 +501,4 @@ Phoenix traces:  http://localhost:6006
 
 ---
 
-**Last Updated:** 2025-10-08
+**Last Updated:** 2025-11-13

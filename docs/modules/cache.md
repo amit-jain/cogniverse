@@ -1,8 +1,8 @@
 # Cache Module Study Guide
 
-**Package:** `cogniverse_core`
+**Package:** `cogniverse_core` (Core Layer)
 **Module Location:** `libs/core/cogniverse_core/common/cache/`
-**Last Updated:** 2025-10-07
+**Last Updated:** 2025-11-13
 **Purpose:** Multi-tiered caching system for embeddings, pipeline artifacts, and video processing outputs with pluggable backend architecture
 
 ---

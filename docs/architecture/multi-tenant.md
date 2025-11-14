@@ -1,7 +1,7 @@
 # Cogniverse Multi-Tenant Architecture
 
-**Last Updated:** 2025-10-15
-**Purpose:** Comprehensive guide to Cogniverse's multi-tenant architecture with schema-per-tenant isolation
+**Last Updated:** 2025-11-13
+**Purpose:** Comprehensive guide to Cogniverse's multi-tenant architecture with schema-per-tenant isolation across 10-package layered architecture
 **Audience:** DevOps, SRE, and developers implementing or operating multi-tenant features
 
 ---
@@ -36,17 +36,18 @@ Cogniverse uses **physical tenant isolation** via dedicated Vespa schemas per te
 - **Per-Tenant Memory**: Mem0 memory manager instances are per-tenant singletons
 - **Isolated Telemetry**: Phoenix projects are per-tenant for trace isolation
 
-### Key Components
+### Key Components (10-Package Architecture)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Tenant Context Layer                      │
+│             Application Layer (cogniverse-runtime)           │
 │  - tenant_id extraction from JWT/headers                     │
 │  - tenant_id validation and parsing                          │
 │  - request.state.tenant_id injection                         │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
+│      Implementation Layer (cogniverse-vespa)                 │
 │              TenantSchemaManager (Singleton)                 │
 │  - Schema name routing: base_schema + tenant_id              │
 │  - Lazy schema creation from templates                       │
@@ -66,9 +67,12 @@ Cogniverse uses **physical tenant isolation** via dedicated Vespa schemas per te
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │              Per-Tenant Resource Isolation                   │
-│  - Mem0MemoryManager._instances[tenant_id]                   │
-│  - Phoenix projects: {tenant_id}_routing_agent               │
-│  - Optimization models: data/optimization/{tenant_id}/       │
+│  Core Layer (cogniverse-core):                               │
+│    - Mem0MemoryManager._instances[tenant_id]                 │
+│  Foundation Layer (cogniverse-foundation):                   │
+│    - Telemetry projects: {tenant_id}_routing_agent           │
+│  Implementation Layer (cogniverse-agents):                   │
+│    - Optimization models: data/optimization/{tenant_id}/     │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -258,7 +262,8 @@ graph LR
 
 `TenantSchemaManager` is the central component for managing tenant-specific Vespa schemas.
 
-**Location**: `libs/vespa/cogniverse_vespa/tenant_schema_manager.py`
+**Package**: cogniverse-vespa (Implementation Layer)
+**Location**: `/home/user/cogniverse/libs/vespa/cogniverse_vespa/tenant_schema_manager.py`
 
 **Key Features**:
 - **Singleton Pattern**: One instance per Vespa endpoint
@@ -476,7 +481,8 @@ Tenant ID is extracted from HTTP requests using one of these methods:
 
 ### Middleware Implementation
 
-**Location**: `libs/runtime/cogniverse_runtime/middleware/` (future location)
+**Package**: cogniverse-runtime (Application Layer)
+**Location**: `/home/user/cogniverse/libs/runtime/cogniverse_runtime/middleware/`
 
 **Example Middleware**:
 
@@ -546,8 +552,10 @@ async def search(request: Request, query: str):
 
 Mem0MemoryManager uses **per-tenant singleton pattern**:
 
+**Package**: cogniverse-core (Core Layer)
+**Location**: `/home/user/cogniverse/libs/core/cogniverse_core/memory/mem0_memory_manager.py`
+
 ```python
-# libs/core/cogniverse_core/common/mem0_memory_manager.py
 
 class Mem0MemoryManager:
     """Per-tenant memory manager using Mem0 with Vespa backend"""
@@ -629,11 +637,14 @@ graph TD
 
 Phoenix telemetry uses per-tenant projects for trace isolation:
 
+**Package**: cogniverse-telemetry-phoenix (Core Layer Plugin)
+**Base Package**: cogniverse-foundation (Foundation Layer)
+
 ```python
-from cogniverse_core.telemetry.manager import TelemetryManager
+from cogniverse_foundation.telemetry import TelemetryProvider
 
 # Initialize telemetry for tenant
-telemetry = TelemetryManager.get_instance(
+telemetry = TelemetryProvider.get_instance(
     tenant_id="acme",
     project_name="routing_agent"
 )
@@ -710,8 +721,11 @@ Tenant-specific backend configuration enables per-tenant customization of video 
 
 The backend configuration is defined through `BackendConfig` and `BackendProfileConfig` dataclasses:
 
+**Package**: cogniverse-foundation (Foundation Layer)
+**Location**: `/home/user/cogniverse/libs/foundation/cogniverse_foundation/config/`
+
 ```python
-from cogniverse_core.config.unified_config import BackendConfig, BackendProfileConfig
+from cogniverse_foundation.config import BackendConfig, BackendProfileConfig
 
 # Backend profile configuration
 @dataclass
@@ -917,7 +931,7 @@ flowchart LR
 
 **Initialization**:
 ```python
-from cogniverse_core.config.unified_config import SystemConfig
+from cogniverse_foundation.config import SystemConfig
 
 # SystemConfig automatically loads and merges backend config
 config = SystemConfig(tenant_id="acme")
@@ -1085,7 +1099,7 @@ def validate_tenant_id(tenant_id: str):
 ### Parsing Tenant IDs
 
 ```python
-from cogniverse_core.common.tenant_utils import parse_tenant_id
+from cogniverse_core.common import parse_tenant_id
 
 # Simple format
 org_id, tenant_name = parse_tenant_id("acme")
@@ -1099,7 +1113,7 @@ org_id, tenant_name = parse_tenant_id("acme:production")
 ### Storage Path Generation
 
 ```python
-from cogniverse_core.common.tenant_utils import get_tenant_storage_path
+from cogniverse_core.common import get_tenant_storage_path
 
 # Simple format
 path = get_tenant_storage_path("data/optimization", "acme")
@@ -1594,12 +1608,12 @@ print(f"Memory B tenant: {memory_b.tenant_id}")  # Should be tenant_b
 
 **Diagnosis**:
 ```python
-# Check telemetry manager project name
-telemetry = TelemetryManager.get_instance("tenant_a", "routing_agent")
+# Check telemetry provider project name
+telemetry = TelemetryProvider.get_instance("tenant_a", "routing_agent")
 print(f"Project: {telemetry.project_name}")  # Should be tenant_a_routing_agent
 ```
 
-**Solution**: Ensure TelemetryManager includes tenant_id in project name.
+**Solution**: Ensure TelemetryProvider includes tenant_id in project name.
 
 ---
 
@@ -1608,7 +1622,7 @@ print(f"Project: {telemetry.project_name}")  # Should be tenant_a_routing_agent
 ### 1. Always Validate Tenant IDs
 
 ```python
-from cogniverse_core.common.tenant_utils import validate_tenant_id
+from cogniverse_core.common import validate_tenant_id
 
 # Validate at entry point
 def handle_request(tenant_id: str):
@@ -1661,11 +1675,12 @@ if stats["tenants_cached"] > 1000:
 
 Cogniverse's multi-tenant architecture provides **physical isolation** via dedicated Vespa schemas per tenant:
 
-**Key Components**:
-- **TenantSchemaManager**: Schema lifecycle and routing
-- **Mem0MemoryManager**: Per-tenant memory isolation
-- **TelemetryManager**: Per-tenant trace isolation
-- **Tenant Utilities**: Validation and parsing
+**Key Components Across 10-Package Architecture**:
+- **TenantSchemaManager** (cogniverse-vespa): Schema lifecycle and routing
+- **Mem0MemoryManager** (cogniverse-core): Per-tenant memory isolation
+- **TelemetryProvider** (cogniverse-foundation): Per-tenant trace isolation base
+- **PhoenixTelemetryProvider** (cogniverse-telemetry-phoenix): Phoenix-specific implementation
+- **Tenant Utilities** (cogniverse-core): Validation and parsing
 
 **Isolation Guarantees**:
 - ✅ Physical data isolation (separate Vespa schemas)
@@ -1682,6 +1697,12 @@ Cogniverse's multi-tenant architecture provides **physical isolation** via dedic
 - ✅ Easy tenant onboarding/offboarding
 
 For implementation details, see:
-- [SDK Architecture](./sdk-architecture.md) - Package structure
-- [System Flows](./system-flows.md) - Multi-tenant request flows
-- [Operations Guide](../operations/multi-tenant-ops.md) - Operational procedures
+- [SDK Architecture](./sdk-architecture.md) - 10-package layered structure
+- [System Flows](./system-flows.md) - Multi-tenant request flows across packages
+- [Architecture Overview](./overview.md) - Complete system architecture
+
+**Package Locations:**
+- Foundation: `/home/user/cogniverse/libs/sdk/`, `/home/user/cogniverse/libs/foundation/`
+- Core: `/home/user/cogniverse/libs/core/`, `/home/user/cogniverse/libs/evaluation/`, `/home/user/cogniverse/libs/telemetry-phoenix/`
+- Implementation: `/home/user/cogniverse/libs/agents/`, `/home/user/cogniverse/libs/vespa/`, `/home/user/cogniverse/libs/synthetic/`
+- Application: `/home/user/cogniverse/libs/runtime/`, `/home/user/cogniverse/libs/dashboard/`

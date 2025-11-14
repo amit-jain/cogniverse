@@ -1,79 +1,165 @@
 # Cogniverse Test Suite - Comprehensive Guide
 
+**Last Updated:** 2025-11-13
+
 ## Overview
 
-This is a comprehensive test suite for the Cogniverse multi-agent RAG system, covering routing, ingestion, and video processing pipelines. The test suite is designed with environment-aware execution, smart dependency detection, and CI/CD integration.
+This is a comprehensive test suite for the Cogniverse multi-modal content intelligence platform built on a **10-package layered architecture**. The suite validates multi-agent orchestration, multi-modal processing (video, audio, images, documents, text, dataframes), routing optimization, and backend integration with environment-aware execution and CI/CD integration.
+
+### Architecture Under Test
+
+**10-Package Layered Architecture:**
+- **Foundation Layer**: cogniverse-sdk (backend interfaces), cogniverse-foundation (config, telemetry base)
+- **Core Layer**: cogniverse-core (agents, registries, memory), cogniverse-evaluation (metrics), cogniverse-telemetry-phoenix (Phoenix provider)
+- **Implementation Layer**: cogniverse-agents (routing, search), cogniverse-vespa (backend), cogniverse-synthetic (data generation)
+- **Application Layer**: cogniverse-runtime (FastAPI, ingestion), cogniverse-dashboard (Streamlit UI)
 
 ## Quick Start
 
 ### Core Test Commands
 ```bash
-# Install test dependencies
-uv pip install pytest pytest-asyncio pytest-cov
+# Run all tests with UV workspace (recommended)
+JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v
 
-# Run all tests
-uv run python run_tests.py
+# Run layer-by-layer tests
+JAX_PLATFORM_NAME=cpu uv run pytest tests/foundation/ -v  # Foundation layer
+JAX_PLATFORM_NAME=cpu uv run pytest tests/common/ tests/evaluation/ -v  # Core layer
+JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ tests/routing/ -v  # Implementation layer
+JAX_PLATFORM_NAME=cpu uv run pytest tests/ingestion/ -v  # Application layer
 
-# Run comprehensive routing tests (recommended)
-python tests/test_comprehensive_routing.py
+# Run comprehensive routing tests
+JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py
 
 # Run ingestion tests with environment detection
-python scripts/test_ingestion.py --integration
+uv run python scripts/test_ingestion.py --integration
 ```
+
+**Note:** Use `JAX_PLATFORM_NAME=cpu` for DSPy tests to avoid GPU initialization overhead.
 
 ## Test Organization
 
-### Directory Structure
+### Layer-by-Layer Testing Approach
+
+Tests are organized following the 10-package architecture layers, testing from Foundation → Core → Implementation → Application:
+
 ```
 tests/
-├── routing/                    # Query routing system tests
-│   ├── unit/                  # Routing strategy unit tests
-│   ├── integration/           # Tiered routing integration tests
-│   └── demo_routing_tiers.py  # Interactive demonstration
-├── ingestion/                 # Video ingestion pipeline tests
-│   ├── unit/                  # Individual component tests
-│   ├── integration/           # Backend and pipeline tests
-│   ├── utils/markers.py       # Smart environment detection
+├── foundation/                 # Foundation layer tests
+│   ├── test_config_base.py    # Configuration base classes
+│   └── test_telemetry_interfaces.py  # Telemetry interfaces
+├── sdk/                        # SDK layer tests
+│   ├── test_backend_interface.py     # Backend interface contracts
+│   └── test_document_model.py        # Universal document model
+├── common/                     # Core layer tests
+│   ├── test_base_agent.py     # Agent base classes
+│   ├── test_mem0_memory_manager.py   # Memory management
+│   └── test_tenant_utils.py   # Multi-tenant utilities
+├── evaluation/                 # Evaluation framework tests
+│   ├── test_experiments.py    # Experiment tracking
+│   ├── test_metrics.py        # Provider-agnostic metrics
+│   └── test_datasets.py       # Dataset handling
+├── telemetry/                  # Telemetry provider tests
+│   ├── test_phoenix_provider.py      # Phoenix telemetry
+│   └── test_evaluation_provider.py   # Phoenix evaluation
+├── agents/                     # Implementation layer - agents
+│   ├── unit/                  # Unit tests
+│   ├── integration/           # Integration tests
+│   └── e2e/                   # End-to-end tests with real services
+├── routing/                    # Routing and optimization tests
+│   ├── unit/                  # Strategy unit tests
+│   ├── integration/           # Tiered routing integration
+│   └── test_comprehensive_routing.py  # Multi-model benchmarks
+├── backends/                   # Vespa backend tests
+│   ├── test_vespa_search_client.py   # Search operations
+│   └── test_tenant_schema_manager.py # Multi-tenant schemas
+├── ingestion/                  # Application layer - runtime
+│   ├── unit/                  # Processor unit tests
+│   ├── integration/           # Pipeline integration tests
 │   └── fixtures/              # Test fixtures and mocks
-└── comprehensive/             # Cross-system integration tests
+├── memory/                     # Memory system tests
+│   ├── unit/                  # Mem0 wrapper tests
+│   └── integration/           # Vespa memory backend tests
+└── system/                     # System integration tests
+    ├── test_e2e_workflows.py  # Complete workflows
+    └── resources/             # Test data and schemas
 ```
 
 ## Test Categories
 
-### 1. Routing System Tests
+### 1. Multi-Modal Testing Strategy
+
+The test suite validates processing across **all content modalities**:
+
+| Modality | Processors Tested | Embedding Models | Backend Tests |
+|----------|------------------|------------------|---------------|
+| **Video** | Frame extraction, chunk segmentation | ColPali, VideoPrism, ColQwen | Multi-vector, single-vector |
+| **Audio** | Whisper transcription, chunking | Text embeddings on transcripts | BM25 + dense hybrid |
+| **Images** | Frame-level processing | ColPali (visual embeddings) | Frame-based schemas |
+| **Documents** | PDF, text extraction | ColPali, text embeddings | Document schemas |
+| **Text** | Chunk processing | Dense, binary, BM25 | Hybrid ranking |
+| **Dataframes** | Structured data processing | Column embeddings | Structured search |
+
+### 2. Layer-by-Layer Test Coverage
+
+**Foundation Layer Tests:**
+- Backend interface contracts (`cogniverse-sdk`)
+- Universal document model for all modalities
+- Configuration base classes (`cogniverse-foundation`)
+- Telemetry provider interfaces
+
+**Core Layer Tests:**
+- Base agent classes and mixins (`cogniverse-core`)
+- Mem0 memory manager with Vespa backend
+- Multi-tenant utilities and context management
+- Provider-agnostic evaluation framework (`cogniverse-evaluation`)
+- Phoenix telemetry provider (`cogniverse-telemetry-phoenix`)
+
+**Implementation Layer Tests:**
+- DSPy 3.0 routing agent with GEPA optimization (`cogniverse-agents`)
+- Multi-modal search and reranking
+- Vespa backend with 9 ranking strategies (`cogniverse-vespa`)
+- Synthetic data generation for optimizers (`cogniverse-synthetic`)
+
+**Application Layer Tests:**
+- Multi-modal ingestion pipeline (`cogniverse-runtime`)
+- FastAPI endpoints and tenant middleware
+- Streamlit dashboard components (`cogniverse-dashboard`)
+
+### 3. Routing System Tests
 
 #### Unit Tests (`tests/routing/unit/`)
-- **GLiNER Strategy**: Named entity recognition routing
-- **LLM Strategy**: Language model-based routing
-- **Keyword Strategy**: Simple keyword-based routing
-- **LangExtract Strategy**: Language extraction routing
+- **GLiNER Strategy**: Named entity recognition for modality detection
+- **LLM Strategy**: DSPy-based routing with local LLMs
+- **GEPA Optimization**: Experience-guided policy adaptation
+- **Modality Caching**: Query modality cache performance
 
 #### Integration Tests (`tests/routing/integration/`)
-- **Tiered Routing**: Multi-tier escalation logic
-- **Generation Type Classification**: Video vs text vs both
-- **Search Modality Detection**: Content type detection
-- **Caching Behavior**: Route caching mechanisms
-- **Error Handling**: Failure recovery patterns
+- **Tiered Routing**: Multi-tier escalation logic with fallback
+- **Multi-Modal Classification**: Video/audio/image/document/text/dataframe detection
+- **Relationship Extraction**: Entity relationship detection for relevance boosting
+- **Search Modality Detection**: Content type detection across modalities
+- **Caching Behavior**: Route caching with tenant isolation
+- **Error Handling**: Circuit breaker patterns and timeout handling
 
 #### Comprehensive Testing
 ```bash
-# Test all routing models and strategies
-python tests/test_comprehensive_routing.py
+# Test all routing models and strategies (DSPy requires CPU-only JAX)
+JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py
 
 # Test specific components
-python tests/test_comprehensive_routing.py llm-only      # LLM models only
-python tests/test_comprehensive_routing.py gliner-only  # GLiNER models only
-python tests/test_comprehensive_routing.py hybrid-only  # Combined approaches
-python tests/test_comprehensive_routing.py quick        # Fast subset
+JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py llm-only      # LLM models only
+JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py gliner-only  # GLiNER models only
+JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py hybrid-only  # Combined approaches
+JAX_PLATFORM_NAME=cpu uv run python tests/test_comprehensive_routing.py quick        # Fast subset
 ```
 
 **Models Tested:**
-- **DeepSeek R1**: 1.5b, 7b, 8b variants
-- **Gemma 3**: 1b, 4b, 12b variants
-- **Qwen 3**: 0.6b, 1.7b, 4b, 8b variants
-- **GLiNER**: All configured models in config.json
+- **DeepSeek R1**: 1.5b, 7b, 8b variants (via Ollama)
+- **Gemma 3**: 1b, 4b, 12b variants (via Ollama)
+- **Qwen 3**: 0.6b, 1.7b, 4b, 8b variants (via Ollama)
+- **GLiNER**: All configured models in config.json (local inference)
 
-### 2. Ingestion Pipeline Tests
+### 4. Multi-Modal Ingestion Pipeline Tests
 
 #### Unit Tests (80%+ Coverage Achieved)
 - **AudioProcessor**: 99% coverage (67/67 statements)
@@ -131,32 +217,93 @@ python scripts/test_ingestion.py --requires-colpali
 
 ## Running Tests
 
-### Unit Tests
+### UV Workspace Testing
+
+All tests run via `uv run pytest` to use the 10-package workspace:
+
 ```bash
-# CI-safe unit tests with coverage
-uv run pytest tests/ingestion/unit/test_*_real.py -v --cov=src/app/ingestion/processors
+# Full test suite (30 min timeout for integration tests)
+JAX_PLATFORM_NAME=cpu timeout 1800 uv run pytest -v
 
-# Routing unit tests
-uv run pytest tests/routing/unit/ -m "unit" -v
+# Foundation layer tests
+uv run pytest tests/sdk/ tests/foundation/ -v
 
-# With coverage reporting
-uv run pytest --cov=src/routing --cov-report=html
+# Core layer tests (requires JAX_PLATFORM_NAME=cpu for DSPy)
+JAX_PLATFORM_NAME=cpu uv run pytest tests/common/ tests/evaluation/ tests/telemetry/ -v
+
+# Implementation layer tests
+JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ tests/routing/ tests/backends/ -v
+
+# Application layer tests
+uv run pytest tests/ingestion/ tests/system/ -v
+
+# With coverage reporting across workspace
+JAX_PLATFORM_NAME=cpu uv run pytest --cov=libs/ --cov-report=html --cov-report=term-missing
 ```
 
-### Integration Tests
+### Layer-Specific Testing
+
+**Foundation Layer:**
+```bash
+# SDK interface tests
+uv run pytest tests/sdk/test_backend_interface.py -v
+uv run pytest tests/sdk/test_document_model.py -v
+
+# Foundation tests
+uv run pytest tests/foundation/test_config_base.py -v
+```
+
+**Core Layer:**
+```bash
+# Core functionality (DSPy integration requires CPU)
+JAX_PLATFORM_NAME=cpu uv run pytest tests/common/ -v --cov=libs/core/cogniverse_core
+
+# Evaluation framework
+uv run pytest tests/evaluation/ -v --cov=libs/evaluation/cogniverse_evaluation
+
+# Phoenix telemetry provider
+uv run pytest tests/telemetry/test_phoenix_provider.py -v
+```
+
+**Implementation Layer:**
+```bash
+# Agents with DSPy optimization
+JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/ -m "unit and ci_fast" -v
+JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/integration/ -v
+
+# Routing system
+JAX_PLATFORM_NAME=cpu uv run pytest tests/routing/unit/ tests/routing/integration/ -v
+
+# Vespa backend
+uv run pytest tests/backends/ -v --cov=libs/vespa/cogniverse_vespa
+```
+
+**Application Layer:**
+```bash
+# Multi-modal ingestion pipeline
+uv run pytest tests/ingestion/unit/ -v --cov=libs/runtime/cogniverse_runtime/ingestion
+
+# Integration tests with environment detection
+uv run python scripts/test_ingestion.py --integration --ci-safe
+
+# System integration tests
+uv run pytest tests/system/ -v
+```
+
+### Integration Tests with Services
 ```bash
 # Mock backend tests (always available)
-python scripts/test_ingestion.py --integration --ci-safe
+uv run python scripts/test_ingestion.py --integration --ci-safe
 
 # Vespa backend tests (requires Vespa running)
 ./scripts/start_vespa.sh
-python scripts/test_ingestion.py --requires-vespa
+uv run python scripts/test_ingestion.py --requires-vespa
 
 # Heavy model tests (local development only)
-python scripts/test_ingestion.py --integration --local-only
+uv run python scripts/test_ingestion.py --integration --local-only
 
-# Routing integration tests
-uv run pytest tests/routing/integration/ -v
+# E2E tests with real Ollama
+JAX_PLATFORM_NAME=cpu timeout 600 uv run pytest tests/agents/e2e/ -v
 ```
 
 ### Specific Test Scenarios
@@ -197,19 +344,44 @@ The test system automatically detects:
 
 ### GitHub Actions Workflows
 
-#### Ingestion Tests (`test-ingestion.yml`)
-1. **Unit Tests Job**: Run `unit and ci_safe` tests with 80% coverage requirement
-2. **Integration Tests Job**: Run `integration and ci_safe` with lightweight Vespa container
-3. **Security/Lint Jobs**: Static analysis and code quality checks
+**Layer-Based CI Strategy:**
 
-#### Routing Tests
-- Mocked dependencies for unit tests
-- Real model testing for integration (when available)
-- Async test support with proper fixtures
+1. **Foundation Layer CI** (`test-foundation.yml`)
+   - SDK interface contract tests
+   - Universal document model tests
+   - Configuration base tests
+   - Zero external dependencies
+
+2. **Core Layer CI** (`test-core.yml`)
+   - Core functionality tests with `JAX_PLATFORM_NAME=cpu`
+   - Evaluation framework tests
+   - Phoenix telemetry provider tests
+   - 80%+ coverage requirement
+
+3. **Implementation Layer CI** (`test-implementation.yml`)
+   - Agent tests: `JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/ -m "unit and ci_fast"`
+   - Routing tests with mocked LLMs
+   - Vespa backend tests with lightweight Docker container
+   - Synthetic data generation tests
+
+4. **Application Layer CI** (`test-application.yml`)
+   - Ingestion pipeline tests: `uv run pytest tests/ingestion/unit/ -m "unit and ci_safe"`
+   - Integration tests with mocked dependencies
+   - System integration tests
+
+**Multi-Modal Testing in CI:**
+- Video: Mocked frame extraction, ColPali embeddings
+- Audio: Mocked Whisper transcription
+- Images: Mocked image processing
+- Documents: Mocked PDF extraction
+- Text: Real text processing
+- Dataframes: Real structured data processing
 
 ### Environment Variables
 - `CI=true`: Automatically detected, excludes `local_only` tests
+- `JAX_PLATFORM_NAME=cpu`: Required for DSPy tests in CI (avoids GPU initialization)
 - `RUN_HEAVY_TESTS=1`: Override to include heavy models in CI
+- `PYTEST_TIMEOUT=1800`: 30-minute timeout for integration tests
 
 ## Output and Reporting
 

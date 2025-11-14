@@ -1,8 +1,9 @@
 # Backends Module (Vespa Integration)
 
-**Package:** `libs/vespa/cogniverse_vespa/`
+**Package:** `cogniverse_vespa` (Implementation Layer)
+**Location:** `libs/vespa/cogniverse_vespa/`
 **Purpose:** Vespa backend integration with multi-tenant schema management
-**Last Updated:** 2025-10-15
+**Last Updated:** 2025-11-13
 
 ---
 

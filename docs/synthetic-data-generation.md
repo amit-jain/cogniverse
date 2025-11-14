@@ -1,6 +1,7 @@
 # Synthetic Data Generation System
 
-**Package**: `libs/synthetic` (cogniverse-synthetic)
+**Package**: `cogniverse-synthetic` (Implementation Layer)
+**Location**: `/home/user/cogniverse/packages/cogniverse-synthetic`
 
 The synthetic data generation system creates high-quality training examples for all Cogniverse optimizers by sampling real content from backend storage and generating realistic queries using DSPy-driven LLM modules with validation.
 
@@ -158,7 +159,7 @@ Samples content from backend storage (Vespa or other) using Backend interface:
 
 ```python
 from cogniverse_synthetic.backend_querier import BackendQuerier
-from cogniverse_vespa import VespaBackend
+from cogniverse_retrieval.vespa_backend import VespaBackend
 
 # Initialize with backend instance
 backend = VespaBackend(config=backend_config)
@@ -191,7 +192,7 @@ Four concrete generators implementing the `BaseGenerator` interface:
 # "show me TensorFlow videos"
 # "find machine learning documents"
 
-from cogniverse_core.config.unified_config import OptimizerGenerationConfig, DSPyModuleConfig
+from cogniverse_sdk.config.types import OptimizerGenerationConfig, DSPyModuleConfig
 
 modality_config = OptimizerGenerationConfig(
     optimizer_type="modality",
@@ -233,7 +234,7 @@ examples = await cross_modal_gen.generate(
 # Enhanced: "find TensorFlow(TECHNOLOGY) object detection tutorial"
 # entities: [{"text": "TensorFlow", "type": "TECHNOLOGY"}]
 
-from cogniverse_core.config.unified_config import OptimizerGenerationConfig, DSPyModuleConfig
+from cogniverse_sdk.config.types import OptimizerGenerationConfig, DSPyModuleConfig
 
 routing_config = OptimizerGenerationConfig(
     optimizer_type="routing",
@@ -360,7 +361,7 @@ class ValidatedEntityQueryGenerator(dspy.Module):
 ```python
 from cogniverse_synthetic import SyntheticDataService
 from cogniverse_synthetic.schemas import SyntheticDataRequest
-from cogniverse_vespa import VespaBackend
+from cogniverse_retrieval.vespa_backend import VespaBackend
 
 # Initialize backend
 backend = VespaBackend(config=backend_config)
@@ -397,7 +398,7 @@ for example in response.data:
 ```python
 from fastapi import FastAPI
 from cogniverse_synthetic import router, configure_service
-from cogniverse_vespa import VespaBackend
+from cogniverse_retrieval.vespa_backend import VespaBackend
 
 app = FastAPI()
 
@@ -681,15 +682,43 @@ async def test_new_optimizer_generator():
 **Issue**: Tests fail with import errors
 - **Fix**: Reinstall package: `uv pip install -e libs/synthetic`
 
+## Package Location
+
+The synthetic data generation package is part of the Implementation Layer:
+
+```
+packages/
+└── cogniverse-synthetic/
+    ├── cogniverse_synthetic/
+    │   ├── service.py              # Main service orchestrator
+    │   ├── api.py                  # FastAPI router
+    │   ├── schemas.py              # Pydantic models
+    │   ├── registry.py             # Optimizer registry
+    │   ├── profile_selector.py     # Profile selection logic
+    │   ├── backend_querier.py      # Backend content sampling
+    │   ├── dspy_signatures.py      # DSPy signature definitions
+    │   ├── dspy_modules.py         # Validated query generators
+    │   ├── generators/             # Concrete generators
+    │   │   ├── base.py
+    │   │   ├── modality.py
+    │   │   ├── cross_modal.py
+    │   │   ├── routing.py
+    │   │   └── workflow.py
+    │   └── utils/                  # Pattern extraction utilities
+    │       ├── pattern_extraction.py
+    │       └── agent_inference.py
+    └── tests/
+```
+
 ## Related Documentation
 
-- [DSPy Optimization Plan](plan/SYNTHETIC_DATA_GENERATION.md) - Original implementation plan
-- [Architecture](architecture.md) - Overall system architecture
-- [Routing](../src/app/routing/README.md) - Query routing module (uses this system)
+- [10-Package Architecture](../ARCHITECTURE.md) - Overall system architecture
+- [Routing Agents](../agents/routing.md) - Query routing module (uses this system)
+- [DSPy Integration](../dspy/integration.md) - DSPy optimization integration
 
 ## API Reference
 
-See `libs/synthetic/cogniverse_synthetic/` for detailed docstrings:
+See `packages/cogniverse-synthetic/cogniverse_synthetic/` for detailed docstrings:
 - `service.py` - SyntheticDataService class
 - `api.py` - FastAPI router
 - `schemas.py` - All Pydantic models

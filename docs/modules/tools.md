@@ -1,8 +1,8 @@
 # Tools Module - Comprehensive Study Guide
 
-**Package:** `cogniverse_agents`
+**Package:** `cogniverse_agents` (Implementation Layer)
 **Module Location:** `libs/agents/cogniverse_agents/tools/`
-**Last Updated:** 2025-10-07
+**Last Updated:** 2025-11-13
 **Purpose:** Agent-to-Agent (A2A) communication, video playback, and temporal pattern extraction tools
 
 ---

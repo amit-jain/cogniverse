@@ -1,16 +1,16 @@
 # Cogniverse Ingestion Module Study Guide
 
-**Package:** `cogniverse_agents`
-**Module Location:** `libs/agents/cogniverse_agents/ingestion/`
+**Package:** `cogniverse_runtime` (Application Layer)
+**Module Location:** `libs/runtime/cogniverse_runtime/ingestion/`
 **Purpose**: Configurable video processing pipeline for multi-modal content extraction and indexing
-**Last Updated**: 2025-10-07
+**Last Updated**: 2025-11-13
 
 ---
 
 ## Package Structure
 
 ```
-libs/agents/cogniverse_agents/ingestion/
+libs/runtime/cogniverse_runtime/ingestion/
 ├── __init__.py                    # Package initialization
 ├── pipeline.py                    # Main VideoIngestionPipeline orchestrator
 ├── strategy_factory.py            # Creates strategy sets from config

@@ -1,7 +1,7 @@
 # SDK Architecture Diagrams
 
-**Last Updated:** 2025-10-21
-**Purpose:** Comprehensive visual documentation of UV workspace SDK architecture
+**Last Updated:** 2025-11-13
+**Purpose:** Comprehensive visual documentation of UV workspace SDK architecture with 10-package layered structure
 
 ---
 
@@ -16,47 +16,90 @@
 
 ## Package Dependency Graph
 
-### High-Level Package Dependencies
+### High-Level Package Dependencies (10-Package Structure)
 
 ```mermaid
 graph TB
-    subgraph "UV Workspace"
-        Core[cogniverse_core<br/>v0.1.0<br/><br/>• Config<br/>• Telemetry<br/>• Evaluation<br/>• Common Utils]
-        Agents[cogniverse_agents<br/>v0.1.0<br/><br/>• Agents<br/>• Routing<br/>• Ingestion<br/>• Search]
-        Vespa[cogniverse_vespa<br/>v0.1.0<br/><br/>• Backends<br/>• Schema Mgmt<br/>• JSON Parser]
-        Synthetic[cogniverse_synthetic<br/>v0.1.0<br/><br/>• Generators<br/>• Profile Selector<br/>• Backend Querier]
-        Runtime[cogniverse_runtime<br/>v0.1.0<br/><br/>• FastAPI Server<br/>• API Endpoints<br/>• Middleware]
-        Dashboard[cogniverse_dashboard<br/>v0.1.0<br/><br/>• Streamlit UI<br/>• Analytics<br/>• Management]
+    subgraph "Foundation Layer"
+        SDK[cogniverse_sdk<br/>v0.1.0<br/><br/>• Public API<br/>• Client SDK<br/>• Types]
+        Foundation[cogniverse_foundation<br/>v0.1.0<br/><br/>• Telemetry Base<br/>• Config Base<br/>• Common Utils]
     end
 
-    Agents -->|depends on| Core
-    Vespa -->|depends on| Core
-    Synthetic -->|depends on| Core
-    Synthetic -->|depends on| Vespa
-    Runtime -->|depends on| Core
-    Runtime -->|depends on| Agents
-    Runtime -->|depends on| Vespa
-    Dashboard -->|depends on| Core
-    Dashboard -->|depends on| Agents
-    Agents -->|uses for training| Synthetic
+    subgraph "Core Layer"
+        Core[cogniverse_core<br/>v0.1.0<br/><br/>• Multi-Agent System<br/>• Memory<br/>• Cache]
+        Evaluation[cogniverse_evaluation<br/>v0.1.0<br/><br/>• Experiment Tracking<br/>• Evaluators<br/>• Datasets]
+        Phoenix[cogniverse_telemetry_phoenix<br/>v0.1.0<br/><br/>• Phoenix Provider<br/>• Spans/Traces<br/>• Annotations]
+    end
 
-    style Core fill:#e1f5ff,stroke:#0077cc,stroke-width:3px
-    style Agents fill:#fff4e1,stroke:#ff9900,stroke-width:2px
-    style Vespa fill:#ffe1f5,stroke:#cc0077,stroke-width:2px
-    style Synthetic fill:#fffacd,stroke:#ffd700,stroke-width:2px
-    style Runtime fill:#f5e1ff,stroke:#7700cc,stroke-width:2px
-    style Dashboard fill:#e1ffe1,stroke:#00cc77,stroke-width:2px
+    subgraph "Implementation Layer"
+        Agents[cogniverse_agents<br/>v0.1.0<br/><br/>• Routing Agent<br/>• Search Agent<br/>• Ingestion Pipeline]
+        Vespa[cogniverse_vespa<br/>v0.1.0<br/><br/>• Vespa Backend<br/>• Schema Mgmt<br/>• Multi-Tenant]
+        Synthetic[cogniverse_synthetic<br/>v0.1.0<br/><br/>• DSPy Generators<br/>• Training Data<br/>• Backend Queries]
+    end
+
+    subgraph "Application Layer"
+        Runtime[cogniverse_runtime<br/>v0.1.0<br/><br/>• FastAPI Server<br/>• Ingestion API<br/>• Search API]
+        Dashboard[cogniverse_dashboard<br/>v0.1.0<br/><br/>• Streamlit UI<br/>• Phoenix Analytics<br/>• Experiment Mgmt]
+    end
+
+    %% Foundation Layer dependencies
+    SDK --> Foundation
+
+    %% Core Layer dependencies
+    Core --> Foundation
+    Evaluation --> Foundation
+    Phoenix --> Foundation
+    Phoenix --> Evaluation
+
+    %% Implementation Layer dependencies
+    Agents --> Core
+    Vespa --> Core
+    Synthetic --> Core
+
+    %% Application Layer dependencies
+    Runtime --> Core
+    Runtime --> Agents
+    Runtime --> Vespa
+    Runtime --> Synthetic
+    Dashboard --> Core
+    Dashboard --> Evaluation
+    Dashboard --> Phoenix
+
+    %% Styling - Foundation Layer (blue)
+    style SDK fill:#4A90E2,stroke:#2E5C8A,stroke-width:3px,color:#fff
+    style Foundation fill:#5BA3F5,stroke:#2E5C8A,stroke-width:3px,color:#fff
+
+    %% Styling - Core Layer (pink)
+    style Core fill:#FF6B9D,stroke:#C1487A,stroke-width:3px,color:#fff
+    style Evaluation fill:#FF85AD,stroke:#C1487A,stroke-width:2px,color:#fff
+    style Phoenix fill:#FF9FBD,stroke:#C1487A,stroke-width:2px,color:#fff
+
+    %% Styling - Implementation Layer (yellow/green)
+    style Agents fill:#FFD966,stroke:#CC9900,stroke-width:2px
+    style Vespa fill:#93C47D,stroke:#6AA84F,stroke-width:2px
+    style Synthetic fill:#FFE599,stroke:#D9A300,stroke-width:2px
+
+    %% Styling - Application Layer (light blue/purple)
+    style Runtime fill:#B4A7D6,stroke:#7E6BAD,stroke-width:2px,color:#fff
+    style Dashboard fill:#A4C2F4,stroke:#6D9EEB,stroke-width:2px
 ```
 
-### Detailed Dependency Chain
+### Detailed Dependency Chain (Layered Architecture)
 
 ```mermaid
-graph LR
+graph TB
     subgraph "Foundation Layer"
-        Core[cogniverse_core]
+        SDK[cogniverse_sdk]
+        Foundation[cogniverse_foundation]
     end
 
-    subgraph "Integration Layer"
+    subgraph "Core Layer"
+        Core[cogniverse_core]
+        Evaluation[cogniverse_evaluation]
+        Phoenix[cogniverse_telemetry_phoenix]
+    end
+
+    subgraph "Implementation Layer"
         Agents[cogniverse_agents]
         Vespa[cogniverse_vespa]
         Synthetic[cogniverse_synthetic]
@@ -67,88 +110,200 @@ graph LR
         Dashboard[cogniverse_dashboard]
     end
 
-    Core --> Agents
-    Core --> Vespa
-    Core --> Synthetic
-    Core --> Runtime
-    Core --> Dashboard
-    Vespa --> Synthetic
-    Agents --> Runtime
-    Agents --> Dashboard
-    Vespa --> Runtime
-    Synthetic -.->|training data| Agents
+    %% Foundation dependencies
+    SDK --> Foundation
 
-    style Core fill:#e1f5ff
-    style Agents fill:#fff4e1
-    style Vespa fill:#ffe1f5
-    style Synthetic fill:#fffacd
-    style Runtime fill:#f5e1ff
-    style Dashboard fill:#e1ffe1
+    %% Core to Foundation
+    Core --> Foundation
+    Evaluation --> Foundation
+    Phoenix --> Foundation
+    Phoenix --> Evaluation
+
+    %% Implementation to Core
+    Agents --> Core
+    Vespa --> Core
+    Synthetic --> Core
+
+    %% Application to Implementation/Core
+    Runtime --> Core
+    Runtime --> Agents
+    Runtime --> Vespa
+    Runtime --> Synthetic
+    Dashboard --> Core
+    Dashboard --> Evaluation
+    Dashboard --> Phoenix
+
+    %% Foundation Layer (blue)
+    style SDK fill:#4A90E2,color:#fff
+    style Foundation fill:#5BA3F5,color:#fff
+
+    %% Core Layer (pink)
+    style Core fill:#FF6B9D,color:#fff
+    style Evaluation fill:#FF85AD,color:#fff
+    style Phoenix fill:#FF9FBD,color:#fff
+
+    %% Implementation Layer (yellow/green)
+    style Agents fill:#FFD966
+    style Vespa fill:#93C47D
+    style Synthetic fill:#FFE599
+
+    %% Application Layer (light blue/purple)
+    style Runtime fill:#B4A7D6,color:#fff
+    style Dashboard fill:#A4C2F4
 ```
 
 ---
 
 ## Package Internal Structure
 
-### cogniverse_core Package Structure
+### cogniverse_foundation Package Structure (Foundation Layer)
+
+```mermaid
+graph TB
+    FoundationPkg[cogniverse_foundation]
+
+    subgraph "Telemetry Base"
+        TelemetryMgr[TelemetryManager]
+        ProviderRegistry[Provider Registry]
+        TelemetryInterfaces[Telemetry Interfaces]
+    end
+
+    subgraph "Configuration Base"
+        ConfigMgr[ConfigManager]
+        UnifiedConfig[UnifiedConfig]
+        TenantConfig[TenantConfig]
+    end
+
+    subgraph "Common Utilities"
+        LoggingUtils[Logging]
+        ExceptionHandling[Exceptions]
+        TypeUtils[Type Utilities]
+    end
+
+    FoundationPkg --> TelemetryMgr
+    FoundationPkg --> ProviderRegistry
+    FoundationPkg --> TelemetryInterfaces
+    FoundationPkg --> ConfigMgr
+    FoundationPkg --> UnifiedConfig
+    FoundationPkg --> TenantConfig
+    FoundationPkg --> LoggingUtils
+    FoundationPkg --> ExceptionHandling
+    FoundationPkg --> TypeUtils
+
+    style FoundationPkg fill:#5BA3F5,stroke:#2E5C8A,stroke-width:3px,color:#fff
+    style TelemetryMgr fill:#7AB8F7,color:#fff
+    style ProviderRegistry fill:#7AB8F7,color:#fff
+    style TelemetryInterfaces fill:#7AB8F7,color:#fff
+    style ConfigMgr fill:#99C9F9,color:#fff
+    style UnifiedConfig fill:#99C9F9,color:#fff
+    style TenantConfig fill:#99C9F9,color:#fff
+    style LoggingUtils fill:#B8DAFB
+    style ExceptionHandling fill:#B8DAFB
+    style TypeUtils fill:#B8DAFB
+```
+
+### cogniverse_core Package Structure (Core Layer)
 
 ```mermaid
 graph TB
     CorePkg[cogniverse_core]
 
-    subgraph "Configuration"
-        ConfigMgr[config_manager]
-        UnifiedConfig[unified_config]
-        TenantConfig[tenant_config]
+    subgraph "Multi-Agent System"
+        AgentOrchestrator[Agent Orchestrator]
+        AgentContext[Agent Context]
+        AgentRegistry[Agent Registry]
     end
 
-    subgraph "Telemetry"
-        TelemetryMgr[TelemetryManager]
-        PhoenixIntegration[Phoenix Integration]
-        SpanExporter[Span Exporter]
+    subgraph "Memory Management"
+        MemoryManager[Memory Manager]
+        ConversationMemory[Conversation Memory]
+        Mem0Integration[Mem0 Integration]
     end
 
-    subgraph "Evaluation"
-        ExperimentTracker[ExperimentTracker]
-        Evaluators[Evaluators]
-        DatasetMgr[DatasetManager]
+    subgraph "Cache System"
+        CacheManager[Cache Manager]
+        RedisBackend[Redis Backend]
+        InMemoryCache[In-Memory Cache]
     end
 
     subgraph "Common"
-        Cache[Cache System]
-        Memory[Memory Mgmt]
         Utils[Utilities]
+        Types[Type Definitions]
     end
 
-    CorePkg --> ConfigMgr
-    CorePkg --> UnifiedConfig
-    CorePkg --> TenantConfig
-    CorePkg --> TelemetryMgr
-    CorePkg --> PhoenixIntegration
-    CorePkg --> SpanExporter
-    CorePkg --> ExperimentTracker
-    CorePkg --> Evaluators
-    CorePkg --> DatasetMgr
-    CorePkg --> Cache
-    CorePkg --> Memory
+    CorePkg --> AgentOrchestrator
+    CorePkg --> AgentContext
+    CorePkg --> AgentRegistry
+    CorePkg --> MemoryManager
+    CorePkg --> ConversationMemory
+    CorePkg --> Mem0Integration
+    CorePkg --> CacheManager
+    CorePkg --> RedisBackend
+    CorePkg --> InMemoryCache
     CorePkg --> Utils
+    CorePkg --> Types
 
-    style CorePkg fill:#e1f5ff,stroke:#0077cc,stroke-width:3px
-    style ConfigMgr fill:#cce5ff
-    style UnifiedConfig fill:#cce5ff
-    style TenantConfig fill:#cce5ff
-    style TelemetryMgr fill:#b3d9ff
-    style PhoenixIntegration fill:#b3d9ff
-    style SpanExporter fill:#b3d9ff
-    style ExperimentTracker fill:#99ccff
-    style Evaluators fill:#99ccff
-    style DatasetMgr fill:#99ccff
-    style Cache fill:#80bfff
-    style Memory fill:#80bfff
-    style Utils fill:#80bfff
+    style CorePkg fill:#FF6B9D,stroke:#C1487A,stroke-width:3px,color:#fff
+    style AgentOrchestrator fill:#FF85AD,color:#fff
+    style AgentContext fill:#FF85AD,color:#fff
+    style AgentRegistry fill:#FF85AD,color:#fff
+    style MemoryManager fill:#FF9FBD,color:#fff
+    style ConversationMemory fill:#FF9FBD,color:#fff
+    style Mem0Integration fill:#FF9FBD,color:#fff
+    style CacheManager fill:#FFB8CD
+    style RedisBackend fill:#FFB8CD
+    style InMemoryCache fill:#FFB8CD
+    style Utils fill:#FFD1DD
+    style Types fill:#FFD1DD
 ```
 
-### cogniverse_agents Package Structure
+### cogniverse_evaluation Package Structure (Core Layer)
+
+```mermaid
+graph TB
+    EvalPkg[cogniverse_evaluation]
+
+    subgraph "Experiment Tracking"
+        ExperimentTracker[Experiment Tracker]
+        RunManager[Run Manager]
+        MetricsCollector[Metrics Collector]
+    end
+
+    subgraph "Evaluators"
+        BaseEvaluator[Base Evaluator]
+        LLMEvaluator[LLM Evaluator]
+        MetricEvaluator[Metric Evaluator]
+    end
+
+    subgraph "Dataset Management"
+        DatasetManager[Dataset Manager]
+        DatasetLoader[Dataset Loader]
+        DatasetValidator[Dataset Validator]
+    end
+
+    EvalPkg --> ExperimentTracker
+    EvalPkg --> RunManager
+    EvalPkg --> MetricsCollector
+    EvalPkg --> BaseEvaluator
+    EvalPkg --> LLMEvaluator
+    EvalPkg --> MetricEvaluator
+    EvalPkg --> DatasetManager
+    EvalPkg --> DatasetLoader
+    EvalPkg --> DatasetValidator
+
+    style EvalPkg fill:#FF85AD,stroke:#C1487A,stroke-width:2px,color:#fff
+    style ExperimentTracker fill:#FF9FBD,color:#fff
+    style RunManager fill:#FF9FBD,color:#fff
+    style MetricsCollector fill:#FF9FBD,color:#fff
+    style BaseEvaluator fill:#FFB8CD
+    style LLMEvaluator fill:#FFB8CD
+    style MetricEvaluator fill:#FFB8CD
+    style DatasetManager fill:#FFD1DD
+    style DatasetLoader fill:#FFD1DD
+    style DatasetValidator fill:#FFD1DD
+```
+
+### cogniverse_agents Package Structure (Implementation Layer)
 
 ```mermaid
 graph TB
@@ -200,25 +355,25 @@ graph TB
     AgentsPkg --> A2ATools
     AgentsPkg --> VideoPlayer
 
-    style AgentsPkg fill:#fff4e1,stroke:#ff9900,stroke-width:3px
-    style BaseAgent fill:#ffebcc
-    style RoutingAgent fill:#ffebcc
-    style VideoSearchAgent fill:#ffebcc
-    style ComposingAgent fill:#ffebcc
-    style RoutingConfig fill:#ffe0b3
-    style GLiNERStrategy fill:#ffe0b3
-    style LLMStrategy fill:#ffe0b3
-    style Optimizer fill:#ffe0b3
-    style Pipeline fill:#ffd699
-    style Processors fill:#ffd699
-    style Extractors fill:#ffd699
-    style Reranker fill:#ffcc80
-    style SearchEngine fill:#ffcc80
-    style A2ATools fill:#ffc266
-    style VideoPlayer fill:#ffc266
+    style AgentsPkg fill:#FFD966,stroke:#CC9900,stroke-width:3px
+    style BaseAgent fill:#FFE082
+    style RoutingAgent fill:#FFE082
+    style VideoSearchAgent fill:#FFE082
+    style ComposingAgent fill:#FFE082
+    style RoutingConfig fill:#FFE79E
+    style GLiNERStrategy fill:#FFE79E
+    style LLMStrategy fill:#FFE79E
+    style Optimizer fill:#FFE79E
+    style Pipeline fill:#FFEDBA
+    style Processors fill:#FFEDBA
+    style Extractors fill:#FFEDBA
+    style Reranker fill:#FFF3D6
+    style SearchEngine fill:#FFF3D6
+    style A2ATools fill:#FFFAF2
+    style VideoPlayer fill:#FFFAF2
 ```
 
-### cogniverse_vespa Package Structure
+### cogniverse_vespa Package Structure (Implementation Layer)
 
 ```mermaid
 graph TB
@@ -247,43 +402,45 @@ graph TB
     VespaPkg --> Fieldset
     VespaPkg --> RankProfile
 
-    style VespaPkg fill:#ffe1f5,stroke:#cc0077,stroke-width:3px
-    style VespaBackend fill:#ffcce5
-    style SchemaManager fill:#ffcce5
-    style TenantSchemaManager fill:#ffcce5
-    style JSONParser fill:#ffcce5
-    style Schema fill:#ffb3d9
-    style Document fill:#ffb3d9
-    style Fieldset fill:#ffb3d9
-    style RankProfile fill:#ffb3d9
+    style VespaPkg fill:#93C47D,stroke:#6AA84F,stroke-width:3px
+    style VespaBackend fill:#A9D18E
+    style SchemaManager fill:#A9D18E
+    style TenantSchemaManager fill:#A9D18E
+    style JSONParser fill:#A9D18E
+    style Schema fill:#BFDE9F
+    style Document fill:#BFDE9F
+    style Fieldset fill:#BFDE9F
+    style RankProfile fill:#BFDE9F
 ```
 
 ---
 
 ## Cross-Package Data Flow
 
-### Video Ingestion Flow Across Packages
+### Video Ingestion Flow Across Packages (10-Package Architecture)
 
 ```mermaid
 sequenceDiagram
     participant Script as scripts/run_ingestion.py
+    participant Foundation as cogniverse_foundation
     participant Core as cogniverse_core
     participant Agents as cogniverse_agents
     participant Vespa as cogniverse_vespa
 
-    Script->>Core: Import SystemConfig
-    Core-->>Script: SystemConfig class
+    Script->>Foundation: Import UnifiedConfig
+    Foundation-->>Script: Config class
 
-    Script->>Core: config = SystemConfig(tenant_id="acme_corp")
-    Core-->>Script: config instance
+    Script->>Foundation: config = UnifiedConfig(tenant_id="acme_corp")
+    Foundation-->>Script: config instance
 
     Script->>Agents: Import VideoIngestionPipeline
     Agents-->>Script: Pipeline class
 
     Script->>Agents: pipeline = VideoIngestionPipeline(config)
-    Agents->>Core: Use config.tenant_id
-    Agents->>Core: Initialize TelemetryManager(tenant_id)
-    Core-->>Agents: Telemetry manager
+    Agents->>Core: Initialize agent context
+    Core->>Foundation: Get TelemetryManager(tenant_id)
+    Foundation-->>Core: Telemetry manager
+    Core-->>Agents: Context ready
 
     Script->>Agents: pipeline.process_video(video_path)
     Agents->>Agents: Extract frames/chunks
@@ -294,88 +451,94 @@ sequenceDiagram
     Vespa-->>Agents: Backend class
 
     Agents->>Vespa: backend = VespaBackend(config)
-    Vespa->>Core: Use config.vespa_url, tenant_id
+    Vespa->>Foundation: Use config.vespa_url, tenant_id
 
     Agents->>Vespa: backend.feed_documents(docs, schema_name)
     Vespa->>Vespa: Append tenant suffix to schema
     Vespa->>Vespa: Upload to video_colpali_mv_frame_acme_corp
 
     Vespa-->>Agents: Success response
-    Agents->>Core: Record telemetry span
-    Core->>Core: Send to Phoenix project: acme_corp_project
+    Agents->>Foundation: Record telemetry span
+    Foundation->>Foundation: Send to Phoenix project: acme_corp_project
 
     Agents-->>Script: Process result
 ```
 
-### Query Routing Flow Across Packages
+### Query Routing Flow Across Packages (10-Package Architecture)
 
 ```mermaid
 sequenceDiagram
     participant User as User Query
     participant Runtime as cogniverse_runtime
+    participant Foundation as cogniverse_foundation
     participant Core as cogniverse_core
     participant Agents as cogniverse_agents
 
     User->>Runtime: POST /route {"query": "ML videos", "tenant_id": "acme_corp"}
 
-    Runtime->>Core: Import SystemConfig
-    Core-->>Runtime: SystemConfig class
+    Runtime->>Foundation: Import UnifiedConfig
+    Foundation-->>Runtime: Config class
 
-    Runtime->>Core: config = SystemConfig(tenant_id="acme_corp")
-    Core-->>Runtime: config with tenant isolation
+    Runtime->>Foundation: config = UnifiedConfig(tenant_id="acme_corp")
+    Foundation-->>Runtime: config with tenant isolation
 
     Runtime->>Agents: Import RoutingAgent
     Agents-->>Runtime: RoutingAgent class
 
     Runtime->>Agents: agent = RoutingAgent(config)
-    Agents->>Core: Initialize telemetry for tenant
-    Core-->>Agents: TelemetryManager(tenant="acme_corp")
+    Agents->>Core: Initialize agent context
+    Core->>Foundation: Get telemetry for tenant
+    Foundation-->>Core: TelemetryManager(tenant="acme_corp")
+    Core-->>Agents: Context ready
 
     Runtime->>Agents: result = agent.route_query(query)
     Agents->>Agents: GLiNER entity extraction
     Agents->>Agents: LLM-based routing decision
 
-    Agents->>Core: Record routing span
-    Core->>Core: Attach tenant_id attribute
-    Core->>Core: Send to Phoenix: acme_corp_project
+    Agents->>Foundation: Record routing span
+    Foundation->>Foundation: Attach tenant_id attribute
+    Foundation->>Foundation: Send to Phoenix: acme_corp_project
 
     Agents-->>Runtime: {modality: "video", strategy: "hybrid"}
     Runtime-->>User: Routing response
 ```
 
-### Search Flow Across Packages
+### Search Flow Across Packages (10-Package Architecture)
 
 ```mermaid
 sequenceDiagram
     participant User as User Query
     participant Runtime as cogniverse_runtime
+    participant Foundation as cogniverse_foundation
     participant Core as cogniverse_core
     participant Agents as cogniverse_agents
     participant Vespa as cogniverse_vespa
 
     User->>Runtime: POST /search {"query": "ML tutorial", "tenant_id": "acme_corp"}
 
-    Runtime->>Core: config = SystemConfig(tenant_id="acme_corp")
-    Core-->>Runtime: Tenant config
+    Runtime->>Foundation: config = UnifiedConfig(tenant_id="acme_corp")
+    Foundation-->>Runtime: Tenant config
 
     Runtime->>Agents: agent = VideoSearchAgent(config)
-    Agents->>Core: Initialize telemetry
-    Core-->>Agents: Telemetry manager
+    Agents->>Core: Initialize agent context
+    Core->>Foundation: Get telemetry manager
+    Foundation-->>Core: Telemetry manager
+    Core-->>Agents: Context ready
 
     Runtime->>Agents: results = agent.search(query, profile="frame_based")
 
     Agents->>Agents: Generate query embedding
 
     Agents->>Vespa: backend = VespaBackend(config)
-    Vespa->>Core: Use tenant_id for schema
+    Vespa->>Foundation: Use tenant_id for schema
 
     Agents->>Vespa: docs = backend.search(query, schema="video_colpali_mv_frame_acme_corp")
     Vespa->>Vespa: Execute Vespa query with tenant schema
     Vespa-->>Agents: Search results
 
     Agents->>Agents: Multi-modal reranking
-    Agents->>Core: Record search span with results
-    Core->>Core: Send to Phoenix: acme_corp_project
+    Agents->>Foundation: Record search span with results
+    Foundation->>Foundation: Send to Phoenix: acme_corp_project
 
     Agents-->>Runtime: Reranked results
     Runtime-->>User: Search response
@@ -385,7 +548,7 @@ sequenceDiagram
 
 ## Import Patterns
 
-### Correct Import Patterns by Package
+### Correct Import Patterns by Package (10-Package Architecture)
 
 ```mermaid
 graph TB
@@ -393,10 +556,20 @@ graph TB
         Script[scripts/run_ingestion.py]
     end
 
+    subgraph "cogniverse_foundation Imports"
+        FoundationConfig["from cogniverse_foundation.config import UnifiedConfig"]
+        FoundationTelemetry["from cogniverse_foundation.telemetry import TelemetryManager"]
+    end
+
     subgraph "cogniverse_core Imports"
-        CoreConfig["from cogniverse_core.config import SystemConfig"]
-        CoreTelemetry["from cogniverse_core.telemetry import TelemetryManager"]
-        CoreEval["from cogniverse_core.evaluation import ExperimentTracker"]
+        CoreAgent["from cogniverse_core.agents import AgentContext"]
+        CoreMemory["from cogniverse_core.memory import MemoryManager"]
+        CoreCache["from cogniverse_core.cache import CacheManager"]
+    end
+
+    subgraph "cogniverse_evaluation Imports"
+        EvalTracker["from cogniverse_evaluation.tracking import ExperimentTracker"]
+        EvalDataset["from cogniverse_evaluation.datasets import DatasetManager"]
     end
 
     subgraph "cogniverse_agents Imports"
@@ -410,9 +583,12 @@ graph TB
         VespaSchema["from cogniverse_vespa.backends import VespaSchemaManager"]
     end
 
-    Script --> CoreConfig
-    Script --> CoreTelemetry
-    Script --> CoreEval
+    Script --> FoundationConfig
+    Script --> FoundationTelemetry
+    Script --> CoreAgent
+    Script --> CoreMemory
+    Script --> EvalTracker
+    Script --> EvalDataset
     Script --> AgentsPipeline
     Script --> AgentsRouting
     Script --> AgentsSearch
@@ -420,78 +596,107 @@ graph TB
     Script --> VespaSchema
 
     style Script fill:#f0f0f0
-    style CoreConfig fill:#e1f5ff
-    style CoreTelemetry fill:#e1f5ff
-    style CoreEval fill:#e1f5ff
-    style AgentsPipeline fill:#fff4e1
-    style AgentsRouting fill:#fff4e1
-    style AgentsSearch fill:#fff4e1
-    style VespaBackend fill:#ffe1f5
-    style VespaSchema fill:#ffe1f5
+    style FoundationConfig fill:#5BA3F5,color:#fff
+    style FoundationTelemetry fill:#5BA3F5,color:#fff
+    style CoreAgent fill:#FF6B9D,color:#fff
+    style CoreMemory fill:#FF6B9D,color:#fff
+    style CoreCache fill:#FF6B9D,color:#fff
+    style EvalTracker fill:#FF85AD,color:#fff
+    style EvalDataset fill:#FF85AD,color:#fff
+    style AgentsPipeline fill:#FFD966
+    style AgentsRouting fill:#FFD966
+    style AgentsSearch fill:#FFD966
+    style VespaBackend fill:#93C47D
+    style VespaSchema fill:#93C47D
 ```
 
-### Package Import Dependencies (Valid Paths)
+### Package Import Dependencies (Valid Paths - 10 Packages)
 
 ```mermaid
-graph LR
+graph TB
+    subgraph "cogniverse_foundation CAN import"
+        FoundationStdLib[Python stdlib]
+        FoundationThirdParty[3rd party:<br/>pydantic, httpx,<br/>opentelemetry]
+    end
+
     subgraph "cogniverse_core CAN import"
-        CoreStdLib[Python stdlib]
-        CoreThirdParty[3rd party:<br/>pydantic, httpx,<br/>arize-phoenix-otel]
+        CoreFoundation[cogniverse_foundation.*]
+        CoreThirdParty[3rd party:<br/>mem0ai, redis]
+    end
+
+    subgraph "cogniverse_evaluation CAN import"
+        EvalFoundation[cogniverse_foundation.*]
+        EvalThirdParty[3rd party:<br/>pandas, polars]
     end
 
     subgraph "cogniverse_agents CAN import"
         AgentsCore[cogniverse_core.*]
-        AgentsThirdParty[3rd party:<br/>litellm, PIL,<br/>transformers]
-    end
-
-    subgraph "cogniverse_vespa CAN import"
-        VespaCore[cogniverse_core.*]
-        VespaThirdParty[3rd party:<br/>pyvespa, requests]
+        AgentsThirdParty[3rd party:<br/>litellm, PIL,<br/>transformers, dspy]
     end
 
     subgraph "cogniverse_runtime CAN import"
         RuntimeCore[cogniverse_core.*]
         RuntimeAgents[cogniverse_agents.*]
         RuntimeVespa[cogniverse_vespa.*]
+        RuntimeSynthetic[cogniverse_synthetic.*]
         RuntimeThirdParty[3rd party:<br/>fastapi, uvicorn]
     end
 
-    Core[cogniverse_core] --> CoreStdLib
+    Foundation[cogniverse_foundation] --> FoundationStdLib
+    Foundation --> FoundationThirdParty
+
+    Core[cogniverse_core] --> CoreFoundation
     Core --> CoreThirdParty
+
+    Evaluation[cogniverse_evaluation] --> EvalFoundation
+    Evaluation --> EvalThirdParty
 
     Agents[cogniverse_agents] --> AgentsCore
     Agents --> AgentsThirdParty
 
-    Vespa[cogniverse_vespa] --> VespaCore
-    Vespa --> VespaThirdParty
-
     Runtime[cogniverse_runtime] --> RuntimeCore
     Runtime --> RuntimeAgents
     Runtime --> RuntimeVespa
+    Runtime --> RuntimeSynthetic
     Runtime --> RuntimeThirdParty
 
-    style Core fill:#e1f5ff
-    style Agents fill:#fff4e1
-    style Vespa fill:#ffe1f5
-    style Runtime fill:#f5e1ff
+    style Foundation fill:#5BA3F5,color:#fff
+    style Core fill:#FF6B9D,color:#fff
+    style Evaluation fill:#FF85AD,color:#fff
+    style Agents fill:#FFD966
+    style Runtime fill:#B4A7D6,color:#fff
 ```
 
 ### INVALID Import Patterns (Circular Dependencies)
 
 ```mermaid
-graph LR
+graph TB
+    Foundation[cogniverse_foundation]
     Core[cogniverse_core]
+    Evaluation[cogniverse_evaluation]
     Agents[cogniverse_agents]
     Vespa[cogniverse_vespa]
+    Runtime[cogniverse_runtime]
 
-    Core -.->|❌ INVALID| Agents
-    Core -.->|❌ INVALID| Vespa
-    Agents -.->|❌ INVALID| Vespa
-    Vespa -.->|❌ INVALID| Agents
+    %% Invalid upward dependencies
+    Core -.->|❌ INVALID upward| Foundation
+    Agents -.->|❌ INVALID upward| Foundation
+    Runtime -.->|❌ INVALID upward| Foundation
 
+    %% Invalid cross-layer dependencies
+    Agents -.->|❌ INVALID cross| Vespa
+    Vespa -.->|❌ INVALID cross| Agents
+    Agents -.->|❌ INVALID cross| Evaluation
+
+    %% Invalid application to implementation
+    Runtime -.->|❌ INVALID| Vespa
+
+    style Foundation fill:#ffcccc
     style Core fill:#ffcccc
+    style Evaluation fill:#ffcccc
     style Agents fill:#ffcccc
     style Vespa fill:#ffcccc
+    style Runtime fill:#ffcccc
 ```
 
 ---
@@ -552,7 +757,7 @@ graph TB
     style Local fill:#f5e1ff
 ```
 
-### Workspace Sync Flow
+### Workspace Sync Flow (10-Package Structure)
 
 ```mermaid
 sequenceDiagram
@@ -569,28 +774,31 @@ sequenceDiagram
     UV->>VEnv: Create/update virtual environment
     VEnv-->>UV: Environment ready
 
+    Note over UV,Packages: Foundation Layer
+    UV->>Packages: Install libs/sdk in editable mode
+    UV->>Packages: Install libs/foundation in editable mode
+
+    Note over UV,Packages: Core Layer
     UV->>Packages: Install libs/core in editable mode
-    Packages-->>UV: cogniverse_core installed
+    UV->>Packages: Install libs/evaluation in editable mode
+    UV->>Packages: Install libs/telemetry-phoenix in editable mode
 
+    Note over UV,Packages: Implementation Layer
     UV->>Packages: Install libs/agents in editable mode
-    Packages-->>UV: cogniverse_agents installed
-
     UV->>Packages: Install libs/vespa in editable mode
-    Packages-->>UV: cogniverse_vespa installed
+    UV->>Packages: Install libs/synthetic in editable mode
 
+    Note over UV,Packages: Application Layer
     UV->>Packages: Install libs/runtime in editable mode
-    Packages-->>UV: cogniverse_runtime installed
-
     UV->>Packages: Install libs/dashboard in editable mode
-    Packages-->>UV: cogniverse_dashboard installed
 
     UV->>VEnv: Install 3rd-party dependencies
     VEnv-->>UV: Dependencies installed
 
-    UV-->>Dev: ✅ Workspace synced
+    UV-->>Dev: ✅ Workspace synced (10 packages)
 ```
 
-### Package Release Flow
+### Package Release Flow (10-Package Structure)
 
 ```mermaid
 graph TB
@@ -611,12 +819,11 @@ graph TB
         PushTag[git push origin v0.2.0]
     end
 
-    subgraph "Publish"
-        PublishCore[Publish cogniverse-core]
-        PublishVespa[Publish cogniverse-vespa]
-        PublishAgents[Publish cogniverse-agents]
-        PublishRuntime[Publish cogniverse-runtime]
-        PublishDashboard[Publish cogniverse-dashboard]
+    subgraph "Publish (Layer Order)"
+        PublishFoundation[1. Foundation Layer<br/>sdk, foundation]
+        PublishCore[2. Core Layer<br/>core, evaluation, telemetry-phoenix]
+        PublishImpl[3. Implementation Layer<br/>agents, vespa, synthetic]
+        PublishApp[4. Application Layer<br/>runtime, dashboard]
     end
 
     UpdateVersion --> UpdateChangelog
@@ -627,39 +834,37 @@ graph TB
     CommitChanges --> CreateTag
     CreateTag --> PushTag
 
-    PushTag --> PublishCore
-    PublishCore --> PublishVespa
-    PublishVespa --> PublishAgents
-    PublishAgents --> PublishRuntime
-    PublishRuntime --> PublishDashboard
+    PushTag --> PublishFoundation
+    PublishFoundation --> PublishCore
+    PublishCore --> PublishImpl
+    PublishImpl --> PublishApp
 
-    style UpdateVersion fill:#e1f5ff
-    style UpdateChangelog fill:#e1f5ff
-    style UpdateDeps fill:#e1f5ff
-    style BuildPkg fill:#fff4e1
-    style TestBuild fill:#fff4e1
-    style CommitChanges fill:#ffe1f5
-    style CreateTag fill:#ffe1f5
-    style PushTag fill:#ffe1f5
-    style PublishCore fill:#e1ffe1
-    style PublishVespa fill:#e1ffe1
-    style PublishAgents fill:#e1ffe1
-    style PublishRuntime fill:#e1ffe1
-    style PublishDashboard fill:#e1ffe1
+    style UpdateVersion fill:#5BA3F5,color:#fff
+    style UpdateChangelog fill:#5BA3F5,color:#fff
+    style UpdateDeps fill:#5BA3F5,color:#fff
+    style BuildPkg fill:#FF6B9D,color:#fff
+    style TestBuild fill:#FF6B9D,color:#fff
+    style CommitChanges fill:#FFD966
+    style CreateTag fill:#FFD966
+    style PushTag fill:#FFD966
+    style PublishFoundation fill:#5BA3F5,color:#fff
+    style PublishCore fill:#FF6B9D,color:#fff
+    style PublishImpl fill:#FFD966
+    style PublishApp fill:#B4A7D6,color:#fff
 ```
 
-### Deployment Architecture
+### Deployment Architecture (10-Package Structure)
 
 ```mermaid
 graph TB
     subgraph "Development Environment"
-        DevWorkspace[UV Workspace<br/>uv sync<br/>Editable installs]
+        DevWorkspace[UV Workspace<br/>uv sync<br/>10 packages editable]
         DevTests[Local Tests<br/>pytest]
     end
 
     subgraph "CI/CD Pipeline"
         GitHub[GitHub Actions]
-        BuildAll[Build all packages]
+        BuildAll[Build all 10 packages]
         TestAll[Test all packages]
         PublishPyPI[Publish to PyPI]
     end
@@ -672,7 +877,7 @@ graph TB
 
     subgraph "Package Installation"
         ProdInstall[pip install<br/>cogniverse-runtime]
-        AllDeps[Auto-installs:<br/>• cogniverse-core<br/>• cogniverse-agents<br/>• cogniverse-vespa]
+        AllDeps[Auto-installs all dependencies:<br/>Foundation: sdk, foundation<br/>Core: core, evaluation<br/>Implementation: agents, vespa, synthetic]
     end
 
     DevWorkspace --> DevTests
@@ -690,38 +895,49 @@ graph TB
     Kubernetes --> ProdInstall
     ProdInstall --> AllDeps
 
-    style DevWorkspace fill:#e1f5ff
-    style DevTests fill:#e1f5ff
-    style GitHub fill:#fff4e1
-    style BuildAll fill:#fff4e1
-    style TestAll fill:#fff4e1
-    style PublishPyPI fill:#ffe1f5
-    style Docker fill:#e1ffe1
-    style Modal fill:#e1ffe1
-    style Kubernetes fill:#e1ffe1
-    style ProdInstall fill:#f5e1ff
-    style AllDeps fill:#f5e1ff
+    style DevWorkspace fill:#5BA3F5,color:#fff
+    style DevTests fill:#5BA3F5,color:#fff
+    style GitHub fill:#FFD966
+    style BuildAll fill:#FFD966
+    style TestAll fill:#FFD966
+    style PublishPyPI fill:#93C47D
+    style Docker fill:#B4A7D6,color:#fff
+    style Modal fill:#B4A7D6,color:#fff
+    style Kubernetes fill:#B4A7D6,color:#fff
+    style ProdInstall fill:#FF6B9D,color:#fff
+    style AllDeps fill:#FF85AD,color:#fff
 ```
 
 ---
 
 ## Summary
 
-This diagram collection provides comprehensive visual documentation of:
+This diagram collection provides comprehensive visual documentation of the **10-package layered architecture**:
 
-1. **Package Dependencies**: Clear hierarchy with core as foundation
-2. **Internal Structure**: Detailed breakdown of each package's modules
+1. **Package Dependencies**: Clear 4-layer hierarchy (Foundation → Core → Implementation → Application)
+2. **Internal Structure**: Detailed breakdown of each package's modules by layer
 3. **Data Flow**: Cross-package interactions during ingestion, routing, and search
-4. **Import Patterns**: Valid and invalid import paths
+4. **Import Patterns**: Valid and invalid import paths with layer enforcement
 5. **Build & Deploy**: Complete pipeline from development to production
 
+**10-Package Architecture Layers:**
+
+| Layer | Packages | Purpose | Color |
+|-------|----------|---------|-------|
+| **Foundation** | sdk, foundation | Base configuration, telemetry interfaces, common utilities | Blue |
+| **Core** | core, evaluation, telemetry-phoenix | Multi-agent system, experiment tracking, Phoenix provider | Pink |
+| **Implementation** | agents, vespa, synthetic | Concrete agents, backends, data generation | Yellow/Green |
+| **Application** | runtime, dashboard | FastAPI server, Streamlit UI | Light Blue/Purple |
+
 **Key Principles:**
-- Unidirectional dependencies (agents/vespa → core, runtime → all)
-- UV workspace enables editable installs for development
-- Build artifacts (wheels) for production deployment
-- Tenant isolation maintained across all package interactions
+- **Layered Dependencies**: Each layer only depends on layers below it
+- **No Circular Dependencies**: Strict unidirectional flow prevents coupling
+- **Separation of Concerns**: Foundation provides interfaces, Core provides orchestration, Implementation provides specifics
+- **UV Workspace**: Enables editable installs for all 10 packages during development
+- **Tenant Isolation**: Maintained across all layers via configuration and naming conventions
 
 **Related Documentation:**
 - [SDK Architecture](../architecture/sdk-architecture.md)
+- [10-Package Architecture Guide](../architecture/10-package-architecture.md)
 - [Package Development](../development/package-dev.md)
 - [Multi-Tenant Architecture](../architecture/multi-tenant.md)

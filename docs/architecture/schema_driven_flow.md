@@ -216,6 +216,10 @@ def determine_search_method(schema_name: str, strategy: str) -> dict:
 ## 4. Multi-Tenant Schema Deployment
 
 ### Tenant Schema Generation
+
+**Package**: cogniverse-vespa (Implementation Layer)
+**Location**: `/home/user/cogniverse/libs/vespa/cogniverse_vespa/tenant_schema_manager.py`
+
 ```python
 class TenantSchemaManager:
     def deploy_tenant_schema(self, tenant_id: str, profile: str):
@@ -247,6 +251,9 @@ class TenantSchemaManager:
 ```
 
 ### Profile to Schema Mapping
+
+**Package**: cogniverse-vespa (Implementation Layer)
+**Location**: `/home/user/cogniverse/libs/vespa/cogniverse_vespa/schema_profile_mapping.py`
 
 ```python
 PROFILE_SCHEMA_MAPPING = {
@@ -282,6 +289,10 @@ PROFILE_SCHEMA_MAPPING = {
 ## 5. Strategy Extraction and Validation
 
 ### Automatic Strategy Extraction
+
+**Package**: cogniverse-vespa (Implementation Layer)
+**Location**: `/home/user/cogniverse/libs/vespa/cogniverse_vespa/strategy_extractor.py`
+
 ```python
 def extract_ranking_strategies(schema_json_path: Path) -> dict:
     """Extract all ranking strategies from schema JSON"""
@@ -373,11 +384,23 @@ class OptimizedSearchService:
 
 ## 7. Complete Configuration Flow
 
-### Configuration Loading Order
-1. **config.json** → Main configuration with profiles
-2. **schemas/*.json** → Vespa schema definitions
-3. **ranking_strategies.json** → Extracted strategies (auto-generated)
-4. **schema_profile_mapping.py** → Profile to schema mapping
+### Configuration Loading Order (10-Package Architecture)
+
+1. **config.json** (cogniverse-foundation) → Main configuration with profiles
+   - Location: `/home/user/cogniverse/configs/config.json`
+   - Package: cogniverse-foundation (config module)
+
+2. **schemas/*.json** (cogniverse-vespa) → Vespa schema definitions
+   - Location: `/home/user/cogniverse/configs/schemas/*.json`
+   - Package: cogniverse-vespa (schema manager)
+
+3. **ranking_strategies.json** (auto-generated) → Extracted strategies
+   - Location: `/home/user/cogniverse/configs/schemas/ranking_strategies.json`
+   - Package: cogniverse-vespa (strategy extractor)
+
+4. **schema_profile_mapping.py** (cogniverse-vespa) → Profile to schema mapping
+   - Location: `/home/user/cogniverse/libs/vespa/cogniverse_vespa/schema_profile_mapping.py`
+   - Package: cogniverse-vespa
 
 ### Runtime Configuration
 ```python
@@ -483,5 +506,15 @@ if schema_dim != embedding_dim:
 
 ---
 
-**Last Updated**: 2025-10-04
+**Last Updated**: 2025-11-13
 **Status**: Production Ready
+
+**Package Architecture Note**: Schema-driven processing spans multiple packages in the 10-package layered architecture:
+- **Foundation Layer**: cogniverse-sdk (schema interfaces), cogniverse-foundation (config)
+- **Core Layer**: cogniverse-core (schema registries, base processing)
+- **Implementation Layer**: cogniverse-vespa (schema management, deployment), cogniverse-agents (schema-based agents)
+- **Application Layer**: cogniverse-runtime (ingestion pipelines using schemas)
+
+Schema files location: `/home/user/cogniverse/configs/schemas/*.json`
+Schema processing: `/home/user/cogniverse/libs/vespa/cogniverse_vespa/schema_manager.py`
+Tenant schema routing: `/home/user/cogniverse/libs/vespa/cogniverse_vespa/tenant_schema_manager.py`

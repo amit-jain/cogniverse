@@ -1,6 +1,8 @@
 # System Test Resources
 
-This directory contains resources for system integration tests, organized like Java's test resources folder:
+**Last Updated:** 2025-11-13
+
+This directory contains resources for system integration tests across the 10-package layered architecture, organized like Java's test resources folder. Resources support multi-modal testing (video, audio, images, documents, text, dataframes) and multi-tenant schema validation:
 
 ## Structure
 

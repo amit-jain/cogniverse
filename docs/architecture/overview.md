@@ -1,7 +1,7 @@
 # Cogniverse System Architecture
 
-**Last Updated:** 2025-10-15
-**Purpose:** Comprehensive architecture guide for the multi-agent RAG system with SDK structure and multi-tenancy
+**Last Updated:** 2025-11-13
+**Purpose:** Comprehensive architecture guide for the multi-agent RAG system with 10-package UV workspace structure and multi-tenancy
 
 ---
 
@@ -20,27 +20,30 @@
 
 ### What is Cogniverse?
 
-Cogniverse is a **multi-agent RAG (Retrieval-Augmented Generation)** system designed for intelligent video content analysis and search with:
-- **SDK Architecture**: Modular UV workspace with 5 independent packages
-- **Multi-Tenant**: Complete isolation via schema-per-tenant pattern
-- **Production-Ready**: Comprehensive telemetry, caching, and optimization
+Cogniverse is a **multi-agent RAG (Retrieval-Augmented Generation)** system designed for intelligent multi-modal content analysis and search with:
+- **10-Package Architecture**: Modular UV workspace with layered architecture (Foundation, Core, Implementation, Application)
+- **Multi-Tenant**: Complete physical isolation via schema-per-tenant pattern
+- **Multi-Modal**: Support for video, audio, images, documents, text, and dataframes
+- **Production-Ready**: Comprehensive telemetry, caching, optimization, and evaluation
 
 ### Key Capabilities
 
-- **Multi-Modal Search**: Text-to-video, video-to-video, image-to-video search
-- **Intelligent Routing**: DSPy-powered query routing with relationship extraction
-- **Agent Orchestration**: Multi-agent workflows with dependency management
-- **Video Processing**: Configurable keyframe extraction, transcription, embeddings
-- **Tenant Isolation**: Schema-per-tenant with independent configuration, memory, and telemetry
+- **Multi-Modal Search**: Video (frame/chunk/global), audio, images, documents, text with unified document model
+- **Intelligent Routing**: DSPy 3.0-powered query routing with entity extraction and relationship detection
+- **Agent Orchestration**: Multi-agent workflows with A2A protocol, dependency management, and parallel execution
+- **Content Processing**: Frame extraction, audio transcription, embedding generation (ColPali, VideoPrism, ColQwen)
+- **Experience-Guided Optimization**: GEPA optimizer for continuous learning from routing decisions
+- **Tenant Isolation**: Schema-per-tenant with independent configuration, memory, telemetry, and evaluation
 
 ### Technology Stack
 
-- **Framework**: Python 3.12+, UV workspace, FastAPI
-- **AI/ML**: ColPali, VideoPrism, Ollama (local LLMs), DSPy 3.0, GLiNER (NER)
-- **Search Backend**: Vespa (vector database)
-- **Memory**: Mem0 with Vespa backend
-- **Telemetry**: Phoenix (OpenTelemetry)
-- **Optimization**: MLflow, GRPO, GEPA
+- **Framework**: Python 3.12+ (3.11+ for sdk/foundation), UV workspace, FastAPI, Streamlit
+- **AI/ML**: ColPali (vidore/colsmol-500m), VideoPrism (scenic-t5), ColQwen, Ollama, DSPy 3.0 (GEPA, MIPRO, SIMBA, Bootstrap), GLiNER
+- **Search Backend**: Vespa 8.x with 9 ranking strategies (BM25, float, binary, hybrid, phased)
+- **Memory**: Mem0 with Vespa backend for multi-tenant context storage
+- **Telemetry**: OpenTelemetry with Phoenix (Arize) collector
+- **Optimization**: DSPy optimizers (GEPA, MIPRO, SIMBA, Bootstrap) with synthetic data generation
+- **Evaluation**: Provider-agnostic evaluation framework with Phoenix provider implementation
 
 ---
 
@@ -48,44 +51,67 @@ Cogniverse is a **multi-agent RAG (Retrieval-Augmented Generation)** system desi
 
 ### UV Workspace Structure
 
-Cogniverse uses a **monorepo workspace** with 5 independent packages:
+Cogniverse uses a **monorepo workspace** with 10 packages in layered architecture:
 
 ```
 cogniverse/
 ├── pyproject.toml                # Root workspace config
 ├── libs/
-│   ├── core/                     # Core utilities and interfaces
+│   # FOUNDATION LAYER (Pure Interfaces)
+│   ├── sdk/                      # cogniverse-sdk
+│   │   ├── pyproject.toml
+│   │   └── cogniverse_sdk/
+│   │       ├── interfaces/       # Backend, ConfigStore, SchemaLoader interfaces
+│   │       └── document.py       # Universal document model
+│   │
+│   ├── foundation/               # cogniverse-foundation
+│   │   ├── pyproject.toml
+│   │   └── cogniverse_foundation/
+│   │       ├── config/           # Configuration base classes
+│   │       └── telemetry/        # Telemetry interfaces
+│   │
+│   # CORE LAYER
+│   ├── core/                     # cogniverse-core
 │   │   ├── pyproject.toml
 │   │   └── cogniverse_core/
 │   │       ├── agents/           # Base agent classes
 │   │       ├── common/           # Shared utilities
-│   │       ├── config/           # Configuration management
-│   │       ├── evaluation/       # Evaluation framework
-│   │       ├── memory/           # Memory management
 │   │       ├── registries/       # Component registries
-│   │       └── telemetry/        # Observability
+│   │       └── memory/           # Memory management
 │   │
-│   ├── agents/                   # Agent implementations
+│   ├── evaluation/               # cogniverse-evaluation
 │   │   ├── pyproject.toml
-│   │   └── cogniverse_agents/    # FLAT: Main agents at top level
-│   │       ├── routing_agent.py  # Routing agent (1570 lines)
-│   │       ├── video_search_agent.py  # Video search agent
-│   │       ├── composing_agent.py     # Orchestration agent
-│   │       ├── routing/          # Routing utilities
-│   │       ├── search/           # Search utilities
-│   │       ├── orchestrator/     # Orchestration utilities
-│   │       ├── optimizer/        # Optimization utilities
-│   │       └── tools/            # Agent tools
+│   │   └── cogniverse_evaluation/
+│   │       ├── experiments/      # Experiment management
+│   │       ├── metrics/          # Provider-agnostic metrics
+│   │       ├── datasets/         # Dataset handling
+│   │       └── storage/          # Storage interfaces
 │   │
-│   ├── vespa/                    # Vespa integration
+│   ├── telemetry-phoenix/        # cogniverse-telemetry-phoenix (Plugin)
 │   │   ├── pyproject.toml
-│   │   └── cogniverse_vespa/     # FLAT: All files at top level
-│   │       ├── tenant_schema_manager.py  # Multi-tenant schemas
-│   │       ├── vespa_search_client.py    # Search client
-│   │       ├── ingestion_client.py       # Ingestion (VespaPyClient)
-│   │       └── json_schema_parser.py     # Schema parsing
+│   │   └── cogniverse_telemetry_phoenix/
+│   │       ├── provider.py       # Phoenix telemetry provider
+│   │       ├── evaluation/       # Phoenix evaluation provider
+│   │       └── traces.py         # Phoenix trace queries
 │   │
-│   ├── synthetic/                # Synthetic data generation
+│   # IMPLEMENTATION LAYER
+│   ├── agents/                   # cogniverse-agents
+│   │   ├── pyproject.toml
+│   │   └── cogniverse_agents/
+│   │       ├── routing/          # Routing agents & DSPy optimization
+│   │       ├── search/           # Search agents (video, document)
+│   │       ├── orchestration/    # Composing agent
+│   │       └── tools/            # A2A tools
+│   │
+│   ├── vespa/                    # cogniverse-vespa
+│   │   ├── pyproject.toml
+│   │   └── cogniverse_vespa/
+│   │       ├── backends/         # Vespa search clients
+│   │       ├── schema/           # Schema management
+│   │       ├── tenant/           # Multi-tenant management
+│   │       └── ingestion/        # Vespa ingestion
+│   │
+│   ├── synthetic/                # cogniverse-synthetic
 │   │   ├── pyproject.toml
 │   │   └── cogniverse_synthetic/
 │   │       ├── service.py        # Main SyntheticDataService
@@ -93,15 +119,17 @@ cogniverse/
 │   │       ├── profile_selector.py  # LLM-based profile selection
 │   │       └── backend_querier.py   # Vespa content sampling
 │   │
-│   ├── runtime/                  # Production runtime
+│   # APPLICATION LAYER
+│   ├── runtime/                  # cogniverse-runtime
 │   │   ├── pyproject.toml
 │   │   ├── Dockerfile
 │   │   └── cogniverse_runtime/
-│   │       ├── api/              # FastAPI endpoints
+│   │       ├── server/           # FastAPI server
+│   │       ├── api/              # API endpoints
 │   │       ├── ingestion/        # Video processing
 │   │       └── middleware/       # Tenant middleware
 │   │
-│   └── dashboard/                # UI and dashboards
+│   └── dashboard/                # cogniverse-dashboard
 │       ├── pyproject.toml
 │       ├── Dockerfile
 │       └── cogniverse_dashboard/
@@ -109,84 +137,149 @@ cogniverse/
 │           └── streamlit/        # Streamlit apps
 │
 └── tests/                        # Test suite
-    ├── agents/
-    ├── memory/
-    ├── ingestion/
+    ├── sdk/
+    ├── foundation/
+    ├── core/
     ├── evaluation/
-    └── routing/
+    ├── agents/
+    ├── vespa/
+    ├── synthetic/
+    └── telemetry/
 ```
 
 ### Package Architecture Diagram
 
 ```mermaid
 graph TB
-    subgraph "cogniverse_runtime"
-        Runtime[FastAPI Server<br/>Tenant Middleware<br/>Ingestion Pipeline]
+    subgraph "Foundation Layer"
+        SDK[cogniverse-sdk<br/>Backend Interfaces<br/>Document Model]
+        Foundation[cogniverse-foundation<br/>Config Base<br/>Telemetry Interfaces]
     end
 
-    subgraph "cogniverse_agents"
-        Agents[Routing Agent<br/>Video Search Agent<br/>Summarizer Agent<br/>Tools & A2A]
+    subgraph "Core Layer"
+        Core[cogniverse-core<br/>Base Agent Classes<br/>Registries<br/>Memory Management]
+        Evaluation[cogniverse-evaluation<br/>Experiments<br/>Metrics<br/>Datasets]
+        TelemetryPhoenix[cogniverse-telemetry-phoenix<br/>Phoenix Provider<br/>Plugin via Entry Points]
     end
 
-    subgraph "cogniverse_core"
-        Core[Base Agent Classes<br/>Configuration<br/>Memory Management<br/>Telemetry<br/>Evaluation]
+    subgraph "Implementation Layer"
+        Agents[cogniverse-agents<br/>Routing Agent<br/>Video Search Agent<br/>Tools & A2A]
+        Vespa[cogniverse-vespa<br/>Tenant Schema Manager<br/>Search Backends<br/>Schema Deployment]
+        Synthetic[cogniverse-synthetic<br/>Synthetic Data Service<br/>Generator Implementations]
     end
 
-    subgraph "cogniverse_vespa"
-        Vespa[Tenant Schema Manager<br/>Search Backends<br/>Tenant-Aware Clients<br/>Schema Deployment]
+    subgraph "Application Layer"
+        Runtime[cogniverse-runtime<br/>FastAPI Server<br/>Tenant Middleware<br/>Ingestion Pipeline]
+        Dashboard[cogniverse-dashboard<br/>Streamlit Dashboards<br/>Phoenix UI<br/>Analytics]
     end
 
-    subgraph "cogniverse_dashboard"
-        Dashboard[Streamlit Dashboards<br/>Phoenix UI<br/>Analytics]
-    end
+    SDK --> Foundation
+    Foundation --> Core
+    Foundation --> Evaluation
+    SDK --> Evaluation
+    SDK --> Core
 
-    Runtime --> Agents
-    Runtime --> Core
-    Runtime --> Vespa
+    Core --> TelemetryPhoenix
+    Evaluation --> TelemetryPhoenix
 
-    Agents --> Core
-    Agents --> Vespa
-
-    Dashboard --> Core
-    Dashboard --> Vespa
-
+    Core --> Agents
     Core --> Vespa
+    Core --> Synthetic
 
-    style Runtime fill:#e1f5ff
-    style Agents fill:#fff4e1
+    Agents --> Runtime
+    Vespa --> Runtime
+    Synthetic --> Runtime
+
+    Core --> Dashboard
+    Evaluation --> Dashboard
+
+    style SDK fill:#d0e8f2
+    style Foundation fill:#d0e8f2
     style Core fill:#ffe1f5
+    style Evaluation fill:#ffe1f5
+    style TelemetryPhoenix fill:#ffe1f5
+    style Agents fill:#fff4e1
     style Vespa fill:#e1ffe1
+    style Synthetic fill:#fff4e1
+    style Runtime fill:#e1f5ff
     style Dashboard fill:#f5e1ff
 ```
 
 ### Package Responsibilities
 
-#### **cogniverse_core** (115 files)
-Core utilities and interfaces shared across all packages.
+#### **Foundation Layer**
+
+##### **cogniverse_sdk**
+Pure backend interfaces with zero internal Cogniverse dependencies.
+
+**Key Modules**:
+- `interfaces/backend.py`: Backend interface (search + ingestion)
+- `interfaces/config_store.py`: Configuration storage interface
+- `interfaces/schema_loader.py`: Schema template loading interface
+- `document.py`: Universal document model
+
+**Dependencies**: None (only numpy for embedding arrays)
+
+##### **cogniverse_foundation**
+Cross-cutting concerns and shared infrastructure.
+
+**Key Modules**:
+- `config/`: Configuration base classes and utilities
+- `telemetry/`: Telemetry interface definitions
+
+**Dependencies**: `cogniverse_sdk`
+
+#### **Core Layer**
+
+##### **cogniverse_core**
+Core functionality, base classes, and registries.
 
 **Key Modules**:
 - `agents/`: Base agent classes, mixins (MemoryAwareMixin, HealthCheckMixin)
-- `common/`: Shared utilities (tenant utils, Mem0 manager, config stores)
-- `config/`: Configuration management (unified config, schema, API mixins)
-- `evaluation/`: Evaluation framework (data models, metrics, storage)
-- `memory/`: Memory management interfaces
+- `common/`: Shared utilities (tenant utils, Mem0 manager)
 - `registries/`: Agent, backend, and DSPy module registries
-- `telemetry/`: Metrics tracking and observability
+- `memory/`: Memory management interfaces
 
-**Dependencies**: None (foundational package)
+**Dependencies**: `cogniverse_sdk`, `cogniverse_foundation`, `cogniverse_evaluation`
 
-#### **cogniverse_agents** (99 files)
+##### **cogniverse_evaluation**
+Provider-agnostic evaluation framework.
+
+**Key Modules**:
+- `experiments/`: Experiment management and tracking
+- `metrics/`: Provider-agnostic metrics (accuracy, relevance, etc.)
+- `datasets/`: Dataset handling and validation
+- `storage/`: Storage interface for evaluation data
+
+**Dependencies**: `cogniverse_sdk`, `cogniverse_foundation`
+
+##### **cogniverse_telemetry_phoenix**
+Phoenix-specific telemetry provider (plugin architecture).
+
+**Key Modules**:
+- `provider.py`: Phoenix telemetry provider implementation
+- `evaluation/`: Phoenix evaluation provider
+- `traces.py`: Phoenix trace query utilities
+- `annotations.py`: Annotation management
+
+**Dependencies**: `cogniverse_core`, `cogniverse_evaluation`
+
+**Plugin Registration**: Entry points for auto-discovery
+
+#### **Implementation Layer**
+
+##### **cogniverse_agents**
 Agent implementations and routing logic.
 
 **Key Modules**:
 - `routing/`: Routing agent, strategies, evaluators
 - `search/`: Video, document, web search agents
-- `multi_modal/`: Multi-modal processing
+- `orchestration/`: Composing agent
 - `tools/`: Agent tools and A2A protocol
 
-**Dependencies**: `cogniverse_core`, `cogniverse_vespa`
+**Dependencies**: `cogniverse_core`
 
-#### **cogniverse_vespa** (17 files)
+##### **cogniverse_vespa**
 Vespa integration and tenant management.
 
 **Key Modules**:
@@ -197,20 +290,33 @@ Vespa integration and tenant management.
 
 **Dependencies**: `cogniverse_core`
 
-#### **cogniverse_runtime** (49 files)
+##### **cogniverse_synthetic**
+Synthetic data generation for optimizer training.
+
+**Key Modules**:
+- `service.py`: Main SyntheticDataService
+- `generators/`: Optimizer-specific generators (GEPA, MIPRO, etc.)
+- `profile_selector.py`: LLM-based profile selection
+- `backend_querier.py`: Vespa content sampling
+
+**Dependencies**: `cogniverse_core`
+
+#### **Application Layer**
+
+##### **cogniverse_runtime**
 Production runtime and APIs.
 
 **Key Modules**:
-- `api/`: FastAPI endpoints, tenant middleware
+- `server/`: FastAPI server
+- `api/`: API endpoints, tenant middleware
 - `ingestion/`: Video processing pipeline
-- `optimization/`: DSPy optimization workflows
-- `deployment/`: Production deployment scripts
+- `middleware/`: Tenant context injection
 
-**Dependencies**: `cogniverse_core`, `cogniverse_agents`, `cogniverse_vespa`
+**Dependencies**: `cogniverse_core`, `cogniverse_agents`, `cogniverse_vespa`, `cogniverse_synthetic`
 
 **Deployment**: Docker container (`libs/runtime/Dockerfile`)
 
-#### **cogniverse_dashboard** (54 files)
+##### **cogniverse_dashboard**
 User interfaces and analytics.
 
 **Key Modules**:
@@ -219,36 +325,55 @@ User interfaces and analytics.
 - `analytics/`: Performance analytics
 - `visualization/`: Embedding visualizations
 
-**Dependencies**: `cogniverse_core`, `cogniverse_vespa`
+**Dependencies**: `cogniverse_core`, `cogniverse_evaluation`
 
 **Deployment**: Docker container (`libs/dashboard/Dockerfile`)
 
 ### Package Dependency Graph
 
 ```mermaid
-graph LR
-    Runtime[cogniverse_runtime]
-    Agents[cogniverse_agents]
-    Core[cogniverse_core]
-    Vespa[cogniverse_vespa]
-    Dashboard[cogniverse_dashboard]
+graph TB
+    SDK[cogniverse-sdk]
+    Foundation[cogniverse-foundation]
+    Core[cogniverse-core]
+    Evaluation[cogniverse-evaluation]
+    TelemetryPhoenix[cogniverse-telemetry-phoenix]
+    Agents[cogniverse-agents]
+    Vespa[cogniverse-vespa]
+    Synthetic[cogniverse-synthetic]
+    Runtime[cogniverse-runtime]
+    Dashboard[cogniverse-dashboard]
 
-    Runtime --> Agents
-    Runtime --> Core
-    Runtime --> Vespa
+    Foundation --> SDK
+    Core --> SDK
+    Core --> Foundation
+    Core --> Evaluation
+    Evaluation --> SDK
+    Evaluation --> Foundation
+
+    TelemetryPhoenix --> Core
+    TelemetryPhoenix --> Evaluation
 
     Agents --> Core
-    Agents --> Vespa
+    Vespa --> Core
+    Synthetic --> Core
+
+    Runtime --> Core
+    Runtime --> Agents
+    Runtime --> Vespa
+    Runtime --> Synthetic
 
     Dashboard --> Core
-    Dashboard --> Vespa
+    Dashboard --> Evaluation
 
-    Vespa --> Core
-
+    style SDK fill:#d0e8f2
+    style Foundation fill:#d0e8f2
     style Core fill:#ffe1f5
+    style Evaluation fill:#ffe1f5
+    style TelemetryPhoenix fill:#ffe1f5
 ```
 
-**Key**: Core is foundational, Vespa builds on Core, Agents uses both Core and Vespa, Runtime and Dashboard consume all packages.
+**Key**: SDK is the pure foundation with zero internal dependencies. Foundation builds on SDK. Core depends on SDK, Foundation, and Evaluation. Telemetry-Phoenix is a plugin. Implementation layer (Agents, Vespa, Synthetic) depends on Core. Application layer (Runtime, Dashboard) consumes lower layers.
 
 ---
 
@@ -677,6 +802,7 @@ For detailed guides, see:
 
 ---
 
-**Version**: 2.0 (SDK Architecture + Multi-Tenancy)
-**Last Updated**: 2025-10-15
-**Status**: Production-Ready
+**Version**: 2.0.0
+**Architecture**: UV Workspace (10 Packages - Layered Architecture)
+**Last Updated**: 2025-11-13
+**Status**: Production Ready

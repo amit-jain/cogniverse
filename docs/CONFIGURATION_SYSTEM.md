@@ -1,6 +1,8 @@
 # Configuration Management System
 
-Multi-tenant, versioned configuration system with pluggable storage backends for the Cogniverse multi-agent architecture.
+**Spans**: SDK (interfaces), Foundation (base), Core (system configuration)
+
+Multi-tenant, versioned configuration system with pluggable storage backends for the Cogniverse 10-package architecture.
 
 ## Overview
 
@@ -15,31 +17,40 @@ The configuration system provides centralized management for all system configur
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                   Applications                       │
-├─────────────┬──────────────┬────────────┬──────────┤
-│ Composing   │ Video Search │  Routing   │ Phoenix  │
-│   Agent     │    Agent     │ Optimizer  │ Telemetry│
-└──────┬──────┴──────┬───────┴──────┬─────┴─────┬────┘
-       │             │              │            │
-       └─────────────┼──────────────┼────────────┘
-                     ▼              ▼
-            ┌─────────────────────────────┐
-            │     ConfigManager           │
-            │    (Singleton Access)       │
-            └────────────┬────────────────┘
-                        │
-                        ▼
-            ┌─────────────────────────────┐
-            │     ConfigStore Interface   │
-            └────────────┬────────────────┘
-                        │
-       ┌────────────────┼────────────────┬───────────────┐
-       ▼                ▼                ▼               ▼
-┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-│   SQLite     │ │    Vespa     │ │  PostgreSQL  │ │   Custom     │
-│ ConfigStore  │ │ ConfigStore  │ │ ConfigStore  │ │   Backend    │
-└──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                      Application Layer                          │
+│                    (cogniverse-services)                        │
+└──────────────────────────┬──────────────────────────────────────┘
+                          │
+┌─────────────────────────▼─────────────────────────────┐
+│                    Agent Layer                        │
+│              (cogniverse-agents)                      │
+│  Composing Agent │ Video Search │ Routing Optimizer  │
+└──────────────────────────┬────────────────────────────┘
+                          │
+┌─────────────────────────▼─────────────────────────────┐
+│                     Core Layer                        │
+│               (cogniverse-core)                       │
+│           ConfigManager (System Config)               │
+└──────────────────────────┬────────────────────────────┘
+                          │
+┌─────────────────────────▼─────────────────────────────┐
+│                  Foundation Layer                     │
+│              (cogniverse-foundation)                  │
+│     ConfigStore Interface │ Base Config Classes       │
+└──────────────────────────┬────────────────────────────┘
+                          │
+┌─────────────────────────▼─────────────────────────────┐
+│                     SDK Layer                         │
+│                (cogniverse-sdk)                       │
+│          Config Interfaces │ Type Definitions         │
+└───────────────────────────────────────────────────────┘
+
+       Storage Backend Implementations:
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+│   SQLite     │ │    Vespa     │ │  PostgreSQL  │
+│ ConfigStore  │ │ ConfigStore  │ │ ConfigStore  │
+└──────────────┘ └──────────────┘ └──────────────┘
 ```
 
 ## Configuration Scopes
@@ -103,7 +114,7 @@ class ConfigScope(Enum):
 **Usage Example**:
 ```python
 from cogniverse_core.config.manager import get_config_manager
-from cogniverse_core.config.store_interface import ConfigScope
+from cogniverse_sdk.config.types import ConfigScope
 
 manager = get_config_manager()
 
@@ -198,7 +209,8 @@ curl http://localhost:8080/ApplicationStatus | jq '.schemas'
 Create custom storage backends by implementing the ConfigStore interface:
 
 ```python
-from cogniverse_core.config.store_interface import ConfigStore, ConfigEntry, ConfigScope
+from cogniverse_sdk.config.interfaces import ConfigStore
+from cogniverse_sdk.config.types import ConfigEntry, ConfigScope
 from typing import Dict, Any, Optional, List
 import datetime
 
@@ -312,7 +324,7 @@ manager.delete_tenant("old_tenant", hard_delete=False)
 ### Dynamic Module Configuration
 
 ```python
-from cogniverse_core.config.agent_config import AgentConfig, ModuleConfig, DSPyModuleType
+from cogniverse_sdk.config.types import AgentConfig, ModuleConfig, DSPyModuleType
 from cogniverse_core.config.manager import get_config_manager
 
 manager = get_config_manager()
@@ -374,7 +386,7 @@ optimizer = factory.get_optimizer(
 Every configuration change creates a new version:
 
 ```python
-from cogniverse_core.config.store_interface import ConfigScope
+from cogniverse_sdk.config.types import ConfigScope
 
 # Get configuration history
 history = manager.store.get_config_history(
@@ -588,7 +600,7 @@ manager.set_system_config(
 ### 3. Use Type-Safe Configurations
 ```python
 # Good: Type-safe dataclass
-from cogniverse_core.config.unified_config import SystemConfig
+from cogniverse_sdk.config.types import SystemConfig
 config = SystemConfig(
     tenant_id="prod",
     llm_model="gpt-4",
@@ -698,14 +710,31 @@ except ConnectionError:
     manager = ConfigManager(store=SQLiteConfigStore())
 ```
 
+## Configuration Layer Details
+
+### SDK Layer (cogniverse-sdk)
+- Defines configuration interfaces and type contracts
+- No implementation, just pure interfaces
+- Used by all other layers for type safety
+
+### Foundation Layer (cogniverse-foundation)
+- Implements base ConfigStore interface
+- Provides common configuration utilities
+- Handles serialization/deserialization
+
+### Core Layer (cogniverse-core)
+- Implements ConfigManager for system-wide configuration
+- Orchestrates configuration across all components
+- Manages tenant isolation and versioning
+
 ## Related Documentation
 
-- [Architecture Overview](architecture.md) - System design
+- [10-Package Architecture](ARCHITECTURE.md) - System design
 - [Multi-Tenant System](multi-tenant-system.md) - Tenant isolation
 - [Agent Orchestration](agent-orchestration.md) - Agent configuration
 - [Optimization System](optimization-system.md) - DSPy optimizer configuration
 
 ---
 
-**Last Updated**: 2025-10-04
-**Status**: Production - Version 2.0
+**Last Updated**: 2025-11-13
+**Status**: Production - Spans SDK, Foundation, and Core Layers

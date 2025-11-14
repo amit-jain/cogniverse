@@ -1,7 +1,7 @@
 # Multi-Tenant Architecture Diagrams
 
-**Last Updated:** 2025-10-15
-**Purpose:** Comprehensive visual documentation of multi-tenant architecture patterns
+**Last Updated:** 2025-11-13
+**Purpose:** Comprehensive visual documentation of multi-tenant architecture patterns with 10-package layered structure
 
 ---
 
@@ -86,23 +86,29 @@ graph TB
     style Mem0 fill:#ffe0e0
 ```
 
-### Tenant Isolation Layers
+### Tenant Isolation Layers (10-Package Architecture)
 
 ```mermaid
 graph TB
     subgraph "Application Layer"
         Request[HTTP Request<br/>tenant_id in header/body]
+        Runtime[cogniverse_runtime]
     end
 
-    subgraph "Configuration Layer"
-        ConfigMgr[ConfigManager]
-        TenantConfig[SystemConfig<br/>per tenant]
+    subgraph "Foundation Layer"
+        ConfigMgr[ConfigManager<br/>cogniverse_foundation]
+        TenantConfig[UnifiedConfig<br/>per tenant]
+        TelemetryBase[TelemetryManager<br/>cogniverse_foundation]
     end
 
-    subgraph "Processing Layer"
-        Agent[Agent Instance<br/>tenant-scoped]
-        Telemetry[TelemetryManager<br/>tenant project]
-        Memory[MemoryManager<br/>tenant namespace]
+    subgraph "Core Layer"
+        Agent[Agent Context<br/>cogniverse_core]
+        Memory[MemoryManager<br/>cogniverse_core]
+    end
+
+    subgraph "Implementation Layer"
+        VespaBackend[VespaBackend<br/>cogniverse_vespa]
+        AgentImpl[Agent Implementations<br/>cogniverse_agents]
     end
 
     subgraph "Storage Layer"
@@ -111,21 +117,27 @@ graph TB
         MemoryStore[Memory Store<br/>user_id prefix]
     end
 
-    Request --> ConfigMgr
+    Request --> Runtime
+    Runtime --> ConfigMgr
     ConfigMgr --> TenantConfig
     TenantConfig --> Agent
-    TenantConfig --> Telemetry
+    TenantConfig --> TelemetryBase
     TenantConfig --> Memory
-    Agent --> VespaSchema
-    Telemetry --> PhoenixProject
+    Agent --> AgentImpl
+    AgentImpl --> VespaBackend
+    VespaBackend --> VespaSchema
+    TelemetryBase --> PhoenixProject
     Memory --> MemoryStore
 
-    style Request fill:#e1f5ff
-    style ConfigMgr fill:#fff4e1
-    style TenantConfig fill:#fff4e1
-    style Agent fill:#ffe1f5
-    style Telemetry fill:#ffe1f5
-    style Memory fill:#ffe1f5
+    style Request fill:#B4A7D6,color:#fff
+    style Runtime fill:#B4A7D6,color:#fff
+    style ConfigMgr fill:#5BA3F5,color:#fff
+    style TenantConfig fill:#5BA3F5,color:#fff
+    style TelemetryBase fill:#5BA3F5,color:#fff
+    style Agent fill:#FF6B9D,color:#fff
+    style Memory fill:#FF6B9D,color:#fff
+    style VespaBackend fill:#93C47D
+    style AgentImpl fill:#FFD966
     style VespaSchema fill:#e1ffe1
     style PhoenixProject fill:#e1ffe1
     style MemoryStore fill:#e1ffe1
@@ -257,69 +269,83 @@ graph TB
 
 ## Tenant Data Flow
 
-### Video Ingestion Flow (Tenant-Specific)
+### Video Ingestion Flow (Tenant-Specific - 10-Package Architecture)
 
 ```mermaid
 sequenceDiagram
     participant User as User (acme_corp)
     participant Script as run_ingestion.py
-    participant Config as SystemConfig
-    participant Pipeline as VideoIngestionPipeline
-    participant Vespa as VespaBackend
+    participant Foundation as cogniverse_foundation
+    participant Core as cogniverse_core
+    participant Agents as cogniverse_agents
+    participant Vespa as cogniverse_vespa
     participant Schema as Vespa Schema
 
     User->>Script: Ingest video for tenant: acme_corp
 
-    Script->>Config: SystemConfig(tenant_id="acme_corp")
-    Config-->>Script: Config with tenant isolation
+    Script->>Foundation: UnifiedConfig(tenant_id="acme_corp")
+    Foundation-->>Script: Config with tenant isolation
 
-    Script->>Pipeline: VideoIngestionPipeline(tenant_id="acme_corp", profile="frame_based")
-    Pipeline->>Pipeline: Extract frames
-    Pipeline->>Pipeline: Generate embeddings
+    Script->>Agents: VideoIngestionPipeline(config, profile="frame_based")
+    Agents->>Core: Initialize agent context
+    Core->>Foundation: Get TelemetryManager
+    Foundation-->>Core: Telemetry manager
+    Core-->>Agents: Context ready
 
-    Pipeline->>Vespa: VespaBackend(config)
+    Agents->>Agents: Extract frames
+    Agents->>Agents: Generate embeddings
+
+    Agents->>Vespa: VespaBackend(config)
+    Vespa->>Foundation: Get tenant_id from config
     Vespa->>Vespa: schema_name = "video_colpali_smol500_mv_frame_acme_corp"
 
-    Pipeline->>Vespa: feed_documents(docs, schema_name)
+    Agents->>Vespa: feed_documents(docs, schema_name)
     Vespa->>Schema: Insert into video_colpali_smol500_mv_frame_acme_corp
     Schema-->>Vespa: Documents inserted
 
-    Vespa-->>Pipeline: Upload success
-    Pipeline-->>Script: Processing complete
+    Vespa-->>Agents: Upload success
+    Agents->>Foundation: Record telemetry span
+    Agents-->>Script: Processing complete
     Script-->>User: Video ingested for acme_corp
 ```
 
-### Search Flow (Tenant-Isolated)
+### Search Flow (Tenant-Isolated - 10-Package Architecture)
 
 ```mermaid
 sequenceDiagram
     participant User as User (acme_corp)
-    participant API as FastAPI Endpoint
-    participant Config as SystemConfig
-    participant Agent as VideoSearchAgent
-    participant Vespa as VespaBackend
+    participant Runtime as cogniverse_runtime
+    participant Foundation as cogniverse_foundation
+    participant Core as cogniverse_core
+    participant Agents as cogniverse_agents
+    participant Vespa as cogniverse_vespa
     participant Phoenix as Phoenix Telemetry
 
-    User->>API: POST /search {"query": "ML tutorial", "tenant_id": "acme_corp"}
+    User->>Runtime: POST /search {"query": "ML tutorial", "tenant_id": "acme_corp"}
 
-    API->>Config: SystemConfig(tenant_id="acme_corp")
-    Config-->>API: Tenant config
+    Runtime->>Foundation: UnifiedConfig(tenant_id="acme_corp")
+    Foundation-->>Runtime: Tenant config
 
-    API->>Agent: VideoSearchAgent(config, profile="frame_based")
-    Agent->>Agent: Generate query embedding
+    Runtime->>Agents: VideoSearchAgent(config, profile="frame_based")
+    Agents->>Core: Initialize agent context
+    Core->>Foundation: Get TelemetryManager
+    Foundation-->>Core: Telemetry manager
+    Core-->>Agents: Context ready
 
-    Agent->>Vespa: search(query, schema="video_colpali_smol500_mv_frame_acme_corp")
+    Agents->>Agents: Generate query embedding
+
+    Agents->>Vespa: search(query, schema="video_colpali_smol500_mv_frame_acme_corp")
     Note over Vespa: Query only searches acme_corp schema
-    Vespa-->>Agent: Search results (acme_corp documents only)
+    Vespa-->>Agents: Search results (acme_corp documents only)
 
-    Agent->>Agent: Multi-modal reranking
+    Agents->>Agents: Multi-modal reranking
 
-    Agent->>Phoenix: Record span with tenant_id="acme_corp"
-    Phoenix->>Phoenix: Send to project: acme_corp_project
-    Phoenix-->>Agent: Span recorded
+    Agents->>Foundation: Record span with tenant_id="acme_corp"
+    Foundation->>Phoenix: Send to project: acme_corp_project
+    Phoenix-->>Foundation: Span recorded
 
-    Agent-->>API: Reranked results
-    API-->>User: Search results (acme_corp data only)
+    Agents-->>Runtime: Reranked results
+    Runtime-->>User: Search results (acme_corp data only)
 ```
 
 ### Cross-Tenant Isolation Verification
@@ -749,28 +775,36 @@ graph TB
 
 ## Summary
 
-This diagram collection provides comprehensive visual documentation of multi-tenant architecture:
+This diagram collection provides comprehensive visual documentation of multi-tenant architecture across the **10-package layered structure**:
 
-1. **Tenant Isolation**: Complete separation at schema, project, and memory levels
-2. **Schema-Per-Tenant**: Naming convention with `_tenant_id` suffix
-3. **Data Flow**: Tenant-specific routing from ingestion to search
-4. **Phoenix Projects**: Per-tenant observability with project isolation
-5. **Memory Isolation**: User ID prefixes and tenant-specific schemas
+1. **Tenant Isolation**: Complete separation at schema, project, and memory levels across all layers
+2. **Schema-Per-Tenant**: Naming convention with `_tenant_id` suffix managed by cogniverse-vespa
+3. **Data Flow**: Tenant-specific routing from ingestion to search through layered architecture
+4. **Phoenix Projects**: Per-tenant observability via cogniverse-telemetry-phoenix plugin
+5. **Memory Isolation**: User ID prefixes and tenant-specific schemas via cogniverse-core
 6. **Lifecycle Management**: Tenant creation, deletion, and backup workflows
 
 **Key Principles:**
-- **Schema Isolation**: Each tenant has dedicated Vespa schemas
-- **Project Isolation**: Each tenant has dedicated Phoenix project
-- **Memory Isolation**: User IDs prefixed with tenant_id
-- **No Cross-Tenant Access**: Firewall at every layer
+- **Schema Isolation**: Each tenant has dedicated Vespa schemas (Implementation Layer)
+- **Project Isolation**: Each tenant has dedicated Phoenix project (Core Layer Plugin)
+- **Memory Isolation**: User IDs prefixed with tenant_id (Core Layer)
+- **No Cross-Tenant Access**: Firewall at every layer of the 10-package architecture
 - **Shared Infrastructure**: Single Vespa/Phoenix instances serve all tenants
+- **Configuration-Driven**: Tenant isolation configured via cogniverse-foundation
 
 **Tenant Naming Conventions:**
-- Vespa schemas: `{base_schema}_{tenant_id}`
-- Phoenix projects: `{tenant_id}_project`
-- Memory user IDs: `{tenant_id}_{user_id}`
+- Vespa schemas: `{base_schema}_{tenant_id}` (cogniverse-vespa)
+- Phoenix projects: `{tenant_id}_project` (cogniverse-telemetry-phoenix)
+- Memory user IDs: `{tenant_id}_{user_id}` (cogniverse-core)
+
+**10-Package Architecture Integration:**
+- **Foundation Layer**: Provides UnifiedConfig with tenant_id, TelemetryManager base
+- **Core Layer**: Manages agent context, memory, and cache with tenant isolation
+- **Implementation Layer**: Vespa backend applies tenant suffixes, agents enforce isolation
+- **Application Layer**: Runtime and dashboard respect tenant boundaries
 
 **Related Documentation:**
+- [10-Package Architecture Guide](../architecture/10-package-architecture.md)
 - [Multi-Tenant Architecture](../architecture/multi-tenant.md)
 - [Multi-Tenant Operations](../operations/multi-tenant-ops.md)
 - [Configuration Guide](../operations/configuration.md)

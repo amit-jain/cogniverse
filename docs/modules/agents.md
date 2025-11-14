@@ -1,8 +1,9 @@
 # Agents Module
 
-**Package:** `libs/agents/cogniverse_agents/`
+**Package:** `cogniverse_agents` (Implementation Layer)
+**Location:** `libs/agents/cogniverse_agents/`
 **Purpose:** Agent implementations for multi-agent RAG system with multi-tenant support
-**Last Updated:** 2025-10-15
+**Last Updated:** 2025-11-13
 
 ---
 
