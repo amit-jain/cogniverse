@@ -192,11 +192,12 @@ class VespaTestManager:
             self.original_cogniverse_config = original_cogniverse_config
 
             # Store original config values for restoration
+            import tempfile
+
             from cogniverse_foundation.config.utils import (
                 create_default_config_manager,
                 get_config,
             )
-            import tempfile
 
             # Use temporary database for tests (fresh state every run)
             temp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
@@ -210,7 +211,7 @@ class VespaTestManager:
             registry = get_backend_registry()
             if hasattr(registry, "_backend_instances"):
                 registry._backend_instances.clear()
-                print(f"🔧 Cleared backend cache for fresh SchemaRegistry")
+                print("🔧 Cleared backend cache for fresh SchemaRegistry")
 
             config_manager = create_default_config_manager(db_path=temp_db_path)
             actual_db_path = getattr(config_manager.store, 'db_path', 'unknown')
@@ -485,9 +486,9 @@ class VespaTestManager:
             # Use backend abstraction instead of direct HTTP calls
             from pathlib import Path
 
-            from cogniverse_foundation.config.utils import get_config
             from cogniverse_core.registries.backend_registry import get_backend_registry
             from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+            from cogniverse_foundation.config.utils import get_config
 
             registry = get_backend_registry()
 

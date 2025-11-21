@@ -1,26 +1,26 @@
 """
-Unit tests for VideoSearchAgent
+Unit tests for SearchAgent
 """
 
 from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
-from cogniverse_agents.tools.a2a_utils import A2AMessage, DataPart, Task, TextPart
-from cogniverse_agents.video_search_agent import (
+from cogniverse_agents.search_agent import (
+    ContentProcessor,
     ImagePart,
+    SearchAgent,
     VideoPart,
-    VideoProcessor,
-    VideoSearchAgent,
 )
+from cogniverse_agents.tools.a2a_utils import A2AMessage, DataPart, Task, TextPart
 
 # Create a mock schema_loader for all tests
 mock_schema_loader = Mock()
 
 
 @pytest.mark.unit
-class TestVideoProcessor:
-    """Test cases for VideoProcessor class"""
+class TestContentProcessor:
+    """Test cases for ContentProcessor class"""
 
     @pytest.fixture
     def mock_query_encoder(self):
@@ -34,16 +34,16 @@ class TestVideoProcessor:
     @pytest.fixture
     def video_processor(self, mock_query_encoder):
         """Video processor with mocked encoder"""
-        return VideoProcessor(mock_query_encoder)
+        return ContentProcessor(mock_query_encoder)
 
     @pytest.mark.ci_fast
     def test_video_processor_initialization(self, mock_query_encoder):
-        """Test VideoProcessor initialization"""
-        processor = VideoProcessor(mock_query_encoder)
+        """Test ContentProcessor initialization"""
+        processor = ContentProcessor(mock_query_encoder)
 
         assert processor.query_encoder == mock_query_encoder
         assert processor.temp_dir.exists()
-        assert processor.temp_dir.name == "video_search_agent"
+        assert processor.temp_dir.name == "search_agent"
 
     @pytest.mark.ci_fast
     def test_process_video_file_with_encode_video(self, video_processor):
@@ -80,7 +80,7 @@ class TestVideoProcessor:
         del mock_query_encoder.encode_video
         del mock_query_encoder.encode_frames
 
-        processor = VideoProcessor(mock_query_encoder)
+        processor = ContentProcessor(mock_query_encoder)
 
         with pytest.raises(
             NotImplementedError, match="Query encoder does not support video encoding"
@@ -92,7 +92,7 @@ class TestVideoProcessor:
         # Remove image encoding methods
         del mock_query_encoder.encode_image
 
-        processor = VideoProcessor(mock_query_encoder)
+        processor = ContentProcessor(mock_query_encoder)
 
         with pytest.raises(
             NotImplementedError, match="Query encoder does not support image encoding"
@@ -120,8 +120,8 @@ class TestVideoProcessor:
 
 
 @pytest.mark.unit
-class TestVideoSearchAgent:
-    """Test cases for VideoSearchAgent class"""
+class TestSearchAgent:
+    """Test cases for SearchAgent class"""
 
     @pytest.fixture
     def mock_config(self):
@@ -163,8 +163,8 @@ class TestVideoSearchAgent:
         encoder.encode_image = Mock(return_value=np.random.rand(128))
         return encoder
 
-    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
-    @patch("cogniverse_agents.video_search_agent.get_backend_registry")
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_core.config.utils.get_config")
     @pytest.mark.ci_fast
     def test_enhanced_agent_initialization(
@@ -176,7 +176,7 @@ class TestVideoSearchAgent:
         mock_vespa_client,
         mock_query_encoder,
     ):
-        """Test VideoSearchAgent initialization"""
+        """Test SearchAgent initialization"""
         # Mock backend registry
         mock_search_backend = Mock()
         mock_registry.return_value.get_search_backend.return_value = mock_search_backend
@@ -184,17 +184,17 @@ class TestVideoSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
+        agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
 
         # Verify agent initialized with correct dependencies
         assert agent.config is not None
         assert agent.search_backend == mock_search_backend
         assert agent.query_encoder == mock_query_encoder
         assert agent.embedding_type == "frame_based"
-        assert isinstance(agent.video_processor, VideoProcessor)
+        assert isinstance(agent.content_processor, ContentProcessor)
 
-    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
-    @patch("cogniverse_agents.video_search_agent.get_backend_registry")
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_core.config.utils.get_config")
     @pytest.mark.ci_fast
     def test_search_by_text(
@@ -214,7 +214,7 @@ class TestVideoSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
+        agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
 
         results = agent.search_by_text("find cats", top_k=5, ranking="binary_binary")
 
@@ -223,8 +223,8 @@ class TestVideoSearchAgent:
         mock_query_encoder.encode.assert_called_once_with("find cats")
         mock_search_backend.search.assert_called_once()
 
-    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
-    @patch("cogniverse_agents.video_search_agent.get_backend_registry")
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_core.config.utils.get_config")
     @pytest.mark.ci_fast
     def test_search_by_video(
@@ -244,10 +244,10 @@ class TestVideoSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
+        agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
 
         # Mock video processor
-        agent.video_processor.process_video_file = Mock(
+        agent.content_processor.process_video_file = Mock(
             return_value=np.random.rand(128)
         )
 
@@ -258,13 +258,13 @@ class TestVideoSearchAgent:
 
         assert len(results) == 2
         assert results[0]["video_id"] == "video1"
-        agent.video_processor.process_video_file.assert_called_once_with(
+        agent.content_processor.process_video_file.assert_called_once_with(
             video_data, "test.mp4"
         )
         mock_search_backend.search.assert_called_once()
 
-    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
-    @patch("cogniverse_agents.video_search_agent.get_backend_registry")
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_core.config.utils.get_config")
     def test_search_by_image(
         self,
@@ -283,10 +283,10 @@ class TestVideoSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
+        agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
 
         # Mock video processor
-        agent.video_processor.process_image_file = Mock(
+        agent.content_processor.process_image_file = Mock(
             return_value=np.random.rand(128)
         )
 
@@ -297,13 +297,13 @@ class TestVideoSearchAgent:
 
         assert len(results) == 2
         assert results[0]["video_id"] == "video1"
-        agent.video_processor.process_image_file.assert_called_once_with(
+        agent.content_processor.process_image_file.assert_called_once_with(
             image_data, "test.jpg"
         )
         mock_search_backend.search.assert_called_once()
 
-    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
-    @patch("cogniverse_agents.video_search_agent.get_backend_registry")
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_core.config.utils.get_config")
     def test_process_enhanced_task_with_text(
         self,
@@ -322,7 +322,7 @@ class TestVideoSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
+        agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
 
         # Create task with text part
         message = A2AMessage(
@@ -338,8 +338,8 @@ class TestVideoSearchAgent:
         assert len(result["results"]) == 2
         assert result["total_results"] == 2
 
-    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
-    @patch("cogniverse_agents.video_search_agent.get_backend_registry")
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_core.config.utils.get_config")
     def test_process_enhanced_task_with_video(
         self,
@@ -358,10 +358,10 @@ class TestVideoSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
+        agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
 
         # Mock video processor
-        agent.video_processor.process_video_file = Mock(
+        agent.content_processor.process_video_file = Mock(
             return_value=np.random.rand(128)
         )
 
@@ -380,8 +380,8 @@ class TestVideoSearchAgent:
         assert len(result["results"]) == 2
         assert result["total_results"] == 2
 
-    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
-    @patch("cogniverse_agents.video_search_agent.get_backend_registry")
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_core.config.utils.get_config")
     def test_process_enhanced_task_with_image(
         self,
@@ -400,10 +400,10 @@ class TestVideoSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
+        agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
 
         # Mock video processor
-        agent.video_processor.process_image_file = Mock(
+        agent.content_processor.process_image_file = Mock(
             return_value=np.random.rand(128)
         )
 
@@ -422,8 +422,8 @@ class TestVideoSearchAgent:
         assert len(result["results"]) == 2
         assert result["total_results"] == 2
 
-    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
-    @patch("cogniverse_agents.video_search_agent.get_backend_registry")
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_core.config.utils.get_config")
     def test_process_enhanced_task_with_mixed_parts(
         self,
@@ -442,13 +442,13 @@ class TestVideoSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
+        agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
 
         # Mock video processor
-        agent.video_processor.process_video_file = Mock(
+        agent.content_processor.process_video_file = Mock(
             return_value=np.random.rand(128)
         )
-        agent.video_processor.process_image_file = Mock(
+        agent.content_processor.process_image_file = Mock(
             return_value=np.random.rand(128)
         )
 
@@ -470,8 +470,8 @@ class TestVideoSearchAgent:
         # Should have results from all three searches (2 each = 6 total)
         assert result["total_results"] == 6
 
-    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
-    @patch("cogniverse_agents.video_search_agent.get_backend_registry")
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_core.config.utils.get_config")
     def test_process_enhanced_task_empty_messages(
         self,
@@ -490,15 +490,15 @@ class TestVideoSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
+        agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
 
         task = Task(id="test_task", messages=[])
 
         with pytest.raises(ValueError, match="Task contains no messages"):
             agent.process_enhanced_task(task)
 
-    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
-    @patch("cogniverse_agents.video_search_agent.get_backend_registry")
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_core.config.utils.get_config")
     def test_process_enhanced_task_no_valid_parts(
         self,
@@ -517,7 +517,7 @@ class TestVideoSearchAgent:
         mock_get_config.return_value = mock_config
         mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-        agent = VideoSearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
+        agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
 
         # Create task with TextPart but no query
         message = A2AMessage(
@@ -534,10 +534,10 @@ class TestVideoSearchAgent:
 
 
 @pytest.mark.unit
-class TestVideoSearchAgentEdgeCases:
-    """Test edge cases and error conditions for VideoSearchAgent"""
+class TestSearchAgentEdgeCases:
+    """Test edge cases and error conditions for SearchAgent"""
 
-    @patch("cogniverse_agents.video_search_agent.get_backend_registry")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_core.config.utils.get_config")
     def test_vespa_client_initialization_failure(
         self, mock_get_config, mock_registry
@@ -550,10 +550,10 @@ class TestVideoSearchAgentEdgeCases:
         mock_registry.return_value.get_search_backend.side_effect = Exception("Vespa connection failed")
 
         with pytest.raises(Exception, match="Vespa connection failed"):
-            VideoSearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
+            SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
 
-    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
-    @patch("cogniverse_agents.video_search_agent.get_backend_registry")
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_core.config.utils.get_config")
     def test_query_encoder_initialization_failure(
         self, mock_get_config, mock_registry, mock_encoder_factory
@@ -572,10 +572,10 @@ class TestVideoSearchAgentEdgeCases:
         )
 
         with pytest.raises(Exception, match="Encoder creation failed"):
-            VideoSearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
+            SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
 
-    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
-    @patch("cogniverse_agents.video_search_agent.get_backend_registry")
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_core.config.utils.get_config")
     def test_search_failure_handling(
         self, mock_get_config, mock_registry, mock_encoder_factory
@@ -591,7 +591,7 @@ class TestVideoSearchAgentEdgeCases:
         mock_registry.return_value.get_search_backend.return_value = mock_search_backend
         mock_encoder_factory.create_encoder.return_value = Mock()
 
-        agent = VideoSearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
+        agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
 
         with pytest.raises(Exception, match="Search failed"):
             agent.search_by_text("test query", ranking="binary_binary")
@@ -636,7 +636,7 @@ class TestDataModels:
 
 
 @pytest.mark.unit
-class TestVideoSearchAgentAdvancedFeatures:
+class TestSearchAgentAdvancedFeatures:
     """Test advanced features and edge cases"""
 
     @pytest.fixture
@@ -657,10 +657,10 @@ class TestVideoSearchAgentAdvancedFeatures:
                 "cogniverse_core.config.utils.get_config"
             ) as mock_get_config,
             patch(
-                "cogniverse_agents.video_search_agent.get_backend_registry"
+                "cogniverse_agents.search_agent.get_backend_registry"
             ) as mock_registry,
             patch(
-                "cogniverse_agents.video_search_agent.QueryEncoderFactory"
+                "cogniverse_agents.search_agent.QueryEncoderFactory"
             ) as mock_encoder_factory,
         ):
             mock_get_config.return_value = mock_config
@@ -672,7 +672,7 @@ class TestVideoSearchAgentAdvancedFeatures:
             mock_query_encoder.encode.return_value = np.random.rand(128)
             mock_encoder_factory.create_encoder.return_value = mock_query_encoder
 
-            agent = VideoSearchAgent(tenant_id="test_tenant",
+            agent = SearchAgent(tenant_id="test_tenant",
                 schema_loader=mock_schema_loader,
                 backend_url="http://localhost", backend_port=8080
             )
@@ -720,9 +720,9 @@ class TestVideoSearchAgentAdvancedFeatures:
 
     @pytest.mark.ci_fast
     def test_video_processor_cleanup_on_error(self, configured_agent):
-        """Test VideoProcessor cleans up temp files on error"""
+        """Test ContentProcessor cleans up temp files on error"""
         # Mock processor to raise error
-        configured_agent.video_processor.process_video_file = Mock(
+        configured_agent.content_processor.process_video_file = Mock(
             side_effect=Exception("Processing failed")
         )
 
@@ -736,7 +736,7 @@ class TestVideoSearchAgentAdvancedFeatures:
     def test_image_processor_with_different_formats(self, configured_agent):
         """Test image processing with different file formats"""
         # Mock processor
-        configured_agent.video_processor.process_image_file = Mock(
+        configured_agent.content_processor.process_image_file = Mock(
             return_value=np.random.rand(128)
         )
 
@@ -747,14 +747,14 @@ class TestVideoSearchAgentAdvancedFeatures:
                 image_data, f"test.{format_ext}", ranking="binary_binary"
             )
             assert isinstance(results, list)
-            configured_agent.video_processor.process_image_file.assert_called_with(
+            configured_agent.content_processor.process_image_file.assert_called_with(
                 image_data, f"test.{format_ext}"
             )
 
     @pytest.mark.ci_fast
     def test_relationship_aware_search_params_validation(self, configured_agent):
         """Test RelationshipAwareSearchParams validation"""
-        from cogniverse_agents.video_search_agent import (
+        from cogniverse_agents.search_agent import (
             RelationshipAwareSearchParams,
         )
 
@@ -785,14 +785,14 @@ class TestVideoSearchAgentAdvancedFeatures:
         assert params_full.confidence_threshold == 0.8
         assert params_full.use_relationship_boost is False
 
-    @patch("cogniverse_agents.video_search_agent.QueryEncoderFactory")
-    @patch("cogniverse_agents.video_search_agent.get_backend_registry")
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_core.config.utils.get_config")
     @pytest.mark.ci_fast
     def test_routing_decision_compatibility(
         self, mock_get_config, mock_registry, mock_encoder_factory
     ):
-        """Test that RoutingDecision structure is compatible with VideoSearchAgent"""
+        """Test that RoutingDecision structure is compatible with SearchAgent"""
         from cogniverse_agents.routing_agent import RoutingDecision
 
         # Mock config and dependencies
@@ -811,13 +811,13 @@ class TestVideoSearchAgentAdvancedFeatures:
         mock_encoder_factory.create_encoder.return_value = Mock()
 
         # Create search agent (just testing structure compatibility)
-        search_agent = VideoSearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
+        search_agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
 
         # Mock routing decision with relationships
         routing_decision = RoutingDecision(
             query="robots playing soccer in competitions",
             enhanced_query="autonomous robots demonstrating advanced soccer skills in competitive tournaments",
-            recommended_agent="video_search_agent",
+            recommended_agent="search_agent",
             confidence=0.85,
             reasoning="Query contains technology and sports entities with competitive context, requiring enhanced video search",
             entities=[

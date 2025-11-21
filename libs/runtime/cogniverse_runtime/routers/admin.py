@@ -7,10 +7,10 @@ import logging
 from datetime import datetime
 from typing import Any, Dict
 
-from cogniverse_foundation.config.manager import ConfigManager
-from cogniverse_foundation.config.unified_config import BackendProfileConfig
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.validation.profile_validator import ProfileValidator
+from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_foundation.config.unified_config import BackendProfileConfig
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 from fastapi import APIRouter, Depends, HTTPException
 

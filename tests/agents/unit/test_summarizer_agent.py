@@ -13,7 +13,6 @@ from cogniverse_agents.summarizer_agent import (
     ThinkingPhase,
     VLMInterface,
 )
-from cogniverse_agents.tools.a2a_utils import A2AMessage, DataPart, Task
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 
@@ -180,7 +179,7 @@ class TestSummarizerAgent:
     async def test_process_a2a_task_success(
         self, mock_init_vlm, mock_vlm_class, mock_get_config
     ):
-        """Test processing A2A task successfully"""
+        """Test processing summarization request successfully"""
         mock_get_config.return_value = {
             "llm": {
                 "model_name": "ollama/smollm3:500m",
@@ -189,30 +188,23 @@ class TestSummarizerAgent:
         }
         mock_vlm_class.return_value = Mock()
 
-        # Mock DSPy prediction result
-        mock_prediction = Mock()
-        mock_prediction.summary = "Test summary of the results"
-        mock_prediction.key_insights = "insight1, insight2"
-
         agent = SummarizerAgent(tenant_id="test_tenant")
 
-        # Mock the dspy_summarizer directly to return our prediction
-        agent.dspy_summarizer = Mock(return_value=mock_prediction)
+        # Create summarization request
+        request = SummaryRequest(
+            query="test query",
+            search_results=[{"id": "1", "title": "Test", "score": 0.8}],
+            summary_type="brief",
+            include_visual_analysis=False,  # Skip visual analysis for speed
+        )
 
-        # Create A2A task
-        request_data = {
-            "query": "test query",
-            "search_results": [{"id": "1", "title": "Test"}],
-            "summary_type": "brief",
-        }
+        result = await agent.summarize(request)
 
-        message = A2AMessage(role="user", parts=[DataPart(data=request_data)])
-        task = Task(id="test_task", messages=[message])
-
-        result = await agent.process_a2a_task(task)
-
-        assert "summary" in result
-        assert "key_points" in result
+        assert result.summary is not None
+        assert len(result.summary) > 0
+        assert isinstance(result.key_points, list)
+        assert result.confidence_score >= 0.0
+        assert result.confidence_score <= 1.0
 
 
 @pytest.mark.unit
@@ -514,7 +506,10 @@ class TestSummarizerAgentCoreFunctionality:
 
             assert isinstance(result, SummaryResult)
             assert result.summary is not None
-            assert "enhanced" in result.summary.lower()
+            assert len(result.summary) > 0
+            # Verify enhancement was applied via metadata
+            assert result.enhancement_applied is True
+            assert result.metadata.get("enhanced_query") is not None
 
 
 if __name__ == "__main__":

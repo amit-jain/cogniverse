@@ -10,9 +10,9 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from cogniverse_foundation.config.utils import get_config
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_foundation.config.utils import get_config
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -34,8 +34,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 1. Load configuration
     from pathlib import Path
 
-    from cogniverse_foundation.config.utils import create_default_config_manager
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.utils import create_default_config_manager
 
     config_manager = create_default_config_manager()
     config = get_config(tenant_id="default", config_manager=config_manager)

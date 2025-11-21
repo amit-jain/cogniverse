@@ -3,8 +3,8 @@
 import logging
 from typing import Any, Dict
 
-from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_foundation.config.utils import create_default_config_manager
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 

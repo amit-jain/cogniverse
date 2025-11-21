@@ -358,7 +358,7 @@ class A2AGateway:
             word in query_lower
             for word in ["video", "visual", "image", "watch", "show"]
         ):
-            agent = "video_search_agent"
+            agent = "search_agent"
             reasoning = "Emergency routing based on video keywords"
         elif any(
             word in query_lower
@@ -373,7 +373,7 @@ class A2AGateway:
             agent = "detailed_report_agent"
             reasoning = "Emergency routing based on analysis keywords"
         else:
-            agent = "video_search_agent"  # Default fallback
+            agent = "search_agent"  # Default fallback
             reasoning = "Emergency routing with default agent"
 
         return A2AQueryResponse(

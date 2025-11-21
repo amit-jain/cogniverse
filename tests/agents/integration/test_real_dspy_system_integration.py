@@ -225,13 +225,13 @@ class TestMultiAgentSystem:
         """Test enhanced video search agent with real configuration"""
         import os
 
-        from cogniverse_agents.video_search_agent import VideoSearchAgent
+        from cogniverse_agents.search_agent import SearchAgent
 
         # Set required environment for video search
         os.environ["VESPA_SCHEMA"] = "video_colpali_smol500_mv_frame"
 
         try:
-            agent = VideoSearchAgent(tenant_id="test_tenant")
+            agent = SearchAgent(tenant_id="test_tenant")
 
             # Should initialize with real config
             assert agent is not None

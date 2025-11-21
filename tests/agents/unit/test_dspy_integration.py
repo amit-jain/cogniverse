@@ -42,11 +42,11 @@ from cogniverse_agents.routing.relationship_extraction_tools import (
 )
 from cogniverse_agents.routing_agent import RoutingAgent, RoutingDecision
 
+# Phase 5 imports for enhanced agent testing
+from cogniverse_agents.search_agent import SearchAgent
+
 # Agent imports
 from cogniverse_agents.summarizer_agent import SummarizerAgent
-
-# Phase 5 imports for enhanced agent testing
-from cogniverse_agents.video_search_agent import VideoSearchAgent
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 
@@ -3118,7 +3118,7 @@ class TestVideoSearchAgent:
                 # Mock schema_loader
                 mock_schema_loader = Mock()
 
-                agent = VideoSearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
+                agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
                 assert agent is not None
                 assert hasattr(agent, "search_backend")
                 assert hasattr(agent, "config")
@@ -3207,7 +3207,7 @@ class TestVideoSearchAgent:
             # Mock schema_loader
             mock_schema_loader = Mock()
 
-            agent = VideoSearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
+            agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
 
             # Test result with entity matches
             result = {
@@ -3265,7 +3265,7 @@ class TestVideoSearchAgent:
             # Mock schema_loader
             mock_schema_loader = Mock()
 
-            agent = VideoSearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
+            agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
 
             # Mock the method since it might not exist in the actual implementation
             agent._find_matching_entities = Mock(
@@ -3325,7 +3325,7 @@ class TestVideoSearchAgent:
             # Mock schema_loader
             mock_schema_loader = Mock()
 
-            agent = VideoSearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
+            agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
 
             # Mock the method since it might not exist in the actual implementation
             enhanced_results = [

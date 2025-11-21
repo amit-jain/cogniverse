@@ -205,8 +205,7 @@ class TestRealVespaIntegration:
             # Pass ports directly - NO environment variables
             from pathlib import Path
 
-            from cogniverse_agents.video_search_agent import VideoSearchAgent
-            from cogniverse_foundation.config.utils import create_default_config_manager
+            from cogniverse_agents.search_agent import SearchAgent
             from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
             print("Initializing Enhanced Video Search Agent...")
@@ -217,7 +216,7 @@ class TestRealVespaIntegration:
             # Use config_manager from fixture (temp DB with correct ports)
             config_manager = shared_system_vespa["manager"].config_manager
 
-            video_agent = VideoSearchAgent(
+            video_agent = SearchAgent(
                 tenant_id="test_tenant",
                 schema_loader=schema_loader,
                 config_manager=config_manager,
@@ -317,10 +316,10 @@ class TestRealVespaIntegration:
         default_schema = shared_system_vespa["default_schema"]
 
         try:
-            from cogniverse_agents.video_search_agent import VideoSearchAgent
+            from cogniverse_agents.search_agent import SearchAgent
 
-            print("Initializing VideoSearchAgent...")
-            video_agent = VideoSearchAgent(
+            print("Initializing SearchAgent...")
+            video_agent = SearchAgent(
                 tenant_id="test_tenant",
                 backend_url=vespa_url,
                 backend_port=vespa_port,
@@ -823,8 +822,7 @@ class TestRealEndToEndIntegration:
             # Pass ports directly - NO environment variables
             from pathlib import Path
 
-            from cogniverse_agents.video_search_agent import VideoSearchAgent
-            from cogniverse_foundation.config.utils import create_default_config_manager
+            from cogniverse_agents.search_agent import SearchAgent
             from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
             # Create dependencies for agent
@@ -834,7 +832,7 @@ class TestRealEndToEndIntegration:
             # Use config_manager from fixture (temp DB with correct ports)
             config_manager = vespa_test_manager.config_manager
 
-            video_search_agent = VideoSearchAgent(
+            video_search_agent = SearchAgent(
                 tenant_id="test_tenant",
                 schema_loader=schema_loader,
                 config_manager=config_manager,

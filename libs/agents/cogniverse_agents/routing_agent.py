@@ -35,7 +35,6 @@ from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
 # Production features from RoutingAgent
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
-from cogniverse_agents.routing.modality_metrics import ModalityMetricsTracker
 from dspy import LM
 
 # Phase 6: Advanced optimization
@@ -57,6 +56,7 @@ from cogniverse_agents.routing.mlflow_integration import (
     MLflowIntegration,
 )
 from cogniverse_agents.routing.modality_cache import ModalityCacheManager
+from cogniverse_agents.routing.modality_metrics import ModalityMetricsTracker
 from cogniverse_agents.routing.parallel_executor import ParallelAgentExecutor
 from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
 from cogniverse_agents.routing.relationship_extraction_tools import (
@@ -116,7 +116,7 @@ class RoutingConfig:
     # Agent capabilities mapping
     agent_capabilities: Dict[str, List[str]] = field(
         default_factory=lambda: {
-            "video_search_agent": [
+            "search_agent": [
                 "video_content_search",
                 "visual_query_analysis",
                 "multimodal_retrieval",
@@ -330,7 +330,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
                     return dspy.Prediction(
                         primary_intent="search",
                         needs_video_search=True,
-                        recommended_agent="video_search_agent",
+                        recommended_agent="search_agent",
                         confidence=0.5,
                     )
 
@@ -535,7 +535,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         Uses the routing decision to determine modality, not keywords.
         """
         agent_modality_map = {
-            "video_search_agent": QueryModality.VIDEO,
+            "search_agent": QueryModality.VIDEO,
             "document_agent": QueryModality.DOCUMENT,
             "document_search_agent": QueryModality.DOCUMENT,
             "image_search_agent": QueryModality.IMAGE,
@@ -650,7 +650,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
                 decision = RoutingDecision(
                     query=query,
                     recommended_agent=final_routing_result.get(
-                        "recommended_agent", "video_search_agent"
+                        "recommended_agent", "search_agent"
                     ),
                     confidence=final_routing_result.get("confidence", 0.5),
                     reasoning=final_routing_result.get(
@@ -868,7 +868,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
             # Extract routing information from DSPy result
             routing_info = {
                 "recommended_agent": getattr(
-                    dspy_result, "recommended_agent", "video_search_agent"
+                    dspy_result, "recommended_agent", "search_agent"
                 ),
                 "confidence": getattr(dspy_result, "confidence", 0.5),
                 "reasoning": getattr(dspy_result, "reasoning", "DSPy routing decision"),
@@ -890,7 +890,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         except Exception as e:
             self.logger.error(f"DSPy routing decision failed: {e}")
             return {
-                "recommended_agent": "video_search_agent",
+                "recommended_agent": "search_agent",
                 "confidence": 0.3,
                 "reasoning": f"Fallback routing due to error: {e}",
                 "primary_intent": "search",
@@ -962,12 +962,12 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
             return []
 
         fallback_mapping = {
-            "video_search_agent": ["summarizer_agent", "detailed_report_agent"],
-            "summarizer_agent": ["detailed_report_agent", "video_search_agent"],
-            "detailed_report_agent": ["summarizer_agent", "video_search_agent"],
+            "search_agent": ["summarizer_agent", "detailed_report_agent"],
+            "summarizer_agent": ["detailed_report_agent", "search_agent"],
+            "detailed_report_agent": ["summarizer_agent", "search_agent"],
         }
 
-        return fallback_mapping.get(primary_agent, ["video_search_agent"])
+        return fallback_mapping.get(primary_agent, ["search_agent"])
 
     def _assess_orchestration_need(
         self,
@@ -1098,7 +1098,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         """Create fallback routing decision when processing fails"""
         return RoutingDecision(
             query=query,
-            recommended_agent="video_search_agent",  # Default fallback
+            recommended_agent="search_agent",  # Default fallback
             confidence=0.2,
             reasoning=f"Fallback routing due to processing error: {error}",
             fallback_agents=["summarizer_agent", "detailed_report_agent"],

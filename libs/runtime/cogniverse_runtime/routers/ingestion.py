@@ -4,9 +4,9 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
-from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel

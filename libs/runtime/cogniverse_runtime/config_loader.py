@@ -8,9 +8,9 @@ import importlib
 import logging
 from typing import Any, Dict, Optional
 
-from cogniverse_foundation.config.utils import get_config
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_foundation.config.utils import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class ConfigLoader:
     # Mapping of agent types to classes
     AGENT_CLASSES = {
         "routing_agent": "cogniverse_agents.routing_agent:RoutingAgent",
-        "video_search_agent": "cogniverse_agents.video_search_agent:VideoSearchAgent",
+        "search_agent": "cogniverse_agents.search_agent:SearchAgent",
         "text_analysis_agent": "cogniverse_agents.text_analysis_agent:TextAnalysisAgent",
         "summarizer_agent": "cogniverse_agents.summarizer_agent:SummarizerAgent",
         "detailed_report_agent": "cogniverse_agents.detailed_report_agent:DetailedReportAgent",

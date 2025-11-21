@@ -10,7 +10,6 @@ import dspy
 import uvicorn
 from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 from cogniverse_core.common.a2a_mixin import A2AEndpointsMixin
-from cogniverse_foundation.config.api_mixin import ConfigAPIMixin
 from cogniverse_core.common.dynamic_dspy_mixin import DynamicDSPyMixin
 from cogniverse_core.common.health_mixin import HealthCheckMixin
 from cogniverse_foundation.config.agent_config import (
@@ -18,6 +17,7 @@ from cogniverse_foundation.config.agent_config import (
     DSPyModuleType,
     ModuleConfig,
 )
+from cogniverse_foundation.config.api_mixin import ConfigAPIMixin
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 from fastapi import FastAPI
