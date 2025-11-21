@@ -470,11 +470,11 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
 
         logger.info("SearchAgent initialization complete")
 
-    def search_by_text(
+    def _search_by_text(
         self, query: str, modality: str = "video", top_k: int = 10, **kwargs
     ) -> List[Dict[str, Any]]:
         """
-        Search content using text query.
+        Internal: Search content using text query.
 
         Args:
             query: Text search query
@@ -558,11 +558,11 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
 
             raise
 
-    def search_by_video(
+    def _search_by_video(
         self, video_data: bytes, filename: str, modality: str = "video", top_k: int = 10, **kwargs
     ) -> List[Dict[str, Any]]:
         """
-        Search content using video query.
+        Internal: Search content using video query.
 
         Args:
             video_data: Raw video file bytes
@@ -649,11 +649,11 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
 
             raise
 
-    def search_by_image(
+    def _search_by_image(
         self, image_data: bytes, filename: str, modality: str = "video", top_k: int = 10, **kwargs
     ) -> List[Dict[str, Any]]:
         """
-        Search content using image query.
+        Internal: Search content using image query.
 
         Args:
             image_data: Raw image file bytes
@@ -767,7 +767,7 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
 
                 if query:
                     search_type = "text"
-                    text_results = self.search_by_text(
+                    text_results = self._search_by_text(
                         query=query,
                         modality=modality,
                         top_k=query_data.get("top_k", 10),
@@ -780,7 +780,7 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
             elif isinstance(part, VideoPart):
                 # Video search
                 search_type = "video"
-                video_results = self.search_by_video(
+                video_results = self._search_by_video(
                     video_data=part.video_data,
                     filename=part.filename or "uploaded_video.mp4",
                     modality="video",
@@ -791,7 +791,7 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
             elif isinstance(part, ImagePart):
                 # Image search
                 search_type = "image"
-                image_results = self.search_by_image(
+                image_results = self._search_by_image(
                     image_data=part.image_data,
                     filename=part.filename or "uploaded_image.jpg",
                     modality=modality,
@@ -802,7 +802,7 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
             elif isinstance(part, TextPart):
                 # Simple text search
                 search_type = "text"
-                text_results = self.search_by_text(query=part.text, modality="video", top_k=10)
+                text_results = self._search_by_text(query=part.text, modality="video", top_k=10)
                 results.extend(text_results)
 
         if not results:
@@ -1112,7 +1112,7 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         logger.warning("Falling back to basic text search")
 
         try:
-            results = self.search_by_text(query, top_k=top_k, **kwargs)
+            results = self._search_by_text(query, top_k=top_k, **kwargs)
             return {
                 "status": "completed_with_fallback",
                 "search_type": "basic_text",
@@ -1158,37 +1158,54 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         return result
 
     # DSPyA2AAgentBase implementation
-    async def _process_with_dspy(self, dspy_input: Dict[str, Any]) -> Any:
-        """Process A2A input with DSPy search optimization"""
+    async def _process(self, dspy_input: Dict[str, Any]) -> Any:
+        """Process A2A input - routes to appropriate search method based on input type"""
         query = dspy_input.get("query", "")
         modality = dspy_input.get("modality", "video")
         top_k = dspy_input.get("top_k", 10)
 
-        # Use DSPy module for search optimization
-        try:
-            dspy_result = self.search_module.forward(query=query, modality=modality, top_k=top_k)
-
-            # Use enhanced query from DSPy if confidence is high
+        # Route based on input type
+        if "video_data" in dspy_input:
+            # Video-based search
+            results = self._search_by_video(
+                video_data=dspy_input["video_data"],
+                filename=dspy_input.get("video_filename", "video.mp4"),
+                modality=modality,
+                top_k=top_k,
+                **dspy_input
+            )
+        elif "image_data" in dspy_input:
+            # Image-based search
+            results = self._search_by_image(
+                image_data=dspy_input["image_data"],
+                filename=dspy_input.get("image_filename", "image.jpg"),
+                modality=modality,
+                top_k=top_k,
+                **dspy_input
+            )
+        else:
+            # Text-based search with optional DSPy optimization
             search_query = query
-            if hasattr(dspy_result, "enhanced_query") and hasattr(dspy_result, "confidence"):
-                if dspy_result.confidence > 0.7:
-                    search_query = dspy_result.enhanced_query
-                    logger.info(f"Using DSPy-enhanced query: {search_query}")
-        except Exception as e:
-            logger.warning(f"DSPy optimization failed: {e}, using original query")
-            search_query = query
+            try:
+                dspy_result = self.search_module.forward(query=query, modality=modality, top_k=top_k)
+                # Use enhanced query from DSPy if confidence is high
+                if hasattr(dspy_result, "enhanced_query") and hasattr(dspy_result, "confidence"):
+                    if dspy_result.confidence > 0.7:
+                        search_query = dspy_result.enhanced_query
+                        logger.info(f"Using DSPy-enhanced query: {search_query}")
+            except Exception as e:
+                logger.warning(f"DSPy optimization failed: {e}, using original query")
 
-        # Perform search
-        results = self.search_by_text(
-            query=search_query,
-            modality=modality,
-            top_k=top_k,
-            **dspy_input
-        )
+            results = self._search_by_text(
+                query=search_query,
+                modality=modality,
+                top_k=top_k,
+                **dspy_input
+            )
 
         return {
             "query": query,
-            "enhanced_query": search_query if search_query != query else None,
+            "enhanced_query": search_query if "search_query" in locals() and search_query != query else None,
             "modality": modality,
             "results": results,
             "total_results": len(results),

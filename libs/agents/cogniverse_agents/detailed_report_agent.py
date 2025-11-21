@@ -218,9 +218,9 @@ class DetailedReportAgent(DSPyA2AAgentBase, TenantAwareAgentMixin):
             else:
                 raise
 
-    async def generate_report(self, request: ReportRequest) -> ReportResult:
+    async def _generate_report(self, request: ReportRequest) -> ReportResult:
         """
-        Generate a detailed report with comprehensive analysis
+        Internal: Generate a detailed report with comprehensive analysis
 
         Args:
             request: Report generation request
@@ -718,7 +718,7 @@ technical accuracy, and actionable insights. Visual analysis {'included' if requ
         )
 
         # Generate basic report
-        result = await self.generate_report(basic_request)
+        result = await self._generate_report(basic_request)
 
         # Add relationship metadata
         result.enhancement_applied = True
@@ -733,8 +733,8 @@ technical accuracy, and actionable insights. Visual analysis {'included' if requ
         return result
 
     # DSPyA2AAgentBase implementation
-    async def _process_with_dspy(self, dspy_input: Dict[str, Any]) -> Any:
-        """Process A2A input with DSPy report generation"""
+    async def _process(self, dspy_input: Dict[str, Any]) -> Any:
+        """Process A2A input - performs report generation"""
         query = dspy_input.get("query", "")
         search_results = dspy_input.get("search_results", [])
         report_type = dspy_input.get("report_type", "comprehensive")
@@ -756,7 +756,7 @@ technical accuracy, and actionable insights. Visual analysis {'included' if requ
         )
 
         # Generate report
-        result = await self.generate_report(request)
+        result = await self._generate_report(request)
 
         return {
             "query": query,

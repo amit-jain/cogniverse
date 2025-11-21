@@ -298,7 +298,7 @@ class TestDetailedReportAgent:
             include_visual_analysis=False,  # Skip visual analysis for speed
         )
 
-        result = await agent.generate_report(request)
+        result = await agent._generate_report(request)
 
         assert result.executive_summary is not None
         assert len(result.executive_summary) > 0
@@ -331,7 +331,7 @@ class TestDetailedReportAgent:
             include_visual_analysis=False,
         )
 
-        result = await agent.generate_report(request)
+        result = await agent._generate_report(request)
 
         # Should handle empty results gracefully
         assert result.executive_summary is not None
@@ -494,7 +494,7 @@ class TestDetailedReportAgentCoreFunctionality:
             mock_cot_instance.forward = Mock(return_value=mock_prediction)
             mock_cot.return_value = mock_cot_instance
 
-            result = await agent.generate_report(sample_report_request)
+            result = await agent._generate_report(sample_report_request)
 
             assert isinstance(result, ReportResult)
             assert result.executive_summary is not None

@@ -198,7 +198,7 @@ class TestSummarizerAgent:
             include_visual_analysis=False,  # Skip visual analysis for speed
         )
 
-        result = await agent.summarize(request)
+        result = await agent._summarize(request)
 
         assert result.summary is not None
         assert len(result.summary) > 0
@@ -459,7 +459,7 @@ class TestSummarizerAgentCoreFunctionality:
             mock_cot_instance.forward = Mock(return_value=mock_prediction)
             mock_cot.return_value = mock_cot_instance
 
-            result = await agent.summarize(sample_summary_request)
+            result = await agent._summarize(sample_summary_request)
 
             assert isinstance(result, SummaryResult)
             assert result.summary is not None

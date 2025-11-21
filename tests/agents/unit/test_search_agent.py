@@ -216,7 +216,7 @@ class TestSearchAgent:
 
         agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
 
-        results = agent.search_by_text("find cats", top_k=5, ranking="binary_binary")
+        results = agent._search_by_text("find cats", top_k=5, ranking="binary_binary")
 
         assert len(results) == 2
         assert results[0]["video_id"] == "video1"
@@ -252,7 +252,7 @@ class TestSearchAgent:
         )
 
         video_data = b"fake_video_data"
-        results = agent.search_by_video(
+        results = agent._search_by_video(
             video_data, "test.mp4", top_k=5, ranking="binary_binary"
         )
 
@@ -291,7 +291,7 @@ class TestSearchAgent:
         )
 
         image_data = b"fake_image_data"
-        results = agent.search_by_image(
+        results = agent._search_by_image(
             image_data, "test.jpg", top_k=5, ranking="binary_binary"
         )
 
@@ -594,7 +594,7 @@ class TestSearchAgentEdgeCases:
         agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader, backend_url="http://localhost", backend_port=8080)
 
         with pytest.raises(Exception, match="Search failed"):
-            agent.search_by_text("test query", ranking="binary_binary")
+            agent._search_by_text("test query", ranking="binary_binary")
 
 
 @pytest.mark.unit
@@ -682,7 +682,7 @@ class TestSearchAgentAdvancedFeatures:
     def test_search_with_empty_results(self, configured_agent):
         """Test handling of empty search results"""
         # Vespa client is already configured to return empty results
-        results = configured_agent.search_by_text(
+        results = configured_agent._search_by_text(
             "non-existent content", top_k=5, ranking="binary_binary"
         )
 
@@ -693,18 +693,18 @@ class TestSearchAgentAdvancedFeatures:
     def test_search_with_different_rankings(self, configured_agent):
         """Test search with different ranking strategies"""
         # Test with float_binary ranking
-        results = configured_agent.search_by_text(
+        results = configured_agent._search_by_text(
             "find cats", top_k=5, ranking="float_binary"
         )
         assert isinstance(results, list)
 
         # Test with default ranking (when not specified)
-        results = configured_agent.search_by_text("find cats", top_k=5)
+        results = configured_agent._search_by_text("find cats", top_k=5)
         assert isinstance(results, list)
 
     def test_search_with_temporal_parameters(self, configured_agent):
         """Test search with date range filters (currently logs warning as not yet supported)"""
-        results = configured_agent.search_by_text(
+        results = configured_agent._search_by_text(
             "find recent videos",
             top_k=5,
             ranking="binary_binary",
@@ -729,7 +729,7 @@ class TestSearchAgentAdvancedFeatures:
         video_data = b"fake_video_data"
 
         with pytest.raises(Exception, match="Processing failed"):
-            configured_agent.search_by_video(
+            configured_agent._search_by_video(
                 video_data, "test.mp4", ranking="binary_binary"
             )
 
@@ -743,7 +743,7 @@ class TestSearchAgentAdvancedFeatures:
         # Test different image formats
         for format_ext in ["jpg", "png", "jpeg", "webp"]:
             image_data = b"fake_image_data"
-            results = configured_agent.search_by_image(
+            results = configured_agent._search_by_image(
                 image_data, f"test.{format_ext}", ranking="binary_binary"
             )
             assert isinstance(results, list)
@@ -855,7 +855,7 @@ class TestSearchAgentAdvancedFeatures:
             assert search_params.routing_confidence == routing_decision.confidence
         else:
             # Verify the search agent has the necessary attributes to handle routing decisions
-            assert hasattr(search_agent, "search_by_text")
+            assert hasattr(search_agent, "_search_by_text")
             assert routing_decision.enhanced_query is not None
             assert len(routing_decision.entities) == 3
             assert len(routing_decision.relationships) == 2

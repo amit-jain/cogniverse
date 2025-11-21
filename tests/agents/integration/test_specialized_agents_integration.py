@@ -121,7 +121,7 @@ class TestSummarizerAgentDSPyIntegration:
             )
 
             # Generate summary with real DSPy.LM
-            result = await agent.summarize(request)
+            result = await agent._summarize(request)
 
             # Verify results
             assert result.summary is not None
@@ -151,7 +151,7 @@ class TestSummarizerAgentDSPyIntegration:
             )
 
             # Process request with real DSPy.LM
-            result = await agent.summarize(request)
+            result = await agent._summarize(request)
 
             # Verify response
             assert result.summary is not None
@@ -200,7 +200,7 @@ class TestDetailedReportAgentDSPyIntegration:
                     "annotations": [{"element": "neural_network", "confidence": 0.9}],
                 }
 
-                result = await agent.generate_report(request)
+                result = await agent._generate_report(request)
 
                 # Verify comprehensive report with real DSPy.LM
                 assert result.executive_summary is not None
@@ -241,7 +241,7 @@ class TestDetailedReportAgentDSPyIntegration:
                     "quality_assessment": {"overall": 0.8},
                 }
 
-                result = await agent.generate_report(request)
+                result = await agent._generate_report(request)
 
                 # Verify response with real DSPy.LM
                 assert result.executive_summary is not None
@@ -278,7 +278,7 @@ class TestCrossAgentDSPyIntegration:
                 summary_type="comprehensive",
             )
 
-            summary_result = await summarizer.summarize(summary_request)
+            summary_result = await summarizer._summarize(summary_request)
 
             # Step 2: Use summary for detailed report
             enhanced_results = sample_search_results.copy()
@@ -311,7 +311,7 @@ class TestCrossAgentDSPyIntegration:
                     "quality_assessment": {"overall": 0.9},
                 }
 
-                report_result = await report_agent.generate_report(report_request)
+                report_result = await report_agent._generate_report(report_request)
 
                 # Verify integrated workflow with real DSPy.LM
                 assert summary_result.summary is not None
@@ -359,8 +359,8 @@ class TestDSPyLMConfigurationIntegration:
             )
 
             # Generate summaries with both configurations using real DSPy.LM
-            result_small = await agent_small.summarize(request)
-            result_medium = await agent_medium.summarize(request)
+            result_small = await agent_small._summarize(request)
+            result_medium = await agent_medium._summarize(request)
 
         # Verify both configurations work with real DSPy.LM
         assert result_small.summary is not None
@@ -390,7 +390,7 @@ class TestDSPyLMConfigurationIntegration:
             )
 
             # This should raise an exception due to bad model config
-            result = await agent.summarize(request)
+            result = await agent._summarize(request)
             # If it succeeds unexpectedly, that's still valid - agent may have fallbacks
             assert (
                 result is not None

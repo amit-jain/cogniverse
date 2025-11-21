@@ -139,9 +139,9 @@ class DSPyA2AAgentBase(ABC):
                     f"Converted A2A task to DSPy input: {list(dspy_input.keys())}"
                 )
 
-                # Step 2: Process with DSPy 3.0 module
-                dspy_output = await self._process_with_dspy(dspy_input)
-                logger.debug("DSPy processing completed")
+                # Step 2: Process with agent's core logic
+                dspy_output = await self._process(dspy_input)
+                logger.debug("Agent processing completed")
 
                 # Step 3: Convert DSPy output back to A2A format
                 a2a_response = self._dspy_to_a2a_output(dspy_output)
@@ -286,15 +286,15 @@ class DSPyA2AAgentBase(ABC):
             )
 
     @abstractmethod
-    async def _process_with_dspy(self, dspy_input: Dict[str, Any]) -> Any:
+    async def _process(self, dspy_input: Dict[str, Any]) -> Any:
         """
-        Process input with DSPy 3.0 module - must be implemented by subclasses.
+        Process input with agent's core logic - must be implemented by subclasses.
 
         Args:
-            dspy_input: Converted input in DSPy format
+            dspy_input: Converted input from A2A task format
 
         Returns:
-            DSPy module output
+            Agent-specific output (will be converted to A2A format)
         """
         pass
 
@@ -396,7 +396,7 @@ class SimpleDSPyA2AAgent(DSPyA2AAgentBase):
             port=port,
         )
 
-    async def _process_with_dspy(self, dspy_input: Dict[str, Any]) -> Any:
+    async def _process(self, dspy_input: Dict[str, Any]) -> Any:
         """Process with simple DSPy module"""
         query = dspy_input.get("query", "")
 

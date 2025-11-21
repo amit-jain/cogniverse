@@ -209,9 +209,9 @@ class SummarizerAgent(DSPyA2AAgentBase, TenantAwareAgentMixin):
             else:
                 raise
 
-    async def summarize(self, request: SummaryRequest) -> SummaryResult:
+    async def _summarize(self, request: SummaryRequest) -> SummaryResult:
         """
-        Generate comprehensive summary with thinking phase
+        Internal: Generate comprehensive summary with thinking phase
 
         Args:
             request: Summarization request
@@ -729,7 +729,7 @@ and structure summary based on identified themes and content categories.
         )
 
         # Use basic summarization with enhanced query
-        result = await self.summarize(basic_request)
+        result = await self._summarize(basic_request)
 
         # Add relationship metadata
         result.enhancement_applied = True
@@ -744,8 +744,8 @@ and structure summary based on identified themes and content categories.
         return result
 
     # DSPyA2AAgentBase implementation
-    async def _process_with_dspy(self, dspy_input: Dict[str, Any]) -> Any:
-        """Process A2A input with DSPy summarization"""
+    async def _process(self, dspy_input: Dict[str, Any]) -> Any:
+        """Process A2A input - performs summarization"""
         query = dspy_input.get("query", "")
         search_results = dspy_input.get("search_results", [])
         summary_type = dspy_input.get("summary_type", "comprehensive")
@@ -763,7 +763,7 @@ and structure summary based on identified themes and content categories.
         )
 
         # Perform summarization
-        result = await self.summarize(request)
+        result = await self._summarize(request)
 
         return {
             "query": query,
