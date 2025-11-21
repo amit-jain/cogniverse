@@ -287,31 +287,29 @@ class OrchestratorAgent(DSPyA2AAgentBase):
                     break
                 depends_on.extend(group)
         else:
-            # Sequential step - find last completed parallel group or previous step
-            if parallel_groups:
-                # Find the last parallel group before this step
-                last_group_before = None
+            # Sequential step - check if previous step is in a parallel group
+            if step_index > 0:
+                prev_step = step_index - 1
+
+                # Check if previous step is in a parallel group
+                prev_in_group = None
                 for group in parallel_groups:
-                    if all(idx < step_index for idx in group):
-                        last_group_before = group
-                    else:
+                    if prev_step in group:
+                        prev_in_group = group
                         break
 
-                if last_group_before:
-                    # Depend on all steps in the last parallel group
-                    depends_on.extend(last_group_before)
-                elif step_index > 0:
-                    # No parallel groups before, depend on previous step
-                    depends_on.append(step_index - 1)
-            elif step_index > 0:
-                # No parallel groups at all, depend on previous step
-                depends_on.append(step_index - 1)
+                if prev_in_group:
+                    # Previous step is in a parallel group, depend on entire group
+                    depends_on.extend(prev_in_group)
+                else:
+                    # Previous step is sequential, just depend on it
+                    depends_on.append(prev_step)
 
         return depends_on
 
     async def _execute_plan(self, plan: OrchestrationPlan) -> Dict[str, Any]:
         """
-        Action Phase: Execute orchestration plan
+        Action Phase: Execute orchestration plan with parallel execution support
 
         Args:
             plan: OrchestrationPlan to execute
@@ -319,40 +317,75 @@ class OrchestratorAgent(DSPyA2AAgentBase):
         Returns:
             Dictionary of agent results
         """
+        import asyncio
+
         agent_results = {}
+        executed = [False] * len(plan.steps)
 
-        # Execute steps (currently sequential, parallel execution would require asyncio.gather)
-        for i, step in enumerate(plan.steps):
-            logger.info(f"Executing step {i+1}: {step.agent_type.value}")
+        # Execute steps respecting dependencies and parallelism
+        while not all(executed):
+            # Find steps ready to execute (all dependencies met)
+            ready_steps = []
+            for i, step in enumerate(plan.steps):
+                if executed[i]:
+                    continue
+                # Check if all dependencies are satisfied
+                deps_met = all(executed[dep_idx] for dep_idx in step.depends_on)
+                if deps_met:
+                    ready_steps.append((i, step))
 
-            # Get agent from registry
-            agent = self.agent_registry.get(step.agent_type)
-            if not agent:
-                logger.warning(f"Agent {step.agent_type.value} not found in registry")
-                agent_results[step.agent_type.value] = {
-                    "status": "error",
-                    "message": f"Agent {step.agent_type.value} not available",
-                }
-                continue
+            if not ready_steps:
+                # No steps ready but not all executed - circular dependency or error
+                logger.error("No steps ready to execute but execution incomplete")
+                break
 
-            # Prepare input (merge query with previous results if needed)
-            agent_input = step.input_data.copy()
-            for dep_idx in step.depends_on:
-                if dep_idx < len(plan.steps):
-                    dep_agent = plan.steps[dep_idx].agent_type.value
-                    if dep_agent in agent_results:
-                        agent_input[f"{dep_agent}_result"] = agent_results[dep_agent]
+            # Execute all ready steps in parallel using asyncio.gather
+            logger.info(
+                f"Executing {len(ready_steps)} steps in parallel: {[s[1].agent_type.value for s in ready_steps]}"
+            )
 
-            # Execute agent
-            try:
-                result = await agent._process(agent_input)
-                agent_results[step.agent_type.value] = result
-            except Exception as e:
-                logger.error(f"Agent {step.agent_type.value} execution failed: {e}")
-                agent_results[step.agent_type.value] = {
-                    "status": "error",
-                    "message": str(e),
-                }
+            async def execute_step(step_index: int, step: AgentStep):
+                """Execute a single step"""
+                agent = self.agent_registry.get(step.agent_type)
+                if not agent:
+                    logger.warning(
+                        f"Agent {step.agent_type.value} not found in registry"
+                    )
+                    return step.agent_type.value, {
+                        "status": "error",
+                        "message": f"Agent {step.agent_type.value} not available",
+                    }
+
+                # Prepare input (merge query with previous results if needed)
+                agent_input = step.input_data.copy()
+                for dep_idx in step.depends_on:
+                    if dep_idx < len(plan.steps):
+                        dep_agent = plan.steps[dep_idx].agent_type.value
+                        if dep_agent in agent_results:
+                            agent_input[f"{dep_agent}_result"] = agent_results[
+                                dep_agent
+                            ]
+
+                # Execute agent
+                try:
+                    result = await agent._process(agent_input)
+                    return step.agent_type.value, result
+                except Exception as e:
+                    logger.error(f"Agent {step.agent_type.value} execution failed: {e}")
+                    return step.agent_type.value, {
+                        "status": "error",
+                        "message": str(e),
+                    }
+
+            # Execute all ready steps concurrently
+            results = await asyncio.gather(
+                *[execute_step(idx, step) for idx, step in ready_steps]
+            )
+
+            # Store results and mark as executed
+            for (step_idx, _), (agent_name, result) in zip(ready_steps, results):
+                agent_results[agent_name] = result
+                executed[step_idx] = True
 
         return agent_results
 
@@ -375,6 +408,7 @@ class OrchestratorAgent(DSPyA2AAgentBase):
         self, plan: OrchestrationPlan, agent_results: Dict[str, Any]
     ) -> str:
         """Generate execution summary"""
+        executed_steps = len(agent_results)  # All executed, including errors
         successful_steps = sum(
             1
             for result in agent_results.values()
@@ -383,7 +417,8 @@ class OrchestratorAgent(DSPyA2AAgentBase):
         total_steps = len(plan.steps)
 
         return (
-            f"Executed {successful_steps}/{total_steps} steps successfully. "
+            f"Executed {executed_steps}/{total_steps} steps "
+            f"({successful_steps} successful). "
             f"Plan: {plan.reasoning}"
         )
 

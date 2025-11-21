@@ -370,7 +370,8 @@ class TestOrchestratorAgent:
 
         summary = orchestrator_agent._generate_summary(plan, agent_results)
 
-        assert "1/2" in summary  # 1 successful out of 2
+        assert "2/2" in summary  # 2 executed out of 2 planned
+        assert "1 successful" in summary  # 1 successful out of 2 executed
         assert "Test plan" in summary
 
     def test_dspy_to_a2a_output(self, orchestrator_agent):
@@ -392,7 +393,7 @@ class TestOrchestratorAgent:
             ),
             agent_results={"search": {"status": "success"}},
             final_output={"status": "success"},
-            execution_summary="Executed 1/1 steps",
+            execution_summary="Executed 1/1 steps (1 successful). Plan: Test plan",
         )
 
         a2a_output = orchestrator_agent._dspy_to_a2a_output(result)
@@ -402,7 +403,10 @@ class TestOrchestratorAgent:
         assert a2a_output["query"] == "test query"
         assert len(a2a_output["plan"]["steps"]) == 1
         assert a2a_output["plan"]["steps"][0]["agent_type"] == "search"
-        assert a2a_output["execution_summary"] == "Executed 1/1 steps"
+        assert (
+            a2a_output["execution_summary"]
+            == "Executed 1/1 steps (1 successful). Plan: Test plan"
+        )
 
     def test_get_agent_skills(self, orchestrator_agent):
         """Test agent skills definition"""

@@ -179,7 +179,24 @@ class EntityExtractionAgent(DSPyA2AAgentBase):
             if len(parts) >= 2:
                 text = parts[0].strip()
                 entity_type = parts[1].strip()
-                confidence = float(parts[2]) if len(parts) > 2 else 0.7
+
+                # Parse confidence with robust handling of different formats
+                confidence = 0.7  # Default
+                if len(parts) > 2:
+                    confidence_str = parts[2].strip()
+                    # Handle "confidence: 0.95" format
+                    if ":" in confidence_str:
+                        confidence_str = confidence_str.split(":")[-1].strip()
+                    # Handle "(text)" format
+                    if "(" in confidence_str:
+                        confidence_str = confidence_str.split("(")[0].strip()
+                    # Try to parse as float
+                    try:
+                        confidence = float(confidence_str)
+                        # Clamp to [0, 1] range
+                        confidence = max(0.0, min(1.0, confidence))
+                    except (ValueError, AttributeError):
+                        confidence = 0.7  # Fallback
 
                 # Extract context (5 words before/after)
                 context = self._extract_context(text, query)
