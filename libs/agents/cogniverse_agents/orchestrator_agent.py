@@ -7,19 +7,19 @@ Implements two-phase orchestration:
 """
 
 import logging
-from typing import Any, Dict, List, Optional
 from enum import Enum
+from typing import Any, Dict, List, Optional
 
 import dspy
-from pydantic import BaseModel, Field
-
 from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
 
 class AgentType(str, Enum):
     """Available agent types for orchestration"""
+
     ENTITY_EXTRACTION = "entity_extraction"
     PROFILE_SELECTION = "profile_selection"
     QUERY_ENHANCEMENT = "query_enhancement"
@@ -30,36 +30,48 @@ class AgentType(str, Enum):
 
 class AgentStep(BaseModel):
     """Single step in orchestration plan"""
+
     agent_type: AgentType
-    input_data: Dict[str, Any] = Field(default_factory=dict, description="Input for this agent")
-    depends_on: List[int] = Field(default_factory=list, description="Indices of steps this depends on")
+    input_data: Dict[str, Any] = Field(
+        default_factory=dict, description="Input for this agent"
+    )
+    depends_on: List[int] = Field(
+        default_factory=list, description="Indices of steps this depends on"
+    )
     reasoning: str = Field(description="Why this step is needed")
 
 
 class OrchestrationPlan(BaseModel):
     """Plan for query processing workflow"""
+
     query: str
     steps: List[AgentStep] = Field(description="Ordered sequence of agent invocations")
     parallel_groups: List[List[int]] = Field(
         default_factory=list,
-        description="Groups of step indices that can run in parallel"
+        description="Groups of step indices that can run in parallel",
     )
     reasoning: str = Field(description="Overall plan reasoning")
 
 
 class OrchestrationResult(BaseModel):
     """Result of orchestrated query processing"""
+
     query: str
     plan: OrchestrationPlan
-    agent_results: Dict[str, Any] = Field(default_factory=dict, description="Results from each agent")
+    agent_results: Dict[str, Any] = Field(
+        default_factory=dict, description="Results from each agent"
+    )
     final_output: Dict[str, Any] = Field(description="Aggregated final output")
     execution_summary: str = Field(description="Summary of execution")
 
 
 class OrchestrationSignature(dspy.Signature):
     """Create execution plan for query processing"""
+
     query: str = dspy.InputField(desc="User query to process")
-    available_agents: str = dspy.InputField(desc="Comma-separated list of available agents")
+    available_agents: str = dspy.InputField(
+        desc="Comma-separated list of available agents"
+    )
 
     agent_sequence: str = dspy.OutputField(
         desc="Comma-separated sequence of agents to invoke (e.g., 'entity_extraction,profile_selection,search')"
@@ -99,7 +111,7 @@ class OrchestrationModule(dspy.Module):
         return dspy.Prediction(
             agent_sequence=agent_sequence,
             parallel_steps=parallel_steps,
-            reasoning=reasoning
+            reasoning=reasoning,
         )
 
 
@@ -122,7 +134,7 @@ class OrchestratorAgent(DSPyA2AAgentBase):
         self,
         tenant_id: str = "default",
         agent_registry: Optional[Dict[AgentType, Any]] = None,
-        port: int = 8013
+        port: int = 8013,
     ):
         """
         Initialize OrchestratorAgent
@@ -148,10 +160,10 @@ class OrchestratorAgent(DSPyA2AAgentBase):
                 "planning",
                 "multi_agent_coordination",
                 "parallel_execution",
-                "result_aggregation"
+                "result_aggregation",
             ],
             port=port,
-            version="1.0.0"
+            version="1.0.0",
         )
 
         logger.info(
@@ -175,13 +187,11 @@ class OrchestratorAgent(DSPyA2AAgentBase):
             return OrchestrationResult(
                 query="",
                 plan=OrchestrationPlan(
-                    query="",
-                    steps=[],
-                    reasoning="Empty query, no orchestration needed"
+                    query="", steps=[], reasoning="Empty query, no orchestration needed"
                 ),
                 agent_results={},
                 final_output={"status": "error", "message": "Empty query"},
-                execution_summary="No execution performed"
+                execution_summary="No execution performed",
             )
 
         # Phase 1: Planning
@@ -201,7 +211,7 @@ class OrchestratorAgent(DSPyA2AAgentBase):
             plan=plan,
             agent_results=agent_results,
             final_output=final_output,
-            execution_summary=execution_summary
+            execution_summary=execution_summary,
         )
 
     async def _create_plan(self, query: str) -> OrchestrationPlan:
@@ -218,10 +228,14 @@ class OrchestratorAgent(DSPyA2AAgentBase):
         available_agents = ", ".join([a.value for a in AgentType])
 
         # Use DSPy to create plan
-        result = self.dspy_module.forward(query=query, available_agents=available_agents)
+        result = self.dspy_module.forward(
+            query=query, available_agents=available_agents
+        )
 
         # Parse agent sequence
-        agent_sequence = [a.strip() for a in result.agent_sequence.split(",") if a.strip()]
+        agent_sequence = [
+            a.strip() for a in result.agent_sequence.split(",") if a.strip()
+        ]
 
         # Parse parallel groups
         parallel_groups = []
@@ -240,7 +254,7 @@ class OrchestratorAgent(DSPyA2AAgentBase):
                     agent_type=agent_type,
                     input_data={"query": query},
                     depends_on=self._calculate_dependencies(i, parallel_groups),
-                    reasoning=f"Step {i+1}: {agent_type.value} processing"
+                    reasoning=f"Step {i+1}: {agent_type.value} processing",
                 )
                 steps.append(step)
             except ValueError:
@@ -250,10 +264,12 @@ class OrchestratorAgent(DSPyA2AAgentBase):
             query=query,
             steps=steps,
             parallel_groups=parallel_groups,
-            reasoning=result.reasoning
+            reasoning=result.reasoning,
         )
 
-    def _calculate_dependencies(self, step_index: int, parallel_groups: List[List[int]]) -> List[int]:
+    def _calculate_dependencies(
+        self, step_index: int, parallel_groups: List[List[int]]
+    ) -> List[int]:
         """Calculate which steps this step depends on"""
         depends_on = []
 
@@ -315,7 +331,7 @@ class OrchestratorAgent(DSPyA2AAgentBase):
                 logger.warning(f"Agent {step.agent_type.value} not found in registry")
                 agent_results[step.agent_type.value] = {
                     "status": "error",
-                    "message": f"Agent {step.agent_type.value} not available"
+                    "message": f"Agent {step.agent_type.value} not available",
                 }
                 continue
 
@@ -335,18 +351,16 @@ class OrchestratorAgent(DSPyA2AAgentBase):
                 logger.error(f"Agent {step.agent_type.value} execution failed: {e}")
                 agent_results[step.agent_type.value] = {
                     "status": "error",
-                    "message": str(e)
+                    "message": str(e),
                 }
 
         return agent_results
 
-    def _aggregate_results(self, query: str, agent_results: Dict[str, Any]) -> Dict[str, Any]:
+    def _aggregate_results(
+        self, query: str, agent_results: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """Aggregate results from all agents into final output"""
-        final_output = {
-            "query": query,
-            "status": "success",
-            "results": {}
-        }
+        final_output = {"query": query, "status": "success", "results": {}}
 
         # Collect results from each agent
         for agent_type, result in agent_results.items():
@@ -357,10 +371,13 @@ class OrchestratorAgent(DSPyA2AAgentBase):
 
         return final_output
 
-    def _generate_summary(self, plan: OrchestrationPlan, agent_results: Dict[str, Any]) -> str:
+    def _generate_summary(
+        self, plan: OrchestrationPlan, agent_results: Dict[str, Any]
+    ) -> str:
         """Generate execution summary"""
         successful_steps = sum(
-            1 for result in agent_results.values()
+            1
+            for result in agent_results.values()
             if not (isinstance(result, dict) and result.get("status") == "error")
         )
         total_steps = len(plan.steps)
@@ -382,22 +399,22 @@ class OrchestratorAgent(DSPyA2AAgentBase):
                         {
                             "agent_type": step.agent_type.value,
                             "reasoning": step.reasoning,
-                            "depends_on": step.depends_on
+                            "depends_on": step.depends_on,
                         }
                         for step in dspy_output.plan.steps
                     ],
                     "parallel_groups": dspy_output.plan.parallel_groups,
-                    "reasoning": dspy_output.plan.reasoning
+                    "reasoning": dspy_output.plan.reasoning,
                 },
                 "agent_results": dspy_output.agent_results,
                 "final_output": dspy_output.final_output,
-                "execution_summary": dspy_output.execution_summary
+                "execution_summary": dspy_output.execution_summary,
             }
         else:
             return {
                 "status": "success",
                 "agent": self.agent_name,
-                "output": str(dspy_output)
+                "output": str(dspy_output),
             }
 
     def _get_agent_skills(self) -> List[Dict[str, Any]]:
@@ -412,11 +429,11 @@ class OrchestratorAgent(DSPyA2AAgentBase):
                     "plan": {
                         "steps": "array of agent steps",
                         "parallel_groups": "array of parallel step groups",
-                        "reasoning": "string"
+                        "reasoning": "string",
                     },
                     "agent_results": "dictionary of agent results",
                     "final_output": "aggregated final output",
-                    "execution_summary": "string"
+                    "execution_summary": "string",
                 },
                 "examples": [
                     {
@@ -427,28 +444,28 @@ class OrchestratorAgent(DSPyA2AAgentBase):
                                 "steps": [
                                     {
                                         "agent_type": "query_enhancement",
-                                        "reasoning": "Enhance query with ML synonyms and context"
+                                        "reasoning": "Enhance query with ML synonyms and context",
                                     },
                                     {
                                         "agent_type": "entity_extraction",
-                                        "reasoning": "Extract ML-related entities"
+                                        "reasoning": "Extract ML-related entities",
                                     },
                                     {
                                         "agent_type": "profile_selection",
-                                        "reasoning": "Select video-based profile"
+                                        "reasoning": "Select video-based profile",
                                     },
                                     {
                                         "agent_type": "search",
-                                        "reasoning": "Execute search with selected profile"
-                                    }
+                                        "reasoning": "Execute search with selected profile",
+                                    },
                                 ],
                                 "parallel_groups": [[0, 1]],
-                                "reasoning": "Enhance and extract entities in parallel, then select profile and search"
+                                "reasoning": "Enhance and extract entities in parallel, then select profile and search",
                             },
-                            "execution_summary": "Executed 4/4 steps successfully"
-                        }
+                            "execution_summary": "Executed 4/4 steps successfully",
+                        },
                     }
-                ]
+                ],
             }
         ]
 
@@ -459,7 +476,7 @@ from fastapi import FastAPI
 app = FastAPI(
     title="OrchestratorAgent",
     description="Autonomous orchestration agent with planning and action phases",
-    version="1.0.0"
+    version="1.0.0",
 )
 
 # Global agent instance
@@ -472,6 +489,7 @@ async def startup_event():
     global orchestrator_agent
 
     import os
+
     tenant_id = os.getenv("TENANT_ID", "default")
     orchestrator_agent = OrchestratorAgent(tenant_id=tenant_id)
     logger.info("OrchestratorAgent started")
@@ -502,7 +520,7 @@ async def process_task(task: Dict[str, Any]):
 
 
 if __name__ == "__main__":
-    import uvicorn
+
     agent = OrchestratorAgent(tenant_id="default", port=8013)
     logger.info("Starting OrchestratorAgent on port 8013...")
     agent.run()

@@ -1,13 +1,13 @@
 """Unit tests for QueryEnhancementAgent"""
 
-import pytest
 from unittest.mock import Mock, patch
-import dspy
 
+import dspy
+import pytest
 from cogniverse_agents.query_enhancement_agent import (
     QueryEnhancementAgent,
-    QueryEnhancementResult,
     QueryEnhancementModule,
+    QueryEnhancementResult,
 )
 
 
@@ -21,7 +21,7 @@ def mock_dspy_lm():
         synonyms="ML, artificial intelligence, AI",
         context="beginner, introduction, basics",
         confidence="0.85",
-        reasoning="Expanded ML acronym, added related AI terms and beginner context"
+        reasoning="Expanded ML acronym, added related AI terms and beginner context",
     )
     return lm
 
@@ -29,7 +29,7 @@ def mock_dspy_lm():
 @pytest.fixture
 def query_agent():
     """Create QueryEnhancementAgent for testing"""
-    with patch('dspy.ChainOfThought'):
+    with patch("dspy.ChainOfThought"):
         agent = QueryEnhancementAgent(tenant_id="test_tenant", port=8012)
         return agent
 
@@ -39,7 +39,7 @@ class TestQueryEnhancementModule:
 
     def test_module_initialization(self):
         """Test QueryEnhancementModule initializes correctly"""
-        with patch('dspy.ChainOfThought') as mock_cot:
+        with patch("dspy.ChainOfThought") as mock_cot:
             module = QueryEnhancementModule()
             assert module.enhancer is not None
             mock_cot.assert_called_once()
@@ -51,7 +51,10 @@ class TestQueryEnhancementModule:
 
         result = module.forward(query="ML tutorials")
 
-        assert result.enhanced_query == "machine learning tutorials and comprehensive guides"
+        assert (
+            result.enhanced_query
+            == "machine learning tutorials and comprehensive guides"
+        )
         assert "deep learning" in result.expansion_terms
         assert result.confidence == "0.85"
 
@@ -84,7 +87,9 @@ class TestQueryEnhancementModule:
         result = module.forward(query="Show videos about Python")
 
         expansions_lower = result.expansion_terms.lower()
-        assert any(term in expansions_lower for term in ["tutorial", "guide", "demonstration"])
+        assert any(
+            term in expansions_lower for term in ["tutorial", "guide", "demonstration"]
+        )
 
 
 class TestQueryEnhancementAgent:
@@ -99,18 +104,18 @@ class TestQueryEnhancementAgent:
     @pytest.mark.asyncio
     async def test_process_with_query(self, query_agent):
         """Test processing query for enhancement"""
-        query_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            enhanced_query="machine learning tutorials and guides",
-            expansion_terms="deep learning, neural networks, AI",
-            synonyms="ML, artificial intelligence",
-            context="beginner, fundamentals",
-            confidence="0.85",
-            reasoning="Expanded ML and added related terms"
-        ))
+        query_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                enhanced_query="machine learning tutorials and guides",
+                expansion_terms="deep learning, neural networks, AI",
+                synonyms="ML, artificial intelligence",
+                context="beginner, fundamentals",
+                confidence="0.85",
+                reasoning="Expanded ML and added related terms",
+            )
+        )
 
-        result = await query_agent._process({
-            "query": "ML tutorials"
-        })
+        result = await query_agent._process({"query": "ML tutorials"})
 
         assert isinstance(result, QueryEnhancementResult)
         assert result.original_query == "ML tutorials"
@@ -142,14 +147,16 @@ class TestQueryEnhancementAgent:
     @pytest.mark.asyncio
     async def test_process_invalid_confidence(self, query_agent):
         """Test processing with invalid confidence value"""
-        query_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            enhanced_query="test query",
-            expansion_terms="",
-            synonyms="",
-            context="",
-            confidence="invalid",  # Invalid confidence
-            reasoning="Test"
-        ))
+        query_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                enhanced_query="test query",
+                expansion_terms="",
+                synonyms="",
+                context="",
+                confidence="invalid",  # Invalid confidence
+                reasoning="Test",
+            )
+        )
 
         result = await query_agent._process({"query": "test"})
 
@@ -158,14 +165,16 @@ class TestQueryEnhancementAgent:
     @pytest.mark.asyncio
     async def test_process_empty_expansions(self, query_agent):
         """Test processing with no expansions"""
-        query_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            enhanced_query="simple query",
-            expansion_terms="",
-            synonyms="",
-            context="",
-            confidence="0.6",
-            reasoning="No expansions needed"
-        ))
+        query_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                enhanced_query="simple query",
+                expansion_terms="",
+                synonyms="",
+                context="",
+                confidence="0.6",
+                reasoning="No expansions needed",
+            )
+        )
 
         result = await query_agent._process({"query": "simple query"})
 
@@ -176,14 +185,16 @@ class TestQueryEnhancementAgent:
     @pytest.mark.asyncio
     async def test_process_with_context(self, query_agent):
         """Test processing adds contextual terms"""
-        query_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            enhanced_query="Python programming tutorials for beginners",
-            expansion_terms="coding, development",
-            synonyms="programming, scripting",
-            context="beginner, introduction, basics",
-            confidence="0.9",
-            reasoning="Added beginner context and programming synonyms"
-        ))
+        query_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                enhanced_query="Python programming tutorials for beginners",
+                expansion_terms="coding, development",
+                synonyms="programming, scripting",
+                context="beginner, introduction, basics",
+                confidence="0.9",
+                reasoning="Added beginner context and programming synonyms",
+            )
+        )
 
         result = await query_agent._process({"query": "Python tutorials"})
 
@@ -200,7 +211,7 @@ class TestQueryEnhancementAgent:
             synonyms=["ML", "AI"],
             context_additions=["beginner", "fundamentals"],
             confidence=0.85,
-            reasoning="Expanded ML and added context"
+            reasoning="Expanded ML and added context",
         )
 
         a2a_output = query_agent._dspy_to_a2a_output(result)
@@ -231,18 +242,18 @@ class TestQueryEnhancementAgentIntegration:
     @pytest.mark.asyncio
     async def test_full_enhancement_workflow(self, query_agent):
         """Test complete query enhancement workflow"""
-        query_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            enhanced_query="comprehensive machine learning tutorials with practical examples and demonstrations",
-            expansion_terms="deep learning, neural networks, supervised learning, unsupervised learning, reinforcement learning",
-            synonyms="ML, AI, artificial intelligence, data science",
-            context="beginner, intermediate, practical, hands-on, step-by-step",
-            confidence="0.95",
-            reasoning="Comprehensive expansion of ML query with multiple related terms, synonyms, and educational context levels"
-        ))
+        query_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                enhanced_query="comprehensive machine learning tutorials with practical examples and demonstrations",
+                expansion_terms="deep learning, neural networks, supervised learning, unsupervised learning, reinforcement learning",
+                synonyms="ML, AI, artificial intelligence, data science",
+                context="beginner, intermediate, practical, hands-on, step-by-step",
+                confidence="0.95",
+                reasoning="Comprehensive expansion of ML query with multiple related terms, synonyms, and educational context levels",
+            )
+        )
 
-        result = await query_agent._process({
-            "query": "ML tutorials"
-        })
+        result = await query_agent._process({"query": "ML tutorials"})
 
         # Verify comprehensive enhancement
         assert result.confidence == 0.95
@@ -262,14 +273,16 @@ class TestQueryEnhancementAgentIntegration:
     @pytest.mark.asyncio
     async def test_acronym_expansion(self, query_agent):
         """Test acronym expansion in queries"""
-        query_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            enhanced_query="natural language processing and machine learning",
-            expansion_terms="NLP, text analysis, language models",
-            synonyms="natural language processing, computational linguistics",
-            context="",
-            confidence="0.8",
-            reasoning="Expanded NLP and ML acronyms"
-        ))
+        query_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                enhanced_query="natural language processing and machine learning",
+                expansion_terms="NLP, text analysis, language models",
+                synonyms="natural language processing, computational linguistics",
+                context="",
+                confidence="0.8",
+                reasoning="Expanded NLP and ML acronyms",
+            )
+        )
 
         result = await query_agent._process({"query": "NLP and ML"})
 
@@ -279,26 +292,29 @@ class TestQueryEnhancementAgentIntegration:
     @pytest.mark.asyncio
     async def test_a2a_task_processing(self, query_agent):
         """Test processing via A2A task format"""
-        query_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            enhanced_query="Python programming tutorials for web development",
-            expansion_terms="Django, Flask, FastAPI, web frameworks",
-            synonyms="programming, coding, development",
-            context="web development, backend, full-stack",
-            confidence="0.88",
-            reasoning="Enhanced Python query with web development context"
-        ))
+        query_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                enhanced_query="Python programming tutorials for web development",
+                expansion_terms="Django, Flask, FastAPI, web frameworks",
+                synonyms="programming, coding, development",
+                context="web development, backend, full-stack",
+                confidence="0.88",
+                reasoning="Enhanced Python query with web development context",
+            )
+        )
 
         # Simulate A2A task input
-        dspy_input = query_agent._a2a_to_dspy_input({
-            "id": "test_task",
-            "messages": [{
-                "role": "user",
-                "parts": [{
-                    "type": "text",
-                    "text": "Python tutorials"
-                }]
-            }]
-        })
+        dspy_input = query_agent._a2a_to_dspy_input(
+            {
+                "id": "test_task",
+                "messages": [
+                    {
+                        "role": "user",
+                        "parts": [{"type": "text", "text": "Python tutorials"}],
+                    }
+                ],
+            }
+        )
 
         result = await query_agent._process(dspy_input)
         a2a_output = query_agent._dspy_to_a2a_output(result)
@@ -311,17 +327,22 @@ class TestQueryEnhancementAgentIntegration:
     @pytest.mark.asyncio
     async def test_whitespace_handling(self, query_agent):
         """Test handling of whitespace in term lists"""
-        query_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            enhanced_query="test",
-            expansion_terms="  term1  ,  term2  ,  term3  ",  # Extra whitespace
-            synonyms="syn1, syn2",
-            context="",
-            confidence="0.7",
-            reasoning="Test"
-        ))
+        query_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                enhanced_query="test",
+                expansion_terms="  term1  ,  term2  ,  term3  ",  # Extra whitespace
+                synonyms="syn1, syn2",
+                context="",
+                confidence="0.7",
+                reasoning="Test",
+            )
+        )
 
         result = await query_agent._process({"query": "test"})
 
         # Verify whitespace is stripped
         assert result.expansion_terms == ["term1", "term2", "term3"]
-        assert all(not term.startswith(" ") and not term.endswith(" ") for term in result.expansion_terms)
+        assert all(
+            not term.startswith(" ") and not term.endswith(" ")
+            for term in result.expansion_terms
+        )

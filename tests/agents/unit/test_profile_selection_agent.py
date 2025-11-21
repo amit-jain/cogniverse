@@ -1,14 +1,14 @@
 """Unit tests for ProfileSelectionAgent"""
 
-import pytest
 from unittest.mock import Mock, patch
-import dspy
 
+import dspy
+import pytest
 from cogniverse_agents.profile_selection_agent import (
-    ProfileSelectionAgent,
     ProfileCandidate,
-    ProfileSelectionResult,
+    ProfileSelectionAgent,
     ProfileSelectionModule,
+    ProfileSelectionResult,
 )
 
 
@@ -22,7 +22,7 @@ def mock_dspy_lm():
         reasoning="Query requests video content with machine learning topic, best matched by video_colpali_base profile",
         query_intent="video_search",
         modality="video",
-        complexity="medium"
+        complexity="medium",
     )
     return lm
 
@@ -30,11 +30,15 @@ def mock_dspy_lm():
 @pytest.fixture
 def profile_agent():
     """Create ProfileSelectionAgent for testing"""
-    with patch('dspy.ChainOfThought'):
+    with patch("dspy.ChainOfThought"):
         agent = ProfileSelectionAgent(
             tenant_id="test_tenant",
-            available_profiles=["video_colpali_base", "video_colpali_large", "image_colpali_base"],
-            port=8011
+            available_profiles=[
+                "video_colpali_base",
+                "video_colpali_large",
+                "image_colpali_base",
+            ],
+            port=8011,
         )
         return agent
 
@@ -44,7 +48,7 @@ class TestProfileSelectionModule:
 
     def test_module_initialization(self):
         """Test ProfileSelectionModule initializes correctly"""
-        with patch('dspy.ChainOfThought') as mock_cot:
+        with patch("dspy.ChainOfThought") as mock_cot:
             module = ProfileSelectionModule()
             assert module.selector is not None
             mock_cot.assert_called_once()
@@ -56,7 +60,7 @@ class TestProfileSelectionModule:
 
         result = module.forward(
             query="Show me machine learning videos",
-            available_profiles="video_colpali_base, video_colpali_large"
+            available_profiles="video_colpali_base, video_colpali_large",
         )
 
         assert result.selected_profile == "video_colpali_base"
@@ -70,7 +74,7 @@ class TestProfileSelectionModule:
 
         result = module.forward(
             query="Show me videos about cats",
-            available_profiles="video_colpali_base, text_bge_base"
+            available_profiles="video_colpali_base, text_bge_base",
         )
 
         # Fallback should detect video modality
@@ -85,7 +89,7 @@ class TestProfileSelectionModule:
 
         result = module.forward(
             query="Show me pictures of mountains",
-            available_profiles="image_colpali_base, video_colpali_base"
+            available_profiles="image_colpali_base, video_colpali_base",
         )
 
         assert result.modality == "image"
@@ -96,7 +100,9 @@ class TestProfileSelectionModule:
         module = ProfileSelectionModule()
         module.selector = Mock(side_effect=Exception("DSPy failed"))
 
-        result = module.forward(query="cat videos", available_profiles="video_colpali_base")
+        result = module.forward(
+            query="cat videos", available_profiles="video_colpali_base"
+        )
 
         assert result.complexity == "simple"
 
@@ -107,7 +113,7 @@ class TestProfileSelectionModule:
 
         result = module.forward(
             query="Show me detailed tutorials about advanced machine learning techniques with neural networks",
-            available_profiles="video_colpali_base"
+            available_profiles="video_colpali_base",
         )
 
         assert result.complexity == "complex"
@@ -126,18 +132,20 @@ class TestProfileSelectionAgent:
     @pytest.mark.asyncio
     async def test_process_with_query(self, profile_agent):
         """Test processing query for profile selection"""
-        profile_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            selected_profile="video_colpali_base",
-            confidence="0.9",
-            reasoning="Best match for video search",
-            query_intent="video_search",
-            modality="video",
-            complexity="medium"
-        ))
+        profile_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                selected_profile="video_colpali_base",
+                confidence="0.9",
+                reasoning="Best match for video search",
+                query_intent="video_search",
+                modality="video",
+                complexity="medium",
+            )
+        )
 
-        result = await profile_agent._process({
-            "query": "Show me machine learning videos"
-        })
+        result = await profile_agent._process(
+            {"query": "Show me machine learning videos"}
+        )
 
         assert isinstance(result, ProfileSelectionResult)
         assert result.query == "Show me machine learning videos"
@@ -160,19 +168,23 @@ class TestProfileSelectionAgent:
     @pytest.mark.asyncio
     async def test_process_custom_profiles(self, profile_agent):
         """Test processing with custom available profiles"""
-        profile_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            selected_profile="custom_profile_1",
-            confidence="0.85",
-            reasoning="Custom profile match",
-            query_intent="text_search",
-            modality="text",
-            complexity="simple"
-        ))
+        profile_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                selected_profile="custom_profile_1",
+                confidence="0.85",
+                reasoning="Custom profile match",
+                query_intent="text_search",
+                modality="text",
+                complexity="simple",
+            )
+        )
 
-        result = await profile_agent._process({
-            "query": "test query",
-            "available_profiles": ["custom_profile_1", "custom_profile_2"]
-        })
+        result = await profile_agent._process(
+            {
+                "query": "test query",
+                "available_profiles": ["custom_profile_1", "custom_profile_2"],
+            }
+        )
 
         assert result.selected_profile == "custom_profile_1"
         assert result.confidence == 0.85
@@ -180,18 +192,18 @@ class TestProfileSelectionAgent:
     @pytest.mark.asyncio
     async def test_process_invalid_confidence(self, profile_agent):
         """Test processing with invalid confidence value"""
-        profile_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            selected_profile="video_colpali_base",
-            confidence="invalid",  # Invalid confidence
-            reasoning="Test",
-            query_intent="video_search",
-            modality="video",
-            complexity="medium"
-        ))
+        profile_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                selected_profile="video_colpali_base",
+                confidence="invalid",  # Invalid confidence
+                reasoning="Test",
+                query_intent="video_search",
+                modality="video",
+                complexity="medium",
+            )
+        )
 
-        result = await profile_agent._process({
-            "query": "test"
-        })
+        result = await profile_agent._process({"query": "test"})
 
         assert result.confidence == 0.5  # Default fallback
 
@@ -202,10 +214,7 @@ class TestProfileSelectionAgent:
         modality = "video"
 
         alternatives = profile_agent._generate_alternatives(
-            query="test query",
-            profiles=profiles,
-            selected=selected,
-            modality=modality
+            query="test query", profiles=profiles, selected=selected, modality=modality
         )
 
         # Should not include selected profile
@@ -213,7 +222,9 @@ class TestProfileSelectionAgent:
 
         # Video profiles should rank higher
         if alternatives:
-            video_alts = [alt for alt in alternatives if "video" in alt.profile_name.lower()]
+            video_alts = [
+                alt for alt in alternatives if "video" in alt.profile_name.lower()
+            ]
             if video_alts:
                 assert video_alts[0].score > 0.3
 
@@ -224,10 +235,7 @@ class TestProfileSelectionAgent:
         modality = "video"
 
         alternatives = profile_agent._generate_alternatives(
-            query="test",
-            profiles=profiles_str,
-            selected=selected,
-            modality=modality
+            query="test", profiles=profiles_str, selected=selected, modality=modality
         )
 
         assert isinstance(alternatives, list)
@@ -239,10 +247,7 @@ class TestProfileSelectionAgent:
         modality = "video"
 
         alternatives = profile_agent._generate_alternatives(
-            query="test",
-            profiles=profiles,
-            selected=selected,
-            modality=modality
+            query="test", profiles=profiles, selected=selected, modality=modality
         )
 
         assert len(alternatives) <= 3
@@ -261,9 +266,9 @@ class TestProfileSelectionAgent:
                 ProfileCandidate(
                     profile_name="video_colpali_large",
                     score=0.7,
-                    reasoning="Alternative video profile"
+                    reasoning="Alternative video profile",
                 )
-            ]
+            ],
         )
 
         a2a_output = profile_agent._dspy_to_a2a_output(result)
@@ -292,21 +297,25 @@ class TestProfileSelectionAgentIntegration:
     @pytest.mark.asyncio
     async def test_full_selection_workflow(self, profile_agent):
         """Test complete profile selection workflow"""
-        profile_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            selected_profile="video_videoprism_base",
-            confidence="0.95",
-            reasoning="Complex query about video content requires advanced video understanding",
-            query_intent="video_search",
-            modality="video",
-            complexity="complex"
-        ))
+        profile_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                selected_profile="video_videoprism_base",
+                confidence="0.95",
+                reasoning="Complex query about video content requires advanced video understanding",
+                query_intent="video_search",
+                modality="video",
+                complexity="complex",
+            )
+        )
 
         # Update available profiles to include videoprism
         profile_agent.available_profiles.append("video_videoprism_base")
 
-        result = await profile_agent._process({
-            "query": "Show me detailed analysis videos about deep learning architectures with visual explanations"
-        })
+        result = await profile_agent._process(
+            {
+                "query": "Show me detailed analysis videos about deep learning architectures with visual explanations"
+            }
+        )
 
         # Verify comprehensive selection
         assert result.selected_profile == "video_videoprism_base"
@@ -328,14 +337,16 @@ class TestProfileSelectionAgentIntegration:
         ]
 
         for query, expected_modality, expected_intent in test_cases:
-            profile_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-                selected_profile="test_profile",
-                confidence="0.8",
-                reasoning="Test",
-                query_intent=expected_intent,
-                modality=expected_modality,
-                complexity="medium"
-            ))
+            profile_agent.dspy_module.forward = Mock(
+                return_value=dspy.Prediction(
+                    selected_profile="test_profile",
+                    confidence="0.8",
+                    reasoning="Test",
+                    query_intent=expected_intent,
+                    modality=expected_modality,
+                    complexity="medium",
+                )
+            )
 
             result = await profile_agent._process({"query": query})
 
@@ -345,29 +356,40 @@ class TestProfileSelectionAgentIntegration:
     @pytest.mark.asyncio
     async def test_a2a_task_processing(self, profile_agent):
         """Test processing via A2A task format"""
-        profile_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            selected_profile="video_colpali_large",
-            confidence="0.88",
-            reasoning="Large model needed for comprehensive search",
-            query_intent="video_search",
-            modality="video",
-            complexity="medium"
-        ))
+        profile_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                selected_profile="video_colpali_large",
+                confidence="0.88",
+                reasoning="Large model needed for comprehensive search",
+                query_intent="video_search",
+                modality="video",
+                complexity="medium",
+            )
+        )
 
         # Simulate A2A task input
-        dspy_input = profile_agent._a2a_to_dspy_input({
-            "id": "test_task",
-            "messages": [{
-                "role": "user",
-                "parts": [{
-                    "type": "data",
-                    "data": {
-                        "query": "Find comprehensive machine learning tutorials",
-                        "available_profiles": ["video_colpali_base", "video_colpali_large"]
+        dspy_input = profile_agent._a2a_to_dspy_input(
+            {
+                "id": "test_task",
+                "messages": [
+                    {
+                        "role": "user",
+                        "parts": [
+                            {
+                                "type": "data",
+                                "data": {
+                                    "query": "Find comprehensive machine learning tutorials",
+                                    "available_profiles": [
+                                        "video_colpali_base",
+                                        "video_colpali_large",
+                                    ],
+                                },
+                            }
+                        ],
                     }
-                }]
-            }]
-        })
+                ],
+            }
+        )
 
         result = await profile_agent._process(dspy_input)
         a2a_output = profile_agent._dspy_to_a2a_output(result)

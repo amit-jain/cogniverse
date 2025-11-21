@@ -9,15 +9,15 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import dspy
-from pydantic import BaseModel, Field
-
 from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
 
 class ProfileCandidate(BaseModel):
     """Candidate profile with score"""
+
     profile_name: str
     score: float = Field(ge=0.0, le=1.0, description="Confidence score")
     reasoning: str = Field(description="Why this profile was selected")
@@ -25,6 +25,7 @@ class ProfileCandidate(BaseModel):
 
 class ProfileSelectionResult(BaseModel):
     """Result of profile selection"""
+
     query: str
     selected_profile: str
     confidence: float = Field(ge=0.0, le=1.0)
@@ -32,18 +33,25 @@ class ProfileSelectionResult(BaseModel):
     query_intent: str = Field(description="Detected query intent")
     modality: str = Field(description="Target modality")
     complexity: str = Field(description="Query complexity: simple, medium, complex")
-    alternatives: List[ProfileCandidate] = Field(default_factory=list, description="Alternative profiles")
+    alternatives: List[ProfileCandidate] = Field(
+        default_factory=list, description="Alternative profiles"
+    )
 
 
 class ProfileSelectionSignature(dspy.Signature):
     """Select optimal backend profile based on query analysis"""
+
     query: str = dspy.InputField(desc="User query to analyze")
-    available_profiles: str = dspy.InputField(desc="Comma-separated list of available profiles")
+    available_profiles: str = dspy.InputField(
+        desc="Comma-separated list of available profiles"
+    )
 
     selected_profile: str = dspy.OutputField(desc="Best matching profile name")
     confidence: str = dspy.OutputField(desc="Confidence score 0.0-1.0")
     reasoning: str = dspy.OutputField(desc="Explanation for profile selection")
-    query_intent: str = dspy.OutputField(desc="Detected intent: text_search, video_search, image_search, etc.")
+    query_intent: str = dspy.OutputField(
+        desc="Detected intent: text_search, video_search, image_search, etc."
+    )
     modality: str = dspy.OutputField(desc="Target modality: video, image, text, audio")
     complexity: str = dspy.OutputField(desc="Query complexity: simple, medium, complex")
 
@@ -65,7 +73,9 @@ class ProfileSelectionModule(dspy.Module):
             # Fallback: simple heuristic
             return self._fallback_selection(query, available_profiles)
 
-    def _fallback_selection(self, query: str, available_profiles: str) -> dspy.Prediction:
+    def _fallback_selection(
+        self, query: str, available_profiles: str
+    ) -> dspy.Prediction:
         """Fallback profile selection using heuristics"""
         profiles = [p.strip() for p in available_profiles.split(",")]
         query_lower = query.lower()
@@ -74,7 +84,9 @@ class ProfileSelectionModule(dspy.Module):
         if "video" in query_lower:
             modality = "video"
             intent = "video_search"
-        elif "image" in query_lower or "picture" in query_lower or "photo" in query_lower:
+        elif (
+            "image" in query_lower or "picture" in query_lower or "photo" in query_lower
+        ):
             modality = "image"
             intent = "image_search"
         else:
@@ -99,7 +111,7 @@ class ProfileSelectionModule(dspy.Module):
             reasoning=f"Fallback selection based on {modality} modality detection",
             query_intent=intent,
             modality=modality,
-            complexity=complexity
+            complexity=complexity,
         )
 
 
@@ -125,7 +137,7 @@ class ProfileSelectionAgent(DSPyA2AAgentBase):
         self,
         tenant_id: str = "default",
         available_profiles: Optional[List[str]] = None,
-        port: int = 8011
+        port: int = 8011,
     ):
         """
         Initialize ProfileSelectionAgent
@@ -141,7 +153,7 @@ class ProfileSelectionAgent(DSPyA2AAgentBase):
             "video_colpali_large",
             "video_videoprism_base",
             "image_colpali_base",
-            "text_bge_base"
+            "text_bge_base",
         ]
 
         # Initialize DSPy module
@@ -157,10 +169,10 @@ class ProfileSelectionAgent(DSPyA2AAgentBase):
                 "query_analysis",
                 "modality_detection",
                 "intent_classification",
-                "profile_ranking"
+                "profile_ranking",
             ],
             port=port,
-            version="1.0.0"
+            version="1.0.0",
         )
 
         logger.info(
@@ -184,13 +196,15 @@ class ProfileSelectionAgent(DSPyA2AAgentBase):
         if not query:
             return ProfileSelectionResult(
                 query="",
-                selected_profile=self.available_profiles[0] if self.available_profiles else "default",
+                selected_profile=(
+                    self.available_profiles[0] if self.available_profiles else "default"
+                ),
                 confidence=0.0,
                 reasoning="Empty query, using default profile",
                 query_intent="unknown",
                 modality="video",
                 complexity="simple",
-                alternatives=[]
+                alternatives=[],
             )
 
         # Convert profiles list to comma-separated string for DSPy
@@ -218,15 +232,11 @@ class ProfileSelectionAgent(DSPyA2AAgentBase):
             query_intent=result.query_intent,
             modality=result.modality,
             complexity=result.complexity,
-            alternatives=alternatives
+            alternatives=alternatives,
         )
 
     def _generate_alternatives(
-        self,
-        query: str,
-        profiles: List[str],
-        selected: str,
-        modality: str
+        self, query: str, profiles: List[str], selected: str, modality: str
     ) -> List[ProfileCandidate]:
         """Generate alternative profile suggestions"""
         alternatives = []
@@ -245,11 +255,13 @@ class ProfileSelectionAgent(DSPyA2AAgentBase):
                 score += 0.4
 
             if score > 0.3:  # Only include relevant alternatives
-                alternatives.append(ProfileCandidate(
-                    profile_name=profile,
-                    score=score,
-                    reasoning=f"Alternative profile for {modality} modality"
-                ))
+                alternatives.append(
+                    ProfileCandidate(
+                        profile_name=profile,
+                        score=score,
+                        reasoning=f"Alternative profile for {modality} modality",
+                    )
+                )
 
         # Sort by score and return top 3
         alternatives.sort(key=lambda x: x.score, reverse=True)
@@ -268,13 +280,13 @@ class ProfileSelectionAgent(DSPyA2AAgentBase):
                 "query_intent": dspy_output.query_intent,
                 "modality": dspy_output.modality,
                 "complexity": dspy_output.complexity,
-                "alternatives": [a.model_dump() for a in dspy_output.alternatives]
+                "alternatives": [a.model_dump() for a in dspy_output.alternatives],
             }
         else:
             return {
                 "status": "success",
                 "agent": self.agent_name,
-                "output": str(dspy_output)
+                "output": str(dspy_output),
             }
 
     def _get_agent_skills(self) -> List[Dict[str, Any]]:
@@ -285,7 +297,7 @@ class ProfileSelectionAgent(DSPyA2AAgentBase):
                 "description": "Select optimal backend profile using LLM reasoning",
                 "input_schema": {
                     "query": "string",
-                    "available_profiles": "optional array of strings"
+                    "available_profiles": "optional array of strings",
                 },
                 "output_schema": {
                     "selected_profile": "string",
@@ -294,13 +306,16 @@ class ProfileSelectionAgent(DSPyA2AAgentBase):
                     "query_intent": "string",
                     "modality": "string",
                     "complexity": "string",
-                    "alternatives": "array of {profile_name, score, reasoning}"
+                    "alternatives": "array of {profile_name, score, reasoning}",
                 },
                 "examples": [
                     {
                         "input": {
                             "query": "Show me videos about machine learning",
-                            "available_profiles": ["video_colpali_base", "text_bge_base"]
+                            "available_profiles": [
+                                "video_colpali_base",
+                                "text_bge_base",
+                            ],
                         },
                         "output": {
                             "selected_profile": "video_colpali_base",
@@ -308,10 +323,10 @@ class ProfileSelectionAgent(DSPyA2AAgentBase):
                             "reasoning": "Query requests video content, best matched by video_colpali_base",
                             "query_intent": "video_search",
                             "modality": "video",
-                            "complexity": "simple"
-                        }
+                            "complexity": "simple",
+                        },
                     }
-                ]
+                ],
             }
         ]
 
@@ -322,7 +337,7 @@ from fastapi import FastAPI
 app = FastAPI(
     title="ProfileSelectionAgent",
     description="Autonomous profile selection agent with LLM reasoning",
-    version="1.0.0"
+    version="1.0.0",
 )
 
 # Global agent instance
@@ -335,6 +350,7 @@ async def startup_event():
     global profile_agent
 
     import os
+
     tenant_id = os.getenv("TENANT_ID", "default")
     profile_agent = ProfileSelectionAgent(tenant_id=tenant_id)
     logger.info("ProfileSelectionAgent started")
@@ -365,7 +381,7 @@ async def process_task(task: Dict[str, Any]):
 
 
 if __name__ == "__main__":
-    import uvicorn
+
     agent = ProfileSelectionAgent(tenant_id="default", port=8011)
     logger.info("Starting ProfileSelectionAgent on port 8011...")
     agent.run()

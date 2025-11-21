@@ -1,16 +1,16 @@
 """Unit tests for OrchestratorAgent"""
 
-import pytest
-from unittest.mock import Mock, AsyncMock, patch
-import dspy
+from unittest.mock import AsyncMock, Mock, patch
 
+import dspy
+import pytest
 from cogniverse_agents.orchestrator_agent import (
-    OrchestratorAgent,
+    AgentStep,
+    AgentType,
     OrchestrationModule,
     OrchestrationPlan,
     OrchestrationResult,
-    AgentStep,
-    AgentType,
+    OrchestratorAgent,
 )
 
 
@@ -21,7 +21,7 @@ def mock_dspy_lm():
     lm.return_value = dspy.Prediction(
         agent_sequence="query_enhancement,entity_extraction,profile_selection,search",
         parallel_steps="0,1",
-        reasoning="Enhance query and extract entities in parallel, then select profile and search sequentially"
+        reasoning="Enhance query and extract entities in parallel, then select profile and search sequentially",
     )
     return lm
 
@@ -36,14 +36,16 @@ def mock_agent_registry():
         AgentType.ENTITY_EXTRACTION,
         AgentType.PROFILE_SELECTION,
         AgentType.QUERY_ENHANCEMENT,
-        AgentType.SEARCH
+        AgentType.SEARCH,
     ]:
         mock_agent = Mock()
-        mock_agent._process = AsyncMock(return_value={
-            "status": "success",
-            "agent": agent_type.value,
-            "result": f"Mock result from {agent_type.value}"
-        })
+        mock_agent._process = AsyncMock(
+            return_value={
+                "status": "success",
+                "agent": agent_type.value,
+                "result": f"Mock result from {agent_type.value}",
+            }
+        )
         registry[agent_type] = mock_agent
 
     return registry
@@ -52,11 +54,9 @@ def mock_agent_registry():
 @pytest.fixture
 def orchestrator_agent(mock_agent_registry):
     """Create OrchestratorAgent for testing"""
-    with patch('dspy.ChainOfThought'):
+    with patch("dspy.ChainOfThought"):
         agent = OrchestratorAgent(
-            tenant_id="test_tenant",
-            agent_registry=mock_agent_registry,
-            port=8013
+            tenant_id="test_tenant", agent_registry=mock_agent_registry, port=8013
         )
         return agent
 
@@ -66,7 +66,7 @@ class TestOrchestrationModule:
 
     def test_module_initialization(self):
         """Test OrchestrationModule initializes correctly"""
-        with patch('dspy.ChainOfThought') as mock_cot:
+        with patch("dspy.ChainOfThought") as mock_cot:
             module = OrchestrationModule()
             assert module.planner is not None
             mock_cot.assert_called_once()
@@ -78,10 +78,13 @@ class TestOrchestrationModule:
 
         result = module.forward(
             query="Show me machine learning videos",
-            available_agents="query_enhancement,entity_extraction,profile_selection,search"
+            available_agents="query_enhancement,entity_extraction,profile_selection,search",
         )
 
-        assert result.agent_sequence == "query_enhancement,entity_extraction,profile_selection,search"
+        assert (
+            result.agent_sequence
+            == "query_enhancement,entity_extraction,profile_selection,search"
+        )
         assert result.parallel_steps == "0,1"
         assert "parallel" in result.reasoning.lower()
 
@@ -92,7 +95,7 @@ class TestOrchestrationModule:
 
         result = module.forward(
             query="Show me videos",
-            available_agents="query_enhancement,entity_extraction,profile_selection,search"
+            available_agents="query_enhancement,entity_extraction,profile_selection,search",
         )
 
         # Fallback should have default sequence
@@ -116,11 +119,13 @@ class TestOrchestratorAgent:
     @pytest.mark.asyncio
     async def test_create_plan(self, orchestrator_agent):
         """Test planning phase"""
-        orchestrator_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            agent_sequence="query_enhancement,profile_selection,search",
-            parallel_steps="",
-            reasoning="Sequential execution: enhance, select, search"
-        ))
+        orchestrator_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                agent_sequence="query_enhancement,profile_selection,search",
+                parallel_steps="",
+                reasoning="Sequential execution: enhance, select, search",
+            )
+        )
 
         plan = await orchestrator_agent._create_plan("Show me ML videos")
 
@@ -134,11 +139,13 @@ class TestOrchestratorAgent:
     @pytest.mark.asyncio
     async def test_create_plan_with_parallel_groups(self, orchestrator_agent):
         """Test planning with parallel execution groups"""
-        orchestrator_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            agent_sequence="query_enhancement,entity_extraction,search",
-            parallel_steps="0,1",
-            reasoning="Enhance and extract in parallel, then search"
-        ))
+        orchestrator_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                agent_sequence="query_enhancement,entity_extraction,search",
+                parallel_steps="0,1",
+                reasoning="Enhance and extract in parallel, then search",
+            )
+        )
 
         plan = await orchestrator_agent._create_plan("Test query")
 
@@ -153,11 +160,13 @@ class TestOrchestratorAgent:
     @pytest.mark.asyncio
     async def test_create_plan_multiple_parallel_groups(self, orchestrator_agent):
         """Test planning with multiple parallel groups"""
-        orchestrator_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            agent_sequence="query_enhancement,entity_extraction,profile_selection,search",
-            parallel_steps="0,1|2,3",
-            reasoning="Two parallel groups"
-        ))
+        orchestrator_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                agent_sequence="query_enhancement,entity_extraction,profile_selection,search",
+                parallel_steps="0,1|2,3",
+                reasoning="Two parallel groups",
+            )
+        )
 
         plan = await orchestrator_agent._create_plan("Test query")
 
@@ -189,8 +198,14 @@ class TestOrchestratorAgent:
         assert orchestrator_agent._calculate_dependencies(1, parallel_groups) == []
 
         # Steps in second group depend on first group
-        assert set(orchestrator_agent._calculate_dependencies(2, parallel_groups)) == {0, 1}
-        assert set(orchestrator_agent._calculate_dependencies(3, parallel_groups)) == {0, 1}
+        assert set(orchestrator_agent._calculate_dependencies(2, parallel_groups)) == {
+            0,
+            1,
+        }
+        assert set(orchestrator_agent._calculate_dependencies(3, parallel_groups)) == {
+            0,
+            1,
+        }
 
     @pytest.mark.asyncio
     async def test_execute_plan(self, orchestrator_agent):
@@ -202,17 +217,17 @@ class TestOrchestratorAgent:
                     agent_type=AgentType.QUERY_ENHANCEMENT,
                     input_data={"query": "test query"},
                     depends_on=[],
-                    reasoning="Enhance query"
+                    reasoning="Enhance query",
                 ),
                 AgentStep(
                     agent_type=AgentType.SEARCH,
                     input_data={"query": "test query"},
                     depends_on=[0],
-                    reasoning="Search"
-                )
+                    reasoning="Search",
+                ),
             ],
             parallel_groups=[],
-            reasoning="Test plan"
+            reasoning="Test plan",
         )
 
         results = await orchestrator_agent._execute_plan(plan)
@@ -233,11 +248,11 @@ class TestOrchestratorAgent:
                     agent_type=AgentType.SUMMARIZER,  # Not in mock registry
                     input_data={"query": "test query"},
                     depends_on=[],
-                    reasoning="Summarize"
+                    reasoning="Summarize",
                 )
             ],
             parallel_groups=[],
-            reasoning="Test plan"
+            reasoning="Test plan",
         )
 
         results = await orchestrator_agent._execute_plan(plan)
@@ -261,11 +276,11 @@ class TestOrchestratorAgent:
                     agent_type=AgentType.SEARCH,
                     input_data={"query": "test query"},
                     depends_on=[],
-                    reasoning="Search"
+                    reasoning="Search",
                 )
             ],
             parallel_groups=[],
-            reasoning="Test plan"
+            reasoning="Test plan",
         )
 
         results = await orchestrator_agent._execute_plan(plan)
@@ -277,15 +292,17 @@ class TestOrchestratorAgent:
     @pytest.mark.asyncio
     async def test_process_full_workflow(self, orchestrator_agent):
         """Test complete orchestration workflow"""
-        orchestrator_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            agent_sequence="query_enhancement,search",
-            parallel_steps="",
-            reasoning="Enhance then search"
-        ))
+        orchestrator_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                agent_sequence="query_enhancement,search",
+                parallel_steps="",
+                reasoning="Enhance then search",
+            )
+        )
 
-        result = await orchestrator_agent._process({
-            "query": "Show me machine learning videos"
-        })
+        result = await orchestrator_agent._process(
+            {"query": "Show me machine learning videos"}
+        )
 
         assert isinstance(result, OrchestrationResult)
         assert result.query == "Show me machine learning videos"
@@ -310,15 +327,14 @@ class TestOrchestratorAgent:
         agent_results = {
             "query_enhancement": {
                 "enhanced_query": "machine learning tutorials",
-                "confidence": 0.9
+                "confidence": 0.9,
             },
-            "search": {
-                "results": [{"title": "ML Tutorial 1"}],
-                "count": 1
-            }
+            "search": {"results": [{"title": "ML Tutorial 1"}], "count": 1},
         }
 
-        final_output = orchestrator_agent._aggregate_results("test query", agent_results)
+        final_output = orchestrator_agent._aggregate_results(
+            "test query", agent_results
+        )
 
         assert final_output["query"] == "test query"
         assert final_output["status"] == "success"
@@ -334,22 +350,22 @@ class TestOrchestratorAgent:
                     agent_type=AgentType.SEARCH,
                     input_data={},
                     depends_on=[],
-                    reasoning="Search"
+                    reasoning="Search",
                 ),
                 AgentStep(
                     agent_type=AgentType.SUMMARIZER,
                     input_data={},
                     depends_on=[],
-                    reasoning="Summarize"
-                )
+                    reasoning="Summarize",
+                ),
             ],
             parallel_groups=[],
-            reasoning="Test plan"
+            reasoning="Test plan",
         )
 
         agent_results = {
             "search": {"status": "success"},
-            "summarizer": {"status": "error", "message": "Failed"}
+            "summarizer": {"status": "error", "message": "Failed"},
         }
 
         summary = orchestrator_agent._generate_summary(plan, agent_results)
@@ -368,15 +384,15 @@ class TestOrchestratorAgent:
                         agent_type=AgentType.SEARCH,
                         input_data={"query": "test"},
                         depends_on=[],
-                        reasoning="Search step"
+                        reasoning="Search step",
                     )
                 ],
                 parallel_groups=[],
-                reasoning="Test plan"
+                reasoning="Test plan",
             ),
             agent_results={"search": {"status": "success"}},
             final_output={"status": "success"},
-            execution_summary="Executed 1/1 steps"
+            execution_summary="Executed 1/1 steps",
         )
 
         a2a_output = orchestrator_agent._dspy_to_a2a_output(result)
@@ -406,18 +422,23 @@ class TestOrchestratorAgentIntegration:
     @pytest.mark.asyncio
     async def test_full_orchestration_workflow(self, orchestrator_agent):
         """Test complete orchestration with multiple agents"""
-        orchestrator_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            agent_sequence="query_enhancement,entity_extraction,profile_selection,search",
-            parallel_steps="0,1|2,3",
-            reasoning="Enhance and extract in parallel, then select and search in parallel"
-        ))
+        orchestrator_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                agent_sequence="query_enhancement,entity_extraction,profile_selection,search",
+                parallel_steps="0,1|2,3",
+                reasoning="Enhance and extract in parallel, then select and search in parallel",
+            )
+        )
 
-        result = await orchestrator_agent._process({
-            "query": "Show me detailed tutorials about deep learning architectures"
-        })
+        result = await orchestrator_agent._process(
+            {"query": "Show me detailed tutorials about deep learning architectures"}
+        )
 
         # Verify complete workflow
-        assert result.query == "Show me detailed tutorials about deep learning architectures"
+        assert (
+            result.query
+            == "Show me detailed tutorials about deep learning architectures"
+        )
         assert len(result.plan.steps) == 4
         assert len(result.plan.parallel_groups) == 2
 
@@ -438,19 +459,19 @@ class TestOrchestratorAgentIntegration:
     async def test_partial_failure_handling(self, orchestrator_agent):
         """Test orchestration with partial agent failures"""
         # Make one agent fail
-        orchestrator_agent.agent_registry[AgentType.ENTITY_EXTRACTION]._process = AsyncMock(
-            side_effect=Exception("Entity extraction failed")
+        orchestrator_agent.agent_registry[AgentType.ENTITY_EXTRACTION]._process = (
+            AsyncMock(side_effect=Exception("Entity extraction failed"))
         )
 
-        orchestrator_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            agent_sequence="query_enhancement,entity_extraction,search",
-            parallel_steps="",
-            reasoning="Sequential execution"
-        ))
+        orchestrator_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                agent_sequence="query_enhancement,entity_extraction,search",
+                parallel_steps="",
+                reasoning="Sequential execution",
+            )
+        )
 
-        result = await orchestrator_agent._process({
-            "query": "Test query"
-        })
+        result = await orchestrator_agent._process({"query": "Test query"})
 
         # Verify partial execution
         assert result.query == "Test query"
@@ -467,23 +488,31 @@ class TestOrchestratorAgentIntegration:
     @pytest.mark.asyncio
     async def test_a2a_task_processing(self, orchestrator_agent):
         """Test processing via A2A task format"""
-        orchestrator_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            agent_sequence="profile_selection,search",
-            parallel_steps="",
-            reasoning="Select profile then search"
-        ))
+        orchestrator_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                agent_sequence="profile_selection,search",
+                parallel_steps="",
+                reasoning="Select profile then search",
+            )
+        )
 
         # Simulate A2A task input
-        dspy_input = orchestrator_agent._a2a_to_dspy_input({
-            "id": "test_task",
-            "messages": [{
-                "role": "user",
-                "parts": [{
-                    "type": "text",
-                    "text": "Find videos about Python programming"
-                }]
-            }]
-        })
+        dspy_input = orchestrator_agent._a2a_to_dspy_input(
+            {
+                "id": "test_task",
+                "messages": [
+                    {
+                        "role": "user",
+                        "parts": [
+                            {
+                                "type": "text",
+                                "text": "Find videos about Python programming",
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
 
         result = await orchestrator_agent._process(dspy_input)
         a2a_output = orchestrator_agent._dspy_to_a2a_output(result)
@@ -504,16 +533,21 @@ class TestOrchestratorAgentIntegration:
             async def _process(input_data):
                 execution_order.append(agent_type.value)
                 return {"status": "success", "agent": agent_type.value}
+
             return _process
 
         for agent_type in orchestrator_agent.agent_registry.keys():
-            orchestrator_agent.agent_registry[agent_type]._process = make_tracking_agent(agent_type)
+            orchestrator_agent.agent_registry[agent_type]._process = (
+                make_tracking_agent(agent_type)
+            )
 
-        orchestrator_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            agent_sequence="query_enhancement,entity_extraction,search",
-            parallel_steps="0,1",  # 0 and 1 parallel, then 2
-            reasoning="Test dependency chain"
-        ))
+        orchestrator_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                agent_sequence="query_enhancement,entity_extraction,search",
+                parallel_steps="0,1",  # 0 and 1 parallel, then 2
+                reasoning="Test dependency chain",
+            )
+        )
 
         await orchestrator_agent._process({"query": "Test"})
 

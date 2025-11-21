@@ -9,23 +9,26 @@ import logging
 from typing import Any, Dict, List
 
 import dspy
-from pydantic import BaseModel, Field
-
 from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
 
 class Entity(BaseModel):
     """Extracted entity with type and metadata"""
+
     text: str = Field(description="Entity text as it appears in query")
-    type: str = Field(description="Entity type: PERSON, PLACE, ORG, CONCEPT, DATE, etc.")
+    type: str = Field(
+        description="Entity type: PERSON, PLACE, ORG, CONCEPT, DATE, etc."
+    )
     confidence: float = Field(description="Confidence score 0-1")
     context: str = Field(default="", description="Surrounding context")
 
 
 class EntityExtractionResult(BaseModel):
     """Result of entity extraction"""
+
     query: str
     entities: List[Entity]
     entity_count: int
@@ -35,9 +38,14 @@ class EntityExtractionResult(BaseModel):
 
 class EntityExtractionSignature(dspy.Signature):
     """Extract named entities from text query"""
+
     query: str = dspy.InputField(desc="User query to analyze")
-    entities: str = dspy.OutputField(desc="Extracted entities in format: text|type|confidence, one per line")
-    entity_types: str = dspy.OutputField(desc="Comma-separated list of entity types found")
+    entities: str = dspy.OutputField(
+        desc="Extracted entities in format: text|type|confidence, one per line"
+    )
+    entity_types: str = dspy.OutputField(
+        desc="Comma-separated list of entity types found"
+    )
 
 
 class EntityExtractionModule(dspy.Module):
@@ -64,10 +72,7 @@ class EntityExtractionModule(dspy.Module):
                 entities_str = ""
                 types_str = ""
 
-            return dspy.Prediction(
-                entities=entities_str,
-                entity_types=types_str
-            )
+            return dspy.Prediction(entities=entities_str, entity_types=types_str)
 
 
 class EntityExtractionAgent(DSPyA2AAgentBase):
@@ -103,10 +108,10 @@ class EntityExtractionAgent(DSPyA2AAgentBase):
                 "entity_extraction",
                 "named_entity_recognition",
                 "entity_classification",
-                "query_understanding"
+                "query_understanding",
             ],
             port=port,
-            version="1.0.0"
+            version="1.0.0",
         )
 
         logger.info(f"EntityExtractionAgent initialized for tenant: {tenant_id}")
@@ -129,7 +134,7 @@ class EntityExtractionAgent(DSPyA2AAgentBase):
                 entities=[],
                 entity_count=0,
                 has_entities=False,
-                dominant_types=[]
+                dominant_types=[],
             )
 
         # Extract entities using DSPy
@@ -139,21 +144,23 @@ class EntityExtractionAgent(DSPyA2AAgentBase):
         entities = self._parse_entities(result.entities, query)
 
         # Parse entity types
-        entity_types = [t.strip() for t in result.entity_types.split(",") if t.strip()]
+        [t.strip() for t in result.entity_types.split(",") if t.strip()]
 
         # Count entity types
         type_counts = {}
         for entity in entities:
             type_counts[entity.type] = type_counts.get(entity.type, 0) + 1
 
-        dominant_types = sorted(type_counts.keys(), key=lambda k: type_counts[k], reverse=True)
+        dominant_types = sorted(
+            type_counts.keys(), key=lambda k: type_counts[k], reverse=True
+        )
 
         return EntityExtractionResult(
             query=query,
             entities=entities,
             entity_count=len(entities),
             has_entities=len(entities) > 0,
-            dominant_types=dominant_types[:3]  # Top 3 types
+            dominant_types=dominant_types[:3],  # Top 3 types
         )
 
     def _parse_entities(self, entities_str: str, query: str) -> List[Entity]:
@@ -177,12 +184,14 @@ class EntityExtractionAgent(DSPyA2AAgentBase):
                 # Extract context (5 words before/after)
                 context = self._extract_context(text, query)
 
-                entities.append(Entity(
-                    text=text,
-                    type=entity_type,
-                    confidence=confidence,
-                    context=context
-                ))
+                entities.append(
+                    Entity(
+                        text=text,
+                        type=entity_type,
+                        confidence=confidence,
+                        context=context,
+                    )
+                )
 
         return entities
 
@@ -212,13 +221,13 @@ class EntityExtractionAgent(DSPyA2AAgentBase):
                 "entities": [e.model_dump() for e in dspy_output.entities],
                 "entity_count": dspy_output.entity_count,
                 "has_entities": dspy_output.has_entities,
-                "dominant_types": dspy_output.dominant_types
+                "dominant_types": dspy_output.dominant_types,
             }
         else:
             return {
                 "status": "success",
                 "agent": self.agent_name,
-                "output": str(dspy_output)
+                "output": str(dspy_output),
             }
 
     def _get_agent_skills(self) -> List[Dict[str, Any]]:
@@ -232,22 +241,28 @@ class EntityExtractionAgent(DSPyA2AAgentBase):
                     "entities": "array of {text, type, confidence, context}",
                     "entity_count": "integer",
                     "has_entities": "boolean",
-                    "dominant_types": "array of strings"
+                    "dominant_types": "array of strings",
                 },
                 "examples": [
                     {
-                        "input": {"query": "Show me videos about Barack Obama in Chicago"},
+                        "input": {
+                            "query": "Show me videos about Barack Obama in Chicago"
+                        },
                         "output": {
                             "entities": [
-                                {"text": "Barack Obama", "type": "PERSON", "confidence": 0.95},
-                                {"text": "Chicago", "type": "PLACE", "confidence": 0.9}
+                                {
+                                    "text": "Barack Obama",
+                                    "type": "PERSON",
+                                    "confidence": 0.95,
+                                },
+                                {"text": "Chicago", "type": "PLACE", "confidence": 0.9},
                             ],
                             "entity_count": 2,
                             "has_entities": True,
-                            "dominant_types": ["PERSON", "PLACE"]
-                        }
+                            "dominant_types": ["PERSON", "PLACE"],
+                        },
                     }
-                ]
+                ],
             }
         ]
 
@@ -258,7 +273,7 @@ from fastapi import FastAPI
 app = FastAPI(
     title="EntityExtractionAgent",
     description="Autonomous entity extraction agent",
-    version="1.0.0"
+    version="1.0.0",
 )
 
 # Global agent instance
@@ -271,6 +286,7 @@ async def startup_event():
     global entity_agent
 
     import os
+
     tenant_id = os.getenv("TENANT_ID", "default")
     entity_agent = EntityExtractionAgent(tenant_id=tenant_id)
     logger.info("EntityExtractionAgent started")
@@ -297,11 +313,13 @@ async def process_task(task: Dict[str, Any]):
     """Process A2A task"""
     if not entity_agent:
         return {"error": "Agent not initialized"}
-    return await entity_agent.app.routes[1].endpoint(task)  # Call base class task endpoint
+    return await entity_agent.app.routes[1].endpoint(
+        task
+    )  # Call base class task endpoint
 
 
 if __name__ == "__main__":
-    import uvicorn
+
     agent = EntityExtractionAgent(tenant_id="default", port=8010)
     logger.info("Starting EntityExtractionAgent on port 8010...")
     agent.run()

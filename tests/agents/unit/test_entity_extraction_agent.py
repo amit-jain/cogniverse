@@ -1,14 +1,14 @@
 """Unit tests for EntityExtractionAgent"""
 
-import pytest
 from unittest.mock import Mock, patch
-import dspy
 
+import dspy
+import pytest
 from cogniverse_agents.entity_extraction_agent import (
-    EntityExtractionAgent,
     Entity,
-    EntityExtractionResult,
+    EntityExtractionAgent,
     EntityExtractionModule,
+    EntityExtractionResult,
 )
 
 
@@ -18,7 +18,7 @@ def mock_dspy_lm():
     lm = Mock()
     lm.return_value = dspy.Prediction(
         entities="Barack Obama|PERSON|0.95\nChicago|PLACE|0.9",
-        entity_types="PERSON, PLACE"
+        entity_types="PERSON, PLACE",
     )
     return lm
 
@@ -26,7 +26,7 @@ def mock_dspy_lm():
 @pytest.fixture
 def entity_agent():
     """Create EntityExtractionAgent for testing"""
-    with patch('dspy.ChainOfThought'):
+    with patch("dspy.ChainOfThought"):
         agent = EntityExtractionAgent(tenant_id="test_tenant", port=8010)
         return agent
 
@@ -36,7 +36,7 @@ class TestEntityExtractionModule:
 
     def test_module_initialization(self):
         """Test EntityExtractionModule initializes correctly"""
-        with patch('dspy.ChainOfThought') as mock_cot:
+        with patch("dspy.ChainOfThought") as mock_cot:
             module = EntityExtractionModule()
             assert module.extractor is not None
             mock_cot.assert_called_once()
@@ -76,14 +76,16 @@ class TestEntityExtractionAgent:
     async def test_process_with_entities(self, entity_agent):
         """Test processing query with entities"""
         # Mock DSPy module
-        entity_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            entities="Barack Obama|PERSON|0.95\nChicago|PLACE|0.9",
-            entity_types="PERSON, PLACE"
-        ))
+        entity_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                entities="Barack Obama|PERSON|0.95\nChicago|PLACE|0.9",
+                entity_types="PERSON, PLACE",
+            )
+        )
 
-        result = await entity_agent._process({
-            "query": "Show me Barack Obama in Chicago"
-        })
+        result = await entity_agent._process(
+            {"query": "Show me Barack Obama in Chicago"}
+        )
 
         assert isinstance(result, EntityExtractionResult)
         assert result.query == "Show me Barack Obama in Chicago"
@@ -98,14 +100,11 @@ class TestEntityExtractionAgent:
     @pytest.mark.asyncio
     async def test_process_no_entities(self, entity_agent):
         """Test processing query with no entities"""
-        entity_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            entities="",
-            entity_types=""
-        ))
+        entity_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(entities="", entity_types="")
+        )
 
-        result = await entity_agent._process({
-            "query": "show me some videos"
-        })
+        result = await entity_agent._process({"query": "show me some videos"})
 
         assert result.entity_count == 0
         assert result.has_entities is False
@@ -181,14 +180,16 @@ class TestEntityExtractionAgent:
     @pytest.mark.asyncio
     async def test_dominant_types(self, entity_agent):
         """Test dominant entity types calculation"""
-        entity_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            entities="Obama|PERSON|0.9\nTrump|PERSON|0.9\nWhite House|PLACE|0.8",
-            entity_types="PERSON, PLACE"
-        ))
+        entity_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                entities="Obama|PERSON|0.9\nTrump|PERSON|0.9\nWhite House|PLACE|0.8",
+                entity_types="PERSON, PLACE",
+            )
+        )
 
-        result = await entity_agent._process({
-            "query": "Obama and Trump at White House"
-        })
+        result = await entity_agent._process(
+            {"query": "Obama and Trump at White House"}
+        )
 
         assert result.dominant_types[0] == "PERSON"  # Most common type
         assert "PLACE" in result.dominant_types
@@ -198,12 +199,22 @@ class TestEntityExtractionAgent:
         result = EntityExtractionResult(
             query="test query",
             entities=[
-                Entity(text="Obama", type="PERSON", confidence=0.9, context="about Obama speaking"),
-                Entity(text="Chicago", type="PLACE", confidence=0.8, context="Obama in Chicago")
+                Entity(
+                    text="Obama",
+                    type="PERSON",
+                    confidence=0.9,
+                    context="about Obama speaking",
+                ),
+                Entity(
+                    text="Chicago",
+                    type="PLACE",
+                    confidence=0.8,
+                    context="Obama in Chicago",
+                ),
             ],
             entity_count=2,
             has_entities=True,
-            dominant_types=["PERSON", "PLACE"]
+            dominant_types=["PERSON", "PLACE"],
         )
 
         a2a_output = entity_agent._dspy_to_a2a_output(result)
@@ -233,14 +244,16 @@ class TestEntityExtractionAgentIntegration:
     @pytest.mark.asyncio
     async def test_full_extraction_workflow(self, entity_agent):
         """Test complete entity extraction workflow"""
-        entity_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            entities="Apple Inc|ORG|0.95\nCupertino|PLACE|0.9\niPhone 15|CONCEPT|0.85",
-            entity_types="ORG, PLACE, CONCEPT"
-        ))
+        entity_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                entities="Apple Inc|ORG|0.95\nCupertino|PLACE|0.9\niPhone 15|CONCEPT|0.85",
+                entity_types="ORG, PLACE, CONCEPT",
+            )
+        )
 
-        result = await entity_agent._process({
-            "query": "Apple Inc announces iPhone 15 in Cupertino"
-        })
+        result = await entity_agent._process(
+            {"query": "Apple Inc announces iPhone 15 in Cupertino"}
+        )
 
         # Verify comprehensive extraction
         assert result.entity_count == 3
@@ -266,22 +279,27 @@ class TestEntityExtractionAgentIntegration:
     @pytest.mark.asyncio
     async def test_a2a_task_processing(self, entity_agent):
         """Test processing via A2A task format"""
-        entity_agent.dspy_module.forward = Mock(return_value=dspy.Prediction(
-            entities="Eiffel Tower|PLACE|0.95\nParis|PLACE|0.9",
-            entity_types="PLACE"
-        ))
+        entity_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                entities="Eiffel Tower|PLACE|0.95\nParis|PLACE|0.9",
+                entity_types="PLACE",
+            )
+        )
 
         # Simulate A2A task input
-        dspy_input = entity_agent._a2a_to_dspy_input({
-            "id": "test_task",
-            "messages": [{
-                "role": "user",
-                "parts": [{
-                    "type": "text",
-                    "text": "Show me Eiffel Tower in Paris"
-                }]
-            }]
-        })
+        dspy_input = entity_agent._a2a_to_dspy_input(
+            {
+                "id": "test_task",
+                "messages": [
+                    {
+                        "role": "user",
+                        "parts": [
+                            {"type": "text", "text": "Show me Eiffel Tower in Paris"}
+                        ],
+                    }
+                ],
+            }
+        )
 
         result = await entity_agent._process(dspy_input)
         a2a_output = entity_agent._dspy_to_a2a_output(result)
