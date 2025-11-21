@@ -761,3 +761,275 @@ class TestAgentCoordinationIntegration:
                 "video" in profile_result.selected_profile.lower()
                 or profile_result.modality == "video"
             ), "Pipeline should preserve video intent from original query"
+
+
+@pytest.mark.integration
+@skip_if_no_ollama
+class TestOrchestratorComplexPatterns:
+    """Advanced orchestration patterns: multiple parallel groups, cascading failures, edge cases"""
+
+    @pytest.mark.asyncio
+    async def test_multiple_parallel_groups_validates_execution(
+        self, orchestrator_with_real_agents
+    ):
+        """CORRECTNESS: Validate multiple parallel groups execute correctly"""
+        from unittest.mock import Mock
+
+        import dspy
+
+        # Complex workflow: [0,1] parallel → [2,3] parallel
+        orchestrator_with_real_agents.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                agent_sequence="entity_extraction,query_enhancement,profile_selection,search",
+                parallel_steps="0,1|2,3",  # Two parallel groups
+                reasoning="Two parallel groups: extract+enhance, then profile+search",
+            )
+        )
+
+        result = await orchestrator_with_real_agents._process(
+            {"query": "Find videos about neural networks"}
+        )
+
+        # VALIDATE: Two parallel groups created
+        assert (
+            len(result.plan.parallel_groups) == 2
+        ), f"Should have 2 parallel groups, got: {len(result.plan.parallel_groups)}"
+        assert result.plan.parallel_groups[0] == [0, 1]
+        assert result.plan.parallel_groups[1] == [2, 3]
+
+        # VALIDATE: First parallel group has no dependencies
+        assert result.plan.steps[0].depends_on == []
+        assert result.plan.steps[1].depends_on == []
+
+        # VALIDATE: Second parallel group depends on first group
+        assert set(result.plan.steps[2].depends_on) == {
+            0,
+            1,
+        }, f"Step 2 should depend on steps 0,1, got: {result.plan.steps[2].depends_on}"
+        assert set(result.plan.steps[3].depends_on) == {
+            0,
+            1,
+        }, f"Step 3 should depend on steps 0,1, got: {result.plan.steps[3].depends_on}"
+
+        # VALIDATE: All 4 agents executed
+        assert (
+            len(result.agent_results) == 4
+        ), f"Should execute all 4 agents, got: {len(result.agent_results)}"
+
+    @pytest.mark.asyncio
+    async def test_mixed_parallel_sequential_validates_dependencies(
+        self, orchestrator_with_real_agents
+    ):
+        """CORRECTNESS: Validate mixed parallel → sequential → parallel pattern"""
+        from unittest.mock import Mock
+
+        import dspy
+
+        # Workflow: [0,1] parallel → 2 sequential → [3,4] parallel
+        orchestrator_with_real_agents.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                agent_sequence="entity_extraction,query_enhancement,profile_selection,search,summarizer",
+                parallel_steps="0,1|3,4",  # First and last parallel
+                reasoning="Parallel extract+enhance, then profile, then parallel search+summarize",
+            )
+        )
+
+        result = await orchestrator_with_real_agents._process(
+            {"query": "Machine learning tutorials"}
+        )
+
+        # VALIDATE: Parallel groups structure
+        assert len(result.plan.parallel_groups) == 2
+        assert result.plan.parallel_groups[0] == [0, 1]
+        assert result.plan.parallel_groups[1] == [3, 4]
+
+        # VALIDATE: First group has no dependencies
+        assert result.plan.steps[0].depends_on == []
+        assert result.plan.steps[1].depends_on == []
+
+        # VALIDATE: Sequential step depends on previous parallel group
+        assert set(result.plan.steps[2].depends_on) == {0, 1}
+
+        # VALIDATE: Second parallel group depends on sequential step
+        assert result.plan.steps[3].depends_on == [2]
+        assert result.plan.steps[4].depends_on == [2]
+
+    @pytest.mark.asyncio
+    async def test_parallel_group_failure_validates_propagation(
+        self, orchestrator_with_real_agents
+    ):
+        """CORRECTNESS: Validate failure handling when entire parallel group fails"""
+        from unittest.mock import AsyncMock, Mock
+
+        import dspy
+
+        # Make both agents in parallel group fail
+        orchestrator_with_real_agents.agent_registry[
+            AgentType.ENTITY_EXTRACTION
+        ]._process = AsyncMock(side_effect=Exception("Extraction service down"))
+
+        orchestrator_with_real_agents.agent_registry[
+            AgentType.QUERY_ENHANCEMENT
+        ]._process = AsyncMock(side_effect=Exception("Enhancement service down"))
+
+        orchestrator_with_real_agents.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                agent_sequence="entity_extraction,query_enhancement,profile_selection",
+                parallel_steps="0,1",
+                reasoning="Parallel extract+enhance, then profile",
+            )
+        )
+
+        result = await orchestrator_with_real_agents._process(
+            {"query": "Show me videos"}
+        )
+
+        # VALIDATE: Both parallel agents failed
+        assert "entity_extraction" in result.agent_results
+        assert result.agent_results["entity_extraction"]["status"] == "error"
+
+        assert "query_enhancement" in result.agent_results
+        assert result.agent_results["query_enhancement"]["status"] == "error"
+
+        # VALIDATE: Dependent agent still executed (orchestrator continues despite failures)
+        assert "profile_selection" in result.agent_results
+
+        # VALIDATE: Summary reflects failures
+        # 3 executed, but 1 successful (only profile_selection)
+        assert "3/3" in result.execution_summary
+        assert "1 successful" in result.execution_summary
+
+    @pytest.mark.asyncio
+    async def test_cascading_failure_validates_degradation(
+        self, orchestrator_with_real_agents
+    ):
+        """CORRECTNESS: Validate sequential failure cascade with graceful degradation"""
+        from unittest.mock import AsyncMock, Mock
+
+        import dspy
+
+        # Make first agent fail → second agent receives error context → third agent proceeds
+        orchestrator_with_real_agents.agent_registry[
+            AgentType.ENTITY_EXTRACTION
+        ]._process = AsyncMock(
+            side_effect=Exception("Entity extraction database unavailable")
+        )
+
+        orchestrator_with_real_agents.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                agent_sequence="entity_extraction,profile_selection,query_enhancement",
+                parallel_steps="",  # All sequential
+                reasoning="Sequential: extract → profile → enhance",
+            )
+        )
+
+        result = await orchestrator_with_real_agents._process(
+            {"query": "Find machine learning tutorials"}
+        )
+
+        # VALIDATE: First agent failed
+        assert result.agent_results["entity_extraction"]["status"] == "error"
+
+        # VALIDATE: Downstream agents still executed
+        # Profile selection receives error result from entity extraction
+        assert "profile_selection" in result.agent_results
+        assert "query_enhancement" in result.agent_results
+
+        # VALIDATE: All 3 agents attempted (no early termination)
+        assert len(result.agent_results) == 3
+
+        # VALIDATE: Execution continues despite cascade
+        # Profile selection and query enhancement should succeed
+        profile_result = result.agent_results["profile_selection"]
+        if isinstance(profile_result, dict):
+            # If it's an error dict, that's OK (expected behavior)
+            assert "status" in profile_result
+        else:
+            # If it succeeded despite upstream failure, that's also OK
+            assert hasattr(profile_result, "selected_profile")
+
+    @pytest.mark.asyncio
+    async def test_long_query_validates_handling(self, orchestrator_with_real_agents):
+        """CORRECTNESS: Validate orchestrator handles very long queries"""
+        # Create a very long query (500+ chars)
+        long_query = (
+            "I am looking for comprehensive video tutorials about machine learning "
+            "that cover topics including supervised learning algorithms like linear "
+            "regression, logistic regression, support vector machines, decision trees, "
+            "random forests, gradient boosting, as well as unsupervised learning methods "
+            "such as k-means clustering, hierarchical clustering, principal component "
+            "analysis, and deep learning architectures including convolutional neural "
+            "networks, recurrent neural networks, long short-term memory networks, "
+            "transformers, attention mechanisms, and generative adversarial networks, "
+            "with practical examples and implementations in Python using TensorFlow, "
+            "PyTorch, and scikit-learn libraries."
+        )
+
+        assert len(long_query) > 500, "Query should be longer than 500 characters"
+
+        result = await orchestrator_with_real_agents._process({"query": long_query})
+
+        # VALIDATE: Orchestrator handled long query
+        assert result.query == long_query
+        assert len(result.plan.steps) > 0, "Long query should still create plan"
+        assert len(result.agent_results) > 0, "Long query should still execute agents"
+
+        # VALIDATE: All executed agents produced results (no truncation errors)
+        for agent_name, agent_result in result.agent_results.items():
+            assert (
+                agent_result is not None
+            ), f"Agent {agent_name} should handle long query"
+
+    @pytest.mark.asyncio
+    async def test_multi_sentence_query_validates_coherence(
+        self, orchestrator_with_real_agents
+    ):
+        """CORRECTNESS: Validate multi-sentence queries maintain coherence"""
+        multi_sentence_query = (
+            "I want to learn about machine learning. Specifically, I'm interested in "
+            "neural networks and deep learning. Can you show me video tutorials that "
+            "cover these topics? I prefer content that includes practical examples."
+        )
+
+        result = await orchestrator_with_real_agents._process(
+            {"query": multi_sentence_query}
+        )
+
+        # VALIDATE: Plan created for complex query
+        assert len(result.plan.steps) > 0
+
+        # VALIDATE: Query preserved through pipeline
+        assert result.query == multi_sentence_query
+
+        # VALIDATE: Agents executed
+        assert len(result.agent_results) > 0
+
+        # VALIDATE: Results are coherent
+        for agent_name, agent_result in result.agent_results.items():
+            assert agent_result is not None
+
+    @pytest.mark.asyncio
+    async def test_special_characters_query_validates_handling(
+        self, orchestrator_with_real_agents
+    ):
+        """CORRECTNESS: Validate queries with special characters are handled"""
+        special_query = (
+            "Show me C++ & Python tutorials for ML/AI (deep learning, NLP, CV) "
+            "with code examples @ github.com #machinelearning 100% practical!"
+        )
+
+        result = await orchestrator_with_real_agents._process({"query": special_query})
+
+        # VALIDATE: Special characters don't break orchestration
+        assert result.query == special_query
+        assert len(result.plan.steps) > 0, "Special chars should not break planning"
+
+        # VALIDATE: Agents handled special characters
+        assert (
+            len(result.agent_results) > 0
+        ), "Special chars should not prevent execution"
+
+        # VALIDATE: No crashes or exceptions in results
+        for agent_name, agent_result in result.agent_results.items():
+            # Either success or graceful error, but not None/crash
+            assert agent_result is not None

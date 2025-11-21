@@ -281,11 +281,24 @@ class OrchestratorAgent(DSPyA2AAgentBase):
                 break
 
         if current_group:
-            # Depends on all steps before the current group
-            for group in parallel_groups:
-                if group == current_group:
-                    break
-                depends_on.extend(group)
+            # Parallel step - check what comes before this group
+            min_index_in_group = min(current_group)
+            if min_index_in_group > 0:
+                prev_step = min_index_in_group - 1
+
+                # Check if previous step is in a parallel group
+                prev_in_group = None
+                for group in parallel_groups:
+                    if prev_step in group:
+                        prev_in_group = group
+                        break
+
+                if prev_in_group:
+                    # Previous parallel group - depend on entire group
+                    depends_on.extend(prev_in_group)
+                else:
+                    # Sequential step before this group - depend on it
+                    depends_on.append(prev_step)
         else:
             # Sequential step - check if previous step is in a parallel group
             if step_index > 0:
