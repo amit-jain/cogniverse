@@ -859,3 +859,264 @@ class TestSearchAgentAdvancedFeatures:
             assert routing_decision.enhanced_query is not None
             assert len(routing_decision.entities) == 3
             assert len(routing_decision.relationships) == 2
+
+
+@pytest.mark.unit
+class TestSearchAgentEnsembleSearch:
+    """Test ensemble search with RRF fusion"""
+
+    @pytest.fixture
+    def mock_config_with_profiles(self):
+        """Mock configuration with multiple profiles"""
+        return {
+            "active_video_profile": "video_colpali_smol500_mv_frame",
+            "backend": {
+                "profiles": {
+                    "profile1": {
+                        "embedding_model": "vidore/colsmol-500m",
+                        "embedding_type": "frame_based",
+                    },
+                    "profile2": {
+                        "embedding_model": "vidore/colqwen-omni",
+                        "embedding_type": "video_based",
+                    },
+                    "profile3": {
+                        "embedding_model": "google/videoprism-base",
+                        "embedding_type": "video_based",
+                    },
+                }
+            },
+        }
+
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
+    @patch("cogniverse_core.config.utils.get_config")
+    @pytest.mark.ci_fast
+    def test_fuse_results_rrf_basic(
+        self, mock_get_config, mock_registry, mock_encoder_factory, mock_config_with_profiles
+    ):
+        """Test basic RRF fusion of results from multiple profiles"""
+        mock_get_config.return_value = mock_config_with_profiles
+        mock_search_backend = Mock()
+        mock_registry.return_value.get_search_backend.return_value = mock_search_backend
+        mock_encoder_factory.create_encoder.return_value = Mock()
+
+        agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
+
+        # Create mock results from two profiles
+        profile_results = {
+            "profile1": [
+                {"id": "doc1", "score": 0.9},
+                {"id": "doc2", "score": 0.8},
+                {"id": "doc3", "score": 0.7},
+            ],
+            "profile2": [
+                {"id": "doc2", "score": 0.85},  # Same doc, different rank
+                {"id": "doc1", "score": 0.75},  # Same doc, different rank
+                {"id": "doc4", "score": 0.70},  # New doc
+            ],
+        }
+
+        fused = agent._fuse_results_rrf(profile_results, k=60, top_k=10)
+
+        # Validate structure
+        assert len(fused) <= 10
+        assert all("rrf_score" in result for result in fused)
+        assert all("profile_ranks" in result for result in fused)
+        assert all("num_profiles" in result for result in fused)
+
+        # Doc1 and doc2 should rank higher (appear in both profiles)
+        assert fused[0]["id"] in ["doc1", "doc2"]
+        assert fused[0]["num_profiles"] == 2
+
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
+    @patch("cogniverse_core.config.utils.get_config")
+    @pytest.mark.ci_fast
+    def test_fuse_results_rrf_formula(
+        self, mock_get_config, mock_registry, mock_encoder_factory, mock_config_with_profiles
+    ):
+        """Test RRF formula: score(doc) = Σ (1 / (k + rank))"""
+        mock_get_config.return_value = mock_config_with_profiles
+        mock_search_backend = Mock()
+        mock_registry.return_value.get_search_backend.return_value = mock_search_backend
+        mock_encoder_factory.create_encoder.return_value = Mock()
+
+        agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
+
+        # Single profile result
+        profile_results = {
+            "profile1": [
+                {"id": "doc1", "score": 0.9},  # rank 0
+            ]
+        }
+
+        k = 60
+        fused = agent._fuse_results_rrf(profile_results, k=k, top_k=10)
+
+        # Expected RRF score: 1 / (60 + 0) = 1/60 ≈ 0.01667
+        expected_score = 1.0 / (k + 0)
+        assert abs(fused[0]["rrf_score"] - expected_score) < 0.001
+
+        # Two profiles, same doc at different ranks
+        profile_results = {
+            "profile1": [{"id": "doc1", "score": 0.9}],  # rank 0
+            "profile2": [{"id": "other", "score": 1.0}, {"id": "doc1", "score": 0.8}],  # rank 1
+        }
+
+        fused = agent._fuse_results_rrf(profile_results, k=k, top_k=10)
+
+        # Expected RRF score: 1/(60+0) + 1/(60+1) ≈ 0.01667 + 0.01639 = 0.03306
+        expected_score = (1.0 / (k + 0)) + (1.0 / (k + 1))
+        doc1_result = next(r for r in fused if r["id"] == "doc1")
+        assert abs(doc1_result["rrf_score"] - expected_score) < 0.001
+
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
+    @patch("cogniverse_core.config.utils.get_config")
+    @pytest.mark.ci_fast
+    def test_fuse_results_rrf_sorting(
+        self, mock_get_config, mock_registry, mock_encoder_factory, mock_config_with_profiles
+    ):
+        """Test that RRF fusion sorts by RRF score correctly"""
+        mock_get_config.return_value = mock_config_with_profiles
+        mock_search_backend = Mock()
+        mock_registry.return_value.get_search_backend.return_value = mock_search_backend
+        mock_encoder_factory.create_encoder.return_value = Mock()
+
+        agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
+
+        # Create results where doc2 appears in both (should rank #1)
+        profile_results = {
+            "profile1": [
+                {"id": "doc1", "score": 1.0},  # Only in profile1
+                {"id": "doc2", "score": 0.9},  # In both
+            ],
+            "profile2": [
+                {"id": "doc2", "score": 1.0},  # In both (rank 0)
+                {"id": "doc3", "score": 0.9},  # Only in profile2
+            ],
+        }
+
+        fused = agent._fuse_results_rrf(profile_results, k=60, top_k=10)
+
+        # doc2 should be first (appears in both profiles)
+        assert fused[0]["id"] == "doc2"
+        assert fused[0]["num_profiles"] == 2
+
+        # Verify descending RRF scores
+        for i in range(len(fused) - 1):
+            assert fused[i]["rrf_score"] >= fused[i + 1]["rrf_score"]
+
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
+    @patch("cogniverse_core.config.utils.get_config")
+    @pytest.mark.asyncio
+    async def test_process_ensemble_mode_detection(
+        self, mock_get_config, mock_registry, mock_encoder_factory, mock_config_with_profiles
+    ):
+        """Test that _process() detects ensemble mode with multiple profiles"""
+        from unittest.mock import AsyncMock
+
+        mock_get_config.return_value = mock_config_with_profiles
+        mock_search_backend = Mock()
+        mock_registry.return_value.get_search_backend.return_value = mock_search_backend
+        mock_encoder_factory.create_encoder.return_value = Mock()
+
+        agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
+
+        # Mock _search_ensemble to avoid actual search (must be AsyncMock)
+        agent._search_ensemble = AsyncMock(return_value=[{"id": "doc1", "rrf_score": 0.5}])
+
+        # Call with multiple profiles
+        result = await agent._process({
+            "query": "test query",
+            "profiles": ["profile1", "profile2"],
+            "top_k": 10
+        })
+
+        # Should detect ensemble mode
+        assert result["search_mode"] == "ensemble"
+        assert result["profiles"] == ["profile1", "profile2"]
+        agent._search_ensemble.assert_called_once()
+
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
+    @patch("cogniverse_core.config.utils.get_config")
+    @pytest.mark.asyncio
+    async def test_process_single_profile_mode(
+        self, mock_get_config, mock_registry, mock_encoder_factory, mock_config_with_profiles
+    ):
+        """Test that _process() uses single profile mode when no profiles specified"""
+        mock_get_config.return_value = mock_config_with_profiles
+        mock_search_backend = Mock()
+        mock_search_backend.search.return_value = []
+        mock_registry.return_value.get_search_backend.return_value = mock_search_backend
+        mock_query_encoder = Mock()
+        mock_query_encoder.encode.return_value = np.random.rand(128)
+        mock_encoder_factory.create_encoder.return_value = mock_query_encoder
+
+        agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
+
+        # Call without profiles parameter
+        result = await agent._process({
+            "query": "test query",
+            "top_k": 10
+        })
+
+        # Should use single profile mode
+        assert result["search_mode"] == "single_profile"
+        assert "profile" in result
+
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
+    @patch("cogniverse_core.config.utils.get_config")
+    @pytest.mark.ci_fast
+    def test_fuse_results_rrf_top_k_limit(
+        self, mock_get_config, mock_registry, mock_encoder_factory, mock_config_with_profiles
+    ):
+        """Test that RRF fusion respects top_k limit"""
+        mock_get_config.return_value = mock_config_with_profiles
+        mock_search_backend = Mock()
+        mock_registry.return_value.get_search_backend.return_value = mock_search_backend
+        mock_encoder_factory.create_encoder.return_value = Mock()
+
+        agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
+
+        # Create many results
+        profile_results = {
+            "profile1": [{"id": f"doc{i}", "score": 1.0 - (i * 0.01)} for i in range(20)],
+            "profile2": [{"id": f"doc{i+10}", "score": 1.0 - (i * 0.01)} for i in range(20)],
+        }
+
+        # Request top 5
+        fused = agent._fuse_results_rrf(profile_results, k=60, top_k=5)
+
+        # Should return exactly 5 results
+        assert len(fused) == 5
+
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
+    @patch("cogniverse_core.config.utils.get_config")
+    @pytest.mark.ci_fast
+    def test_fuse_results_rrf_empty_profiles(
+        self, mock_get_config, mock_registry, mock_encoder_factory, mock_config_with_profiles
+    ):
+        """Test RRF fusion with empty profile results"""
+        mock_get_config.return_value = mock_config_with_profiles
+        mock_search_backend = Mock()
+        mock_registry.return_value.get_search_backend.return_value = mock_search_backend
+        mock_encoder_factory.create_encoder.return_value = Mock()
+
+        agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
+
+        # Empty results from all profiles
+        profile_results = {
+            "profile1": [],
+            "profile2": [],
+        }
+
+        fused = agent._fuse_results_rrf(profile_results, k=60, top_k=10)
+
+        # Should return empty list
+        assert len(fused) == 0

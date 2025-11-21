@@ -37,6 +37,40 @@ skip_if_no_openai = pytest.mark.skipif(
 )
 
 
+@pytest.fixture(autouse=True)
+def clear_singleton_state_between_tests():
+    """
+    Function-scoped autouse fixture to clear singleton state between each test.
+
+    This prevents test isolation issues when using module-scoped fixtures like vespa_with_schema.
+    Runs automatically before each test to ensure clean state.
+    """
+    # Clear before each test
+    from cogniverse_core.registries.backend_registry import get_backend_registry
+    from cogniverse_foundation.config.manager import ConfigManager
+
+    registry = get_backend_registry()
+    if hasattr(registry, "_backend_instances"):
+        initial_count = len(registry._backend_instances)
+        registry._backend_instances.clear()
+        if initial_count > 0:
+            logger.debug(f"🧹 Cleared {initial_count} cached backend instances before test")
+
+    if hasattr(ConfigManager, "_instance"):
+        if ConfigManager._instance is not None:
+            logger.debug("🧹 Cleared ConfigManager singleton before test")
+        ConfigManager._instance = None
+
+    yield
+
+    # Clear after each test as well
+    registry = get_backend_registry()
+    if hasattr(registry, "_backend_instances"):
+        registry._backend_instances.clear()
+    if hasattr(ConfigManager, "_instance"):
+        ConfigManager._instance = None
+
+
 @pytest.fixture(scope="module")
 def vespa_with_schema():
     """

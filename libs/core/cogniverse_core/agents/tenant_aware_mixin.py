@@ -56,6 +56,7 @@ class TenantAwareAgentMixin:
         self,
         tenant_id: str,
         config: Optional[SystemConfig] = None,
+        config_manager: Optional["ConfigManager"] = None,
         **kwargs
     ):
         """
@@ -64,6 +65,7 @@ class TenantAwareAgentMixin:
         Args:
             tenant_id: Tenant identifier (REQUIRED - no default)
             config: Optional system configuration
+            config_manager: Optional ConfigManager instance (if provided, will be used instead of creating new one)
             **kwargs: Passed to other base classes in MRO chain
 
         Raises:
@@ -98,8 +100,13 @@ class TenantAwareAgentMixin:
         self.tenant_id = tenant_id
 
         # Initialize or get config manager
-        from cogniverse_foundation.config.utils import create_default_config_manager
-        self.config_manager = create_default_config_manager()
+        # Use provided config_manager if available (for dependency injection)
+        # Otherwise create a new one
+        if config_manager is not None:
+            self.config_manager = config_manager
+        else:
+            from cogniverse_foundation.config.utils import create_default_config_manager
+            self.config_manager = create_default_config_manager()
 
         # Store or load configuration
         self.config = config

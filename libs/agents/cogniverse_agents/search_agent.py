@@ -316,7 +316,8 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         self.config_manager = config_manager
 
         # Initialize tenant support via TenantAwareAgentMixin
-        TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
+        # Pass config_manager so it uses the injected instance instead of creating a new one
+        TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id, config_manager=config_manager)
 
         # Initialize memory mixin
         MemoryAwareMixin.__init__(self)
@@ -469,6 +470,221 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         )
 
         logger.info("SearchAgent initialization complete")
+
+    def _fuse_results_rrf(
+        self,
+        profile_results: Dict[str, List[Dict[str, Any]]],
+        k: int = 60,
+        top_k: int = 10
+    ) -> List[Dict[str, Any]]:
+        """
+        Fuse results from multiple profiles using Reciprocal Rank Fusion (RRF).
+
+        Formula: score(doc) = Σ_profiles (1 / (k + rank_in_profile))
+
+        Args:
+            profile_results: Dict mapping profile names to their result lists
+            k: RRF constant (default 60, typical range: 20-100)
+            top_k: Number of final results to return
+
+        Returns:
+            Fused and re-ranked results
+        """
+        logger.info(f"Fusing results from {len(profile_results)} profiles using RRF (k={k})")
+
+        # Accumulate RRF scores by document ID
+        doc_scores = {}  # doc_id -> {score, result_data}
+        doc_profile_ranks = {}  # doc_id -> {profile: rank}
+
+        # Calculate RRF scores
+        for profile_name, results in profile_results.items():
+            for rank, result in enumerate(results):
+                doc_id = result["id"]
+                rrf_score = 1.0 / (k + rank)
+
+                if doc_id not in doc_scores:
+                    doc_scores[doc_id] = {
+                        "score": 0.0,
+                        "result": result,
+                        "profile_ranks": {},
+                        "profile_scores": {},
+                    }
+
+                doc_scores[doc_id]["score"] += rrf_score
+                doc_scores[doc_id]["profile_ranks"][profile_name] = rank
+                doc_scores[doc_id]["profile_scores"][profile_name] = result.get("score", 0.0)
+
+        # Sort by RRF score
+        fused_results = []
+        for doc_id, doc_data in doc_scores.items():
+            result = doc_data["result"].copy()
+            result["rrf_score"] = doc_data["score"]
+            result["profile_ranks"] = doc_data["profile_ranks"]
+            result["profile_scores"] = doc_data["profile_scores"]
+            result["num_profiles"] = len(doc_data["profile_ranks"])
+            fused_results.append(result)
+
+        # Sort by RRF score (descending)
+        fused_results.sort(key=lambda x: x["rrf_score"], reverse=True)
+
+        logger.info(
+            f"RRF fusion complete: {len(fused_results)} unique documents from {len(profile_results)} profiles"
+        )
+
+        return fused_results[:top_k]
+
+    async def _search_ensemble(
+        self,
+        query: str,
+        profiles: List[str],
+        modality: str = "video",
+        top_k: int = 10,
+        rrf_k: int = 60,
+        **kwargs
+    ) -> List[Dict[str, Any]]:
+        """
+        Execute parallel search across multiple profiles and fuse with RRF.
+
+        Args:
+            query: Text search query
+            profiles: List of profile names to query
+            modality: Content modality to search
+            top_k: Number of final results to return
+            rrf_k: RRF constant for fusion
+            **kwargs: Additional search parameters
+
+        Returns:
+            Fused results from all profiles
+        """
+        logger.info(f"Ensemble search with {len(profiles)} profiles: {profiles}")
+
+        import asyncio
+
+        # Pre-compute query embeddings for each profile in parallel
+        async def encode_for_profile(profile_name: str):
+            """Encode query for specific profile"""
+            try:
+                # Get profile config
+                backend_config_data = self.config.get("backend", {})
+                profiles_config = backend_config_data.get("profiles", {})
+
+                if profile_name not in profiles_config:
+                    logger.warning(f"Profile {profile_name} not found in config, using active profile encoder")
+                    return profile_name, self.query_encoder.encode(query)
+
+                # Create encoder for this profile
+                profile_config = profiles_config[profile_name]
+                model_name = profile_config.get("embedding_model", "vidore/colsmol-500m")
+
+                # Reuse active encoder if same model
+                if profile_name == self.active_profile:
+                    embeddings = self.query_encoder.encode(query)
+                else:
+                    # Create temporary encoder for this profile
+                    from cogniverse_agents.query.encoders import QueryEncoderFactory
+                    encoder = QueryEncoderFactory.create_encoder(
+                        profile_name, model_name, config=self.config
+                    )
+                    embeddings = encoder.encode(query)
+
+                logger.debug(f"Encoded query for profile {profile_name}: shape {embeddings.shape}")
+                return profile_name, embeddings
+
+            except Exception as e:
+                logger.error(f"Failed to encode query for profile {profile_name}: {e}")
+                return profile_name, None
+
+        # Encode queries in parallel
+        encoding_tasks = [encode_for_profile(p) for p in profiles]
+        profile_embeddings = await asyncio.gather(*encoding_tasks)
+
+        # Filter successful encodings
+        valid_embeddings = {
+            profile: emb for profile, emb in profile_embeddings if emb is not None
+        }
+
+        if not valid_embeddings:
+            raise ValueError("Failed to encode query for any profile")
+
+        logger.info(f"Encoded query for {len(valid_embeddings)}/{len(profiles)} profiles")
+
+        # Execute searches in parallel using shared thread pool
+        import concurrent.futures
+        loop = asyncio.get_event_loop()
+
+        async def search_profile(profile_name: str, query_embeddings, executor):
+            """Execute search for single profile"""
+            try:
+                query_dict = {
+                    "query": query,
+                    "type": modality,
+                    "query_embeddings": query_embeddings,
+                    "top_k": top_k * 2,  # Fetch 2x results for better fusion
+                    "filters": None,
+                    "strategy": kwargs.get("ranking", "binary_binary"),
+                    "profile": profile_name,
+                }
+
+                # Execute synchronous search in shared thread pool
+                search_results = await loop.run_in_executor(
+                    executor, self.search_backend.search, query_dict
+                )
+
+                # Convert SearchResult objects to dict
+                results = []
+                for sr in search_results:
+                    result_dict = {
+                        "id": sr.document.id,
+                        "score": sr.score,
+                        **sr.document.metadata
+                    }
+                    results.append(result_dict)
+
+                logger.info(f"Profile {profile_name}: {len(results)} results")
+                return profile_name, results
+
+            except Exception as e:
+                logger.error(f"Search failed for profile {profile_name}: {e}")
+                return profile_name, []
+
+        # Create shared thread pool and run searches in parallel
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(valid_embeddings)) as executor:
+            search_tasks = [
+                search_profile(profile, embeddings, executor)
+                for profile, embeddings in valid_embeddings.items()
+            ]
+            profile_results_list = await asyncio.gather(*search_tasks)
+
+        # Convert to dict
+        profile_results = {profile: results for profile, results in profile_results_list if results}
+
+        if not profile_results:
+            logger.warning("No results from any profile")
+            return []
+
+        # Fuse results using RRF
+        fused_results = self._fuse_results_rrf(profile_results, k=rrf_k, top_k=top_k)
+
+        # Store successful ensemble search in memory
+        if self.is_memory_enabled() and fused_results:
+            self.remember_success(
+                query=query,
+                result={
+                    "result_count": len(fused_results),
+                    "top_result": fused_results[0] if fused_results else None,
+                    "profiles_used": list(profile_results.keys()),
+                },
+                metadata={
+                    "search_type": "ensemble",
+                    "modality": modality,
+                    "profiles": profiles,
+                    "rrf_k": rrf_k,
+                    "top_k": top_k,
+                },
+            )
+            logger.debug("💾 Stored successful ensemble search in memory")
+
+        return fused_results
 
     def _search_by_text(
         self, query: str, modality: str = "video", top_k: int = 10, **kwargs
@@ -1164,6 +1380,34 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         modality = dspy_input.get("modality", "video")
         top_k = dspy_input.get("top_k", 10)
 
+        # Check for ensemble mode (multiple profiles)
+        profiles = dspy_input.get("profiles")
+        if profiles and isinstance(profiles, list) and len(profiles) > 1:
+            logger.info(f"Ensemble mode detected: {len(profiles)} profiles")
+            rrf_k = dspy_input.get("rrf_k", 60)
+
+            # Extract additional kwargs (exclude keys we're passing explicitly)
+            ensemble_kwargs = {k: v for k, v in dspy_input.items()
+                             if k not in ["query", "profiles", "modality", "top_k", "rrf_k"]}
+
+            results = await self._search_ensemble(
+                query=query,
+                profiles=profiles,
+                modality=modality,
+                top_k=top_k,
+                rrf_k=rrf_k,
+                **ensemble_kwargs
+            )
+            return {
+                "query": query,
+                "modality": modality,
+                "search_mode": "ensemble",
+                "profiles": profiles,
+                "rrf_k": rrf_k,
+                "results": results,
+                "total_results": len(results),
+            }
+
         # Route based on input type
         if "video_data" in dspy_input:
             # Video-based search
@@ -1196,17 +1440,23 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
             except Exception as e:
                 logger.warning(f"DSPy optimization failed: {e}, using original query")
 
+            # Extract additional kwargs (exclude keys we're passing explicitly)
+            search_kwargs = {k: v for k, v in dspy_input.items()
+                           if k not in ["query", "modality", "top_k"]}
+
             results = self._search_by_text(
                 query=search_query,
                 modality=modality,
                 top_k=top_k,
-                **dspy_input
+                **search_kwargs
             )
 
         return {
             "query": query,
             "enhanced_query": search_query if "search_query" in locals() and search_query != query else None,
             "modality": modality,
+            "search_mode": "single_profile",
+            "profile": self.active_profile,
             "results": results,
             "total_results": len(results),
         }
