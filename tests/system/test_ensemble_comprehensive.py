@@ -74,17 +74,9 @@ def comprehensive_ensemble_setup():
 
         logger.info(f"✅ Vespa ready at http://localhost:{http_port}")
 
-        # Ingest test data using the first profile's schema
-        logger.info("📥 Ingesting test data...")
-        test_docs = _create_test_documents_with_embeddings()
-
-        for doc in test_docs:
-            try:
-                manager.ingest_document(doc)
-            except Exception as e:
-                logger.warning(f"Failed to ingest document {doc.get('id')}: {e}")
-
-        logger.info(f"✅ Ingested {len(test_docs)} test documents")
+        # The fixture already ingested REAL video data via full_setup()
+        # No need to ingest more - use the real videos from VespaTestManager
+        logger.info("✅ Using REAL video data from VespaTestManager.full_setup()")
 
         yield {
             "http_port": http_port,
@@ -200,46 +192,18 @@ class TestComprehensiveEnsembleSearch:
             port=8018,
         )
 
-        # Mock encoder factory to return appropriate encoders for each profile
-        def create_mock_encoder(profile_name, model_name, config=None):
-            """Create mock encoder with correct dimensions for each profile"""
-            encoder = Mock()
-            profile_info = profiles.get(profile_name, profiles[list(profiles.keys())[0]])
-            embedding_dim = profile_info["embedding_dim"]
-            # Return embeddings with correct shape for the profile
-            encoder.encode = Mock(return_value=np.random.rand(embedding_dim))
-            encoder.embedding_dim = embedding_dim
-            return encoder
-
-        # Mock search backend to return test results
-        # Track which profiles were searched
-        search_calls = []
-
-        def mock_search(query_dict):
-            """Return mock results for each profile"""
-            profile = query_dict.get("profile", query_dict.get("schema", ""))
-            search_calls.append(profile)
-            logger.info(f"Mock search called for profile: {profile}")
-            # Return results with profile-specific IDs
-            return [
-                {"id": f"{profile}_doc1", "title": f"Result 1 from {profile}", "score": 0.9},
-                {"id": f"{profile}_doc2", "title": f"Result 2 from {profile}", "score": 0.8},
-            ]
-
-        agent.search_backend.search = mock_search
+        # NO MOCKING - use REAL query encoders and REAL Vespa!
+        logger.info("🔄 Loading REAL query encoders (ColPali model ~2GB)")
 
         try:
-            with patch('cogniverse_agents.query.encoders.QueryEncoderFactory.create_encoder',
-                      side_effect=create_mock_encoder):
-                result = await agent._process({
-                    "query": "test query with different embedding dimensions",
-                    "profiles": list(profiles.keys()),
-                    "top_k": 5,
-                    "rrf_k": 60
-                })
+            result = await agent._process({
+                "query": "robot playing soccer",  # Real query matching test videos
+                "profiles": list(profiles.keys()),
+                "top_k": 5,
+                "rrf_k": 60
+            })
 
-            logger.info(f"Search calls made to profiles: {search_calls}")
-            logger.info(f"Result: {result}")
+            logger.info(f"Result from REAL Vespa with REAL encoders: {result}")
 
             # VALIDATE: Ensemble executed successfully
             assert result["search_mode"] == "ensemble"
@@ -249,19 +213,23 @@ class TestComprehensiveEnsembleSearch:
             assert "results" in result
             assert "total_results" in result
 
-            # Allow 0 results if mock didn't work as expected, but log it
-            if result["total_results"] == 0:
-                logger.warning(f"⚠️ No results returned - search calls: {search_calls}")
-                logger.warning(f"⚠️ This may indicate profile name mapping issue")
-            else:
-                # VALIDATE: Results from different profiles were fused
-                result_ids = {r["id"] for r in result["results"]}
-                logger.info(f"✅ Fused results from {len(profiles)} profiles: {result_ids}")
+            # VALIDATE: MUST have results (real Vespa with ingested data)
+            assert result["total_results"] > 0, "Should return results from REAL Vespa with ingested videos"
+            assert len(result["results"]) > 0, "Results list should not be empty"
 
-            logger.info(f"✅ Comprehensive test passed with REAL profiles using different dimensions")
+            # VALIDATE: RRF fusion metadata on ALL results
+            for doc in result["results"]:
+                assert "rrf_score" in doc, "Should have RRF score"
+                assert "profile_ranks" in doc, "Should have profile ranks"
+                assert "num_profiles" in doc, "Should have profile count"
+                assert doc["rrf_score"] > 0, f"Invalid RRF score: {doc['rrf_score']}"
+                logger.info(f"   Doc {doc['id']}: RRF={doc['rrf_score']:.4f}, profiles={doc['num_profiles']}")
 
-        finally:
-            agent.search_backend.search = None
+            logger.info(f"✅ Comprehensive test passed: {result['total_results']} results from REAL Vespa with REAL encoders")
+
+        except Exception as e:
+            logger.error(f"❌ Comprehensive test failed: {e}")
+            raise
 
     @pytest.mark.asyncio
     async def test_comprehensive_encoder_loading_latency(self, comprehensive_ensemble_setup):
@@ -319,79 +287,31 @@ class TestComprehensiveEnsembleSearch:
             port=8018,
         )
 
-        # Mock encoders
-        encoder_creation_count = {"count": 0}
-
-        def create_mock_encoder(profile_name, model_name, config=None):
-            encoder_creation_count["count"] += 1
-            encoder = Mock()
-            profile_info = profiles.get(profile_name, profiles[list(profiles.keys())[0]])
-            encoder.encode = Mock(return_value=np.random.rand(profile_info["embedding_dim"]))
-            encoder.embedding_dim = profile_info["embedding_dim"]
-            return encoder
-
-        # Mock search
-        agent.search_backend.search = Mock(return_value=[
-            {"id": "doc1", "title": "Result 1", "score": 0.9}
-        ])
+        # NO MOCKING - use REAL encoders and REAL Vespa
+        logger.info("🔄 Measuring latency with REAL query encoders")
 
         try:
-            with patch('cogniverse_agents.query.encoders.QueryEncoderFactory.create_encoder',
-                      side_effect=create_mock_encoder):
-                start_time = time.time()
+            start_time = time.time()
 
-                result = await agent._process({
-                    "query": "latency test query",
-                    "profiles": list(profiles.keys()),
-                    "top_k": 10,
-                    "rrf_k": 60
-                })
+            result = await agent._process({
+                "query": "robot playing soccer",
+                "profiles": list(profiles.keys()),
+                "top_k": 10,
+                "rrf_k": 60
+            })
 
-                elapsed_ms = (time.time() - start_time) * 1000
+            elapsed_ms = (time.time() - start_time) * 1000
 
-            logger.info(f"⏱️  Total latency: {elapsed_ms:.2f}ms for {len(profiles)} profiles")
-            logger.info(f"⏱️  Encoder creations: {encoder_creation_count['count']}")
+            logger.info(f"⏱️  Total latency: {elapsed_ms:.2f}ms for {len(profiles)} profiles with REAL encoders")
 
-            # VALIDATE: Reasonable latency (not too slow)
-            # Target: <3000ms for mock setup (more lenient since mocking has overhead)
-            assert elapsed_ms < 3000, f"Latency {elapsed_ms:.2f}ms exceeds 3000ms threshold"
+            # VALIDATE: Reasonable latency with REAL encoders and REAL Vespa
+            # Target: <60000ms (60s) for real ColPali encoder (~2GB model) + real Vespa
+            # First run includes model loading time
+            assert elapsed_ms < 60000, f"Latency {elapsed_ms:.2f}ms exceeds 60s threshold"
 
-            logger.info(f"✅ Latency validated: {elapsed_ms:.2f}ms with {len(profiles)} REAL profiles")
+            logger.info(f"✅ Latency validated: {elapsed_ms:.2f}ms with REAL encoders and REAL Vespa")
 
-        finally:
-            pass
+        except Exception as e:
+            logger.error(f"❌ Latency test failed: {e}")
+            raise
 
-    @pytest.mark.asyncio
-    async def test_comprehensive_deterministic_embeddings(self, comprehensive_ensemble_setup):
-        """
-        COMPREHENSIVE TEST: Validate embedding consistency across profiles.
-
-        Validates:
-        - Mock encoders produce consistent dimensions for each profile
-        - Different profiles produce different dimensions as expected
-        """
-        profiles = comprehensive_ensemble_setup["profiles"]
-
-        logger.info("🔬 Testing embedding dimensions for each profile...")
-
-        from unittest.mock import Mock
-        import numpy as np
-
-        for profile_name, profile_data in profiles.items():
-            # Create mock encoder for this profile
-            encoder = Mock()
-            embedding_dim = profile_data["embedding_dim"]
-            encoder.encode = Mock(return_value=np.random.rand(embedding_dim))
-            encoder.embedding_dim = embedding_dim
-
-            # Test encoding
-            emb1 = encoder.encode("test query 1")
-            emb2 = encoder.encode("test query 2")
-
-            # VALIDATE: Dimensions match profile specs
-            assert emb1.shape[0] == embedding_dim, \
-                f"Profile {profile_name} should produce {embedding_dim}-dim embeddings, got {emb1.shape}"
-
-            logger.info(f"✅ Profile {profile_name}: {embedding_dim}-dim embeddings (binary: {profile_data['binary_dim']} bytes)")
-
-        logger.info(f"✅ All {len(profiles)} profiles produce correct embedding dimensions")
