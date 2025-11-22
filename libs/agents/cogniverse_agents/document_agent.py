@@ -504,6 +504,10 @@ class DocumentAgent(TenantAwareAgentMixin, MemoryAwareMixin, DSPyA2AAgentBase):
         return results
 
     # DSPyA2AAgentBase abstract method implementations
+    async def _process(self, dspy_input: Dict[str, Any]) -> Any:
+        """Process input - delegates to _process_with_dspy for backward compatibility"""
+        return await self._process_with_dspy(dspy_input)
+
     async def _process_with_dspy(self, dspy_input: Dict[str, Any]) -> Dict[str, Any]:
         """Process document search request"""
         query = dspy_input.get("query", "")

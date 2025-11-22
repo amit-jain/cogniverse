@@ -1153,6 +1153,10 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         return stats
 
     # DSPyA2AAgentBase implementation
+    async def _process(self, dspy_input: Dict[str, Any]) -> Any:
+        """Process input - delegates to _process_with_dspy for backward compatibility"""
+        return await self._process_with_dspy(dspy_input)
+
     async def _process_with_dspy(self, dspy_input: Dict[str, Any]) -> Any:
         """Process A2A input with DSPy routing logic"""
         query = dspy_input.get("query", "")
