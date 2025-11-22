@@ -60,6 +60,12 @@ class SystemConfig:
     # Video processing
     video_processing_profiles: List[str] = field(default_factory=list)
 
+    # Agent Registry - structured config for all agents
+    agents: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
+    # Agent Registry URL for Curated Registry pattern (A2A discovery)
+    agent_registry_url: str = "http://localhost:8000"
+
     # Metadata
     environment: str = "development"
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -85,6 +91,8 @@ class SystemConfig:
             "phoenix_url": self.phoenix_url,
             "phoenix_collector_endpoint": self.phoenix_collector_endpoint,
             "video_processing_profiles": self.video_processing_profiles,
+            "agents": self.agents,
+            "agent_registry_url": self.agent_registry_url,
             "environment": self.environment,
             "metadata": self.metadata,
         }
@@ -116,6 +124,8 @@ class SystemConfig:
                 "phoenix_collector_endpoint", "localhost:4317"
             ),
             video_processing_profiles=data.get("video_processing_profiles", []),
+            agents=data.get("agents", {}),
+            agent_registry_url=data.get("agent_registry_url", "http://localhost:8000"),
             environment=data.get("environment", "development"),
             metadata=data.get("metadata", {}),
         )

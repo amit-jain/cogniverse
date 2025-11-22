@@ -61,6 +61,80 @@ class AgentRegistry:
 
     def _initialize_from_config(self):
         """Initialize registry from system configuration"""
+        # Try structured agents config first
+        agents_config = self.config.get("agents", {})
+
+        if agents_config:
+            # Use structured config with explicit agent definitions
+            self._register_from_structured_config(agents_config)
+        else:
+            # Fall back to legacy individual URL-based config for backward compatibility
+            self._register_from_legacy_config()
+
+        logger.info(f"Initialized {len(self.agents)} agents from configuration")
+
+    def _register_from_structured_config(self, agents_config: Dict[str, Dict[str, Any]]):
+        """Register agents from structured config with default ports and capabilities"""
+        # Default agent configurations matching Phase 5 requirements
+        default_agents = {
+            "orchestrator": {
+                "url": "http://localhost:8000",
+                "enabled": True,
+                "capabilities": ["orchestration", "workflow_planning", "agent_coordination"]
+            },
+            "entity_extraction": {
+                "url": "http://localhost:8010",
+                "enabled": True,
+                "capabilities": ["entity_extraction", "relationship_extraction", "semantic_analysis"]
+            },
+            "profile_selection": {
+                "url": "http://localhost:8011",
+                "enabled": True,
+                "capabilities": ["profile_selection", "ensemble_composition", "llm_reasoning"]
+            },
+            "query_enhancement": {
+                "url": "http://localhost:8012",
+                "enabled": True,
+                "capabilities": ["query_enhancement", "query_expansion", "synonym_generation"]
+            },
+            "search": {
+                "url": "http://localhost:8002",
+                "enabled": True,
+                "capabilities": ["search", "ensemble_search", "multimodal_search"]
+            },
+            "summarizer": {
+                "url": "http://localhost:8003",
+                "enabled": True,
+                "capabilities": ["summarization", "content_condensation"]
+            },
+            "detailed_report": {
+                "url": "http://localhost:8004",
+                "enabled": True,
+                "capabilities": ["detailed_reporting", "comprehensive_analysis"]
+            },
+        }
+
+        # Merge user config with defaults
+        for agent_name, default_config in default_agents.items():
+            # Use user config if provided, otherwise use defaults
+            agent_config = agents_config.get(agent_name, default_config)
+
+            # Check if agent is enabled (default to True if not specified)
+            if not agent_config.get("enabled", True):
+                logger.debug(f"Agent {agent_name} is disabled in config, skipping registration")
+                continue
+
+            # Register agent
+            self.register_agent(
+                AgentEndpoint(
+                    name=agent_name,
+                    url=agent_config.get("url", default_config["url"]),
+                    capabilities=agent_config.get("capabilities", default_config["capabilities"]),
+                )
+            )
+
+    def _register_from_legacy_config(self):
+        """Register agents from legacy individual URL config for backward compatibility"""
         # Video search agent
         video_agent_url = self.config.get("video_agent_url")
         if video_agent_url:
@@ -100,8 +174,6 @@ class AgentRegistry:
                 ],
             )
         )
-
-        logger.info(f"Initialized {len(self.agents)} agents from configuration")
 
     def register_agent(self, agent: AgentEndpoint) -> bool:
         """

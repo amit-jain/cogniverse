@@ -439,3 +439,181 @@ class TestAgentRegistry:
         # Check agent details
         assert "agent1" in stats["agent_details"]
         assert stats["agent_details"]["agent1"]["health_status"] == "healthy"
+
+
+@pytest.mark.unit
+class TestAgentRegistryStructuredConfig:
+    """Test cases for structured agent configuration (Phase 5)"""
+
+    @pytest.fixture
+    def structured_config(self):
+        """Structured config with agents dict"""
+        return {
+            "agents": {
+                "orchestrator": {
+                    "url": "http://localhost:8000",
+                    "enabled": True,
+                    "capabilities": ["orchestration", "workflow_planning"]
+                },
+                "entity_extraction": {
+                    "url": "http://localhost:8010",
+                    "enabled": True,
+                    "capabilities": ["entity_extraction"]
+                },
+                "profile_selection": {
+                    "url": "http://localhost:8011",
+                    "enabled": False,  # Test disabled agent
+                    "capabilities": ["profile_selection"]
+                },
+            }
+        }
+
+    @pytest.mark.ci_fast
+    @patch("cogniverse_agents.agent_registry.get_config")
+    def test_structured_config_registration(self, mock_get_config, structured_config):
+        """Test agents are registered from structured config"""
+        # Mock get_config to return structured config
+        mock_get_config.return_value = structured_config
+
+        config_manager = create_default_config_manager()
+        registry = AgentRegistry(
+            tenant_id="test",
+            config_manager=config_manager
+        )
+
+        # Should register enabled agents only (orchestrator, entity_extraction)
+        # profile_selection is disabled
+        assert len(registry.agents) == 2
+        assert "orchestrator" in registry.agents
+        assert "entity_extraction" in registry.agents
+        assert "profile_selection" not in registry.agents  # disabled
+
+    @pytest.mark.ci_fast
+    @patch("cogniverse_foundation.config.utils.get_config")
+    def test_all_default_agents_registered(self, mock_get_config):
+        """Test all 7 Phase 2-3 agents registered with defaults"""
+        # Full agents config with all 7 agents enabled
+        full_agents_config = {
+            "agents": {
+                "orchestrator": {"url": "http://localhost:8000", "enabled": True},
+                "entity_extraction": {"url": "http://localhost:8010", "enabled": True},
+                "profile_selection": {"url": "http://localhost:8011", "enabled": True},
+                "query_enhancement": {"url": "http://localhost:8012", "enabled": True},
+                "search": {"url": "http://localhost:8002", "enabled": True},
+                "summarizer": {"url": "http://localhost:8003", "enabled": True},
+                "detailed_report": {"url": "http://localhost:8004", "enabled": True},
+            }
+        }
+
+        mock_get_config.return_value = full_agents_config
+
+        config_manager = create_default_config_manager()
+        registry = AgentRegistry(
+            tenant_id="test",
+            config_manager=config_manager
+        )
+
+        # All 7 agents should be registered
+        assert len(registry.agents) == 7
+        assert "orchestrator" in registry.agents
+        assert "entity_extraction" in registry.agents
+        assert "profile_selection" in registry.agents
+        assert "query_enhancement" in registry.agents
+        assert "search" in registry.agents
+        assert "summarizer" in registry.agents
+        assert "detailed_report" in registry.agents
+
+    @pytest.mark.ci_fast
+    @patch("cogniverse_foundation.config.utils.get_config")
+    def test_capability_based_discovery(self, mock_get_config, structured_config):
+        """Test finding agents by capability"""
+        mock_get_config.return_value = structured_config
+
+        config_manager = create_default_config_manager()
+        registry = AgentRegistry(
+            tenant_id="test",
+            config_manager=config_manager
+        )
+
+        # Find by orchestration capability
+        agents = registry.get_agents_by_capability("orchestration")
+        assert len(agents) == 1
+        assert agents[0].name == "orchestrator"
+
+        # Find by entity_extraction capability
+        agents = registry.get_agents_by_capability("entity_extraction")
+        assert len(agents) == 1
+        assert agents[0].name == "entity_extraction"
+
+        # Nonexistent capability
+        agents = registry.get_agents_by_capability("nonexistent")
+        assert len(agents) == 0
+
+    @pytest.mark.ci_fast
+    @patch("cogniverse_foundation.config.utils.get_config")
+    def test_backward_compatibility_legacy_config(self, mock_get_config):
+        """Test backward compatibility with legacy individual URL config"""
+        # Legacy config (no agents dict)
+        legacy_config = {
+            "video_agent_url": "http://localhost:8002",
+            "text_agent_url": "http://localhost:8003",
+            "routing_agent_port": 8001,
+        }
+
+        mock_get_config.return_value = legacy_config
+
+        config_manager = create_default_config_manager()
+        registry = AgentRegistry(
+            tenant_id="test",
+            config_manager=config_manager
+        )
+
+        # Should register 3 legacy agents
+        assert len(registry.agents) == 3
+        assert "video_search" in registry.agents
+        assert "text_search" in registry.agents
+        assert "routing_agent" in registry.agents
+
+    @pytest.mark.ci_fast
+    @patch("cogniverse_foundation.config.utils.get_config")
+    def test_custom_url_override(self, mock_get_config):
+        """Test custom URL overrides default URL"""
+        # Custom URL for orchestrator
+        custom_config = {
+            "agents": {
+                "orchestrator": {
+                    "url": "http://custom-host:9000",
+                    "enabled": True,
+                    "capabilities": ["orchestration"]
+                }
+            }
+        }
+
+        mock_get_config.return_value = custom_config
+
+        config_manager = create_default_config_manager()
+        registry = AgentRegistry(
+            tenant_id="test",
+            config_manager=config_manager
+        )
+
+        # Should use custom URL
+        assert registry.agents["orchestrator"].url == "http://custom-host:9000"
+
+    @pytest.mark.ci_fast
+    @patch("cogniverse_foundation.config.utils.get_config")
+    def test_disabled_agents_not_registered(self, mock_get_config, structured_config):
+        """Test disabled agents are not registered"""
+        mock_get_config.return_value = structured_config
+
+        config_manager = create_default_config_manager()
+        registry = AgentRegistry(
+            tenant_id="test",
+            config_manager=config_manager
+        )
+
+        # profile_selection is disabled in fixture
+        assert "profile_selection" not in registry.agents
+
+        # Only enabled agents registered
+        assert len(registry.agents) == 2

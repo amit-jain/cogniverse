@@ -1,16 +1,32 @@
 """Agent endpoints - unified interface for all agent operations."""
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from cogniverse_core.registries.agent_registry import AgentRegistry
-from cogniverse_foundation.config.utils import create_default_config_manager
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Module-level registry (injected from main.py)
+_agent_registry: Optional[AgentRegistry] = None
+
+
+def set_agent_registry(registry: AgentRegistry) -> None:
+    """Inject AgentRegistry dependency for router endpoints"""
+    global _agent_registry
+    _agent_registry = registry
+    logger.info("AgentRegistry injected into agents router")
+
+
+def get_registry() -> AgentRegistry:
+    """Get the injected registry or raise error"""
+    if _agent_registry is None:
+        raise RuntimeError("AgentRegistry not initialized. Call set_agent_registry() first.")
+    return _agent_registry
 
 
 class AgentTask(BaseModel):
@@ -22,12 +38,46 @@ class AgentTask(BaseModel):
     top_k: int = 10
 
 
+class AgentRegistrationData(BaseModel):
+    """Agent self-registration data for Curated Registry pattern"""
+
+    name: str
+    url: str
+    capabilities: List[str] = []
+    health_endpoint: str = "/health"
+    process_endpoint: str = "/tasks/send"
+    timeout: int = 30
+
+
+@router.post("/register", status_code=201)
+async def register_agent(data: AgentRegistrationData) -> Dict[str, Any]:
+    """
+    Register an agent in the curated registry (A2A pattern).
+
+    Agents call this endpoint during startup to self-register.
+    """
+    registry = get_registry()
+
+    success = registry.register_agent_from_data(data.dict())
+
+    if not success:
+        raise HTTPException(
+            status_code=400, detail=f"Failed to register agent '{data.name}'"
+        )
+
+    return {
+        "status": "registered",
+        "agent": data.name,
+        "url": data.url,
+        "capabilities": data.capabilities,
+    }
+
+
 @router.get("/")
 async def list_agents() -> Dict[str, Any]:
     """List all registered agents."""
-    config_manager = create_default_config_manager()
-    agent_registry = AgentRegistry(config_manager=config_manager)
-    agents = agent_registry.list_agents()
+    registry = get_registry()
+    agents = registry.list_agents()
 
     return {
         "count": len(agents),
@@ -35,47 +85,93 @@ async def list_agents() -> Dict[str, Any]:
     }
 
 
+@router.get("/stats")
+async def get_registry_stats() -> Dict[str, Any]:
+    """Get registry statistics including health status"""
+    registry = get_registry()
+    return registry.get_registry_stats()
+
+
+@router.get("/by-capability/{capability}")
+async def find_agents_by_capability(capability: str) -> Dict[str, Any]:
+    """
+    Find agents by capability (A2A Curated Registry pattern).
+
+    Enables capability-based agent discovery.
+    """
+    registry = get_registry()
+    agents = registry.find_agents_by_capability(capability)
+
+    return {
+        "capability": capability,
+        "count": len(agents),
+        "agents": [
+            {
+                "name": agent.name,
+                "url": agent.url,
+                "capabilities": agent.capabilities,
+                "health_status": agent.health_status,
+            }
+            for agent in agents
+        ],
+    }
+
+
 @router.get("/{agent_name}")
 async def get_agent_info(agent_name: str) -> Dict[str, Any]:
     """Get information about a specific agent."""
-    config_manager = create_default_config_manager()
-    agent_registry = AgentRegistry(config_manager=config_manager)
+    registry = get_registry()
 
     # Try to get agent
-    agent = agent_registry.get_agent(agent_name)
+    agent = registry.get_agent(agent_name)
     if not agent:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
 
-    # Return agent card/info
+    # Return agent endpoint info
     return {
-        "name": agent_name,
-        "type": agent.__class__.__name__,
-        "capabilities": getattr(agent, "capabilities", []),
-        "description": getattr(agent, "description", ""),
+        "name": agent.name,
+        "url": agent.url,
+        "capabilities": agent.capabilities,
+        "health_status": agent.health_status,
+        "health_endpoint": agent.health_endpoint,
+        "process_endpoint": agent.process_endpoint,
+    }
+
+
+@router.delete("/{agent_name}", status_code=200)
+async def unregister_agent(agent_name: str) -> Dict[str, Any]:
+    """Unregister an agent from the registry"""
+    registry = get_registry()
+
+    success = registry.unregister_agent(agent_name)
+
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+
+    return {
+        "status": "unregistered",
+        "agent": agent_name,
     }
 
 
 @router.get("/{agent_name}/card")
 async def get_agent_card(agent_name: str) -> Dict[str, Any]:
     """Get agent card (A2A protocol) for a specific agent."""
-    config_manager = create_default_config_manager()
-    agent_registry = AgentRegistry(config_manager=config_manager)
+    registry = get_registry()
 
-    agent = agent_registry.get_agent(agent_name)
+    agent = registry.get_agent(agent_name)
     if not agent:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
 
-    # If agent has get_agent_card method, use it
-    if hasattr(agent, "get_agent_card"):
-        return agent.get_agent_card()
-
-    # Otherwise return basic card
+    # Return A2A agent card
     return {
-        "name": agent_name,
+        "name": agent.name,
+        "url": agent.url,
         "version": "1.0",
-        "capabilities": getattr(agent, "capabilities", []),
+        "capabilities": agent.capabilities,
         "endpoints": {
-            "process": f"/agents/{agent_name}/process",
+            "health": agent.health_endpoint,
+            "process": agent.process_endpoint,
             "info": f"/agents/{agent_name}",
         },
     }
@@ -83,35 +179,24 @@ async def get_agent_card(agent_name: str) -> Dict[str, Any]:
 
 @router.post("/{agent_name}/process")
 async def process_agent_task(agent_name: str, task: AgentTask) -> Dict[str, Any]:
-    """Process a task with a specific agent."""
-    config_manager = create_default_config_manager()
-    agent_registry = AgentRegistry(config_manager=config_manager)
+    """
+    Process a task with a specific agent.
 
-    agent = agent_registry.get_agent(agent_name)
+    Note: This endpoint is for routing to agents. For direct agent execution,
+    agents should expose their own process endpoints.
+    """
+    registry = get_registry()
+
+    agent = registry.get_agent(agent_name)
     if not agent:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
 
-    try:
-        # Call agent's process method
-        if hasattr(agent, "process"):
-            result = await agent.process(
-                query=task.query, context=task.context, top_k=task.top_k
-            )
-            return result
-        elif hasattr(agent, "forward"):
-            # For DSPy agents
-            result = agent.forward(
-                query=task.query, context=task.context, top_k=task.top_k
-            )
-            return {"result": result}
-        else:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Agent '{agent_name}' does not support processing",
-            )
-    except Exception as e:
-        logger.error(f"Error processing task with agent {agent_name}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    # In curated registry pattern, agents are remote services
+    # This endpoint would forward the request to the agent's URL
+    raise HTTPException(
+        status_code=501,
+        detail=f"Direct processing not supported. Call agent at {agent.url}{agent.process_endpoint}",
+    )
 
 
 @router.post("/{agent_name}/upload")
@@ -120,29 +205,21 @@ async def upload_file_to_agent(
     file: UploadFile = File(...),
     top_k: int = 10,
 ) -> Dict[str, Any]:
-    """Upload a file for agent processing (e.g., video/image search)."""
-    config_manager = create_default_config_manager()
-    agent_registry = AgentRegistry(config_manager=config_manager)
+    """
+    Upload a file for agent processing (e.g., video/image search).
 
-    agent = agent_registry.get_agent(agent_name)
+    Note: This endpoint is for routing to agents. For direct agent execution,
+    agents should expose their own upload endpoints.
+    """
+    registry = get_registry()
+
+    agent = registry.get_agent(agent_name)
     if not agent:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
 
-    try:
-        # Read file content
-        content = await file.read()
-
-        # Call agent's upload handler if available
-        if hasattr(agent, "process_upload"):
-            result = await agent.process_upload(
-                file_content=content, filename=file.filename, top_k=top_k
-            )
-            return result
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Agent '{agent_name}' does not support file uploads",
-            )
-    except Exception as e:
-        logger.error(f"Error uploading file to agent {agent_name}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    # In curated registry pattern, agents are remote services
+    # This endpoint would forward the request to the agent's URL
+    raise HTTPException(
+        status_code=501,
+        detail=f"Direct file upload not supported. Call agent at {agent.url}/upload",
+    )

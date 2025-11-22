@@ -10,14 +10,19 @@ import logging
 import time
 import uuid
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import dspy
+import httpx
 import uvicorn
+from cogniverse_foundation.config.utils import get_config
 from fastapi import FastAPI
 from pydantic import BaseModel
 
 from cogniverse_core.common.a2a_utils import A2AClient, AgentCard
+
+if TYPE_CHECKING:
+    from cogniverse_foundation.config.manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +68,8 @@ class DSPyA2AAgentBase(ABC):
         capabilities: List[str],
         port: int = 8000,
         version: str = "1.0.0",
+        config_manager: Optional["ConfigManager"] = None,
+        tenant_id: str = "default",
     ):
         """
         Initialize DSPy-A2A agent.
@@ -74,6 +81,8 @@ class DSPyA2AAgentBase(ABC):
             capabilities: List of agent capabilities
             port: Port for A2A HTTP server
             version: Agent version
+            config_manager: ConfigManager for accessing configuration
+            tenant_id: Tenant identifier for multi-tenancy
         """
         # A2A Protocol Configuration
         self.agent_name = agent_name
@@ -81,6 +90,14 @@ class DSPyA2AAgentBase(ABC):
         self.capabilities = capabilities
         self.port = port
         self.version = version
+        self.tenant_id = tenant_id
+
+        # Configuration
+        self.config_manager = config_manager
+        if config_manager:
+            self.config = get_config(tenant_id=tenant_id, config_manager=config_manager)
+        else:
+            self.config = {}
 
         # DSPy 3.0 Core
         self.dspy_module = dspy_module
@@ -102,6 +119,9 @@ class DSPyA2AAgentBase(ABC):
 
         # Setup A2A protocol endpoints
         self._setup_a2a_endpoints()
+
+        # Self-register with curated agent registry (A2A pattern)
+        self._self_register()
 
         logger.info(f"Initialized {agent_name} with DSPy 3.0 + A2A integration")
 
@@ -223,6 +243,58 @@ class DSPyA2AAgentBase(ABC):
                     "has_tools": hasattr(self.dspy_module, "tools"),
                 },
             }
+
+    def _self_register(self):
+        """
+        Self-register with curated agent registry via HTTP.
+
+        Implements A2A Curated Registries pattern where agents publish
+        themselves to a central registry on startup.
+        """
+        if not self.config or not isinstance(self.config, dict):
+            logger.warning(
+                f"Agent {self.agent_name} skipping self-registration: "
+                "config not available"
+            )
+            return
+
+        registry_url = self.config.get("agent_registry_url")
+        if not registry_url:
+            logger.warning(
+                f"Agent {self.agent_name} skipping self-registration: "
+                "agent_registry_url not configured"
+            )
+            return
+
+        registration_data = {
+            "name": self.agent_name,
+            "url": f"http://localhost:{self.port}",
+            "capabilities": self.capabilities,
+            "health_endpoint": "/health",
+            "process_endpoint": "/tasks/send",
+            "timeout": 30,
+        }
+
+        try:
+            with httpx.Client(timeout=5.0) as client:
+                response = client.post(
+                    f"{registry_url}/agents/register",
+                    json=registration_data,
+                )
+                response.raise_for_status()
+                logger.info(
+                    f"Agent {self.agent_name} successfully registered with "
+                    f"registry at {registry_url}"
+                )
+        except httpx.HTTPError as e:
+            logger.warning(
+                f"Agent {self.agent_name} failed to register with registry at "
+                f"{registry_url}: {e}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Agent {self.agent_name} failed to register with registry: {e}"
+            )
 
     def _a2a_to_dspy_input(self, task: Dict[str, Any]) -> Dict[str, Any]:
         """

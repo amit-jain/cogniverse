@@ -10,10 +10,10 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import httpx
+from cogniverse_foundation.config.utils import get_config
 
 from cogniverse_core.common.a2a_utils import A2AClient
 from cogniverse_core.common.agent_models import AgentEndpoint
-from cogniverse_foundation.config.utils import get_config
 
 if TYPE_CHECKING:
     from cogniverse_foundation.config.manager import ConfigManager
@@ -64,48 +64,13 @@ class AgentRegistry:
         logger.info(f"AgentRegistry initialized for tenant: {tenant_id}")
 
     def _initialize_from_config(self):
-        """Initialize registry from system configuration"""
-        # Video search agent
-        video_agent_url = self.config.get("video_agent_url")
-        if video_agent_url:
-            self.register_agent(
-                AgentEndpoint(
-                    name="video_search",
-                    url=video_agent_url,
-                    capabilities=[
-                        "video_search",
-                        "multimodal_search",
-                        "temporal_search",
-                    ],
-                )
-            )
+        """Initialize registry from system configuration
 
-        # Text search agent
-        text_agent_url = self.config.get("text_agent_url")
-        if text_agent_url:
-            self.register_agent(
-                AgentEndpoint(
-                    name="text_search",
-                    url=text_agent_url,
-                    capabilities=["text_search", "document_search", "hybrid_search"],
-                )
-            )
-
-        # Routing agent (self-registration)
-        routing_agent_port = self.config.get("routing_agent_port", 8001)
-        self.register_agent(
-            AgentEndpoint(
-                name="routing_agent",
-                url=f"http://localhost:{routing_agent_port}",
-                capabilities=[
-                    "query_routing",
-                    "workflow_coordination",
-                    "agent_orchestration",
-                ],
-            )
-        )
-
-        logger.info(f"Initialized {len(self.agents)} agents from configuration")
+        Note: Registry now relies on agent self-registration via HTTP.
+        This method is kept for emergency fallback only - agents should
+        register themselves using the Curated Registry pattern.
+        """
+        logger.info("AgentRegistry initialized - waiting for agent self-registration")
 
     def register_agent(self, agent: AgentEndpoint) -> bool:
         """

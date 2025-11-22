@@ -57,7 +57,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     agent_registry = AgentRegistry(config_manager=config_manager)
     logger.info("Registries initialized")
 
-    # 5. Use config loader to dynamically load backends and agents
+    # 5. Wire agent registry to agents router for Curated Registry pattern
+    agents.set_agent_registry(agent_registry)
+    logger.info("AgentRegistry wired to agents router")
+
+    # 6. Use config loader to dynamically load backends and agents
     config_loader = get_config_loader()
     config_loader.load_backends()
     config_loader.load_agents()
