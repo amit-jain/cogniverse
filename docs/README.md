@@ -35,6 +35,8 @@ Complete documentation for Cogniverse - the multi-agent system with 10-package l
 - **[Architecture Overview](architecture/overview.md)** - 10-package layered architecture
 - **[SDK Architecture](architecture/sdk-architecture.md)** - UV workspace deep-dive
 - **[Multi-Tenant Architecture](architecture/multi-tenant.md)** - Complete tenant isolation
+- **[Multi-Agent Interactions](architecture/multi-agent-interactions.md)** - Agent communication flows with 8 Mermaid diagrams (orchestrator, registry, workflows)
+- **[Ensemble Composition](architecture/ensemble-composition.md)** - RRF fusion algorithm, parallel profile execution, performance analysis
 - **[System Flows](architecture/system-flows.md)** - 20+ architectural diagrams
 - **[Integration](architecture/integration.md)** - Component integration patterns
 
