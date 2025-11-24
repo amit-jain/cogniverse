@@ -1,6 +1,6 @@
 # Welcome to Cogniverse
 
-**Version 2.0.0** | **10-Package UV Workspace Architecture** | **Production Ready** | **Last Updated: 2025-11-13**
+**Version 2.0.0** | **11-Package UV Workspace Architecture** | **Production Ready** | **Last Updated: 2025-11-24**
 
 ## Multi-Agent RAG System for Multi-Modal Content Analysis and Search
 
@@ -41,6 +41,13 @@ Cogniverse is a technical framework for building production multi-agent systems 
 - DSPy-based optimization with GEPA, MIPRO, SIMBA, Bootstrap
 - Synthetic data generation for training optimizers
 - Automated prompt and module optimization
+
+**LLM Fine-Tuning Infrastructure**
+- End-to-end pipeline from Phoenix telemetry to trained LoRA adapters
+- Automatic method selection (SFT vs DPO) based on available annotations
+- Validation split with early stopping to prevent overfitting
+- Automatic adapter evaluation with test set comparison
+- Complete dashboard UI for dataset analysis, training configuration, and experiment tracking
 
 **Multi-Tenant Architecture**
 - Schema-per-tenant physical isolation in Vespa
@@ -86,9 +93,9 @@ JAX_PLATFORM_NAME=cpu uv run python tests/comprehensive_video_query_test_v2.py \
   --test-multiple-strategies
 ```
 
-## 10-Package Layered Architecture
+## 11-Package Layered Architecture
 
-Cogniverse uses a UV workspace with 10 packages organized in 4 layers:
+Cogniverse uses a UV workspace with 11 packages organized in 4 layers:
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -103,7 +110,9 @@ Cogniverse uses a UV workspace with 10 packages organized in 4 layers:
 ┌─────────────────────────────────────────────┐
 │        IMPLEMENTATION LAYER                  │
 │  ┌─────────┐  ┌────────┐  ┌──────────────┐ │
-│  │ agents  │  │ vespa  │  │ synthetic    │ │
+│  │ agents  │  │ vespa  │  │ finetuning   │ │
+│  ├─────────┤  ├────────┤  ├──────────────┤ │
+│  │synthetic│  │        │  │              │ │
 │  └─────────┘  └────────┘  └──────────────┘ │
 └─────────────────────────────────────────────┘
                ↓ depends on ↓
@@ -135,6 +144,7 @@ Cogniverse uses a UV workspace with 10 packages organized in 4 layers:
 | **cogniverse-telemetry-phoenix** | Core | Phoenix telemetry provider (plugin via entry points) |
 | **cogniverse-agents** | Implementation | Routing, video search, orchestration agents |
 | **cogniverse-vespa** | Implementation | Vespa backend, tenant schema management |
+| **cogniverse-finetuning** | Implementation | LLM fine-tuning pipeline (SFT, DPO, evaluation, dashboard) |
 | **cogniverse-synthetic** | Implementation | Synthetic data generation for optimizers |
 | **cogniverse-runtime** | Application | FastAPI server, ingestion pipeline, middleware |
 | **cogniverse-dashboard** | Application | Streamlit UI, Phoenix analytics |
@@ -196,6 +206,13 @@ Cogniverse uses a UV workspace with 10 packages organized in 4 layers:
 - **ProfileSelector**: LLM-based profile selection from backend content
 - **BackendQuerier**: Sample real content from Vespa for synthetic generation
 
+### Fine-Tuning Infrastructure (cogniverse-finetuning)
+- **FinetuningOrchestrator**: End-to-end pipeline from Phoenix annotations to trained adapters
+- **TrainingMethodSelector**: Auto-select SFT vs DPO based on data availability (preference pairs, approved examples)
+- **SFTTrainer & DPOTrainer**: TRL-based trainers with LoRA, validation split, and early stopping
+- **AdapterEvaluator**: Compare adapter vs base model on held-out test sets
+- **Dashboard Integration**: Dataset analysis, training configuration UI, experiment tracking, job monitoring
+
 ### Evaluation Framework (cogniverse-evaluation + cogniverse-telemetry-phoenix)
 - **Provider-agnostic metrics**: Accuracy, MRR, NDCG, Precision@K independent of telemetry backend
 - **Phoenix evaluation provider**: Phoenix-specific experiment tracking and annotation
@@ -256,6 +273,6 @@ Cogniverse uses a UV workspace with 10 packages organized in 4 layers:
 ---
 
 **Version**: 2.0.0
-**Architecture**: UV Workspace (10 Packages - Layered Architecture)
-**Last Updated**: 2025-11-13
+**Architecture**: UV Workspace (11 Packages - Layered Architecture)
+**Last Updated**: 2025-11-24
 **Status**: Production Ready

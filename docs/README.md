@@ -1,8 +1,8 @@
 # Cogniverse Documentation
 
-**Version:** 2.0.0 | **Last Updated:** 2025-11-13 | **Status:** Production Ready
+**Version:** 2.0.0 | **Last Updated:** 2025-11-24 | **Status:** Production Ready
 
-Complete documentation for Cogniverse - the multi-agent system with 10-package layered architecture.
+Complete documentation for Cogniverse - the multi-agent system with 11-package layered architecture.
 
 ---
 
@@ -54,6 +54,7 @@ Complete documentation for Cogniverse - the multi-agent system with 10-package l
 *Implementation Layer:*
 - **[Agents Module](modules/agents.md)** - Routing, search, orchestration agents
 - **[Vespa Module](modules/backends.md)** - Vespa backend, tenant schemas
+- **[Fine-Tuning Module](modules/finetuning.md)** - LLM fine-tuning pipeline (SFT, DPO, evaluation, dashboard)
 - **[Synthetic Module](modules/synthetic.md)** - Synthetic data generation (coming soon)
 
 *Application Layer:*
@@ -125,9 +126,9 @@ Complete documentation for Cogniverse - the multi-agent system with 10-package l
 
 ## 📦 Package Documentation
 
-### 10-Package Architecture
+### 11-Package Architecture
 
-Cogniverse uses a **UV workspace** with 10 packages in layered architecture:
+Cogniverse uses a **UV workspace** with 11 packages in layered architecture:
 
 **Foundation Layer:**
 1. [cogniverse-sdk](modules/sdk.md) - Pure backend interfaces (zero dependencies)
@@ -141,11 +142,12 @@ Cogniverse uses a **UV workspace** with 10 packages in layered architecture:
 **Implementation Layer:**
 6. [cogniverse-agents](modules/agents.md) - Routing, search, orchestration
 7. [cogniverse-vespa](modules/backends.md) - Vespa backend, schemas
-8. [cogniverse-synthetic](modules/synthetic.md) - Synthetic data generation
+8. [cogniverse-finetuning](modules/finetuning.md) - LLM fine-tuning pipeline (SFT, DPO, evaluation, dashboard)
+9. [cogniverse-synthetic](modules/synthetic.md) - Synthetic data generation
 
 **Application Layer:**
-9. [cogniverse-runtime](modules/runtime.md) - FastAPI server, ingestion
-10. [cogniverse-dashboard](modules/dashboard.md) - Streamlit UI, analytics
+10. [cogniverse-runtime](modules/runtime.md) - FastAPI server, ingestion
+11. [cogniverse-dashboard](modules/dashboard.md) - Streamlit UI, analytics
 
 ---
 
@@ -202,6 +204,6 @@ Cogniverse uses a **UV workspace** with 10 packages in layered architecture:
 ---
 
 **Version**: 2.0.0
-**Architecture**: UV Workspace (10 Packages - Layered Architecture)
-**Last Updated**: 2025-11-13
+**Architecture**: UV Workspace (11 Packages - Layered Architecture)
+**Last Updated**: 2025-11-24
 **Status**: Production Ready
