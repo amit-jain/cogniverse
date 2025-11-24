@@ -1,0 +1,60 @@
+[project]
+name = "cogniverse-finetuning"
+version = "0.1.0"
+description = "LLM fine-tuning infrastructure with LoRA/PEFT and DPO for Cogniverse agents"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+authors = [
+    {name = "Cogniverse Team"}
+]
+
+dependencies = [
+    "cogniverse-sdk",
+    "cogniverse-core",
+    "cogniverse-agents",
+    "cogniverse-synthetic",       # Reuse existing synthetic data generation
+    "cogniverse-foundation",      # Telemetry provider interfaces (TraceStore, AnnotationStore, DatasetStore)
+    # Note: Uses telemetry provider abstraction, not direct Phoenix dependency
+
+    # Fine-tuning core libraries
+    "peft>=0.13.0",           # LoRA/PEFT adapters
+    "transformers>=4.50.0",   # Hugging Face transformers
+    "datasets>=3.2.0",        # Dataset loading and processing
+    "accelerate>=1.2.0",      # Training acceleration
+    "trl>=0.12.0",            # DPO, PPO, RLHF trainers (SFTTrainer, DPOTrainer)
+
+    # Training infrastructure
+    "torch>=2.5.0",
+    # "bitsandbytes>=0.45.0",   # Quantization and memory optimization (optional - Linux/Windows only, not available on macOS)
+    "scipy>=1.10.0",
+
+    # Embedding fine-tuning
+    "sentence-transformers>=3.3.0",  # Contrastive learning for embeddings
+
+    # Experiment tracking
+    "mlflow>=3.0.0",
+
+    # Cloud infrastructure
+    "modal>=0.68.0",          # Modal GPU jobs
+    "boto3>=1.28.0",          # S3 for model storage
+    "huggingface-hub>=0.28.0", # HF Hub integration
+
+    # Data processing
+    "pandas>=2.1.0",
+    "pyarrow>=14.0.0",        # Efficient dataset serialization
+]
+
+[tool.uv.sources]
+cogniverse-sdk = { workspace = true }
+cogniverse-core = { workspace = true }
+cogniverse-agents = { workspace = true }
+cogniverse-synthetic = { workspace = true }
+cogniverse-foundation = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["cogniverse_finetuning"]

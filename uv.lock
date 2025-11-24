@@ -22,6 +22,7 @@ members = [
     "cogniverse-core",
     "cogniverse-dashboard",
     "cogniverse-evaluation",
+    "cogniverse-finetuning",
     "cogniverse-foundation",
     "cogniverse-runtime",
     "cogniverse-sdk",
@@ -638,6 +639,20 @@ wheels = [
 ]
 
 [[package]]
+name = "boto3"
+version = "1.39.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "botocore" },
+    { name = "jmespath" },
+    { name = "s3transfer" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d1/ef/f8dbe6482bdf9eb0230f2639483cdd40ef5aaa89c2fb651f2edeee9c248a/boto3-1.39.8.tar.gz", hash = "sha256:456ea6baef037eb6205d64e012259d14f0c9300c9b30603890746c1a0882fa01", size = 111829, upload-time = "2025-07-17T19:19:14.828Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3c/f0/f3701472b2e6192e62d80e703186ae9c789b3d607ba22943702c500897d2/boto3-1.39.8-py3-none-any.whl", hash = "sha256:dcea5270ccced0b4b962eb5874cb71b6232ccfc6203e05bf834a314442e4a79c", size = 139886, upload-time = "2025-07-17T19:19:12.634Z" },
+]
+
+[[package]]
 name = "botocore"
 version = "1.39.8"
 source = { registry = "https://pypi.org/simple" }
@@ -933,6 +948,55 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.0.0" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "scikit-learn", specifier = ">=1.3.0" },
+]
+
+[[package]]
+name = "cogniverse-finetuning"
+version = "0.1.0"
+source = { editable = "libs/finetuning" }
+dependencies = [
+    { name = "accelerate" },
+    { name = "boto3" },
+    { name = "cogniverse-agents" },
+    { name = "cogniverse-core" },
+    { name = "cogniverse-foundation" },
+    { name = "cogniverse-sdk" },
+    { name = "cogniverse-synthetic" },
+    { name = "datasets" },
+    { name = "huggingface-hub" },
+    { name = "mlflow" },
+    { name = "modal" },
+    { name = "pandas" },
+    { name = "peft" },
+    { name = "pyarrow" },
+    { name = "scipy" },
+    { name = "sentence-transformers" },
+    { name = "torch" },
+    { name = "transformers" },
+    { name = "trl" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "accelerate", specifier = ">=1.2.0" },
+    { name = "boto3", specifier = ">=1.28.0" },
+    { name = "cogniverse-agents", editable = "libs/agents" },
+    { name = "cogniverse-core", editable = "libs/core" },
+    { name = "cogniverse-foundation", editable = "libs/foundation" },
+    { name = "cogniverse-sdk", editable = "libs/sdk" },
+    { name = "cogniverse-synthetic", editable = "libs/synthetic" },
+    { name = "datasets", specifier = ">=3.2.0" },
+    { name = "huggingface-hub", specifier = ">=0.28.0" },
+    { name = "mlflow", specifier = ">=3.0.0" },
+    { name = "modal", specifier = ">=0.68.0" },
+    { name = "pandas", specifier = ">=2.1.0" },
+    { name = "peft", specifier = ">=0.13.0" },
+    { name = "pyarrow", specifier = ">=14.0.0" },
+    { name = "scipy", specifier = ">=1.10.0" },
+    { name = "sentence-transformers", specifier = ">=3.3.0" },
+    { name = "torch", specifier = ">=2.5.0" },
+    { name = "transformers", specifier = ">=4.50.0" },
+    { name = "trl", specifier = ">=0.12.0" },
 ]
 
 [[package]]
@@ -5572,6 +5636,18 @@ wheels = [
 ]
 
 [[package]]
+name = "s3transfer"
+version = "0.13.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "botocore" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6d/05/d52bf1e65044b4e5e27d4e63e8d1579dbdec54fce685908ae09bc3720030/s3transfer-0.13.1.tar.gz", hash = "sha256:c3fdba22ba1bd367922f27ec8032d6a1cf5f10c934fb5d68cf60fd5a23d936cf", size = 150589, upload-time = "2025-07-18T19:22:42.31Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6d/4f/d073e09df851cfa251ef7840007d04db3293a0482ce607d2b993926089be/s3transfer-0.13.1-py3-none-any.whl", hash = "sha256:a981aa7429be23fe6dfc13e80e4020057cbab622b08c0315288758d67cabc724", size = 85308, upload-time = "2025-07-18T19:22:40.947Z" },
+]
+
+[[package]]
 name = "safetensors"
 version = "0.6.2"
 source = { registry = "https://pypi.org/simple" }
@@ -6469,6 +6545,20 @@ source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/06/00/59500052cb1cf8cf5316be93598946bc451f14072c6ff256904428eaf03c/triton-3.2.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:8d9b215efc1c26fa7eefb9a157915c92d52e000d2bf83e5f69704047e63f125c", size = 253159365, upload-time = "2025-01-22T19:13:24.648Z" },
     { url = "https://files.pythonhosted.org/packages/c7/30/37a3384d1e2e9320331baca41e835e90a3767303642c7a80d4510152cbcf/triton-3.2.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:e5dfa23ba84541d7c0a531dfce76d8bcd19159d50a4a8b14ad01e91734a5c1b0", size = 253154278, upload-time = "2025-01-22T19:13:54.221Z" },
+]
+
+[[package]]
+name = "trl"
+version = "0.20.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "accelerate" },
+    { name = "datasets" },
+    { name = "transformers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/60/11/95cf1210df9f241b7b1084abe1032e322374f667c4587c09af8d14a1d76f/trl-0.20.0.tar.gz", hash = "sha256:3f949b009b79dc609cd8f5469d67209ab8f71c5cb4d8d979f7b568ef054922fa", size = 461791, upload-time = "2025-07-29T04:10:06.305Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5c/25/fb8509e9206a2ebfa89f9e1c1b595c1c7d68852716ac64f9c4845aa4133e/trl-0.20.0-py3-none-any.whl", hash = "sha256:925703a4b6117c45c64625768669e0cccb2cc71011b3d52163e47c0e7d6eb8af", size = 504561, upload-time = "2025-07-29T04:10:04.697Z" },
 ]
 
 [[package]]
