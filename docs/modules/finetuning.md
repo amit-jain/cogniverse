@@ -1172,6 +1172,100 @@ libs/finetuning/
 
 ---
 
+## Phoenix Experiment Tracking
+
+### Overview
+
+All fine-tuning experiments are automatically logged to Phoenix as EXPERIMENT spans. This provides a unified system for telemetry, evaluation, AND experiment tracking—no MLflow needed.
+
+### Experiment Span Schema
+
+Each training run creates an EXPERIMENT span with the following attributes:
+
+**Span Identification**:
+- `openinference.span.kind`: "EXPERIMENT"
+- `operation.name`: "fine_tuning"
+- `experiment.run_id`: Unique run ID (e.g., "run_2025-11-24T10:00:00")
+- `experiment.agent_type`: Agent type or modality (e.g., "routing", "video")
+
+**Hyperparameters** (`params.*`):
+- `params.base_model`: Base model name (e.g., "HuggingFaceTB/SmolLM-135M")
+- `params.method`: Training method ("sft", "dpo", "embedding")
+- `params.backend`: Backend type ("local" or "remote")
+- `params.backend_provider`: Provider for remote backend ("modal", "sagemaker", etc.)
+- `params.epochs`: Number of training epochs
+- `params.batch_size`: Batch size
+- `params.learning_rate`: Learning rate
+- `params.use_lora`: Whether LoRA was used
+- `params.lora_r`: LoRA rank (default: 8)
+- `params.lora_alpha`: LoRA alpha (default: 16)
+
+**Dataset Info** (`data.*`):
+- `data.total_spans`: Total spans in Phoenix
+- `data.approved_count`: Number of approved annotations
+- `data.rejected_count`: Number of rejected annotations
+- `data.preference_pairs`: Number of preference pairs (for DPO)
+- `data.dataset_size`: Final training dataset size
+- `data.used_synthetic`: Whether synthetic data was used
+- `data.synthetic_approved_count`: Number of approved synthetic examples
+
+**Results** (`metrics.*`):
+- `metrics.train_loss`: Final training loss
+- `metrics.train_samples`: Number of training samples processed
+- `metrics.epochs_completed`: Actual epochs completed
+
+**Output** (`output.*`):
+- `output.adapter_path`: Path to saved adapter
+
+### Querying Experiments
+
+Use the helper functions to query experiments from Python:
+
+```python
+from cogniverse_finetuning.orchestrator import (
+    list_experiments,
+    get_experiment_details,
+    compare_experiments
+)
+
+# List all routing experiments
+experiments = await list_experiments(
+    telemetry_provider=provider,
+    project="cogniverse-tenant1",
+    agent_type="routing",
+    method="sft",  # Optional: filter by method
+    limit=50
+)
+
+# Get specific experiment details
+details = await get_experiment_details(
+    telemetry_provider=provider,
+    project="cogniverse-tenant1",
+    run_id="run_2025-11-24T10:00:00"
+)
+
+# Compare multiple experiments
+comparison = await compare_experiments(
+    telemetry_provider=provider,
+    project="cogniverse-tenant1",
+    run_ids=["run_001", "run_002", "run_003"]
+)
+```
+
+### Dashboard Integration
+
+The Phoenix dashboard includes a **Fine-Tuning** tab (Monitoring > Fine-Tuning) that provides:
+
+- **Experiment History Table**: All training runs with hyperparameters and metrics
+- **Summary Metrics**: Total runs, SFT/DPO counts, best loss
+- **Experiment Details**: View hyperparameters, dataset info, and output paths
+- **Side-by-Side Comparison**: Compare multiple experiments with loss charts
+- **Filtering**: Filter by agent type, modality, or training method
+
+Access the dashboard at `http://localhost:8501` (default Streamlit port).
+
+---
+
 ## Dependencies
 
 **Core**:

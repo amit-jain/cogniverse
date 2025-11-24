@@ -739,7 +739,8 @@ with top_level_tabs[2]:
         "🗺️ Embedding Atlas",
         "🎯 Routing Evaluation",
         "🔄 Orchestration",
-        "📊 Multi-Modal Performance"
+        "📊 Multi-Modal Performance",
+        "🧬 Fine-Tuning"
     ])
 
 # Analytics Tab
@@ -2206,6 +2207,199 @@ with monitoring_tabs[5]:
     # Real System Status (no hardcoded claims)
     st.subheader("📊 System Status")
     st.info("System status is displayed in the sidebar based on real agent connectivity checks. No services are assumed to be running.")
+
+# Fine-Tuning Tab
+with monitoring_tabs[6]:
+    st.header("🧬 Fine-Tuning Experiments")
+    st.markdown("View and compare fine-tuning experiments tracked in Phoenix")
+
+    # Configuration
+    with st.expander("⚙️ Configuration", expanded=True):
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            ft_tenant_id = st.text_input("Tenant ID", value="tenant1", key="ft_tenant")
+
+        with col2:
+            ft_project = st.text_input("Project", value=f"cogniverse-{ft_tenant_id}", key="ft_project")
+
+        with col3:
+            ft_agent_filter = st.selectbox(
+                "Agent/Modality",
+                options=["All", "routing", "profile_selection", "entity_extraction", "video", "image", "text"],
+                key="ft_agent_filter"
+            )
+
+    # Load experiments button
+    if st.button("🔄 Load Experiments") or "ft_experiments_df" not in st.session_state:
+        with st.spinner("Loading experiments from Phoenix..."):
+            try:
+                import asyncio
+                from cogniverse_foundation.telemetry.registry import TelemetryRegistry
+                from cogniverse_finetuning.orchestrator import list_experiments
+
+                # Initialize telemetry
+                registry = TelemetryRegistry()
+                ft_provider = registry.get_telemetry_provider(
+                    name="phoenix",
+                    tenant_id=ft_tenant_id,
+                    config={
+                        "project_name": ft_project,
+                        "http_endpoint": agent_config["phoenix_base_url"],
+                    }
+                )
+
+                # Query experiments
+                agent_filter = None if ft_agent_filter == "All" else ft_agent_filter
+                experiments_df = asyncio.run(list_experiments(
+                    ft_provider, ft_project, agent_type=agent_filter, limit=100
+                ))
+
+                st.session_state.ft_experiments_df = experiments_df
+                st.session_state.ft_provider = ft_provider
+                st.session_state.ft_project = ft_project
+
+                if len(experiments_df) > 0:
+                    st.success(f"✅ Loaded {len(experiments_df)} experiments")
+                else:
+                    st.info("No experiments found. Run fine-tuning to create experiments.")
+
+            except Exception as e:
+                st.error(f"❌ Error loading experiments: {e}")
+
+    # Display experiments
+    if "ft_experiments_df" in st.session_state and not st.session_state.ft_experiments_df.empty:
+        df = st.session_state.ft_experiments_df
+
+        st.markdown("---")
+        st.subheader("📋 Experiment History")
+
+        # Summary metrics
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total Runs", len(df))
+        with col2:
+            sft_count = len(df[df["method"] == "sft"]) if "method" in df.columns else 0
+            st.metric("SFT Runs", sft_count)
+        with col3:
+            dpo_count = len(df[df["method"] == "dpo"]) if "method" in df.columns else 0
+            st.metric("DPO Runs", dpo_count)
+        with col4:
+            if "train_loss" in df.columns:
+                best_loss = df["train_loss"].min()
+                st.metric("Best Loss", f"{best_loss:.4f}")
+            else:
+                st.metric("Best Loss", "N/A")
+
+        # Experiments table
+        st.markdown("### Select Experiments to Compare")
+
+        # Format display table
+        display_columns = ["run_id", "agent_type", "method", "base_model", "backend",
+                          "batch_size", "learning_rate", "dataset_size", "train_loss", "timestamp"]
+        available_display_columns = [col for col in display_columns if col in df.columns]
+        display_df = df[available_display_columns].copy()
+
+        # Format timestamps
+        if "timestamp" in display_df.columns:
+            display_df["timestamp"] = pd.to_datetime(display_df["timestamp"]).dt.strftime("%Y-%m-%d %H:%M")
+
+        # Add selection
+        if "run_id" in display_df.columns:
+            selected_indices = st.multiselect(
+                "Select runs to compare",
+                range(len(display_df)),
+                format_func=lambda i: f"{display_df.iloc[i]['run_id'][:20]}..."
+            )
+
+        # Display full table
+        st.dataframe(display_df, use_container_width=True)
+
+        # Show experiment details or comparison
+        if selected_indices:
+            if len(selected_indices) == 1:
+                # Single experiment details
+                st.markdown("---")
+                st.subheader("📊 Experiment Details")
+
+                idx = selected_indices[0]
+                experiment = df.iloc[idx]
+
+                # Hyperparameters
+                st.markdown("#### ⚙️ Hyperparameters")
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Method", experiment["method"].upper() if "method" in experiment else "N/A")
+                with col2:
+                    st.metric("Batch Size", int(experiment["batch_size"]) if "batch_size" in experiment else "N/A")
+                with col3:
+                    lr_val = f"{float(experiment['learning_rate']):.0e}" if "learning_rate" in experiment else "N/A"
+                    st.metric("Learning Rate", lr_val)
+                with col4:
+                    st.metric("Backend", experiment["backend"] if "backend" in experiment else "N/A")
+
+                # Dataset info
+                st.markdown("#### 📊 Dataset")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Dataset Size", int(experiment["dataset_size"]) if "dataset_size" in experiment else "N/A")
+                with col2:
+                    synthetic_label = "Yes" if experiment.get("used_synthetic", False) else "No"
+                    st.metric("Used Synthetic", synthetic_label)
+                with col3:
+                    loss_val = f"{float(experiment['train_loss']):.4f}" if "train_loss" in experiment and pd.notna(experiment["train_loss"]) else "N/A"
+                    st.metric("Train Loss", loss_val)
+
+                # Output
+                st.markdown("#### 💾 Output")
+                if "adapter_path" in experiment:
+                    st.code(experiment["adapter_path"], language="text")
+
+            elif len(selected_indices) > 1:
+                # Multiple experiments comparison
+                st.markdown("---")
+                st.subheader("🔬 Compare Experiments")
+
+                try:
+                    from cogniverse_finetuning.orchestrator import compare_experiments
+                    import asyncio
+
+                    run_ids = [df.iloc[i]["run_id"] for i in selected_indices if "run_id" in df.columns]
+                    comparison_df = asyncio.run(compare_experiments(
+                        st.session_state.ft_provider,
+                        st.session_state.ft_project,
+                        run_ids
+                    ))
+
+                    st.dataframe(comparison_df, use_container_width=True)
+
+                    # Chart: Loss comparison
+                    if "train_loss" in df.columns:
+                        import plotly.graph_objects as go
+
+                        fig = go.Figure()
+                        for i, idx in enumerate(selected_indices):
+                            exp = df.iloc[idx]
+                            if pd.notna(exp.get("train_loss")):
+                                fig.add_trace(go.Bar(
+                                    x=[f"Run {i+1}"],
+                                    y=[float(exp["train_loss"])],
+                                    name=f"{exp['method'].upper() if 'method' in exp else 'Unknown'}",
+                                    text=[f"{float(exp['train_loss']):.4f}"],
+                                    textposition="outside"
+                                ))
+
+                        fig.update_layout(
+                            title="Training Loss Comparison",
+                            yaxis_title="Loss",
+                            barmode='group',
+                            height=400
+                        )
+
+                        st.plotly_chart(fig, use_container_width=True)
+
+                except Exception as e:
+                    st.error(f"Error comparing experiments: {e}")
 
 # Auto-refresh logic
 if st.session_state.auto_refresh:

@@ -12,7 +12,10 @@ Combines all components into a high-level API:
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
+
+import pandas as pd
+from opentelemetry.trace import Status, StatusCode
 
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
@@ -198,6 +201,66 @@ class FinetuningOrchestrator:
         self.synthetic_service = synthetic_service
         self.approval_orchestrator = approval_orchestrator
 
+    def _log_experiment_to_phoenix(
+        self,
+        config: OrchestrationConfig,
+        result: "OrchestrationResult",
+        analysis: any,
+        approved_batch: any,
+        formatted_dataset: List[Dict],
+    ) -> None:
+        """
+        Log experiment to Phoenix as EXPERIMENT span.
+
+        Args:
+            config: Orchestration configuration
+            result: Training result with metrics and adapter path
+            analysis: DataAnalysis from method selector
+            approved_batch: Approval batch (if synthetic was used)
+            formatted_dataset: Formatted training dataset
+        """
+        run_id = f"run_{datetime.utcnow().isoformat()}"
+
+        experiment_span_attributes = {
+            "openinference.span.kind": "EXPERIMENT",
+            "operation.name": "fine_tuning",
+            "experiment.run_id": run_id,
+            "experiment.agent_type": config.agent_type or config.modality,
+            # Hyperparameters
+            "params.base_model": config.base_model,
+            "params.method": result.training_method,
+            "params.backend": config.backend,
+            "params.backend_provider": config.backend_provider,
+            "params.epochs": config.epochs,
+            "params.batch_size": config.batch_size,
+            "params.learning_rate": config.learning_rate,
+            "params.use_lora": config.use_lora,
+            "params.lora_r": 8,
+            "params.lora_alpha": 16,
+            # Dataset info
+            "data.total_spans": analysis.total_spans if analysis else 0,
+            "data.approved_count": analysis.approved_count if analysis else 0,
+            "data.rejected_count": analysis.rejected_count if analysis else 0,
+            "data.preference_pairs": analysis.preference_pairs if analysis else 0,
+            "data.dataset_size": len(formatted_dataset),
+            "data.used_synthetic": result.used_synthetic,
+            "data.synthetic_approved_count": result.synthetic_approval_count or 0,
+            # Results
+            "metrics.train_loss": result.metrics.get("train_loss"),
+            "metrics.train_samples": result.metrics.get("train_samples"),
+            "metrics.epochs_completed": result.metrics.get("epoch", config.epochs),
+            "output.adapter_path": result.adapter_path,
+        }
+
+        # Create experiment span in Phoenix
+        with self.provider.tracer.start_as_current_span(
+            f"experiment.{config.agent_type or config.modality}.{result.training_method}",
+            attributes=experiment_span_attributes,
+        ) as span:
+            span.set_status(Status(StatusCode.OK))
+
+        logger.info(f"Experiment logged to Phoenix: {run_id}")
+
     def _create_backend(self, config: OrchestrationConfig) -> TrainingBackend:
         """Create training backend based on config."""
         training_config = TrainingJobConfig(
@@ -315,7 +378,7 @@ class FinetuningOrchestrator:
                 config=training_config,
             )
 
-            return OrchestrationResult(
+            orchestration_result = OrchestrationResult(
                 model_type="llm",
                 training_method="dpo",
                 adapter_path=result.adapter_path,
@@ -327,6 +390,17 @@ class FinetuningOrchestrator:
                 if approved_batch
                 else None,
             )
+
+            # Log experiment to Phoenix
+            self._log_experiment_to_phoenix(
+                config=config,
+                result=orchestration_result,
+                analysis=analysis,
+                approved_batch=approved_batch,
+                formatted_dataset=formatted_dataset,
+            )
+
+            return orchestration_result
 
         elif analysis.recommended_method == "sft":
             # SFT: Extract instruction examples
@@ -361,7 +435,7 @@ class FinetuningOrchestrator:
                 config=training_config,
             )
 
-            return OrchestrationResult(
+            orchestration_result = OrchestrationResult(
                 model_type="llm",
                 training_method="sft",
                 adapter_path=result.adapter_path,
@@ -373,6 +447,17 @@ class FinetuningOrchestrator:
                 if approved_batch
                 else None,
             )
+
+            # Log experiment to Phoenix
+            self._log_experiment_to_phoenix(
+                config=config,
+                result=orchestration_result,
+                analysis=analysis,
+                approved_batch=approved_batch,
+                formatted_dataset=formatted_dataset,
+            )
+
+            return orchestration_result
 
         else:
             raise ValueError(
@@ -440,7 +525,7 @@ class FinetuningOrchestrator:
             config=training_config,
         )
 
-        return OrchestrationResult(
+        orchestration_result = OrchestrationResult(
             model_type="embedding",
             training_method="embedding",
             adapter_path=result.adapter_path,
@@ -449,6 +534,17 @@ class FinetuningOrchestrator:
             lora_config={"use_lora": config.use_lora},
             used_synthetic=False,  # Embedding doesn't use synthetic yet
         )
+
+        # Log experiment to Phoenix
+        self._log_experiment_to_phoenix(
+            config=config,
+            result=orchestration_result,
+            analysis=None,  # No analysis for embedding yet
+            approved_batch=None,
+            formatted_dataset=formatted_dataset,
+        )
+
+        return orchestration_result
 
 
 # High-level convenience function
@@ -562,3 +658,195 @@ async def finetune(
     )
 
     return await orchestrator.run(config)
+
+
+# Experiment Query Helpers
+
+
+async def list_experiments(
+    telemetry_provider: TelemetryProvider,
+    project: str,
+    agent_type: Optional[str] = None,
+    method: Optional[Literal["sft", "dpo", "embedding"]] = None,
+    limit: int = 50,
+) -> pd.DataFrame:
+    """
+    List fine-tuning experiments from Phoenix.
+
+    Args:
+        telemetry_provider: Phoenix provider
+        project: Project name
+        agent_type: Filter by agent type (routing, etc.) or modality (video, image, text)
+        method: Filter by method (sft, dpo, embedding)
+        limit: Max number of experiments to return
+
+    Returns:
+        DataFrame with experiment details
+
+    Example:
+        >>> experiments = await list_experiments(
+        ...     provider, "cogniverse-tenant1", agent_type="routing"
+        ... )
+        >>> print(experiments[["run_id", "method", "train_loss"]])
+    """
+    # Query spans with EXPERIMENT kind
+    spans_df = await telemetry_provider.traces.get_spans(project=project)
+
+    if spans_df.empty:
+        return pd.DataFrame()
+
+    # Filter for EXPERIMENT spans
+    mask = spans_df["attributes.openinference.span.kind"] == "EXPERIMENT"
+    mask &= spans_df["attributes.operation.name"] == "fine_tuning"
+
+    if agent_type:
+        mask &= spans_df["attributes.experiment.agent_type"] == agent_type
+
+    if method:
+        mask &= spans_df["attributes.params.method"] == method
+
+    experiments_df = spans_df[mask].copy()
+
+    if experiments_df.empty:
+        return experiments_df
+
+    # Extract relevant columns
+    result_columns = [
+        "attributes.experiment.run_id",
+        "attributes.experiment.agent_type",
+        "attributes.params.method",
+        "attributes.params.base_model",
+        "attributes.params.backend",
+        "attributes.params.batch_size",
+        "attributes.params.learning_rate",
+        "attributes.data.dataset_size",
+        "attributes.data.used_synthetic",
+        "attributes.metrics.train_loss",
+        "attributes.output.adapter_path",
+        "start_time",
+    ]
+
+    # Only select columns that exist
+    available_columns = [col for col in result_columns if col in experiments_df.columns]
+    result_df = experiments_df[available_columns].copy()
+
+    # Rename columns for clarity
+    column_mapping = {
+        "attributes.experiment.run_id": "run_id",
+        "attributes.experiment.agent_type": "agent_type",
+        "attributes.params.method": "method",
+        "attributes.params.base_model": "base_model",
+        "attributes.params.backend": "backend",
+        "attributes.params.batch_size": "batch_size",
+        "attributes.params.learning_rate": "learning_rate",
+        "attributes.data.dataset_size": "dataset_size",
+        "attributes.data.used_synthetic": "used_synthetic",
+        "attributes.metrics.train_loss": "train_loss",
+        "attributes.output.adapter_path": "adapter_path",
+        "start_time": "timestamp",
+    }
+
+    result_df.rename(columns={k: v for k, v in column_mapping.items() if k in result_df.columns}, inplace=True)
+
+    # Sort by timestamp (newest first)
+    if "timestamp" in result_df.columns:
+        result_df = result_df.sort_values("timestamp", ascending=False)
+
+    # Limit results
+    if len(result_df) > limit:
+        result_df = result_df.head(limit)
+
+    return result_df
+
+
+async def get_experiment_details(
+    telemetry_provider: TelemetryProvider,
+    project: str,
+    run_id: str,
+) -> Dict[str, Any]:
+    """
+    Get detailed information about a specific experiment.
+
+    Args:
+        telemetry_provider: Phoenix provider
+        project: Project name
+        run_id: Experiment run ID
+
+    Returns:
+        Dict with all experiment metadata
+
+    Example:
+        >>> details = await get_experiment_details(
+        ...     provider, "cogniverse-tenant1", "run_2025-11-24T10:00:00"
+        ... )
+        >>> print(f"Train loss: {details['metrics.train_loss']}")
+    """
+    # Query all spans
+    spans_df = await telemetry_provider.traces.get_spans(project=project)
+
+    if spans_df.empty:
+        raise ValueError(f"Experiment not found: {run_id}")
+
+    # Filter for this specific experiment
+    mask = spans_df["attributes.openinference.span.kind"] == "EXPERIMENT"
+    mask &= spans_df["attributes.experiment.run_id"] == run_id
+
+    experiments_df = spans_df[mask]
+
+    if experiments_df.empty:
+        raise ValueError(f"Experiment not found: {run_id}")
+
+    experiment = experiments_df.iloc[0]
+
+    # Extract all attributes
+    details = {}
+    for col in experiment.index:
+        if col.startswith("attributes."):
+            key = col.replace("attributes.", "")
+            details[key] = experiment[col]
+
+    return details
+
+
+async def compare_experiments(
+    telemetry_provider: TelemetryProvider,
+    project: str,
+    run_ids: List[str],
+) -> pd.DataFrame:
+    """
+    Compare multiple experiments side-by-side.
+
+    Args:
+        telemetry_provider: Phoenix provider
+        project: Project name
+        run_ids: List of experiment run IDs to compare
+
+    Returns:
+        DataFrame with side-by-side comparison
+
+    Example:
+        >>> comparison = await compare_experiments(
+        ...     provider, "cogniverse-tenant1", ["run_001", "run_002"]
+        ... )
+        >>> print(comparison.T)  # Transpose for side-by-side view
+    """
+    experiments = []
+
+    for run_id in run_ids:
+        try:
+            details = await get_experiment_details(telemetry_provider, project, run_id)
+            experiments.append(details)
+        except ValueError:
+            # Skip experiments that don't exist
+            continue
+
+    if not experiments:
+        return pd.DataFrame()
+
+    comparison_df = pd.DataFrame(experiments)
+
+    # Transpose for side-by-side view
+    comparison_df = comparison_df.T
+    comparison_df.columns = [f"Run {i+1}" for i in range(len(comparison_df.columns))]
+
+    return comparison_df
