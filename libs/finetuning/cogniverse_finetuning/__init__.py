@@ -47,6 +47,7 @@ from cogniverse_finetuning.orchestrator import (
     FinetuningOrchestrator,
     OrchestrationConfig,
     OrchestrationResult,
+    analyze_dataset_status,
     finetune,
 )
 
@@ -56,5 +57,6 @@ __all__ = [
     "FinetuningOrchestrator",
     "OrchestrationConfig",
     "OrchestrationResult",
+    "analyze_dataset_status",
     "finetune",
 ]

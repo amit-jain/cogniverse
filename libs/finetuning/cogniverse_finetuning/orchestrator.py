@@ -24,6 +24,7 @@ from cogniverse_finetuning.dataset.formatters import InstructionFormatter
 from cogniverse_finetuning.dataset.method_selector import TrainingMethodSelector
 from cogniverse_finetuning.dataset.preference_extractor import PreferencePairExtractor
 from cogniverse_finetuning.dataset.trace_converter import TraceToInstructionConverter
+from cogniverse_finetuning.evaluation.adapter_evaluator import AdapterEvaluator
 from cogniverse_finetuning.training.backend import (
     LocalTrainingBackend,
     RemoteTrainingBackend,
@@ -152,6 +153,10 @@ class OrchestrationConfig:
     # Synthetic generation
     generate_synthetic: bool = True
 
+    # Evaluation
+    evaluate_after_training: bool = True  # Auto-evaluate adapter
+    test_set_size: int = 50  # Number of test examples
+
     # Output
     output_dir: str = "outputs/adapters"
 
@@ -168,6 +173,7 @@ class OrchestrationResult:
     lora_config: Dict
     used_synthetic: bool
     synthetic_approval_count: Optional[int] = None
+    evaluation_result: Optional[Any] = None  # ComparisonResult from evaluation
 
 
 class FinetuningOrchestrator:
@@ -245,10 +251,20 @@ class FinetuningOrchestrator:
             "data.dataset_size": len(formatted_dataset),
             "data.used_synthetic": result.used_synthetic,
             "data.synthetic_approved_count": result.synthetic_approval_count or 0,
-            # Results
+            # Results - Training Metrics
             "metrics.train_loss": result.metrics.get("train_loss"),
             "metrics.train_samples": result.metrics.get("train_samples"),
+            "metrics.train_examples": result.metrics.get("train_examples"),
             "metrics.epochs_completed": result.metrics.get("epoch", config.epochs),
+            # Validation Metrics (if validation split was used)
+            "metrics.used_validation_split": result.metrics.get("used_validation_split", False),
+            "metrics.val_examples": result.metrics.get("val_examples"),
+            "metrics.eval_loss": result.metrics.get("eval_loss"),
+            "metrics.eval_samples": result.metrics.get("eval_samples"),
+            # DPO-specific validation metrics
+            "metrics.eval_reward_accuracy": result.metrics.get("eval_reward_accuracy"),
+            "metrics.eval_reward_margin": result.metrics.get("eval_reward_margin"),
+            # Output
             "output.adapter_path": result.adapter_path,
         }
 
@@ -260,6 +276,56 @@ class FinetuningOrchestrator:
             span.set_status(Status(StatusCode.OK))
 
         logger.info(f"Experiment logged to Phoenix: {run_id}")
+
+    def _log_evaluation_to_phoenix(
+        self,
+        config: OrchestrationConfig,
+        adapter_path: str,
+        evaluation_result: Any,  # ComparisonResult
+    ) -> None:
+        """
+        Log adapter evaluation to Phoenix as EVALUATION span.
+
+        Args:
+            config: Orchestration configuration
+            adapter_path: Path to evaluated adapter
+            evaluation_result: ComparisonResult with evaluation metrics
+        """
+        eval_span_attributes = {
+            "openinference.span.kind": "EVALUATION",
+            "operation.name": "adapter_evaluation",
+            "evaluation.adapter_path": adapter_path,
+            "evaluation.agent_type": config.agent_type or config.modality,
+            "evaluation.test_size": config.test_set_size,
+            # Base metrics
+            "metrics.base.accuracy": evaluation_result.base_metrics.accuracy,
+            "metrics.base.confidence": evaluation_result.base_metrics.avg_confidence,
+            "metrics.base.error_rate": evaluation_result.base_metrics.error_rate,
+            "metrics.base.hallucination_rate": evaluation_result.base_metrics.hallucination_rate,
+            "metrics.base.latency_ms": evaluation_result.base_metrics.avg_latency_ms,
+            # Adapter metrics
+            "metrics.adapter.accuracy": evaluation_result.adapter_metrics.accuracy,
+            "metrics.adapter.confidence": evaluation_result.adapter_metrics.avg_confidence,
+            "metrics.adapter.error_rate": evaluation_result.adapter_metrics.error_rate,
+            "metrics.adapter.hallucination_rate": evaluation_result.adapter_metrics.hallucination_rate,
+            "metrics.adapter.latency_ms": evaluation_result.adapter_metrics.avg_latency_ms,
+            # Improvements
+            "improvement.accuracy": evaluation_result.accuracy_improvement,
+            "improvement.confidence": evaluation_result.confidence_improvement,
+            "improvement.error_reduction": evaluation_result.error_reduction,
+            "improvement.latency_overhead": evaluation_result.latency_overhead,
+            "improvement.significant": evaluation_result.improvement_significant,
+            "improvement.p_value": evaluation_result.p_value,
+        }
+
+        # Create evaluation span in Phoenix
+        with self.provider.tracer.start_as_current_span(
+            f"evaluation.{config.agent_type or config.modality}",
+            attributes=eval_span_attributes,
+        ) as span:
+            span.set_status(Status(StatusCode.OK))
+
+        logger.info("Evaluation logged to Phoenix")
 
     def _create_backend(self, config: OrchestrationConfig) -> TrainingBackend:
         """Create training backend based on config."""
@@ -391,6 +457,39 @@ class FinetuningOrchestrator:
                 else None,
             )
 
+            # Evaluate adapter automatically
+            if config.evaluate_after_training:
+                logger.info("Running post-training evaluation...")
+                evaluator = AdapterEvaluator(
+                    telemetry_provider=self.provider,
+                    agent_type=config.agent_type,
+                )
+
+                try:
+                    evaluation_result = await evaluator.evaluate(
+                        base_model=config.base_model,
+                        adapter_path=result.adapter_path,
+                        project=config.project,
+                        test_size=config.test_set_size,
+                    )
+
+                    # Log to Phoenix
+                    self._log_evaluation_to_phoenix(
+                        config=config,
+                        adapter_path=result.adapter_path,
+                        evaluation_result=evaluation_result,
+                    )
+
+                    orchestration_result.evaluation_result = evaluation_result
+
+                    logger.info(
+                        f"Evaluation complete: accuracy improvement={evaluation_result.accuracy_improvement:.2%}"
+                    )
+
+                except Exception as e:
+                    logger.error(f"Evaluation failed: {e}", exc_info=True)
+                    # Continue without evaluation
+
             # Log experiment to Phoenix
             self._log_experiment_to_phoenix(
                 config=config,
@@ -447,6 +546,39 @@ class FinetuningOrchestrator:
                 if approved_batch
                 else None,
             )
+
+            # Evaluate adapter automatically
+            if config.evaluate_after_training:
+                logger.info("Running post-training evaluation...")
+                evaluator = AdapterEvaluator(
+                    telemetry_provider=self.provider,
+                    agent_type=config.agent_type,
+                )
+
+                try:
+                    evaluation_result = await evaluator.evaluate(
+                        base_model=config.base_model,
+                        adapter_path=result.adapter_path,
+                        project=config.project,
+                        test_size=config.test_set_size,
+                    )
+
+                    # Log to Phoenix
+                    self._log_evaluation_to_phoenix(
+                        config=config,
+                        adapter_path=result.adapter_path,
+                        evaluation_result=evaluation_result,
+                    )
+
+                    orchestration_result.evaluation_result = evaluation_result
+
+                    logger.info(
+                        f"Evaluation complete: accuracy improvement={evaluation_result.accuracy_improvement:.2%}"
+                    )
+
+                except Exception as e:
+                    logger.error(f"Evaluation failed: {e}", exc_info=True)
+                    # Continue without evaluation
 
             # Log experiment to Phoenix
             self._log_experiment_to_phoenix(
@@ -658,6 +790,103 @@ async def finetune(
     )
 
     return await orchestrator.run(config)
+
+
+# Dataset Analysis Helpers
+
+
+async def analyze_dataset_status(
+    telemetry_provider: TelemetryProvider,
+    project: str,
+    agent_type: Optional[str] = None,
+    modality: Optional[str] = None,
+    min_sft_examples: int = 50,
+    min_dpo_pairs: int = 20,
+) -> Dict[str, Any]:
+    """
+    Analyze dataset status for fine-tuning readiness.
+
+    Returns dataset metrics, recommended method, and confidence level.
+
+    Args:
+        telemetry_provider: Phoenix provider
+        project: Project name
+        agent_type: Agent type (for LLM fine-tuning)
+        modality: Modality (for embedding fine-tuning)
+        min_sft_examples: Minimum examples for SFT
+        min_dpo_pairs: Minimum pairs for DPO
+
+    Returns:
+        Dict with dataset status metrics
+
+    Example:
+        >>> status = await analyze_dataset_status(
+        ...     provider, "cogniverse-tenant1", agent_type="routing"
+        ... )
+        >>> print(f"Approved: {status['approved_count']}/{status['sft_target']}")
+        >>> print(f"Method: {status['recommended_method']}")
+    """
+    from cogniverse_finetuning.dataset.method_selector import TrainingMethodSelector
+
+    # Create selector
+    selector = TrainingMethodSelector(
+        synthetic_service=None,  # No synthetic for status check
+        approval_orchestrator=None,
+    )
+
+    # Analyze data
+    analysis, _ = await selector.analyze_and_prepare(
+        provider=telemetry_provider,
+        project=project,
+        agent_type=agent_type,
+        min_sft_examples=min_sft_examples,
+        min_dpo_pairs=min_dpo_pairs,
+        generate_synthetic=False,  # Just analyze, don't generate
+    )
+
+    # Calculate progress percentages
+    sft_progress = (analysis.approved_count / min_sft_examples) * 100 if min_sft_examples > 0 else 0
+    dpo_progress = (analysis.preference_pairs / min_dpo_pairs) * 100 if min_dpo_pairs > 0 else 0
+
+    # Determine status
+    sft_ready = analysis.approved_count >= min_sft_examples
+    dpo_ready = analysis.preference_pairs >= min_dpo_pairs
+
+    # Calculate confidence in recommendation
+    if analysis.recommended_method == "dpo":
+        confidence = min(dpo_progress / 100, 1.0)
+    elif analysis.recommended_method == "sft":
+        confidence = min(sft_progress / 100, 1.0)
+    else:
+        confidence = 0.0
+
+    return {
+        # Raw counts
+        "total_spans": analysis.total_spans,
+        "approved_count": analysis.approved_count,
+        "rejected_count": analysis.rejected_count,
+        "preference_pairs": analysis.preference_pairs,
+
+        # Targets
+        "sft_target": min_sft_examples,
+        "dpo_target": min_dpo_pairs,
+
+        # Progress
+        "sft_progress": sft_progress,
+        "dpo_progress": dpo_progress,
+
+        # Readiness
+        "sft_ready": sft_ready,
+        "dpo_ready": dpo_ready,
+
+        # Recommendation
+        "recommended_method": analysis.recommended_method,
+        "confidence": confidence,
+        "needs_synthetic": analysis.needs_synthetic,
+
+        # Analysis object (for advanced use)
+        "analysis": analysis,
+    }
 
 
 # Experiment Query Helpers

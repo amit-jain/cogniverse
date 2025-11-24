@@ -194,10 +194,25 @@ class SFTFinetuner:
             evaluation_strategy="steps" if val_dataset else "no",
             save_total_limit=3,
             load_best_model_at_end=True if val_dataset else False,
+            metric_for_best_model="eval_loss" if val_dataset else None,
+            greater_is_better=False if val_dataset else None,
             report_to="none",
         )
 
-        # 5. Create SFTTrainer
+        # 5. Early stopping callback (if validation enabled)
+        callbacks = []
+        if val_dataset:
+            from transformers import EarlyStoppingCallback
+
+            # Stop if eval_loss doesn't improve for 3 evaluations
+            early_stopping = EarlyStoppingCallback(
+                early_stopping_patience=3,
+                early_stopping_threshold=0.0,
+            )
+            callbacks.append(early_stopping)
+            logger.info("Early stopping enabled (patience=3)")
+
+        # 6. Create SFTTrainer
         trainer = SFTTrainer(
             model=model,
             args=training_args,
@@ -206,27 +221,41 @@ class SFTFinetuner:
             tokenizer=tokenizer,
             dataset_text_field=config.get("dataset_text_field", "text"),
             max_seq_length=config.get("max_seq_length", 512),
+            callbacks=callbacks,
         )
 
-        # 6. Train
+        # 7. Train
         logger.info("Starting training...")
         train_result = trainer.train()
 
-        # 7. Save adapter
+        # 8. Save adapter
         trainer.save_model(str(output_path))
         tokenizer.save_pretrained(str(output_path))
 
         logger.info(f"Training complete. Adapter saved to {output_path}")
 
-        # 8. Collect metrics and return
+        # 9. Collect metrics and return
         metrics = {
             "train_loss": train_result.metrics.get("train_loss"),
+            "train_samples": train_result.metrics.get("train_samples"),
             "total_examples": len(dataset),
+            "train_examples": len(train_dataset) if isinstance(train_dataset, Dataset) else len(dataset),
             "epochs": config.get("epochs", 3),
             "batch_size": config.get("batch_size", 4),
             "learning_rate": config.get("learning_rate", 2e-4),
             "max_seq_length": config.get("max_seq_length", 512),
         }
+
+        # Add validation metrics if validation was used
+        if val_dataset:
+            eval_result = trainer.evaluate()
+            metrics["eval_loss"] = eval_result.get("eval_loss")
+            metrics["eval_samples"] = eval_result.get("eval_samples")
+            metrics["val_examples"] = len(val_dataset)
+            metrics["used_validation_split"] = True
+            logger.info(f"Validation loss: {metrics['eval_loss']:.4f}")
+        else:
+            metrics["used_validation_split"] = False
 
         return {
             "adapter_path": str(output_path),

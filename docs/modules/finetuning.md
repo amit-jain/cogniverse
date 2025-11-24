@@ -1266,6 +1266,325 @@ Access the dashboard at `http://localhost:8501` (default Streamlit port).
 
 ---
 
+## Automatic Adapter Evaluation
+
+### Overview
+
+After training completes, adapters are automatically evaluated against the base model on a held-out test set. This provides objective metrics on adapter quality and improvement over baseline.
+
+### Evaluation Metrics
+
+**Accuracy Metrics**:
+- `accuracy`: Percentage of correct predictions (0-1)
+- `top_k_accuracy`: Correct prediction in top-k results
+
+**Confidence Metrics**:
+- `avg_confidence`: Average confidence score (0-1)
+- `confidence_calibration`: How well confidence matches accuracy
+
+**Error Metrics**:
+- `error_rate`: Percentage of incorrect predictions (0-1)
+- `hallucination_rate`: Predictions not in valid output space
+
+**Latency**:
+- `avg_latency_ms`: Average inference latency in milliseconds
+- `latency_overhead`: Additional latency from adapter (ms)
+
+### Configuration
+
+Enable/disable evaluation in `OrchestrationConfig`:
+
+```python
+config = OrchestrationConfig(
+    tenant_id="tenant1",
+    project="cogniverse-tenant1",
+    model_type="llm",
+    agent_type="routing",
+    evaluate_after_training=True,  # Enable auto-evaluation
+    test_set_size=50,  # Number of test examples
+    ...
+)
+```
+
+### Test Set Creation
+
+Evaluation uses a time-based split to ensure test data is NOT in the training set:
+- **Training Data**: Older annotations (used for training)
+- **Test Data**: Recent annotations (last 7 days)
+- **Size**: Configurable (default: 50 examples)
+- **Sampling**: Random sample from recent data
+
+### Evaluation Process
+
+1. **Create Test Set**: Extract recent examples from telemetry (last 7 days)
+2. **Load Base Model**: Load the base model without adapter
+3. **Evaluate Base**: Run base model on test set, compute metrics
+4. **Load Adapter**: Load the trained LoRA adapter
+5. **Evaluate Adapter**: Run adapter model on test set, compute metrics
+6. **Compare**: Calculate improvements and statistical significance
+
+### Evaluation Span Schema
+
+Each evaluation creates an EVALUATION span with the following attributes:
+
+**Span Identification**:
+- `openinference.span.kind`: "EVALUATION"
+- `operation.name`: "adapter_evaluation"
+- `evaluation.adapter_path`: Path to evaluated adapter
+- `evaluation.agent_type`: Agent type (e.g., "routing")
+- `evaluation.test_size`: Number of test examples
+
+**Base Model Metrics** (`metrics.base.*`):
+- `metrics.base.accuracy`: Base model accuracy
+- `metrics.base.confidence`: Base model average confidence
+- `metrics.base.error_rate`: Base model error rate
+- `metrics.base.hallucination_rate`: Base model hallucination rate
+- `metrics.base.latency_ms`: Base model average latency
+
+**Adapter Metrics** (`metrics.adapter.*`):
+- `metrics.adapter.accuracy`: Adapter accuracy
+- `metrics.adapter.confidence`: Adapter average confidence
+- `metrics.adapter.error_rate`: Adapter error rate
+- `metrics.adapter.hallucination_rate`: Adapter hallucination rate
+- `metrics.adapter.latency_ms`: Adapter average latency
+
+**Improvements** (`improvement.*`):
+- `improvement.accuracy`: Accuracy improvement (e.g., 0.18 = 18% improvement)
+- `improvement.confidence`: Confidence improvement
+- `improvement.error_reduction`: Error rate reduction
+- `improvement.latency_overhead`: Additional latency from adapter (ms)
+- `improvement.significant`: Statistical significance (boolean)
+- `improvement.p_value`: P-value for significance test
+
+### Statistical Significance
+
+Improvements are tested for statistical significance:
+- **Threshold**: Accuracy improvement >5%
+- **p-value**: Computed for significance test
+- **Result**: `improvement.significant` = true if p < 0.05
+
+### Dashboard Integration
+
+Evaluation results are displayed in the Fine-Tuning dashboard:
+
+**Experiment Details View**:
+- **Base Model Metrics**: Accuracy, confidence, error rate, hallucination rate, latency
+- **Adapter Model Metrics**: Same metrics for adapter
+- **Improvements**: Side-by-side comparison with delta indicators
+- **Statistical Significance**: Visual indicator (✅/ℹ️) with p-value
+
+**Example**:
+```
+Base Model Metrics          Adapter Model Metrics
+Accuracy: 65.0%            Accuracy: 83.0%
+Confidence: 72.0%          Confidence: 88.0%
+Error Rate: 35.0%          Error Rate: 17.0%
+Hallucination Rate: 8.0%   Hallucination Rate: 2.0%
+Latency: 145.3 ms          Latency: 152.1 ms
+
+Improvements
+Accuracy Δ: +18.0% ↑
+Confidence Δ: +16.0% ↑
+Error Reduction: 18.0% ↑
+Latency Overhead: 6.8 ms ↓
+
+✅ Statistically significant improvement (p=0.01)
+```
+
+### Usage Example
+
+```python
+from cogniverse_finetuning import finetune
+
+# Run fine-tuning with automatic evaluation
+result = await finetune(
+    telemetry_provider=provider,
+    tenant_id="tenant1",
+    project="cogniverse-tenant1",
+    model_type="llm",
+    agent_type="routing",
+    base_model="HuggingFaceTB/SmolLM-135M",
+    backend="local",
+    evaluate_after_training=True,  # Enable evaluation
+    test_set_size=50  # Number of test examples
+)
+
+# Access evaluation results
+if result.evaluation_result:
+    print(f"Accuracy improvement: {result.evaluation_result.accuracy_improvement:.2%}")
+    print(f"Base accuracy: {result.evaluation_result.base_metrics.accuracy:.2%}")
+    print(f"Adapter accuracy: {result.evaluation_result.adapter_metrics.accuracy:.2%}")
+    print(f"Significant: {result.evaluation_result.improvement_significant}")
+```
+
+### Supported Agent Types
+
+Evaluation currently supports:
+- **routing**: Agent routing decisions
+- **profile_selection**: Backend profile selection
+- **entity_extraction**: Not yet implemented (falls back to exact match)
+
+### Error Handling
+
+Evaluation failures do NOT fail the training pipeline:
+- **No Test Data**: Logs warning, continues without evaluation
+- **Model Load Failure**: Logs error, continues without evaluation
+- **Inference Errors**: Logs error, continues without evaluation
+
+This ensures training can complete even if evaluation fails.
+
+### Best Practices
+
+**Test Set Quality**:
+- ✅ Ensure recent telemetry data available (last 7 days)
+- ✅ Use realistic test set size (50-100 examples)
+- ✅ Review test set coverage (different query types)
+
+**Interpreting Results**:
+- ✅ Focus on statistically significant improvements
+- ✅ Consider latency overhead vs accuracy gains
+- ✅ Compare multiple training runs
+- ❌ Don't over-interpret single-run results
+- ❌ Don't ignore high hallucination rates
+
+**When to Retrain**:
+- Accuracy improvement <5%: May need more data or better hyperparameters
+- High hallucination rate (>10%): Check dataset quality
+- Large latency overhead (>50ms): Consider distillation or quantization
+
+---
+
+## Validation Split & Early Stopping
+
+### Overview
+
+For larger datasets (>100 examples/pairs), training automatically uses a 90/10 train/validation split with early stopping to prevent overfitting and improve generalization.
+
+### Automatic Validation Split
+
+**Trigger Condition**:
+- Dataset size > 100 examples (SFT) or pairs (DPO)
+
+**Split Ratio**:
+- 90% training data
+- 10% validation data
+
+**Example**:
+```
+Dataset: 150 examples
+→ Train: 135 examples (90%)
+→ Val: 15 examples (10%)
+```
+
+### Early Stopping
+
+**Configuration**:
+- **Metric**: Validation loss (`eval_loss`)
+- **Patience**: 3 evaluations
+- **Threshold**: 0.0 (any improvement counts)
+- **Goal**: Lower is better
+
+**How It Works**:
+1. Model evaluates on validation set every 500 steps (default `eval_steps`)
+2. If `eval_loss` doesn't improve for 3 consecutive evaluations, training stops
+3. Best checkpoint (lowest `eval_loss`) is loaded at end
+
+**Benefits**:
+- Prevents overfitting on training data
+- Saves compute time (stops when no longer improving)
+- Automatically selects best model checkpoint
+
+### Validation Metrics
+
+**Training Metrics** (logged to Phoenix):
+- `metrics.train_loss`: Final training loss
+- `metrics.train_samples`: Number of training samples
+- `metrics.train_examples`: Number of training examples/pairs
+
+**Validation Metrics** (logged to Phoenix):
+- `metrics.used_validation_split`: Boolean (true if validation used)
+- `metrics.eval_loss`: Validation loss
+- `metrics.eval_samples`: Number of validation samples
+- `metrics.val_examples`: Number of validation examples/pairs
+
+**DPO-Specific Validation Metrics**:
+- `metrics.eval_reward_accuracy`: Percentage of times chosen > rejected
+- `metrics.eval_reward_margin`: Average reward margin (chosen - rejected)
+
+### Dashboard Display
+
+**Experiment Details → Validation Metrics Section**:
+- **Train Examples**: Number of training examples
+- **Val Examples**: Number of validation examples
+- **Val Loss**: Final validation loss
+- **Overfit**: Percentage difference between val loss and train loss
+  - Positive (red ↑): Model is overfitting
+  - Negative (green ↓): Model is generalizing well
+- **Early Stopping Indicator**: "✅ Validation split used with early stopping (patience=3)"
+
+**DPO Experiments Also Show**:
+- **Reward Accuracy**: Percentage of preference pairs correctly ranked
+- **Reward Margin**: Average difference in rewards between chosen and rejected
+
+### Example Output
+
+```
+Training HuggingFaceTB/SmolLM-135M with 120 examples...
+Split dataset: 108 train, 12 validation examples
+Early stopping enabled (patience=3)
+Starting training...
+[Epoch 1] train_loss=0.8234, eval_loss=0.7891
+[Epoch 2] train_loss=0.6543, eval_loss=0.7234
+[Epoch 3] train_loss=0.5123, eval_loss=0.7456  # Validation loss increased
+[Epoch 4] train_loss=0.4234, eval_loss=0.7567  # No improvement for 3 evals
+Early stopping triggered at epoch 4
+Loading best model (eval_loss=0.7234 from epoch 2)
+Training complete. Adapter saved to outputs/sft_adapters
+Validation loss: 0.7234
+```
+
+### Configuration
+
+Validation split and early stopping are **automatic** and cannot be disabled when dataset size > 100. This is by design to ensure high-quality adapters.
+
+**Customization** (advanced users can modify trainer code):
+- `eval_steps`: Frequency of validation evaluation (default: 500)
+- `early_stopping_patience`: Number of evaluations to wait (default: 3)
+- `metric_for_best_model`: Metric to optimize (default: "eval_loss")
+
+### Best Practices
+
+**Interpreting Validation Metrics**:
+- ✅ `eval_loss` < `train_loss`: Model generalizing well
+- ⚠️ `eval_loss` ≈ `train_loss`: Model learning appropriately
+- ❌ `eval_loss` >> `train_loss`: Model overfitting (>10% difference)
+
+**When Overfitting Occurs**:
+- Reduce `epochs` (try 2 instead of 3)
+- Increase `batch_size` (try 8 instead of 4)
+- Reduce `learning_rate` (try 1e-4 instead of 2e-4)
+- Add more training data
+
+**When Validation Loss is High**:
+- Increase training data quality (review annotations)
+- Check for data distribution mismatch (train vs val)
+- Consider using DPO if you have preference data
+- Increase model capacity (try larger base model)
+
+### Comparison with No Validation
+
+| Feature | No Validation (<100 examples) | With Validation (>100 examples) |
+|---------|-------------------------------|----------------------------------|
+| Training Data | All data | 90% of data |
+| Validation Data | None | 10% of data |
+| Early Stopping | No | Yes (patience=3) |
+| Best Checkpoint | Last checkpoint | Best checkpoint by val loss |
+| Overfitting Risk | Higher | Lower |
+| Compute Time | May be longer | Shorter (stops early) |
+| Metrics Logged | `train_loss` only | `train_loss` + `eval_loss` |
+
+---
+
 ## Dependencies
 
 **Core**:

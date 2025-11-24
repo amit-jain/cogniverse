@@ -2230,7 +2230,478 @@ with monitoring_tabs[6]:
                 key="ft_agent_filter"
             )
 
+    # Dataset Status Section
+    st.markdown("---")
+    st.subheader("📊 Dataset Status")
+
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown("Analyze available training data and readiness for fine-tuning")
+    with col2:
+        analyze_button = st.button("🔍 Analyze Dataset", key="ft_analyze_dataset")
+
+    if analyze_button or "ft_dataset_status" in st.session_state:
+        if analyze_button:
+            with st.spinner("Analyzing dataset..."):
+                try:
+                    import asyncio
+                    from cogniverse_foundation.telemetry.registry import TelemetryRegistry
+                    from cogniverse_finetuning.orchestrator import analyze_dataset_status
+
+                    # Initialize telemetry
+                    registry = TelemetryRegistry()
+                    dataset_provider = registry.get_telemetry_provider(
+                        name="phoenix",
+                        tenant_id=ft_tenant_id,
+                        config={
+                            "project_name": ft_project,
+                            "http_endpoint": agent_config["phoenix_base_url"],
+                        }
+                    )
+
+                    # Analyze dataset
+                    agent_filter = None if ft_agent_filter == "All" else ft_agent_filter
+
+                    # Determine if LLM or embedding
+                    if agent_filter in ["routing", "profile_selection", "entity_extraction"]:
+                        # LLM fine-tuning
+                        status = asyncio.run(analyze_dataset_status(
+                            dataset_provider,
+                            ft_project,
+                            agent_type=agent_filter,
+                            min_sft_examples=50,
+                            min_dpo_pairs=20
+                        ))
+                    elif agent_filter in ["video", "image", "text"]:
+                        # Embedding fine-tuning
+                        status = asyncio.run(analyze_dataset_status(
+                            dataset_provider,
+                            ft_project,
+                            modality=agent_filter,
+                            min_sft_examples=100  # Triplets threshold
+                        ))
+                    else:
+                        st.warning("Please select a specific agent type or modality")
+                        status = None
+
+                    if status:
+                        st.session_state.ft_dataset_status = status
+                        st.session_state.ft_dataset_provider = dataset_provider
+                        st.success("✅ Dataset analysis complete")
+
+                except Exception as e:
+                    st.error(f"❌ Error analyzing dataset: {e}")
+                    import traceback
+                    st.code(traceback.format_exc())
+
+        # Display dataset status
+        if "ft_dataset_status" in st.session_state:
+            status = st.session_state.ft_dataset_status
+
+            # Summary metrics
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Spans", status["total_spans"])
+            with col2:
+                approved_display = f"{status['approved_count']} / {status['sft_target']}"
+                delta_approved = f"{status['sft_progress']:.0f}%"
+                st.metric("Approved", approved_display, delta=delta_approved)
+            with col3:
+                st.metric("Rejected", status["rejected_count"])
+            with col4:
+                pairs_display = f"{status['preference_pairs']} / {status['dpo_target']}"
+                delta_pairs = f"{status['dpo_progress']:.0f}%"
+                st.metric("Preference Pairs", pairs_display, delta=delta_pairs)
+
+            # Progress bars
+            st.markdown("#### Training Readiness")
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("**SFT (Supervised Fine-Tuning)**")
+                sft_progress_value = min(status["sft_progress"] / 100, 1.0)
+                st.progress(sft_progress_value)
+
+                if status["sft_ready"]:
+                    st.success(f"✅ Ready ({status['approved_count']}/{status['sft_target']} examples)")
+                else:
+                    needed = status['sft_target'] - status['approved_count']
+                    st.warning(f"⚠️ Need {needed} more approved examples")
+
+            with col2:
+                st.markdown("**DPO (Direct Preference Optimization)**")
+                dpo_progress_value = min(status["dpo_progress"] / 100, 1.0)
+                st.progress(dpo_progress_value)
+
+                if status["dpo_ready"]:
+                    st.success(f"✅ Ready ({status['preference_pairs']}/{status['dpo_target']} pairs)")
+                else:
+                    needed = status['dpo_target'] - status['preference_pairs']
+                    st.warning(f"⚠️ Need {needed} more preference pairs")
+
+            # Recommendation
+            st.markdown("#### Recommendation")
+
+            method_labels = {
+                "sft": "SFT (Supervised Fine-Tuning)",
+                "dpo": "DPO (Direct Preference Optimization)",
+                "insufficient": "Insufficient Data"
+            }
+
+            method_label = method_labels.get(status["recommended_method"], status["recommended_method"])
+            confidence_pct = status["confidence"] * 100
+
+            if status["recommended_method"] in ["sft", "dpo"]:
+                st.info(f"**Recommended Method:** {method_label} (confidence: {confidence_pct:.0f}%)")
+            else:
+                st.error(f"**Status:** {method_label}")
+
+            # Synthetic generation button
+            if status["needs_synthetic"]:
+                st.markdown("#### Actions")
+                col1, col2 = st.columns([1, 3])
+                with col1:
+                    if st.button("🎲 Generate Synthetic Data", key="ft_generate_synthetic"):
+                        st.info("Synthetic data generation requires integration with SyntheticDataService and ApprovalOrchestrator. This feature will be available when those services are configured.")
+                with col2:
+                    st.markdown("Generate synthetic training examples to meet minimum data requirements")
+            else:
+                st.markdown("#### Actions")
+                col1, col2 = st.columns([1, 3])
+                with col1:
+                    if st.button("▶️ Start Training", key="ft_start_training_from_status"):
+                        st.info("Training configuration UI will be available in Phase 4. For now, use the Python API to start training.")
+                with col2:
+                    st.markdown("Ready to start fine-tuning with available data")
+
+    # Training Configuration Section
+    st.markdown("---")
+    st.subheader("⚙️ Training Configuration")
+
+    with st.form("training_config_form"):
+        st.markdown("Configure and start a new fine-tuning job")
+
+        # Basic Configuration
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            base_model = st.selectbox(
+                "Base Model",
+                options=[
+                    "HuggingFaceTB/SmolLM-135M",
+                    "HuggingFaceTB/SmolLM-360M",
+                    "Qwen/Qwen2.5-3B",
+                    "meta-llama/Llama-3.1-8B",
+                ],
+                key="ft_base_model"
+            )
+
+        with col2:
+            training_method = st.radio(
+                "Training Method",
+                options=["Auto", "SFT", "DPO"],
+                horizontal=True,
+                help="Auto: Automatically select based on available data",
+                key="ft_training_method"
+            )
+
+        with col3:
+            backend = st.radio(
+                "Backend",
+                options=["Local", "Remote"],
+                horizontal=True,
+                help="Local: Use local GPU/CPU. Remote: Use cloud GPU (Modal)",
+                key="ft_backend"
+            )
+
+        # Hyperparameters
+        st.markdown("#### Hyperparameters")
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            epochs = st.number_input(
+                "Epochs",
+                min_value=1,
+                max_value=20,
+                value=3,
+                help="Number of training epochs",
+                key="ft_epochs"
+            )
+
+        with col2:
+            batch_size = st.number_input(
+                "Batch Size",
+                min_value=1,
+                max_value=32,
+                value=4,
+                help="Training batch size (lower for less GPU memory)",
+                key="ft_batch_size"
+            )
+
+        with col3:
+            learning_rate = st.number_input(
+                "Learning Rate",
+                min_value=1e-6,
+                max_value=1e-3,
+                value=2e-4,
+                format="%.2e",
+                help="Learning rate for optimizer",
+                key="ft_learning_rate"
+            )
+
+        # LoRA Configuration
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            use_lora = st.checkbox(
+                "Use LoRA",
+                value=True,
+                help="Parameter-efficient fine-tuning with LoRA adapters",
+                key="ft_use_lora"
+            )
+
+        if use_lora:
+            with col2:
+                lora_r = st.number_input(
+                    "LoRA Rank (r)",
+                    min_value=1,
+                    max_value=64,
+                    value=8,
+                    help="LoRA rank (higher = more parameters)",
+                    key="ft_lora_r"
+                )
+
+            with col3:
+                lora_alpha = st.number_input(
+                    "LoRA Alpha",
+                    min_value=1,
+                    max_value=128,
+                    value=16,
+                    help="LoRA scaling factor",
+                    key="ft_lora_alpha"
+                )
+
+        # Remote Backend Configuration (conditional)
+        if backend == "Remote":
+            st.markdown("#### Remote Backend Configuration")
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                gpu_type = st.selectbox(
+                    "GPU Type",
+                    options=["T4", "A10G", "A100-40GB", "A100-80GB", "H100"],
+                    index=1,  # Default to A10G
+                    help="GPU type for remote training",
+                    key="ft_gpu_type"
+                )
+
+            with col2:
+                gpu_count = st.number_input(
+                    "GPU Count",
+                    min_value=1,
+                    max_value=8,
+                    value=1,
+                    help="Number of GPUs",
+                    key="ft_gpu_count"
+                )
+
+            with col3:
+                timeout = st.number_input(
+                    "Timeout (seconds)",
+                    min_value=600,
+                    max_value=7200,
+                    value=3600,
+                    help="Maximum training time",
+                    key="ft_timeout"
+                )
+
+        # Evaluation Configuration
+        st.markdown("#### Evaluation")
+        col1, col2 = st.columns(2)
+
+        with col1:
+            evaluate_after_training = st.checkbox(
+                "Auto-evaluate after training",
+                value=True,
+                help="Automatically evaluate adapter vs base model on test set",
+                key="ft_evaluate"
+            )
+
+        with col2:
+            if evaluate_after_training:
+                test_set_size = st.number_input(
+                    "Test Set Size",
+                    min_value=10,
+                    max_value=500,
+                    value=50,
+                    help="Number of test examples",
+                    key="ft_test_size"
+                )
+            else:
+                test_set_size = 50
+
+        # Submit button
+        st.markdown("---")
+        submit_button = st.form_submit_button("▶️ Start Training", type="primary")
+
+    # Handle form submission
+    if submit_button:
+        # Validate configuration
+        if ft_agent_filter == "All":
+            st.error("❌ Please select a specific agent type or modality before starting training")
+        else:
+            # Start training job
+            with st.spinner("Starting training job..."):
+                try:
+                    import asyncio
+                    import threading
+                    from datetime import datetime
+                    from cogniverse_foundation.telemetry.registry import TelemetryRegistry
+                    from cogniverse_finetuning import finetune
+
+                    # Initialize telemetry
+                    registry = TelemetryRegistry()
+                    train_provider = registry.get_telemetry_provider(
+                        name="phoenix",
+                        tenant_id=ft_tenant_id,
+                        config={
+                            "project_name": ft_project,
+                            "http_endpoint": agent_config["phoenix_base_url"],
+                        }
+                    )
+
+                    # Prepare config
+                    config = {
+                        "telemetry_provider": train_provider,
+                        "tenant_id": ft_tenant_id,
+                        "project": ft_project,
+                        "base_model": base_model,
+                        "backend": backend.lower(),
+                        "backend_provider": "modal" if backend == "Remote" else None,
+                        "epochs": epochs,
+                        "batch_size": batch_size,
+                        "learning_rate": learning_rate,
+                        "use_lora": use_lora,
+                        "evaluate_after_training": evaluate_after_training,
+                        "test_set_size": test_set_size,
+                    }
+
+                    # Add agent_type or modality
+                    if ft_agent_filter in ["routing", "profile_selection", "entity_extraction"]:
+                        config["model_type"] = "llm"
+                        config["agent_type"] = ft_agent_filter
+                    elif ft_agent_filter in ["video", "image", "text"]:
+                        config["model_type"] = "embedding"
+                        config["modality"] = ft_agent_filter
+                    else:
+                        st.error("Invalid agent type/modality")
+                        config = None
+
+                    # Add remote backend config
+                    if backend == "Remote":
+                        config["gpu"] = gpu_type
+                        config["gpu_count"] = gpu_count
+                        config["timeout"] = timeout
+
+                    if config:
+                        # Create job record
+                        job_id = f"job_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+                        job_info = {
+                            "job_id": job_id,
+                            "status": "running",
+                            "config": config,
+                            "started_at": datetime.now().isoformat(),
+                            "completed_at": None,
+                            "result": None,
+                            "error": None,
+                        }
+
+                        # Store in session state
+                        if "ft_training_jobs" not in st.session_state:
+                            st.session_state.ft_training_jobs = {}
+                        st.session_state.ft_training_jobs[job_id] = job_info
+
+                        # Run training in background thread
+                        def run_training():
+                            try:
+                                result = asyncio.run(finetune(**config))
+
+                                # Update job status
+                                job_info["status"] = "completed"
+                                job_info["completed_at"] = datetime.now().isoformat()
+                                job_info["result"] = {
+                                    "adapter_path": result.adapter_path,
+                                    "training_method": result.training_method,
+                                    "train_loss": result.metrics.get("train_loss"),
+                                }
+
+                            except Exception as e:
+                                job_info["status"] = "failed"
+                                job_info["completed_at"] = datetime.now().isoformat()
+                                job_info["error"] = str(e)
+
+                        training_thread = threading.Thread(target=run_training, daemon=True)
+                        training_thread.start()
+
+                        st.success(f"✅ Training job started: {job_id}")
+                        st.info("Job is running in the background. Check Job Status below for progress.")
+
+                except Exception as e:
+                    st.error(f"❌ Error starting training: {e}")
+                    import traceback
+                    st.code(traceback.format_exc())
+
+    # Job Status Section (if any jobs exist)
+    if "ft_training_jobs" in st.session_state and st.session_state.ft_training_jobs:
+        st.markdown("---")
+        st.subheader("🔄 Job Status")
+
+        for job_id, job_info in st.session_state.ft_training_jobs.items():
+            with st.expander(f"{job_id} - {job_info['status'].upper()}", expanded=(job_info['status'] == 'running')):
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    st.metric("Status", job_info["status"].upper())
+
+                with col2:
+                    st.metric("Started", job_info["started_at"][:19])
+
+                with col3:
+                    if job_info["completed_at"]:
+                        st.metric("Completed", job_info["completed_at"][:19])
+                    else:
+                        st.metric("Completed", "Running...")
+
+                # Show config
+                st.markdown("**Configuration:**")
+                config_display = {
+                    "Base Model": job_info["config"]["base_model"],
+                    "Backend": job_info["config"]["backend"],
+                    "Epochs": job_info["config"]["epochs"],
+                    "Batch Size": job_info["config"]["batch_size"],
+                    "Learning Rate": f"{job_info['config']['learning_rate']:.2e}",
+                }
+                st.json(config_display)
+
+                # Show result or error
+                if job_info["status"] == "completed":
+                    st.success("✅ Training completed successfully")
+                    st.markdown("**Results:**")
+                    st.json(job_info["result"])
+
+                    if st.button(f"View in Experiments", key=f"view_exp_{job_id}"):
+                        st.info("Scroll down to Experiment History to see this run")
+
+                elif job_info["status"] == "failed":
+                    st.error("❌ Training failed")
+                    st.code(job_info["error"])
+
+                elif job_info["status"] == "running":
+                    st.info("⏳ Training in progress... Refresh page to update status")
+
     # Load experiments button
+    st.markdown("---")
     if st.button("🔄 Load Experiments") or "ft_experiments_df" not in st.session_state:
         with st.spinner("Loading experiments from Phoenix..."):
             try:
@@ -2350,10 +2821,182 @@ with monitoring_tabs[6]:
                     loss_val = f"{float(experiment['train_loss']):.4f}" if "train_loss" in experiment and pd.notna(experiment["train_loss"]) else "N/A"
                     st.metric("Train Loss", loss_val)
 
+                # Validation Metrics (if validation split was used)
+                used_val_split = experiment.get("used_validation_split", False)
+                if used_val_split:
+                    st.markdown("#### 📈 Validation Metrics")
+
+                    col1, col2, col3, col4 = st.columns(4)
+
+                    with col1:
+                        train_examples = int(experiment.get("train_examples", 0))
+                        st.metric("Train Examples", train_examples if train_examples else "N/A")
+
+                    with col2:
+                        val_examples = int(experiment.get("val_examples", 0))
+                        st.metric("Val Examples", val_examples if val_examples else "N/A")
+
+                    with col3:
+                        eval_loss_val = f"{float(experiment['eval_loss']):.4f}" if "eval_loss" in experiment and pd.notna(experiment["eval_loss"]) else "N/A"
+                        st.metric("Val Loss", eval_loss_val)
+
+                    with col4:
+                        # Calculate improvement if both train and val loss available
+                        if "train_loss" in experiment and "eval_loss" in experiment:
+                            train_loss = float(experiment["train_loss"])
+                            eval_loss = float(experiment["eval_loss"])
+                            if pd.notna(train_loss) and pd.notna(eval_loss):
+                                overfit_pct = ((eval_loss - train_loss) / train_loss) * 100
+                                st.metric(
+                                    "Overfit",
+                                    f"{abs(overfit_pct):.1f}%",
+                                    delta=f"{overfit_pct:+.1f}%",
+                                    delta_color="inverse"  # Higher is worse
+                                )
+                            else:
+                                st.metric("Overfit", "N/A")
+                        else:
+                            st.metric("Overfit", "N/A")
+
+                    # DPO-specific validation metrics
+                    if experiment.get("method") == "dpo":
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            reward_acc = experiment.get("eval_reward_accuracy")
+                            if reward_acc is not None and pd.notna(reward_acc):
+                                st.metric("Reward Accuracy", f"{float(reward_acc):.2%}")
+                        with col2:
+                            reward_margin = experiment.get("eval_reward_margin")
+                            if reward_margin is not None and pd.notna(reward_margin):
+                                st.metric("Reward Margin", f"{float(reward_margin):.4f}")
+
+                    # Early stopping indicator
+                    st.info("✅ Validation split used with early stopping (patience=3)")
+
                 # Output
                 st.markdown("#### 💾 Output")
                 if "adapter_path" in experiment:
                     st.code(experiment["adapter_path"], language="text")
+
+                # Evaluation Results (if available)
+                st.markdown("#### 🎯 Evaluation Results")
+                try:
+                    # Query for EVALUATION spans matching this adapter
+                    adapter_path = experiment.get("adapter_path")
+                    if adapter_path:
+                        spans_df = asyncio.run(
+                            st.session_state.ft_provider.traces.get_spans(project=st.session_state.ft_project)
+                        )
+
+                        if not spans_df.empty:
+                            # Filter for EVALUATION spans with matching adapter_path
+                            eval_mask = spans_df["attributes.openinference.span.kind"] == "EVALUATION"
+                            eval_mask &= spans_df["attributes.evaluation.adapter_path"] == adapter_path
+                            eval_spans = spans_df[eval_mask]
+
+                            if not eval_spans.empty:
+                                # Get the latest evaluation
+                                eval_span = eval_spans.iloc[0]
+
+                                # Display metrics comparison
+                                col1, col2 = st.columns(2)
+
+                                with col1:
+                                    st.markdown("**Base Model Metrics**")
+                                    base_acc = eval_span.get("attributes.metrics.base.accuracy")
+                                    base_conf = eval_span.get("attributes.metrics.base.confidence")
+                                    base_error = eval_span.get("attributes.metrics.base.error_rate")
+                                    base_halluc = eval_span.get("attributes.metrics.base.hallucination_rate")
+                                    base_latency = eval_span.get("attributes.metrics.base.latency_ms")
+
+                                    if pd.notna(base_acc):
+                                        st.metric("Accuracy", f"{float(base_acc):.2%}")
+                                    if pd.notna(base_conf):
+                                        st.metric("Confidence", f"{float(base_conf):.2%}")
+                                    if pd.notna(base_error):
+                                        st.metric("Error Rate", f"{float(base_error):.2%}")
+                                    if pd.notna(base_halluc):
+                                        st.metric("Hallucination Rate", f"{float(base_halluc):.2%}")
+                                    if pd.notna(base_latency):
+                                        st.metric("Latency", f"{float(base_latency):.1f} ms")
+
+                                with col2:
+                                    st.markdown("**Adapter Model Metrics**")
+                                    adapter_acc = eval_span.get("attributes.metrics.adapter.accuracy")
+                                    adapter_conf = eval_span.get("attributes.metrics.adapter.confidence")
+                                    adapter_error = eval_span.get("attributes.metrics.adapter.error_rate")
+                                    adapter_halluc = eval_span.get("attributes.metrics.adapter.hallucination_rate")
+                                    adapter_latency = eval_span.get("attributes.metrics.adapter.latency_ms")
+
+                                    if pd.notna(adapter_acc):
+                                        st.metric("Accuracy", f"{float(adapter_acc):.2%}")
+                                    if pd.notna(adapter_conf):
+                                        st.metric("Confidence", f"{float(adapter_conf):.2%}")
+                                    if pd.notna(adapter_error):
+                                        st.metric("Error Rate", f"{float(adapter_error):.2%}")
+                                    if pd.notna(adapter_halluc):
+                                        st.metric("Hallucination Rate", f"{float(adapter_halluc):.2%}")
+                                    if pd.notna(adapter_latency):
+                                        st.metric("Latency", f"{float(adapter_latency):.1f} ms")
+
+                                # Improvements
+                                st.markdown("**Improvements**")
+                                col1, col2, col3, col4 = st.columns(4)
+
+                                with col1:
+                                    acc_imp = eval_span.get("attributes.improvement.accuracy")
+                                    if pd.notna(acc_imp):
+                                        st.metric(
+                                            "Accuracy Δ",
+                                            f"{float(acc_imp):.2%}",
+                                            delta=f"{float(acc_imp):.2%}"
+                                        )
+
+                                with col2:
+                                    conf_imp = eval_span.get("attributes.improvement.confidence")
+                                    if pd.notna(conf_imp):
+                                        st.metric(
+                                            "Confidence Δ",
+                                            f"{float(conf_imp):.2%}",
+                                            delta=f"{float(conf_imp):.2%}"
+                                        )
+
+                                with col3:
+                                    error_red = eval_span.get("attributes.improvement.error_reduction")
+                                    if pd.notna(error_red):
+                                        st.metric(
+                                            "Error Reduction",
+                                            f"{float(error_red):.2%}",
+                                            delta=f"{float(error_red):.2%}"
+                                        )
+
+                                with col4:
+                                    latency_oh = eval_span.get("attributes.improvement.latency_overhead")
+                                    if pd.notna(latency_oh):
+                                        st.metric(
+                                            "Latency Overhead",
+                                            f"{float(latency_oh):.1f} ms",
+                                            delta=f"{float(latency_oh):.1f} ms",
+                                            delta_color="inverse"
+                                        )
+
+                                # Statistical significance
+                                significant = eval_span.get("attributes.improvement.significant")
+                                p_value = eval_span.get("attributes.improvement.p_value")
+                                if pd.notna(significant) and pd.notna(p_value):
+                                    if significant:
+                                        st.success(f"✅ Statistically significant improvement (p={float(p_value):.4f})")
+                                    else:
+                                        st.info(f"ℹ️ Improvement not statistically significant (p={float(p_value):.4f})")
+                            else:
+                                st.info("No evaluation results found for this experiment. Set `evaluate_after_training=True` to enable auto-evaluation.")
+                        else:
+                            st.info("No evaluation results available.")
+                    else:
+                        st.info("No adapter path found.")
+
+                except Exception as e:
+                    st.warning(f"Could not load evaluation results: {e}")
 
             elif len(selected_indices) > 1:
                 # Multiple experiments comparison

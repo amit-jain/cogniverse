@@ -202,11 +202,26 @@ class DPOFinetuner:
             evaluation_strategy="steps" if val_dataset else "no",
             save_total_limit=3,
             load_best_model_at_end=True if val_dataset else False,
+            metric_for_best_model="eval_loss" if val_dataset else None,
+            greater_is_better=False if val_dataset else None,
             report_to="none",
             remove_unused_columns=False,  # DPOTrainer needs all columns
         )
 
-        # 5. Create DPOTrainer
+        # 5. Early stopping callback (if validation enabled)
+        callbacks = []
+        if val_dataset:
+            from transformers import EarlyStoppingCallback
+
+            # Stop if eval_loss doesn't improve for 3 evaluations
+            early_stopping = EarlyStoppingCallback(
+                early_stopping_patience=3,
+                early_stopping_threshold=0.0,
+            )
+            callbacks.append(early_stopping)
+            logger.info("Early stopping enabled (patience=3)")
+
+        # 6. Create DPOTrainer
         beta = config.get("beta", 0.1)
         trainer = DPOTrainer(
             model=model,
@@ -218,22 +233,25 @@ class DPOFinetuner:
             beta=beta,
             max_length=config.get("max_seq_length", 512),
             max_prompt_length=config.get("max_prompt_length", 256),
+            callbacks=callbacks,
         )
 
-        # 6. Train
+        # 7. Train
         logger.info(f"Starting DPO training (beta={beta})...")
         train_result = trainer.train()
 
-        # 7. Save adapter
+        # 8. Save adapter
         trainer.save_model(str(output_path))
         tokenizer.save_pretrained(str(output_path))
 
         logger.info(f"Training complete. Adapter saved to {output_path}")
 
-        # 8. Collect metrics and return
+        # 9. Collect metrics and return
         metrics = {
             "train_loss": train_result.metrics.get("train_loss"),
+            "train_samples": train_result.metrics.get("train_samples"),
             "total_pairs": len(dataset),
+            "train_pairs": len(train_dataset) if isinstance(train_dataset, Dataset) else len(dataset),
             "epochs": config.get("epochs", 3),
             "batch_size": config.get("batch_size", 4),
             "learning_rate": config.get("learning_rate", 5e-5),
@@ -241,12 +259,22 @@ class DPOFinetuner:
             "max_seq_length": config.get("max_seq_length", 512),
         }
 
+        # Add validation metrics if validation was used
         if val_dataset:
             eval_result = trainer.evaluate()
             metrics["eval_loss"] = eval_result.get("eval_loss")
+            metrics["eval_samples"] = eval_result.get("eval_samples")
+            metrics["val_pairs"] = len(val_dataset)
             # DPO-specific metrics
             metrics["eval_reward_accuracy"] = eval_result.get("rewards/accuracies")
             metrics["eval_reward_margin"] = eval_result.get("rewards/margins")
+            metrics["used_validation_split"] = True
+            logger.info(
+                f"Validation loss: {metrics['eval_loss']:.4f}, "
+                f"Reward accuracy: {metrics['eval_reward_accuracy']:.4f}"
+            )
+        else:
+            metrics["used_validation_split"] = False
 
         return {
             "adapter_path": str(output_path),
