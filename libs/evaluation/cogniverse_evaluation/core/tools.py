@@ -33,12 +33,11 @@ def video_search_tool():
         """
         try:
             # Import here to avoid circular dependencies
-            from cogniverse_runtime.search.service import SearchService
-
             from cogniverse_foundation.config.utils import (
                 create_default_config_manager,
                 get_config,
             )
+            from cogniverse_runtime.search.service import SearchService
 
             # Initialize ConfigManager for dependency injection
             config_manager = create_default_config_manager()

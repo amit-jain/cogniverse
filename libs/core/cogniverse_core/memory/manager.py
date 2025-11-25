@@ -139,6 +139,7 @@ class Mem0MemoryManager:
             create_default_config_manager,
             get_config,
         )
+
         from cogniverse_core.registries.backend_registry import get_backend_registry
 
         # Use passed config_manager or create default if not provided

@@ -6,10 +6,13 @@ Handles tenant ID validation, storage, and context management.
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_foundation.config.utils import get_config
+
+if TYPE_CHECKING:
+    from cogniverse_foundation.config.manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 

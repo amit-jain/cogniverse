@@ -14,15 +14,12 @@ import logging
 import random
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Dict, List, Literal, Optional
+from typing import Dict, List, Literal
 
-import pandas as pd
 import torch
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
-
-from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
 
@@ -155,11 +152,12 @@ class AdapterEvaluator:
 
         Uses recent data NOT used in training (time-based split).
         """
-        from cogniverse_finetuning.dataset.trace_converter import TraceToInstructionConverter
+        from cogniverse_finetuning.dataset.trace_converter import (
+            TraceToInstructionConverter,
+        )
 
-        # Get data from last 7 days (assuming training used older data)
-        end_time = datetime.now()
-        start_time = end_time - timedelta(days=7)
+        # Get data from telemetry (TODO: implement time-based split for test set)
+        # Future: Filter to last 7 days assuming training used older data
 
         # Extract examples
         converter = TraceToInstructionConverter(self.provider)

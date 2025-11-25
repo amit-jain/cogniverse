@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List
 
 import dspy
-
 from cogniverse_foundation.config.utils import get_config
 
 if TYPE_CHECKING:

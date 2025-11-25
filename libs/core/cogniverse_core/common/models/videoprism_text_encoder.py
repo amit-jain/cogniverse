@@ -26,7 +26,6 @@ from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 
 # Add VideoPrism to path once at module level

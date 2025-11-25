@@ -49,12 +49,11 @@ def create_retrieval_solver(
         logger.info(f"Running retrieval for query: {query_str[:50]}...")
 
         # Import here to avoid circular dependencies
-        from cogniverse_runtime.search.service import SearchService
-
         from cogniverse_foundation.config.utils import (
             create_default_config_manager,
             get_config,
         )
+        from cogniverse_runtime.search.service import SearchService
 
         # Initialize ConfigManager for dependency injection
         config_manager = create_default_config_manager()
@@ -204,10 +203,9 @@ def create_batch_solver(
         backend = None
         if config.get("use_backend_for_ground_truth", False):
             try:
-                from cogniverse_runtime.search.service import SearchService
-
                 from cogniverse_foundation.config.manager import ConfigManager
                 from cogniverse_foundation.config.utils import get_config
+                from cogniverse_runtime.search.service import SearchService
 
                 # Initialize ConfigManager for dependency injection
                 ground_truth_config_manager = ConfigManager()

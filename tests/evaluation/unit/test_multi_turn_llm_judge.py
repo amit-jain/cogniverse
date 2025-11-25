@@ -8,13 +8,12 @@ Tests validate:
 4. Conversation history formatting
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from cogniverse_evaluation.evaluators.llm_judge import (
-    SyncLLMReferenceFreeEvaluator,
-    SyncLLMReferenceBasedEvaluator,
     SyncLLMHybridEvaluator,
+    SyncLLMReferenceBasedEvaluator,
+    SyncLLMReferenceFreeEvaluator,
 )
 
 
@@ -98,7 +97,7 @@ class TestMultiTurnEvaluation:
         }
         output_data = {"results": [{"video_id": "v1", "score": 0.9}]}
 
-        result = evaluator.evaluate(input=input_data, output=output_data)
+        _ = evaluator.evaluate(input=input_data, output=output_data)
 
         # Verify all history turns are in prompt
         call_args = mock_call_llm.call_args
@@ -122,7 +121,7 @@ class TestMultiTurnEvaluation:
         }
         output_data = {"results": [{"video_id": "v1", "score": 0.9}]}
 
-        result = evaluator.evaluate(input=input_data, output=output_data)
+        _ = evaluator.evaluate(input=input_data, output=output_data)
 
         # Should not have "Previous Conversation" since only one turn
         call_args = mock_call_llm.call_args
@@ -155,7 +154,7 @@ class TestReferenceBasedMultiTurn:
         output_data = {"results": [{"video_id": "v1", "score": 0.9}]}
         expected = ["v1", "v2"]
 
-        result = evaluator.evaluate(
+        _ = evaluator.evaluate(
             input=input_data, output=output_data, expected=expected
         )
 
@@ -188,7 +187,7 @@ class TestHybridMultiTurn:
         output_data = {"results": [{"video_id": "v1", "score": 0.9}]}
         expected = ["v1"]
 
-        result = evaluator.evaluate(
+        _ = evaluator.evaluate(
             input=input_data, output=output_data, expected=expected
         )
 
@@ -251,7 +250,7 @@ class TestEdgeCases:
         }
         output_data = {"results": [{"video_id": "v1", "score": 0.9}]}
 
-        result = evaluator.evaluate(input=input_data, output=output_data)
+        _ = evaluator.evaluate(input=input_data, output=output_data)
 
         call_args = mock_call_llm.call_args
         prompt = call_args[0][0]

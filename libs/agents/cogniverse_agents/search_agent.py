@@ -494,7 +494,6 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
 
         # Accumulate RRF scores by document ID
         doc_scores = {}  # doc_id -> {score, result_data}
-        doc_profile_ranks = {}  # doc_id -> {profile: rank}
 
         # Calculate RRF scores
         for profile_name, results in profile_results.items():

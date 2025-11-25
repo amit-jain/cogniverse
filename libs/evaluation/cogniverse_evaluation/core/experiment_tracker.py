@@ -318,7 +318,7 @@ class ExperimentTracker:
             # Load data from CSV
             df = pd.read_csv(csv_path)
             data = df.to_dict('records')
-            dataset = self.provider.create_dataset(
+            _ = self.provider.create_dataset(
                 name=final_dataset_name,
                 data=data,
                 description="Experiment dataset",
@@ -329,7 +329,7 @@ class ExperimentTracker:
                 {"query": "test query 1", "expected": "test result 1"},
                 {"query": "test query 2", "expected": "test result 2"},
             ]
-            dataset = self.provider.create_dataset(
+            _ = self.provider.create_dataset(
                 name=final_dataset_name,
                 data=test_data,
                 description="Test dataset",

@@ -227,7 +227,9 @@ class ConfigurableVisualJudge(Evaluator):
             # If sample_all, extract every frame (with limit)
             if sample_all:
                 # Get max_total_frames from config
-                from cogniverse_foundation.config.utils import create_default_config_manager
+                from cogniverse_foundation.config.utils import (
+                    create_default_config_manager,
+                )
 
                 # Initialize ConfigManager for dependency injection
                 sample_config_manager = create_default_config_manager()
