@@ -5,8 +5,9 @@ Implements all store interfaces using Phoenix AsyncClient.
 """
 
 import logging
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Generator, List, Optional
 
 import pandas as pd
 from cogniverse_foundation.telemetry.providers.base import (
@@ -700,3 +701,23 @@ class PhoenixProvider(TelemetryProvider):
             raise RuntimeError("PhoenixProvider not initialized - call initialize() first")
 
         return px.Client(endpoint=self._http_endpoint)
+
+    @contextmanager
+    def session_context(self, session_id: str) -> Generator[None, None, None]:
+        """
+        Use OpenInference's using_session to propagate session_id.
+
+        This automatically adds session.id attribute to all spans
+        created within this context, enabling Phoenix to group
+        traces by session in the Sessions view.
+
+        Args:
+            session_id: Unique session identifier for grouping traces
+
+        Yields:
+            Context that propagates session_id to all nested spans
+        """
+        from openinference.instrumentation import using_session
+
+        with using_session(session_id):
+            yield

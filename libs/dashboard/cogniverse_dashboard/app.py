@@ -198,6 +198,11 @@ if 'last_refresh' not in st.session_state:
 if 'auto_refresh' not in st.session_state:
     st.session_state.auto_refresh = False
 
+# Session ID for telemetry correlation across API requests
+if 'session_id' not in st.session_state:
+    import uuid
+    st.session_state.session_id = str(uuid.uuid4())
+
 # Sidebar configuration
 with st.sidebar:
     st.title("🔥 Analytics Dashboard")

@@ -4,6 +4,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -24,42 +25,87 @@ class SearchRequest(BaseModel):
     filters: Dict[str, Any] = {}
     tenant_id: Optional[str] = None
     org_id: Optional[str] = None
+    session_id: Optional[str] = None
 
 
-@router.post("/")
-async def search(request: SearchRequest) -> Dict[str, Any]:
+class SearchResponse(BaseModel):
+    """Search response model."""
+
+    query: str
+    profile: Optional[str]
+    strategy: Optional[str]
+    results_count: int
+    results: list
+    session_id: Optional[str] = None
+
+
+@router.post("/", response_model=SearchResponse)
+async def search(request: SearchRequest) -> SearchResponse:
     """Execute a search query."""
-    try:
-        config_manager = create_default_config_manager()
-        config = get_config(tenant_id=request.tenant_id or "default", config_manager=config_manager)
+    tenant_id = request.tenant_id or "default"
 
-        # Create search service
-        search_service = SearchService(
-            config=config,
-            profile=request.profile or config.get("default_profile", "default"),
+    telemetry_manager = get_telemetry_manager()
+
+    # Use session_span if session_id provided, otherwise regular span
+    if request.session_id:
+        context_manager = telemetry_manager.session_span(
+            "api.search.request",
+            tenant_id=tenant_id,
+            session_id=request.session_id,
+            attributes={
+                "query": request.query,
+                "profile": request.profile,
+                "strategy": request.strategy,
+                "top_k": request.top_k,
+            },
+        )
+    else:
+        context_manager = telemetry_manager.span(
+            "api.search.request",
+            tenant_id=tenant_id,
+            attributes={
+                "query": request.query,
+                "profile": request.profile,
+                "strategy": request.strategy,
+                "top_k": request.top_k,
+            },
         )
 
-        # Execute search
-        results = search_service.search(
-            query=request.query,
-            top_k=request.top_k,
-            strategy=request.strategy,
-            filters=request.filters,
-            tenant_id=request.tenant_id,
-            org_id=request.org_id,
-        )
+    with context_manager as span:
+        try:
+            config_manager = create_default_config_manager()
+            config = get_config(tenant_id=tenant_id, config_manager=config_manager)
 
-        return {
-            "query": request.query,
-            "profile": request.profile,
-            "strategy": request.strategy,
-            "results_count": len(results),
-            "results": [r.to_dict() for r in results],
-        }
+            # Create search service
+            search_service = SearchService(
+                config=config,
+                profile=request.profile or config.get("default_profile", "default"),
+            )
 
-    except Exception as e:
-        logger.error(f"Search error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+            # Execute search - all child spans automatically inherit session_id
+            results = search_service.search(
+                query=request.query,
+                top_k=request.top_k,
+                strategy=request.strategy,
+                filters=request.filters,
+                tenant_id=request.tenant_id,
+                org_id=request.org_id,
+            )
+
+            span.set_attribute("results_count", len(results))
+
+            return SearchResponse(
+                query=request.query,
+                profile=request.profile,
+                strategy=request.strategy,
+                results_count=len(results),
+                results=[r.to_dict() for r in results],
+                session_id=request.session_id,
+            )
+
+        except Exception as e:
+            logger.error(f"Search error: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/strategies")

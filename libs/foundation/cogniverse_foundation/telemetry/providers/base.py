@@ -6,8 +6,9 @@ Provider packages (cogniverse-telemetry-phoenix) implement these interfaces.
 """
 
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Generator, List, Optional
 
 import pandas as pd
 
@@ -393,3 +394,28 @@ class TelemetryProvider(ABC):
         if self._analytics_store is None:
             raise RuntimeError(f"{self.name} provider not initialized")
         return self._analytics_store
+
+    @abstractmethod
+    @contextmanager
+    def session_context(self, session_id: str) -> Generator[None, None, None]:
+        """
+        Context manager for session tracking.
+
+        All spans created within this context will be associated with the session_id.
+        Different backends implement this differently:
+        - Phoenix: uses openinference.instrumentation.using_session()
+        - Other backends: may use different mechanisms
+
+        Args:
+            session_id: Unique session identifier for grouping traces
+
+        Yields:
+            Context that propagates session_id to all nested spans
+
+        Example:
+            with provider.session_context("user-session-123"):
+                # All spans created here will have session.id attribute
+                with tracer.start_as_current_span("operation"):
+                    pass
+        """
+        yield  # Default implementation for ABC

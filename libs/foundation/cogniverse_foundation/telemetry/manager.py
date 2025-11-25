@@ -248,6 +248,110 @@ class TelemetryManager:
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 raise
 
+    @contextmanager
+    def session(
+        self,
+        tenant_id: str,
+        session_id: str,
+        project_name: Optional[str] = None,
+    ):
+        """
+        Context manager for session tracking without creating a span.
+
+        Use this to wrap multiple operations that should share a session_id.
+        All spans created within this context will be associated with the session.
+
+        Args:
+            tenant_id: Tenant identifier
+            session_id: Session identifier for cross-request correlation
+            project_name: Optional project name suffix
+
+        Usage:
+            with telemetry.session(tenant_id, session_id="user-session-abc"):
+                # Multiple spans created here share the session_id
+                with telemetry.span("operation1", tenant_id):
+                    pass
+                with telemetry.span("operation2", tenant_id):
+                    pass
+        """
+        if not tenant_id:
+            raise ValueError("tenant_id is required for session tracking")
+
+        if not session_id:
+            raise ValueError("session_id is required for session tracking")
+
+        try:
+            provider = self.get_provider(tenant_id=tenant_id, project_name=project_name)
+        except Exception as e:
+            logger.warning(f"Failed to get provider for session tracking: {e}")
+            provider = None
+
+        if provider is None:
+            yield  # No-op if telemetry disabled
+            return
+
+        with provider.session_context(session_id):
+            yield
+
+    @contextmanager
+    def session_span(
+        self,
+        name: str,
+        tenant_id: str,
+        session_id: str,
+        project_name: Optional[str] = None,
+        attributes: Optional[Dict[str, Any]] = None,
+    ):
+        """
+        Context manager for creating a span within a session context.
+
+        This combines session tracking with span creation:
+        1. Establishes session context (via provider)
+        2. Creates a span within that context
+        3. All nested spans inherit the session_id
+
+        Args:
+            name: Span name
+            tenant_id: Tenant identifier
+            session_id: Session identifier for cross-request correlation
+            project_name: Optional project name suffix
+            attributes: Optional span attributes
+
+        Usage:
+            # At API entry point - establishes session context
+            with telemetry.session_span(
+                "api.search.request",
+                tenant_id=request.tenant_id,
+                session_id=request.session_id,
+                attributes={"query": request.query}
+            ) as span:
+                # All child spans automatically inherit session_id
+                result = await search_service.search(query=request.query)
+        """
+        if not tenant_id:
+            raise ValueError("tenant_id is required for session_span")
+
+        if not session_id:
+            raise ValueError("session_id is required for session_span")
+
+        try:
+            provider = self.get_provider(tenant_id=tenant_id, project_name=project_name)
+        except Exception as e:
+            logger.warning(f"Failed to get provider for session tracking: {e}")
+            provider = None
+
+        if provider is None:
+            # Graceful degradation - no session tracking, just create span
+            with self.span(name, tenant_id, project_name, attributes) as span:
+                yield span
+            return
+
+        # Wrap span creation in session context
+        with provider.session_context(session_id):
+            with self.span(name, tenant_id, project_name, attributes) as span:
+                # Session ID is now propagated via the session context
+                yield span
+
     def _get_tracer_for_project(
         self, tenant_id: str, project_name: Optional[str]
     ) -> Optional[Tracer]:

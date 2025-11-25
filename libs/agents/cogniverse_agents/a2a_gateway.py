@@ -18,6 +18,7 @@ import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
@@ -277,20 +278,48 @@ class A2AGateway:
         start_time = datetime.now()
         self.gateway_stats["total_requests"] += 1
 
-        try:
-            # Use routing (now has all production features)
-            if self.routing_system_available:
-                return await self._process_routing(request, start_time)
-            else:
-                # System not available
-                return self._create_emergency_response(
-                    request, start_time, "Routing system not available"
-                )
+        telemetry_manager = get_telemetry_manager()
 
-        except Exception as e:
-            self.logger.error(f"Routing request failed: {e}")
-            self.gateway_stats["failed_requests"] += 1
-            return self._create_emergency_response(request, start_time, str(e))
+        # Use session_span if session_id provided, otherwise regular span
+        if request.session_id:
+            context_manager = telemetry_manager.session_span(
+                "a2a.gateway.route",
+                tenant_id=self.tenant_id,
+                session_id=request.session_id,
+                attributes={
+                    "query": request.query[:100] if request.query else None,
+                    "user_id": request.user_id,
+                },
+            )
+        else:
+            context_manager = telemetry_manager.span(
+                "a2a.gateway.route",
+                tenant_id=self.tenant_id,
+                attributes={
+                    "query": request.query[:100] if request.query else None,
+                    "user_id": request.user_id,
+                },
+            )
+
+        with context_manager as span:
+            try:
+                # Use routing (now has all production features)
+                if self.routing_system_available:
+                    response = await self._process_routing(request, start_time)
+                    span.set_attribute("agent", response.agent)
+                    span.set_attribute("confidence", response.confidence)
+                    span.set_attribute("routing_method", response.routing_method)
+                    return response
+                else:
+                    # System not available
+                    return self._create_emergency_response(
+                        request, start_time, "Routing system not available"
+                    )
+
+            except Exception as e:
+                self.logger.error(f"Routing request failed: {e}")
+                self.gateway_stats["failed_requests"] += 1
+                return self._create_emergency_response(request, start_time, str(e))
 
     async def _process_routing(
         self, request: A2AQueryRequest, start_time: datetime
