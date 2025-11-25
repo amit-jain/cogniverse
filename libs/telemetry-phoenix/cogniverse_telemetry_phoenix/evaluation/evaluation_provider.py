@@ -5,6 +5,7 @@ Implements the generic EvaluationProvider interface for Phoenix backend.
 """
 
 import logging
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from cogniverse_evaluation.providers.base import EvaluationProvider
@@ -273,3 +274,86 @@ class PhoenixEvaluationProvider(EvaluationProvider):
             monitor.log_retrieval_event({**data, "event_type": event_type})
         except Exception as e:
             logger.error(f"Failed to log experiment event: {e}")
+
+    def log_session_evaluation(
+        self,
+        session_id: str,
+        evaluation_name: str,
+        session_score: float,
+        session_outcome: str,
+        turn_scores: Optional[List[float]] = None,
+        explanation: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        Log session-level (multi-turn) evaluation result.
+
+        This logs an evaluation for an entire conversation session, enabling
+        trajectory-level analysis and fine-tuning data collection.
+
+        Args:
+            session_id: Session identifier (from span attributes)
+            evaluation_name: Name of evaluation (e.g., "conversation_quality")
+            session_score: Overall session score (0-1)
+            session_outcome: Session outcome ("success", "partial", "failure")
+            turn_scores: Optional per-turn scores
+            explanation: Optional explanation
+            metadata: Additional metadata
+        """
+        if not self._initialized:
+            logger.warning("Provider not initialized, skipping session evaluation")
+            return
+
+        try:
+            # Build annotation data
+            annotation_data = {
+                "evaluation_name": evaluation_name,
+                "session_score": session_score,
+                "session_outcome": session_outcome,
+                "evaluated_at": datetime.now().isoformat(),
+            }
+
+            if turn_scores:
+                annotation_data["turn_scores"] = turn_scores
+                annotation_data["num_turns"] = len(turn_scores)
+                annotation_data["avg_turn_score"] = sum(turn_scores) / len(turn_scores)
+
+            if explanation:
+                annotation_data["explanation"] = explanation
+
+            if metadata:
+                annotation_data.update(metadata)
+
+            # Store as annotation using the telemetry provider's annotation store
+            if self._telemetry_provider is not None:
+                import asyncio
+
+                # Get annotation store from provider
+                annotation_store = self._telemetry_provider.annotations
+
+                # Create task to add annotation
+                async def add_annotation():
+                    await annotation_store.add_annotation(
+                        span_id=session_id,
+                        name="session_evaluation",
+                        label=session_outcome,
+                        score=session_score,
+                        metadata=annotation_data,
+                    )
+
+                # Run async operation
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        asyncio.create_task(add_annotation())
+                    else:
+                        loop.run_until_complete(add_annotation())
+                except RuntimeError:
+                    asyncio.run(add_annotation())
+
+            logger.info(
+                f"Logged session evaluation for {session_id}: "
+                f"{evaluation_name}={session_score:.2f} ({session_outcome})"
+            )
+        except Exception as e:
+            logger.error(f"Failed to log session evaluation: {e}")

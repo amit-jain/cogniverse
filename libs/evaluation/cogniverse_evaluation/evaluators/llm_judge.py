@@ -203,10 +203,28 @@ class SyncLLMReferenceFreeEvaluator(Evaluator, LLMJudgeBase):
 
     async def _evaluate_async(self, input, output, **kwargs) -> Any:
         """
-        Evaluate query-result relevance using LLM
+        Evaluate query-result relevance using LLM.
+
+        Supports both single-turn and multi-turn evaluation:
+        - Single-turn: input = {"query": "..."}
+        - Multi-turn: input = {"conversation": [{"query": "...", "response": "..."}, ...]}
         """
-        # Extract query
-        query = input.get("query", "") if isinstance(input, dict) else str(input)
+        # Extract query and conversation history
+        if isinstance(input, dict):
+            if "conversation" in input:
+                # Multi-turn mode
+                conversation = input["conversation"]
+                current_query = conversation[-1].get("query", "") if conversation else ""
+                history = conversation[:-1] if len(conversation) > 1 else []
+            else:
+                # Single-turn mode (backward compatible)
+                current_query = input.get("query", "")
+                history = []
+        else:
+            current_query = str(input)
+            history = []
+
+        query = current_query
 
         # Extract results
         if hasattr(output, "results"):
@@ -261,7 +279,19 @@ Consider visual relevance, content match, and result quality."""
                 else:
                     logger.debug(f"Frame path not found: {frame_path}")
 
-        prompt = f"""Query: "{query}"
+        # Build conversation history context for multi-turn
+        history_text = ""
+        if history:
+            history_lines = []
+            for i, turn in enumerate(history, 1):
+                q = turn.get("query", "")
+                r = turn.get("response", "")
+                history_lines.append(f"Turn {i}:")
+                history_lines.append(f"  User: {q}")
+                history_lines.append(f"  Assistant: {r}")
+            history_text = "### Previous Conversation:\n" + "\n".join(history_lines) + "\n\n"
+
+        prompt = f"""{history_text}Current Query: "{query}"
 
 I'm showing you {len(frame_paths)} video frames from the top search results.
 {chr(10).join(results_info)}
@@ -270,6 +300,7 @@ Please evaluate:
 1. How well do these video frames match the query "{query}"?
 2. Are they visually relevant to what was searched for?
 3. Do they show appropriate content?
+{"4. Does the response make sense given the conversation history?" if history else ""}
 
 Provide a score from 0-10 where:
 - 10 = Perfect match, exactly what was searched for
@@ -385,10 +416,28 @@ class SyncLLMReferenceBasedEvaluator(Evaluator, LLMJudgeBase):
         self, input, output, expected=None, **kwargs
     ) -> Any:
         """
-        Evaluate results against ground truth using LLM
+        Evaluate results against ground truth using LLM.
+
+        Supports both single-turn and multi-turn evaluation:
+        - Single-turn: input = {"query": "..."}
+        - Multi-turn: input = {"conversation": [{"query": "...", "response": "..."}, ...]}
         """
-        # Extract query
-        query = input.get("query", "") if isinstance(input, dict) else str(input)
+        # Extract query and conversation history
+        if isinstance(input, dict):
+            if "conversation" in input:
+                # Multi-turn mode
+                conversation = input["conversation"]
+                current_query = conversation[-1].get("query", "") if conversation else ""
+                history = conversation[:-1] if len(conversation) > 1 else []
+            else:
+                # Single-turn mode (backward compatible)
+                current_query = input.get("query", "")
+                history = []
+        else:
+            current_query = str(input)
+            history = []
+
+        query = current_query
 
         # Extract results
         if hasattr(output, "results"):
@@ -457,7 +506,19 @@ Consider both precision (are retrieved videos relevant?) and recall (are relevan
 
             results_text.append(result_line)
 
-        prompt = f"""Query: "{query}"
+        # Build conversation history context for multi-turn
+        history_text = ""
+        if history:
+            history_lines = []
+            for i, turn in enumerate(history, 1):
+                q = turn.get("query", "")
+                r = turn.get("response", "")
+                history_lines.append(f"Turn {i}:")
+                history_lines.append(f"  User: {q}")
+                history_lines.append(f"  Assistant: {r}")
+            history_text = "### Previous Conversation:\n" + "\n".join(history_lines) + "\n\n"
+
+        prompt = f"""{history_text}Current Query: "{query}"
 
 Expected/Relevant Videos: {expected_videos}
 
@@ -468,6 +529,7 @@ Evaluate the search quality:
 1. Precision: How many retrieved videos are actually relevant?
 2. Recall: How many expected videos were retrieved?
 3. Ranking: Are expected videos ranked highly?
+{"4. Conversation coherence: Does this response make sense given the conversation history?" if history else ""}
 
 Score from 0-10 and explain your reasoning.
 Format: Score: X/10"""
@@ -579,7 +641,13 @@ class SyncLLMHybridEvaluator(Evaluator, LLMJudgeBase):
         self, input, output, expected=None, **kwargs
     ) -> Any:
         """
-        Perform hybrid evaluation
+        Perform hybrid evaluation combining reference-free and reference-based approaches.
+
+        Supports both single-turn and multi-turn evaluation:
+        - Single-turn: input = {"query": "..."}
+        - Multi-turn: input = {"conversation": [{"query": "...", "response": "..."}, ...]}
+
+        Both component evaluators handle conversation history internally.
         """
         # Run both evaluations
         tasks = []
