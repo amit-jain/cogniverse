@@ -12,8 +12,16 @@ from unittest.mock import Mock, patch
 import httpx
 import pytest
 
+# Check if cogniverse_runtime is available
+try:
+    import cogniverse_runtime
+    RUNTIME_AVAILABLE = True
+except ImportError:
+    RUNTIME_AVAILABLE = False
+
 
 @pytest.mark.integration
+@pytest.mark.skipif(not RUNTIME_AVAILABLE, reason="cogniverse_runtime not installed")
 class TestDashboardProfileIntegration:
     """Integration tests for dashboard API helper functions"""
 

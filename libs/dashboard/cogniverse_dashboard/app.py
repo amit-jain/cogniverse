@@ -203,6 +203,10 @@ if 'session_id' not in st.session_state:
     import uuid
     st.session_state.session_id = str(uuid.uuid4())
 
+# Conversation history for multi-turn search sessions
+if 'conversation_history' not in st.session_state:
+    st.session_state.conversation_history = []
+
 # Sidebar configuration
 with st.sidebar:
     st.title("🔥 Analytics Dashboard")
@@ -2182,10 +2186,32 @@ with main_tabs[7]:
 with main_tabs[8]:
     st.header("🔍 Interactive Search Interface")
     st.markdown("Live search testing and evaluation with multiple ranking strategies and real-time results.")
-    
+
+    # Session Info and Controls
+    session_col1, session_col2, session_col3 = st.columns([2, 1, 1])
+    with session_col1:
+        st.caption(f"Session ID: `{st.session_state.session_id[:8]}...`")
+    with session_col2:
+        st.caption(f"Turns: {len(st.session_state.conversation_history)}")
+    with session_col3:
+        if st.button("🔄 New Session", help="Start a new conversation session"):
+            import uuid
+            st.session_state.session_id = str(uuid.uuid4())
+            st.session_state.conversation_history = []
+            st.rerun()
+
+    # Conversation History (collapsible)
+    if st.session_state.conversation_history:
+        with st.expander(f"📜 Conversation History ({len(st.session_state.conversation_history)} turns)", expanded=False):
+            for i, turn in enumerate(st.session_state.conversation_history, 1):
+                st.markdown(f"**Turn {i}:** {turn['query']}")
+                result_count = turn.get('result_count', 0)
+                st.caption(f"→ {result_count} results returned at {turn['timestamp'].strftime('%H:%M:%S')}")
+            st.markdown("---")
+
     # Search Interface
     st.subheader("🔎 Search Interface")
-    
+
     col1, col2 = st.columns([3, 1])
     with col1:
         search_query = st.text_input(
@@ -2193,7 +2219,7 @@ with main_tabs[8]:
             placeholder="e.g. basketball dunk, person throwing discus, game highlights",
             help="Enter natural language queries to search through ingested videos"
         )
-    
+
     with col2:
         # Check if video search agent is available
         video_search_agent_available = (
@@ -2234,19 +2260,21 @@ with main_tabs[8]:
     # Search Results
     if search_button and search_query:
         st.subheader("🎯 Search Results")
-        
+
         with st.spinner(f"🔍 Searching for: '{search_query}' using {selected_profile}..."):
             try:
                 # Prepare search task for video search agent
+                # Include session_id for multi-turn tracing
                 search_task = {
                     "action": "search_videos",
                     "query": search_query,
                     "profile": selected_profile,
                     "strategies": ranking_strategies,
                     "top_k": top_k,
-                    "confidence_threshold": confidence_threshold
+                    "confidence_threshold": confidence_threshold,
+                    "session_id": st.session_state.session_id,  # Link traces in Phoenix
                 }
-                
+
                 # Call video search agent for real results
                 search_result = run_async_in_streamlit(call_agent_async(
                     agent_config.get("video_search_agent_url"),
@@ -2266,6 +2294,16 @@ with main_tabs[8]:
                             "results": search_results,
                             "timestamp": datetime.now()
                         }
+
+                        # Add to conversation history for multi-turn tracking
+                        total_results = sum(len(search_results.get(s, [])) for s in ranking_strategies)
+                        st.session_state.conversation_history.append({
+                            "query": search_query,
+                            "profile": selected_profile,
+                            "timestamp": datetime.now(),
+                            "result_count": total_results,
+                            "results_summary": {s: len(search_results.get(s, [])) for s in ranking_strategies},
+                        })
 
                         st.success(f"✅ Found results for '{search_query}' across {len(ranking_strategies)} strategies")
                 else:
@@ -2349,7 +2387,71 @@ with main_tabs[8]:
     
     else:
         st.info("👆 Enter a search query and click Search to see results")
-    
+
+    # Session Evaluation (unified for single and multi-turn)
+    if st.session_state.conversation_history:
+        st.markdown("---")
+        num_turns = len(st.session_state.conversation_history)
+        st.subheader("📝 Session Evaluation")
+        st.caption(f"Rate this search session ({num_turns} {'turn' if num_turns == 1 else 'turns'}) for evaluation and fine-tuning.")
+
+        eval_col1, eval_col2, eval_col3 = st.columns([2, 2, 1])
+
+        with eval_col1:
+            session_outcome = st.selectbox(
+                "Session Outcome",
+                ["Not Rated", "Success", "Partial", "Failure"],
+                help="Overall success of this search session"
+            )
+
+        with eval_col2:
+            session_score = st.slider(
+                "Session Quality",
+                min_value=0.0,
+                max_value=1.0,
+                value=0.5,
+                step=0.1,
+                help="Overall quality score for this session (0=poor, 1=excellent)"
+            )
+
+        with eval_col3:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("💾 Save Evaluation", type="primary"):
+                if session_outcome != "Not Rated":
+                    try:
+                        # Log session evaluation via Phoenix provider
+                        from cogniverse_telemetry_phoenix.evaluation.evaluation_provider import (
+                            PhoenixEvaluationProvider,
+                        )
+
+                        eval_provider = PhoenixEvaluationProvider()
+                        eval_provider.initialize({
+                            "tenant_id": "default",
+                            "http_endpoint": agent_config.get("phoenix_base_url", "http://localhost:6006"),
+                            "project_name": "cogniverse-search",
+                        })
+
+                        eval_provider.log_session_evaluation(
+                            session_id=st.session_state.session_id,
+                            evaluation_name="dashboard_annotation",
+                            session_score=session_score,
+                            session_outcome=session_outcome.lower(),
+                            turn_scores=None,
+                            explanation=f"Manual annotation from dashboard ({num_turns} turns)",
+                            metadata={
+                                "num_turns": num_turns,
+                                "queries": [t["query"] for t in st.session_state.conversation_history],
+                            }
+                        )
+
+                        st.success(f"✅ Evaluation saved: {session_outcome} ({session_score:.1f})")
+                    except ImportError:
+                        st.warning("⚠️ Phoenix provider not available - evaluation not saved")
+                    except Exception as e:
+                        st.error(f"❌ Failed to save evaluation: {e}")
+                else:
+                    st.warning("⚠️ Please select a session outcome")
+
     # Search Analytics
     st.subheader("📈 Search Analytics")
     col1, col2, col3, col4 = st.columns(4)
