@@ -23,6 +23,8 @@ The Instrumentation module provides production-grade observability through:
 - Graceful degradation when telemetry unavailable
 - Per-modality performance metrics (latency percentiles, success rates)
 - Phoenix analytics with Plotly visualizations
+- **Session Tracking**: Multi-turn conversation tracking with `session_span()` method
+- **Phoenix Sessions View**: Grouped trace visualization for conversation trajectories
 
 ---
 
@@ -160,6 +162,39 @@ with telemetry.span(
     span.set_attribute("routing.strategy", result.strategy)
     span.set_attribute("routing.latency_ms", result.latency)
 ```
+
+#### Session Tracking for Multi-Turn Conversations
+
+```python
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+telemetry = get_telemetry_manager()
+
+# Multi-turn conversation with session tracking
+session_id = "user-session-uuid-123"
+
+# Turn 1: First search
+with telemetry.session_span("search", tenant_id="acme", session_id=session_id) as span:
+    span.set_attribute("query", "find basketball videos")
+    results = search("find basketball videos")
+
+# Turn 2: Follow-up search (same session)
+with telemetry.session_span("search", tenant_id="acme", session_id=session_id) as span:
+    span.set_attribute("query", "show me dunks")
+    results = search("show me dunks")
+
+# Both spans will be grouped in Phoenix Sessions view under session_id
+# Enables:
+# - Trajectory extraction for fine-tuning
+# - Session-level evaluation
+# - Conversation history analysis
+```
+
+**Session Tracking Benefits:**
+- **Phoenix Sessions View**: Traces with same `session.id` grouped together
+- **Fine-Tuning Data**: Extract conversation trajectories via `TraceToTrajectoryConverter`
+- **Session Evaluation**: Log session-level outcomes (success/partial/failure)
+- **Conversation Analysis**: View complete user journeys across turns
 
 #### Configuration
 

@@ -213,6 +213,92 @@ Triplet(
 
 ---
 
+#### Trajectory Extraction (`trace_converter.py`)
+
+**Purpose**: Extract multi-turn conversation trajectories from Phoenix sessions for fine-tuning.
+
+**Data Structures**:
+
+```python
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+@dataclass
+class ConversationTurn:
+    """A single turn in a conversation."""
+    turn_id: int
+    query: str
+    response: str
+    timestamp: datetime
+    span_id: str
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass
+class ConversationTrajectory:
+    """A complete conversation session."""
+    session_id: str
+    turns: List[ConversationTurn]
+    session_outcome: Optional[str] = None  # "success", "partial", "failure"
+    session_score: Optional[float] = None  # 0.0-1.0
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass
+class TrajectoryDataset:
+    """Collection of conversation trajectories."""
+    trajectories: List[ConversationTrajectory]
+    metadata: Dict[str, Any] = field(default_factory=dict)
+```
+
+**TraceToTrajectoryConverter**:
+
+```python
+from cogniverse_finetuning.dataset.trace_converter import TraceToTrajectoryConverter
+
+converter = TraceToTrajectoryConverter(telemetry_provider)
+
+# Extract trajectories from Phoenix
+dataset = await converter.extract_trajectories(
+    project="cogniverse-tenant1",
+    min_turns_per_session=2,      # Minimum turns for multi-turn
+    include_annotations=True,     # Include session annotations
+    start_time=datetime.now() - timedelta(days=7)
+)
+
+print(f"Extracted {len(dataset.trajectories)} trajectories")
+for traj in dataset.trajectories[:3]:
+    print(f"Session {traj.session_id}: {len(traj.turns)} turns, outcome={traj.session_outcome}")
+```
+
+**Conversion Process**:
+1. Query Phoenix for spans with `session.id` attribute
+2. Group spans by `session_id`
+3. Order turns chronologically within each session
+4. Filter sessions by `min_turns_per_session`
+5. Attach session-level annotations (outcome, score)
+6. Return `TrajectoryDataset`
+
+**Export Formats**:
+
+```python
+# Save to JSONL
+dataset.save_jsonl("trajectories.jsonl")
+
+# Save to Parquet
+dataset.save_parquet("trajectories.parquet")
+
+# Load from file
+loaded = TrajectoryDataset.load_jsonl("trajectories.jsonl")
+```
+
+**JSONL Format**:
+```json
+{"session_id": "sess_123", "turns": [{"turn_id": 0, "query": "...", "response": "...", "timestamp": "..."}], "session_outcome": "success", "session_score": 0.9}
+{"session_id": "sess_456", "turns": [...], "session_outcome": "partial", "session_score": 0.6}
+```
+
+---
+
 #### TrainingMethodSelector (`method_selector.py`)
 
 **Purpose**: Auto-select SFT vs DPO based on available data.
@@ -782,6 +868,49 @@ Where:
 ```
 Loss = max(0, margin + sim(anchor, neg) - sim(anchor, pos))
 ```
+
+---
+
+### Multi-Turn Fine-Tuning (Planned)
+
+**Status**: Phase 5 - Pending Implementation
+
+Multi-turn fine-tuning will enable training on conversation trajectories extracted from Phoenix sessions.
+
+**Planned Features**:
+- Extract trajectories using `TraceToTrajectoryConverter`
+- Format for multi-turn SFT (each turn includes conversation history as context)
+- Support `multi_turn: bool` and `min_turns_per_session: int` in `OrchestrationConfig`
+- Train using existing SFT backend with conversation-aware formatting
+
+**Planned Configuration**:
+```python
+@dataclass
+class OrchestrationConfig:
+    # ... existing fields ...
+    multi_turn: bool = False
+    min_turns_per_session: int = 2
+```
+
+**Planned Usage**:
+```python
+result = await finetune(
+    telemetry_provider=provider,
+    tenant_id="tenant1",
+    project="cogniverse-tenant1",
+    model_type="llm",
+    agent_type="routing",
+    multi_turn=True,
+    min_turns_per_session=2,
+    backend="local"
+)
+```
+
+**Future Enhancements**:
+- **DiaTool-DPO**: Trajectory-level DPO when algorithm is released
+- **GRPO with SkyRL**: Online RL for multi-turn agents
+- **Turn Attribution**: Per-turn quality scoring and credit assignment
+- **Reward Models**: Session-level reward prediction from history
 
 ---
 

@@ -396,6 +396,49 @@ with manager.span(
 
 ---
 
+#### `session_span(name: str, tenant_id: str, session_id: str, project_name: Optional[str] = None, attributes: Optional[Dict[str, Any]] = None) -> ContextManager`
+Context manager for creating spans within a session context.
+
+**Purpose:** Links multiple requests in a multi-turn conversation session. All spans created within a session share the same `session.id` attribute and are grouped together in Phoenix Sessions view.
+
+**Parameters:**
+- `name`: Span name
+- `tenant_id`: Tenant identifier
+- `session_id`: Session identifier (client-generated UUID)
+- `project_name`: Optional Phoenix project name
+- `attributes`: Optional span attributes
+
+**Automatic Attributes:**
+- `session.id`: Session identifier (for grouping in Phoenix)
+- All attributes from `span()` method
+
+**Example:**
+```python
+manager = TelemetryManager()
+
+# Multi-turn conversation with session tracking
+session_id = "user-session-uuid-123"
+
+# Turn 1: First search
+with manager.session_span("search", tenant_id="acme", session_id=session_id) as span:
+    span.set_attribute("query", "find basketball videos")
+    results = search("find basketball videos")
+
+# Turn 2: Follow-up search (same session)
+with manager.session_span("search", tenant_id="acme", session_id=session_id) as span:
+    span.set_attribute("query", "show me dunks")
+    results = search("show me dunks")
+
+# Both spans will be grouped in Phoenix Sessions view under session_id
+```
+
+**Phoenix Sessions View:**
+- Traces with the same `session.id` are grouped together
+- Enables viewing complete conversation trajectories
+- Supports session-level evaluation and fine-tuning data extraction
+
+---
+
 #### `force_flush(timeout_millis: int = 10000) -> bool`
 Force flush all spans for all tenants.
 

@@ -30,6 +30,7 @@ The UI/Dashboard module provides interactive web-based interfaces for:
 - **Routing Evaluation**: Routing decision analysis with golden datasets
 - **Orchestration Annotation**: Multi-agent workflow visualization
 - **Quick Setup**: Fast tenant creation and video ingestion from sidebar
+- **Interactive Search**: Multi-turn conversation tracking with session-level evaluation
 
 ### Technology Stack
 - **Framework**: Streamlit 1.30+ (dashboard package - application layer)
@@ -981,6 +982,94 @@ GET /ingestion/status/{job_id}
 4. `video_videoprism_large_mv_chunk_30s` (1024-dim, 30s chunks)
 5. `video_videoprism_lvt_base_sv_chunk_6s` (768-dim, 6s chunks)
 6. `video_videoprism_lvt_large_sv_chunk_6s` (1024-dim, 6s chunks)
+
+---
+
+### 7. Interactive Search with Session Tracking
+
+**Purpose**: Multi-turn conversation tracking with unified session-level evaluation
+
+**Location**: `libs/dashboard/cogniverse_dashboard/app.py` (Interactive Search tab)
+
+**Features**:
+- **Conversation History Tracking**: Maintains `st.session_state.conversation_history` across turns
+- **Session ID Management**: Auto-generated UUIDs with "New Session" button
+- **Session-Aware Search**: Passes `session_id` to search API for Phoenix span grouping
+- **Per-Result Annotation**: Thumbs up/down relevance annotation for individual results
+- **Session-Level Evaluation**: Unified UI for both single and multi-turn conversations
+
+**Session State Management**:
+```python
+# Initialize conversation history on first load
+if 'conversation_history' not in st.session_state:
+    st.session_state.conversation_history = []
+
+# Initialize session ID
+if 'session_id' not in st.session_state:
+    import uuid
+    st.session_state.session_id = str(uuid.uuid4())
+```
+
+**Session Info Display**:
+```python
+# Display current session info
+col1, col2 = st.columns([3, 1])
+with col1:
+    st.caption(f"Session ID: {st.session_state.session_id}")
+with col2:
+    if st.button("New Session"):
+        st.session_state.session_id = str(uuid.uuid4())
+        st.session_state.conversation_history = []
+        st.rerun()
+```
+
+**Conversation History Tracking**:
+```python
+# After each search, add to history
+if search_results:
+    st.session_state.conversation_history.append({
+        "query": query,
+        "response": f"Found {len(search_results)} results"
+    })
+```
+
+**Session-Level Evaluation UI**:
+```python
+# Show after ANY search (single or multi-turn)
+if st.session_state.conversation_history:
+    st.subheader("Session Evaluation")
+
+    # Outcome selection
+    session_outcome = st.selectbox(
+        "Session Outcome",
+        ["Not Rated", "Success", "Partial", "Failure"]
+    )
+
+    # Quality score
+    session_score = st.slider(
+        "Session Quality",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.5,
+        step=0.1
+    )
+
+    # Log evaluation
+    if st.button("Log Session Evaluation"):
+        await evaluation_provider.log_session_evaluation(
+            session_id=st.session_state.session_id,
+            conversation=st.session_state.conversation_history,
+            outcome=session_outcome.lower(),
+            score=session_score
+        )
+        st.success("Session evaluation logged!")
+```
+
+**Phoenix Integration**:
+- All spans within a session share the same `session.id` attribute
+- Spans are grouped in Phoenix Sessions view
+- Enables trajectory extraction for fine-tuning
+- Supports session-level evaluation logging
 
 ---
 

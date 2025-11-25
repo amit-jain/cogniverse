@@ -80,6 +80,18 @@ The Evaluation Module provides **comprehensive experiment tracking and performan
    - Automatic upload of evaluation results to Phoenix
    - Batch processing of historical traces
 
+5. **Multi-Turn Evaluation**
+   - LLM judges support conversation history context
+   - Session-level evaluation with outcome (success/partial/failure)
+   - Session quality scoring (0-1)
+   - Trajectory-level evaluation for fine-tuning data collection
+
+6. **Session-Based Evaluation**
+   - Unified evaluation UI for single and multi-turn conversations
+   - Per-result relevance annotation for individual results
+   - Session-level outcome classification (Success/Partial/Failure)
+   - Integration with Phoenix session tracking
+
 ### Dependencies
 
 **Internal:**
@@ -1076,6 +1088,170 @@ print(f"Evaluators: {summary['evaluators_run']}")
 for eval_name, stats in summary["results"].items():
     print(f"{eval_name}: {stats['mean_score']:.3f}")
 ```
+
+---
+
+### 5. Multi-Turn Session Evaluation
+
+**Purpose:** Evaluate multi-turn conversations at the session level, considering conversation history context.
+
+#### Session-Level Evaluation Components
+
+**PhoenixEvaluationProvider** (in `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/evaluation_provider.py`)
+
+Provides session-level evaluation logging:
+
+```python
+async def log_session_evaluation(
+    self,
+    session_id: str,
+    conversation: List[Dict[str, str]],
+    outcome: str,
+    score: float,
+    metadata: Optional[Dict[str, Any]] = None
+) -> None
+```
+
+**Parameters:**
+- `session_id`: Unique session identifier
+- `conversation`: List of `{"query": "...", "response": "..."}` turns
+- `outcome`: Session outcome ("success", "partial", "failure")
+- `score`: Session quality score (0.0-1.0)
+- `metadata`: Optional additional metadata
+
+**Example:**
+```python
+from cogniverse_telemetry_phoenix import PhoenixEvaluationProvider
+
+provider = PhoenixEvaluationProvider()
+
+await provider.log_session_evaluation(
+    session_id="sess_abc123",
+    conversation=[
+        {"query": "Show me cooking videos", "response": "Found 5 cooking tutorials..."},
+        {"query": "Filter to Italian cuisine", "response": "Here are 3 Italian cooking videos..."},
+        {"query": "Which one has the most views?", "response": "The pasta video has 1.2M views..."}
+    ],
+    outcome="success",
+    score=0.9,
+    metadata={"turns": 3, "topic": "cooking"}
+)
+```
+
+---
+
+#### LLM Judges with Conversation History
+
+All three LLM evaluators support multi-turn conversation context:
+
+**1. AnswerRelevanceEvaluator**
+```python
+from cogniverse_evaluation.evaluators.llm_evaluators import AnswerRelevanceEvaluator
+
+evaluator = AnswerRelevanceEvaluator()
+
+# Single-turn evaluation
+score = evaluator.evaluate(query="What is RAG?", response="RAG stands for...")
+
+# Multi-turn evaluation with history
+conversation_history = [
+    {"query": "What is RAG?", "response": "RAG stands for Retrieval-Augmented Generation..."},
+    {"query": "How does it work?", "response": "RAG works by first retrieving relevant documents..."}
+]
+
+score = evaluator.evaluate(
+    query="Can you give an example?",
+    response="For example, when you ask about weather...",
+    conversation_history=conversation_history
+)
+```
+
+**2. ContextRelevanceEvaluator**
+```python
+from cogniverse_evaluation.evaluators.llm_evaluators import ContextRelevanceEvaluator
+
+evaluator = ContextRelevanceEvaluator()
+
+# Multi-turn with retrieved context
+score = evaluator.evaluate(
+    query="Show me the step 3 instructions",
+    context="Step 3: Mix ingredients thoroughly...",
+    conversation_history=[
+        {"query": "Show me pasta recipes", "response": "Here's an Italian pasta recipe..."},
+        {"query": "What ingredients do I need?", "response": "You'll need: flour, eggs, salt..."}
+    ]
+)
+```
+
+**3. GroundednessEvaluator**
+```python
+from cogniverse_evaluation.evaluators.llm_evaluators import GroundednessEvaluator
+
+evaluator = GroundednessEvaluator()
+
+# Evaluate if response is grounded in retrieved documents
+score = evaluator.evaluate(
+    response="The cooking time is 30 minutes at 350°F",
+    context="Recipe notes: Bake for 30 minutes at 350 degrees Fahrenheit...",
+    conversation_history=conversation_history
+)
+```
+
+---
+
+#### Session Tracking Integration
+
+Session evaluation works with the telemetry module's session tracking:
+
+```python
+from cogniverse_telemetry import get_telemetry_manager
+
+tm = get_telemetry_manager()
+
+# Start a session
+session_id = "user_session_12345"
+
+# Track multiple turns within the session
+with tm.session_span("turn_1", tenant_id="tenant1", session_id=session_id):
+    # First query-response
+    pass
+
+with tm.session_span("turn_2", tenant_id="tenant1", session_id=session_id):
+    # Second query-response
+    pass
+
+# Evaluate the entire session
+await evaluation_provider.log_session_evaluation(
+    session_id=session_id,
+    conversation=conversation_history,
+    outcome="success",
+    score=0.85
+)
+```
+
+---
+
+#### Dashboard Integration
+
+The Interactive Search tab in the dashboard provides unified session evaluation:
+
+**Features:**
+- Conversation history tracking across turns
+- Session ID display and "New Session" button
+- Per-result relevance annotation (thumbs up/down)
+- Session-level outcome selection (Success/Partial/Failure)
+- Session quality scoring (0.0-1.0 slider)
+
+**Workflow:**
+1. User performs searches (single or multiple turns)
+2. Each search adds to `st.session_state.conversation_history`
+3. Individual results can be annotated for relevance
+4. After any search, session-level evaluation is available:
+   - Select outcome: Success, Partial, or Failure
+   - Set quality score: 0.0 to 1.0
+   - Click "Log Session Evaluation" to record
+
+**Note:** Session evaluation works for both single-turn and multi-turn conversations, providing a unified annotation mechanism.
 
 ---
 
