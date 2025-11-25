@@ -28,6 +28,7 @@ Thumbs.db
 
 # Project specific
 data*
+!**/dataset/
 archive*
 poc*
 *.log
