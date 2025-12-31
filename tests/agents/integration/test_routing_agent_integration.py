@@ -8,7 +8,7 @@ import os
 import tempfile
 
 import pytest
-from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
 
@@ -67,15 +67,13 @@ class TestRoutingAgentIntegration:
         self, test_config, routing_config_file
     ):
         """Test RoutingAgent initialization with actual config file"""
-        from cogniverse_agents.routing_agent import RoutingConfig
-
-        config = RoutingConfig(**test_config)
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
             provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        agent = RoutingAgent(tenant_id="test_tenant", config=config, telemetry_config=telemetry_config)
+        deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        agent = RoutingAgent(deps=deps)
 
         # Verify agent initialized properly
         assert agent.config is not None
@@ -87,15 +85,13 @@ class TestRoutingAgentIntegration:
     @pytest.mark.asyncio
     async def test_real_routing_decision_flow(self, test_config):
         """Test actual routing decision flow through comprehensive router"""
-        from cogniverse_agents.routing_agent import RoutingConfig
-
-        config = RoutingConfig(**test_config)
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
             provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        agent = RoutingAgent(tenant_id="test_tenant", config=config, telemetry_config=telemetry_config)
+        deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        agent = RoutingAgent(deps=deps)
 
         # Test different query types
         test_queries = [
@@ -120,15 +116,13 @@ class TestRoutingAgentIntegration:
     @pytest.mark.asyncio
     async def test_routing_agent_context_propagation(self, test_config):
         """Test that context is properly propagated through routing layers"""
-        from cogniverse_agents.routing_agent import RoutingConfig
-
-        config = RoutingConfig(**test_config)
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
             provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        agent = RoutingAgent(tenant_id="test_tenant", config=config, telemetry_config=telemetry_config)
+        deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        agent = RoutingAgent(deps=deps)
 
         context = {
             "user_id": "test_user",
@@ -145,42 +139,34 @@ class TestRoutingAgentIntegration:
 
     def test_agent_registry_validation_integration(self):
         """Test agent initialization with different configurations"""
-        from cogniverse_agents.routing_agent import RoutingConfig
-
         # Test with minimal valid config (default values)
-        minimal_config = RoutingConfig()
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
             provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        agent = RoutingAgent(tenant_id="test_tenant", config=minimal_config, telemetry_config=telemetry_config)
+        deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        agent = RoutingAgent(deps=deps)
         assert agent.config is not None
         assert hasattr(agent, 'logger')
 
-        # Test with custom config
-        full_config = RoutingConfig(
-            model_name="ollama/gemma3:4b",
-            base_url="http://localhost:11434",
-            confidence_threshold=0.8,
-        )
-        agent = RoutingAgent(tenant_id="test_tenant", config=full_config, telemetry_config=telemetry_config)
-        assert agent.config is not None
-        assert hasattr(agent, 'routing_module')
+        # Test with another tenant
+        deps2 = RoutingDeps(tenant_id="test_tenant_2", telemetry_config=telemetry_config)
+        agent2 = RoutingAgent(deps=deps2)
+        assert agent2.config is not None
+        assert hasattr(agent2, 'routing_module')
 
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_workflow_generation_consistency(self, test_config):
         """Test that workflow generation is consistent across multiple calls"""
-        from cogniverse_agents.routing_agent import RoutingConfig
-
-        config = RoutingConfig(**test_config)
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
             provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        agent = RoutingAgent(tenant_id="test_tenant", config=config, telemetry_config=telemetry_config)
+        deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        agent = RoutingAgent(deps=deps)
         query = "Show me training videos"
 
         # Run same query multiple times

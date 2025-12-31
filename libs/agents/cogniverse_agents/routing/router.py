@@ -379,7 +379,7 @@ class ComprehensiveRouter:
 
             # Map agent to search modality
             agent_to_modality = {
-                "video_search_agent": SearchModality.VIDEO,
+                "search_agent": SearchModality.VIDEO,
                 "text_search_agent": SearchModality.TEXT,
                 "image_search_agent": SearchModality.IMAGE,
                 "audio_analysis_agent": SearchModality.AUDIO,
@@ -525,7 +525,7 @@ class ComprehensiveRouter:
             # Explicit orchestration without other triggers - use fallback pattern
             decision.orchestration_pattern = "sequential"
             decision.primary_agent = (
-                "video_search_agent" if needs_video else "text_search_agent"
+                "search_agent" if needs_video else "text_search_agent"
             )
             decision.secondary_agents = []
             decision.agent_execution_order = [decision.primary_agent]
@@ -546,20 +546,20 @@ class ComprehensiveRouter:
             if needs_video and needs_text:
                 # Need both video and text search first
                 decision.secondary_agents = [
-                    "video_search_agent",
+                    "search_agent",
                     "text_search_agent",
                     "summarizer_agent",
                 ]
                 decision.agent_execution_order = [
-                    "video_search_agent",
+                    "search_agent",
                     "text_search_agent",
                     "summarizer_agent",
                     "detailed_report_agent",
                 ]
             elif needs_video:
-                decision.secondary_agents = ["video_search_agent", "summarizer_agent"]
+                decision.secondary_agents = ["search_agent", "summarizer_agent"]
                 decision.agent_execution_order = [
-                    "video_search_agent",
+                    "search_agent",
                     "summarizer_agent",
                     "detailed_report_agent",
                 ]
@@ -579,16 +579,16 @@ class ComprehensiveRouter:
             if needs_video and needs_text:
                 # Parallel search, then sequential summarization
                 decision.orchestration_pattern = "parallel"
-                decision.secondary_agents = ["video_search_agent", "text_search_agent"]
+                decision.secondary_agents = ["search_agent", "text_search_agent"]
                 decision.agent_execution_order = [
-                    "video_search_agent",
+                    "search_agent",
                     "text_search_agent",
                     "summarizer_agent",
                 ]
             elif needs_video:
-                decision.secondary_agents = ["video_search_agent"]
+                decision.secondary_agents = ["search_agent"]
                 decision.agent_execution_order = [
-                    "video_search_agent",
+                    "search_agent",
                     "summarizer_agent",
                 ]
             else:
@@ -601,9 +601,9 @@ class ComprehensiveRouter:
         elif needs_video and needs_text:
             # Multi-modal search - parallel execution
             decision.orchestration_pattern = "parallel"
-            decision.primary_agent = "video_search_agent"
+            decision.primary_agent = "search_agent"
             decision.secondary_agents = ["text_search_agent"]
-            decision.agent_execution_order = ["video_search_agent", "text_search_agent"]
+            decision.agent_execution_order = ["search_agent", "text_search_agent"]
 
         else:
             # Should not reach here, but handle gracefully

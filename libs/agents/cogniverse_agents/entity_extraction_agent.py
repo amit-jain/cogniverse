@@ -1,5 +1,5 @@
 """
-EntityExtractionAgent - Autonomous A2A agent for extracting entities from queries.
+EntityExtractionAgent - Type-safe A2A agent for extracting entities from queries.
 
 Extracts named entities (people, places, organizations, concepts) from user queries
 to enhance search and provide structured query understanding.
@@ -9,7 +9,8 @@ import logging
 from typing import Any, Dict, List
 
 import dspy
-from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -26,14 +27,37 @@ class Entity(BaseModel):
     context: str = Field(default="", description="Surrounding context")
 
 
-class EntityExtractionResult(BaseModel):
-    """Result of entity extraction"""
+# =============================================================================
+# Type-Safe Input/Output/Dependencies
+# =============================================================================
 
-    query: str
-    entities: List[Entity]
-    entity_count: int
-    has_entities: bool
-    dominant_types: List[str] = Field(description="Most common entity types")
+
+class EntityExtractionInput(AgentInput):
+    """Type-safe input for entity extraction"""
+
+    query: str = Field(..., description="Query to extract entities from")
+
+
+class EntityExtractionOutput(AgentOutput):
+    """Type-safe output from entity extraction"""
+
+    query: str = Field(..., description="Original query")
+    entities: List[Entity] = Field(default_factory=list, description="Extracted entities")
+    entity_count: int = Field(0, description="Number of entities found")
+    has_entities: bool = Field(False, description="Whether entities were found")
+    dominant_types: List[str] = Field(
+        default_factory=list, description="Most common entity types"
+    )
+
+
+class EntityExtractionDeps(AgentDeps):
+    """Dependencies for entity extraction agent"""
+
+    pass  # Only needs tenant_id from base
+
+
+# Backward compatibility alias
+EntityExtractionResult = EntityExtractionOutput
 
 
 class EntityExtractionSignature(dspy.Signature):
@@ -75,9 +99,11 @@ class EntityExtractionModule(dspy.Module):
             return dspy.Prediction(entities=entities_str, entity_types=types_str)
 
 
-class EntityExtractionAgent(DSPyA2AAgentBase):
+class EntityExtractionAgent(
+    A2AAgent[EntityExtractionInput, EntityExtractionOutput, EntityExtractionDeps]
+):
     """
-    Autonomous A2A agent for entity extraction.
+    Type-safe A2A agent for entity extraction.
 
     Capabilities:
     - Extract named entities from queries
@@ -86,24 +112,21 @@ class EntityExtractionAgent(DSPyA2AAgentBase):
     - Support multi-entity queries
     """
 
-    def __init__(self, tenant_id: str = "default", port: int = 8010):
+    def __init__(self, deps: EntityExtractionDeps, port: int = 8010):
         """
-        Initialize EntityExtractionAgent
+        Initialize EntityExtractionAgent with typed dependencies.
 
         Args:
-            tenant_id: Tenant identifier
+            deps: Typed dependencies with tenant_id
             port: Port for A2A server
         """
-        self.tenant_id = tenant_id
-
         # Initialize DSPy module
         extraction_module = EntityExtractionModule()
 
-        # Initialize base class
-        super().__init__(
+        # Create A2A config
+        config = A2AAgentConfig(
             agent_name="entity_extraction_agent",
-            agent_description="Autonomous entity extraction from user queries",
-            dspy_module=extraction_module,
+            agent_description="Type-safe entity extraction from user queries",
             capabilities=[
                 "entity_extraction",
                 "named_entity_recognition",
@@ -114,19 +137,22 @@ class EntityExtractionAgent(DSPyA2AAgentBase):
             version="1.0.0",
         )
 
-        logger.info(f"EntityExtractionAgent initialized for tenant: {tenant_id}")
+        # Initialize base class
+        super().__init__(deps=deps, config=config, dspy_module=extraction_module)
 
-    async def _process(self, dspy_input: Dict[str, Any]) -> EntityExtractionResult:
+        logger.info(f"EntityExtractionAgent initialized for tenant: {deps.tenant_id}")
+
+    async def process(self, input: EntityExtractionInput) -> EntityExtractionOutput:
         """
-        Process entity extraction request
+        Process entity extraction request with typed input/output.
 
         Args:
-            dspy_input: Input with 'query' field
+            input: Typed input with query field
 
         Returns:
-            EntityExtractionResult with extracted entities
+            EntityExtractionOutput with extracted entities
         """
-        query = dspy_input.get("query", "")
+        query = input.query
 
         if not query:
             return EntityExtractionResult(
@@ -228,60 +254,8 @@ class EntityExtractionAgent(DSPyA2AAgentBase):
         except Exception:
             return query[:50]
 
-    def _dspy_to_a2a_output(self, dspy_output: Any) -> Dict[str, Any]:
-        """Convert EntityExtractionResult to A2A format"""
-        if isinstance(dspy_output, EntityExtractionResult):
-            return {
-                "status": "success",
-                "agent": self.agent_name,
-                "query": dspy_output.query,
-                "entities": [e.model_dump() for e in dspy_output.entities],
-                "entity_count": dspy_output.entity_count,
-                "has_entities": dspy_output.has_entities,
-                "dominant_types": dspy_output.dominant_types,
-            }
-        else:
-            return {
-                "status": "success",
-                "agent": self.agent_name,
-                "output": str(dspy_output),
-            }
-
-    def _get_agent_skills(self) -> List[Dict[str, Any]]:
-        """Define agent skills for A2A protocol"""
-        return [
-            {
-                "name": "extract_entities",
-                "description": "Extract named entities from user query",
-                "input_schema": {"query": "string"},
-                "output_schema": {
-                    "entities": "array of {text, type, confidence, context}",
-                    "entity_count": "integer",
-                    "has_entities": "boolean",
-                    "dominant_types": "array of strings",
-                },
-                "examples": [
-                    {
-                        "input": {
-                            "query": "Show me videos about Barack Obama in Chicago"
-                        },
-                        "output": {
-                            "entities": [
-                                {
-                                    "text": "Barack Obama",
-                                    "type": "PERSON",
-                                    "confidence": 0.95,
-                                },
-                                {"text": "Chicago", "type": "PLACE", "confidence": 0.9},
-                            ],
-                            "entity_count": 2,
-                            "has_entities": True,
-                            "dominant_types": ["PERSON", "PLACE"],
-                        },
-                    }
-                ],
-            }
-        ]
+    # Note: _dspy_to_a2a_output and _get_agent_skills are now handled by A2AAgent base class
+    # which uses Pydantic schemas from EntityExtractionInput/EntityExtractionOutput
 
 
 # FastAPI app for standalone deployment
@@ -305,7 +279,8 @@ async def startup_event():
     import os
 
     tenant_id = os.getenv("TENANT_ID", "default")
-    entity_agent = EntityExtractionAgent(tenant_id=tenant_id)
+    deps = EntityExtractionDeps(tenant_id=tenant_id)
+    entity_agent = EntityExtractionAgent(deps=deps)
     logger.info("EntityExtractionAgent started")
 
 
@@ -336,7 +311,7 @@ async def process_task(task: Dict[str, Any]):
 
 
 if __name__ == "__main__":
-
-    agent = EntityExtractionAgent(tenant_id="default", port=8010)
+    deps = EntityExtractionDeps(tenant_id="default")
+    agent = EntityExtractionAgent(deps=deps, port=8010)
     logger.info("Starting EntityExtractionAgent on port 8010...")
-    agent.run()
+    agent.start()

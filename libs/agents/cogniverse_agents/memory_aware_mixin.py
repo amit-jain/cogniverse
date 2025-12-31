@@ -36,11 +36,19 @@ class MemoryAwareMixin:
                 return result
     """
 
-    def __init__(self):
-        """Initialize memory-aware mixin"""
+    def __init__(self, **kwargs):
+        """Initialize memory-aware mixin.
+
+        Accepts **kwargs to work with cooperative multiple inheritance (MRO).
+        """
+        # Pass kwargs to next class in MRO (cooperative inheritance)
+        super().__init__(**kwargs)
+
         self.memory_manager: Optional[Mem0MemoryManager] = None
-        self.agent_name: Optional[str] = None
-        self.tenant_id: Optional[str] = None
+        self._memory_agent_name: Optional[str] = None
+        # Note: tenant_id is now a property in AgentBase from deps
+        # We store it separately for memory operations only if needed
+        self._memory_tenant_id: Optional[str] = None
         self._memory_initialized: bool = False
 
     def initialize_memory(
@@ -73,8 +81,8 @@ class MemoryAwareMixin:
             raise ValueError("tenant_id is required - no default tenant")
 
         try:
-            self.agent_name = agent_name
-            self.tenant_id = tenant_id
+            self._memory_agent_name = agent_name
+            self._memory_tenant_id = tenant_id
 
             # Get tenant-specific memory manager instance
             self.memory_manager = Mem0MemoryManager(tenant_id=tenant_id)
@@ -91,12 +99,12 @@ class MemoryAwareMixin:
                 )
 
             self._memory_initialized = True
-            logger.info(f"Memory initialized for {agent_name} (tenant: {tenant_id})")
+            logger.info(f"Memory initialized for {self._memory_agent_name} (tenant: {self._memory_tenant_id})")
 
             return True
 
         except Exception as e:
-            logger.error(f"Failed to initialize memory for {agent_name}: {e}")
+            logger.error(f"Failed to initialize memory for {self._memory_agent_name}: {e}")
             self._memory_initialized = False
             return False
 
@@ -120,15 +128,15 @@ class MemoryAwareMixin:
         if not self.is_memory_enabled():
             return None
 
-        if not self.agent_name or not self.memory_manager:
+        if not self._memory_agent_name or not self.memory_manager:
             return None
 
         try:
             # Search memory with Mem0
             results = self.memory_manager.search_memory(
                 query=query,
-                tenant_id=self.tenant_id,
-                agent_name=self.agent_name,
+                tenant_id=self._memory_tenant_id,
+                agent_name=self._memory_agent_name,
                 top_k=top_k,
             )
 
@@ -144,7 +152,7 @@ class MemoryAwareMixin:
 
             context = "\n\n".join(context_parts)
 
-            logger.info(f"Retrieved {len(results)} memories for {self.agent_name}")
+            logger.info(f"Retrieved {len(results)} memories for {self._memory_agent_name}")
 
             return context
 
@@ -168,19 +176,19 @@ class MemoryAwareMixin:
         if not self.is_memory_enabled():
             return False
 
-        if not self.agent_name or not self.memory_manager:
+        if not self._memory_agent_name or not self.memory_manager:
             return False
 
         try:
             memory_id = self.memory_manager.add_memory(
                 content=content,
-                tenant_id=self.tenant_id,
-                agent_name=self.agent_name,
+                tenant_id=self._memory_tenant_id,
+                agent_name=self._memory_agent_name,
                 metadata=metadata,
             )
 
             if memory_id:
-                logger.debug(f"Updated memory for {self.agent_name}: {memory_id}")
+                logger.debug(f"Updated memory for {self._memory_agent_name}: {memory_id}")
                 return True
 
             return False
@@ -199,12 +207,12 @@ class MemoryAwareMixin:
         if not self.is_memory_enabled():
             return None
 
-        if not self.agent_name or not self.memory_manager:
+        if not self._memory_agent_name or not self.memory_manager:
             return None
 
         try:
             return self.memory_manager.get_memory_stats(
-                tenant_id=self.tenant_id, agent_name=self.agent_name
+                tenant_id=self._memory_tenant_id, agent_name=self._memory_agent_name
             )
 
         except Exception as e:
@@ -225,16 +233,16 @@ class MemoryAwareMixin:
         if not self.is_memory_enabled():
             return False
 
-        if not self.agent_name or not self.memory_manager:
+        if not self._memory_agent_name or not self.memory_manager:
             return False
 
         try:
             success = self.memory_manager.clear_agent_memory(
-                tenant_id=self.tenant_id, agent_name=self.agent_name
+                tenant_id=self._memory_tenant_id, agent_name=self._memory_agent_name
             )
 
             if success:
-                logger.info(f"Cleared memory for {self.agent_name}")
+                logger.info(f"Cleared memory for {self._memory_agent_name}")
 
             return success
 
@@ -326,8 +334,8 @@ class MemoryAwareMixin:
         """
         summary = {
             "enabled": self.is_memory_enabled(),
-            "agent_name": self.agent_name,
-            "tenant_id": self.tenant_id,
+            "agent_name": self._memory_agent_name,
+            "tenant_id": self._memory_tenant_id,
             "initialized": self._memory_initialized,
         }
 

@@ -28,11 +28,12 @@ if TYPE_CHECKING:
 from cogniverse_agents.multi_agent_orchestrator import (
     MultiAgentOrchestrator,
 )
+from cogniverse_agents.routing.config import RoutingConfig
 
 # Routing imports
 from cogniverse_agents.routing_agent import (
     RoutingAgent,
-    RoutingConfig,
+    RoutingDeps,
 )
 
 # No longer need fallback routing - RoutingAgent has all features
@@ -170,10 +171,12 @@ class A2AGateway:
         """Initialize routing and orchestration system"""
         try:
             # Initialize routing agent
-            self.router = RoutingAgent(
+            deps = RoutingDeps(
                 tenant_id=self.tenant_id,
                 telemetry_config=self.telemetry_config,
-                config=config or RoutingConfig(),
+            )
+            self.router = RoutingAgent(
+                deps=deps,
                 port=self.port + 1,  # Use different port to avoid conflicts
             )
 

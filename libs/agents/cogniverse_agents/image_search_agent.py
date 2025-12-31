@@ -6,39 +6,66 @@ same approach as video frames. Connects to Vespa for real search.
 """
 
 import logging
-from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import dspy
 import numpy as np
 import torch
-from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
-from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.models.model_loaders import get_or_load_model
 from PIL import Image
+from pydantic import Field
 
 from cogniverse_agents.query.encoders import ColPaliQueryEncoder
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class ImageResult:
+# =============================================================================
+# Type-Safe Models
+# =============================================================================
+
+
+class ImageResult(AgentOutput):
     """Result from image search"""
 
-    image_id: str
-    image_url: str
-    title: str
-    description: str
-    relevance_score: float
-    detected_objects: List[str] = field(default_factory=list)
-    detected_scenes: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    image_id: str = Field(..., description="Image identifier")
+    image_url: str = Field(..., description="Image URL")
+    title: str = Field("", description="Image title")
+    description: str = Field("", description="Image description")
+    relevance_score: float = Field(0.0, description="Relevance score")
+    detected_objects: List[str] = Field(default_factory=list, description="Detected objects")
+    detected_scenes: List[str] = Field(default_factory=list, description="Detected scenes")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
 
 
-class ImageSearchAgent(TenantAwareAgentMixin, DSPyA2AAgentBase):
+class ImageSearchInput(AgentInput):
+    """Type-safe input for image search"""
+
+    query: str = Field(..., description="Search query")
+    search_mode: str = Field("semantic", description="Search mode: semantic, hybrid")
+    limit: int = Field(20, description="Number of results")
+    visual_filters: Optional[Dict[str, Any]] = Field(None, description="Visual filters")
+
+
+class ImageSearchOutput(AgentOutput):
+    """Type-safe output from image search"""
+
+    results: List[ImageResult] = Field(default_factory=list, description="Search results")
+    count: int = Field(0, description="Number of results")
+
+
+class ImageSearchDeps(AgentDeps):
+    """Dependencies for image search agent"""
+
+    vespa_endpoint: str = Field("http://localhost:8080", description="Vespa endpoint")
+    colpali_model: str = Field("vidore/colsmol-500m", description="ColPali model name")
+
+
+class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearchDeps]):
     """
-    Image search using ColPali multi-vector embeddings
+    Type-safe image search using ColPali multi-vector embeddings.
 
     Capabilities:
     - Image similarity search using ColPali (same as video frames)
@@ -47,28 +74,18 @@ class ImageSearchAgent(TenantAwareAgentMixin, DSPyA2AAgentBase):
     - Real Vespa backend integration
     """
 
-    def __init__(
-        self,
-        tenant_id: str,
-        vespa_endpoint: str = "http://localhost:8080",
-        colpali_model: str = "vidore/colsmol-500m",
-        port: int = 8005,
-    ):
+    def __init__(self, deps: ImageSearchDeps, port: int = 8005):
         """
-        Initialize Image Search Agent
+        Initialize Image Search Agent with typed dependencies.
 
         Args:
-            tenant_id: Tenant identifier (REQUIRED - no default)
-            vespa_endpoint: Vespa endpoint URL
-            colpali_model: ColPali model name
+            deps: Typed dependencies with tenant_id, vespa_endpoint, colpali_model
             port: A2A server port
 
         Raises:
-            ValueError: If tenant_id is empty or None
+            TypeError: If deps is not ImageSearchDeps
+            ValidationError: If deps fails Pydantic validation
         """
-        # Initialize tenant support via TenantAwareAgentMixin
-        TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
-
         # Create DSPy module
         class ImageSearchSignature(dspy.Signature):
             query: str = dspy.InputField(desc="Image search query")
@@ -84,26 +101,27 @@ class ImageSearchAgent(TenantAwareAgentMixin, DSPyA2AAgentBase):
                     result=f"Searching images: {query} (mode: {mode})"
                 )
 
-        # Initialize A2A base explicitly to avoid MRO issues with TenantAwareAgentMixin
-        DSPyA2AAgentBase.__init__(
-            self,
+        # Create A2A config
+        config = A2AAgentConfig(
             agent_name="ImageSearchAgent",
-            agent_description="Image search using ColPali multi-vector embeddings",
-            dspy_module=ImageSearchModule(),
+            agent_description="Type-safe image search using ColPali multi-vector embeddings",
             capabilities=["image_search", "image_similarity", "hybrid_search"],
             port=port,
             version="1.0.0",
         )
 
-        self._vespa_endpoint = vespa_endpoint
-        self._colpali_model_name = colpali_model
+        # Initialize A2A base
+        super().__init__(deps=deps, config=config, dspy_module=ImageSearchModule())
+
+        self._vespa_endpoint = deps.vespa_endpoint
+        self._colpali_model_name = deps.colpali_model
 
         # Lazy load models
         self._colpali_model = None
         self._colpali_processor = None
         self._query_encoder = None
 
-        logger.info("🖼️  Initialized ImageSearchAgent with ColPali")
+        logger.info(f"Initialized ImageSearchAgent for tenant: {deps.tenant_id}")
 
     @property
     def colpali_model(self):
@@ -332,58 +350,27 @@ class ImageSearchAgent(TenantAwareAgentMixin, DSPyA2AAgentBase):
 
         return results
 
-    # DSPyA2AAgentBase abstract method implementations
-    async def _process_with_dspy(self, dspy_input: Dict[str, Any]) -> Dict[str, Any]:
-        """Process image search request"""
-        query = dspy_input.get("query", "")
-        search_mode = dspy_input.get("search_mode", "semantic")
-        limit = dspy_input.get("limit", 20)
-        visual_filters = dspy_input.get("visual_filters")
+    # ==========================================================================
+    # Type-safe process method (required by AgentBase)
+    # ==========================================================================
 
+    async def process(self, input: ImageSearchInput) -> ImageSearchOutput:
+        """
+        Process image search request with typed input/output.
+
+        Args:
+            input: Typed input with query, search_mode, limit, visual_filters
+
+        Returns:
+            ImageSearchOutput with results and count
+        """
         results = await self.search_images(
-            query=query,
-            search_mode=search_mode,
-            limit=limit,
-            visual_filters=visual_filters,
+            query=input.query,
+            search_mode=input.search_mode,
+            limit=input.limit,
+            visual_filters=input.visual_filters,
         )
 
-        return {"results": results, "count": len(results)}
+        return ImageSearchOutput(results=results, count=len(results))
 
-    def _dspy_to_a2a_output(self, dspy_output: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert search results to A2A response format"""
-        results = dspy_output.get("results", [])
-
-        return {
-            "status": "success",
-            "result_type": "image_search_results",
-            "count": dspy_output.get("count", 0),
-            "results": [
-                {
-                    "image_id": r.image_id,
-                    "image_url": r.image_url,
-                    "title": r.title,
-                    "description": r.description,
-                    "relevance_score": r.relevance_score,
-                    "detected_objects": r.detected_objects,
-                    "detected_scenes": r.detected_scenes,
-                }
-                for r in results
-            ],
-        }
-
-    def _get_agent_skills(self) -> List[Dict[str, Any]]:
-        """Define image search agent skills for A2A protocol"""
-        return [
-            {
-                "name": "search_images",
-                "description": "Search images using ColPali multi-vector embeddings",
-                "input": {"query": "str", "search_mode": "str", "limit": "int"},
-                "output": {"results": "List[ImageResult]", "count": "int"},
-            },
-            {
-                "name": "find_similar_images",
-                "description": "Find visually similar images",
-                "input": {"reference_image": "Image", "limit": "int"},
-                "output": {"results": "List[ImageResult]"},
-            },
-        ]
+    # Note: _dspy_to_a2a_output and _get_agent_skills handled by A2AAgent base class

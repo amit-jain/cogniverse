@@ -10,16 +10,57 @@ from typing import Any, Dict, List, Optional
 
 import dspy
 import uvicorn
-from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
-from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.vlm_interface import VLMInterface
 from fastapi import FastAPI, HTTPException
+from pydantic import Field
 
 # Enhanced routing support
 from cogniverse_agents.routing_agent import RoutingDecision
 from cogniverse_agents.tools.a2a_utils import DataPart, Task
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Type-Safe Input/Output/Dependencies
+# =============================================================================
+
+
+class DetailedReportInput(AgentInput):
+    """Type-safe input for detailed report generation"""
+
+    query: str = Field(..., description="Query for report")
+    search_results: List[Dict[str, Any]] = Field(default_factory=list, description="Results to analyze")
+    report_type: str = Field("comprehensive", description="Type: comprehensive, technical, analytical")
+    include_visual_analysis: bool = Field(True, description="Include visual analysis")
+    include_technical_details: bool = Field(True, description="Include technical details")
+    include_recommendations: bool = Field(True, description="Include recommendations")
+    max_results_to_analyze: int = Field(20, description="Maximum results to analyze")
+    context: Optional[Dict[str, Any]] = Field(None, description="Additional context")
+
+
+class DetailedReportOutput(AgentOutput):
+    """Type-safe output from detailed report generation"""
+
+    executive_summary: str = Field(..., description="Executive summary")
+    detailed_findings: List[Dict[str, Any]] = Field(default_factory=list, description="Detailed findings")
+    visual_analysis: List[Dict[str, Any]] = Field(default_factory=list, description="Visual analysis")
+    technical_details: List[Dict[str, Any]] = Field(default_factory=list, description="Technical details")
+    recommendations: List[str] = Field(default_factory=list, description="Recommendations")
+    confidence_assessment: Dict[str, float] = Field(default_factory=dict, description="Confidence assessment")
+    thinking_process: Dict[str, Any] = Field(default_factory=dict, description="Thinking phase details")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+
+
+class DetailedReportDeps(AgentDeps):
+    """Dependencies for detailed report agent"""
+
+    max_report_length: int = Field(2000, description="Maximum report length")
+    thinking_enabled: bool = Field(True, description="Enable thinking phase")
+    visual_analysis_enabled: bool = Field(True, description="Enable visual analysis")
+    technical_analysis_enabled: bool = Field(True, description="Enable technical analysis")
 
 
 # DSPy Signatures and Module
@@ -132,50 +173,33 @@ class ReportResult:
         return self.confidence_assessment.get("overall", 0.0)
 
 
-class DetailedReportAgent(DSPyA2AAgentBase, TenantAwareAgentMixin):
+class DetailedReportAgent(A2AAgent[DetailedReportInput, DetailedReportOutput, DetailedReportDeps]):
     """
-    Agent for generating comprehensive detailed reports with full A2A support.
+    Type-safe agent for generating comprehensive detailed reports with full A2A support.
     Provides visual analysis, technical insights, and actionable recommendations.
     """
 
-    def __init__(self, tenant_id: str, port: int = 8004, **kwargs):
+    def __init__(self, deps: DetailedReportDeps, port: int = 8004):
         """
-        Initialize detailed report agent
+        Initialize detailed report agent with typed dependencies.
 
         Args:
-            tenant_id: Tenant identifier (REQUIRED - no default)
+            deps: Typed dependencies with tenant_id and configuration
             port: A2A server port
-            **kwargs: Additional configuration options
 
         Raises:
-            ValueError: If tenant_id is empty or None
+            TypeError: If deps is not DetailedReportDeps
+            ValidationError: If deps fails Pydantic validation
         """
-        # Initialize tenant support via TenantAwareAgentMixin
-        TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
-
-        logger.info(f"Initializing DetailedReportAgent for tenant: {tenant_id}...")
-
-        # Initialize DSPy components
-        self._initialize_vlm_client()
+        logger.info(f"Initializing DetailedReportAgent for tenant: {deps.tenant_id}...")
 
         # Create DSPy report generation module
         self.report_module = ReportGenerationModule()
 
-        # Initialize VLM for visual analysis
-        self.vlm = VLMInterface(config_manager=self.config_manager, tenant_id=self.tenant_id)
-
-        # Configuration
-        self.max_report_length = kwargs.get("max_report_length", 2000)
-        self.thinking_enabled = kwargs.get("thinking_enabled", True)
-        self.visual_analysis_enabled = kwargs.get("visual_analysis_enabled", True)
-        self.technical_analysis_enabled = kwargs.get("technical_analysis_enabled", True)
-
-        # Initialize DSPyA2AAgentBase with report module
-        DSPyA2AAgentBase.__init__(
-            self,
+        # Create A2A config
+        config = A2AAgentConfig(
             agent_name="detailed_report_agent",
-            agent_description="Generates comprehensive detailed reports with visual and technical analysis",
-            dspy_module=self.report_module,
+            agent_description="Type-safe detailed reports with visual and technical analysis",
             capabilities=[
                 "detailed_report",
                 "visual_analysis",
@@ -184,16 +208,55 @@ class DetailedReportAgent(DSPyA2AAgentBase, TenantAwareAgentMixin):
                 "relationship_aware_reporting",
             ],
             port=port,
+            version="2.0.0",
         )
 
-        logger.info("DetailedReportAgent initialization complete")
+        # Initialize A2A base
+        super().__init__(deps=deps, config=config, dspy_module=self.report_module)
+
+        # Create config manager for VLM and other services
+        from cogniverse_foundation.config.utils import create_default_config_manager
+        self._config_manager = create_default_config_manager()
+
+        # Initialize DSPy components
+        self._initialize_vlm_client()
+
+        # Initialize VLM for visual analysis
+        self.vlm = VLMInterface(config_manager=self._config_manager, tenant_id=self.deps.tenant_id)
+
+        # Configuration from deps
+        self.max_report_length = deps.max_report_length
+        self.thinking_enabled = deps.thinking_enabled
+        self.visual_analysis_enabled = deps.visual_analysis_enabled
+        self.technical_analysis_enabled = deps.technical_analysis_enabled
+
+        logger.info(f"DetailedReportAgent initialized for tenant: {deps.tenant_id}")
 
     def _initialize_vlm_client(self):
         """Initialize DSPy LM from configuration"""
-        llm_config = self.config.get("llm", {})
-        model_name = llm_config.get("model_name")
-        base_url = llm_config.get("base_url")
-        api_key = llm_config.get("api_key")
+        import os
+
+        from cogniverse_foundation.config.utils import (
+            create_default_config_manager,
+            get_config,
+        )
+
+        # Get system config for LLM settings
+        config_manager = create_default_config_manager()
+        system_config = get_config(tenant_id=self.deps.tenant_id, config_manager=config_manager)
+
+        # Try to get LLM config from system config or environment
+        if system_config and hasattr(system_config, 'get') and callable(system_config.get):
+            llm_config = system_config.get("llm", {})
+        elif system_config and hasattr(system_config, 'llm'):
+            llm_config = system_config.llm if isinstance(system_config.llm, dict) else {}
+        else:
+            llm_config = {}
+
+        # Fall back to environment variables if not in config
+        model_name = llm_config.get("model_name") or os.environ.get("LLM_MODEL_NAME", "gemma3:4b")
+        base_url = llm_config.get("base_url") or os.environ.get("LLM_BASE_URL", "http://localhost:11434")
+        api_key = llm_config.get("api_key") or os.environ.get("LLM_API_KEY")
 
         if not all([model_name, base_url]):
             raise ValueError(
@@ -285,6 +348,20 @@ class DetailedReportAgent(DSPyA2AAgentBase, TenantAwareAgentMixin):
         except Exception as e:
             logger.error(f"Report generation failed: {e}")
             raise
+
+    async def generate_report(self, request: ReportRequest) -> ReportResult:
+        """
+        Public method to generate detailed report.
+
+        This is a public alias for _generate_report that provides the expected interface.
+
+        Args:
+            request: Report generation request
+
+        Returns:
+            Detailed report result with thinking phase
+        """
+        return await self._generate_report(request)
 
     async def _thinking_phase(self, request: ReportRequest) -> ThinkingPhase:
         """Comprehensive thinking phase for report generation"""
@@ -732,41 +809,43 @@ technical accuracy, and actionable insights. Visual analysis {'included' if requ
 
         return result
 
-    # DSPyA2AAgentBase implementation
-    async def _process(self, dspy_input: Dict[str, Any]) -> Any:
-        """Process A2A input - performs report generation"""
-        query = dspy_input.get("query", "")
-        search_results = dspy_input.get("search_results", [])
-        report_type = dspy_input.get("report_type", "comprehensive")
-        include_visual = dspy_input.get("include_visual_analysis", True)
-        include_technical = dspy_input.get("include_technical_details", True)
-        include_recommendations = dspy_input.get("include_recommendations", True)
-        max_results = dspy_input.get("max_results_to_analyze", 20)
+    # ==========================================================================
+    # Type-safe process method (required by AgentBase)
+    # ==========================================================================
 
-        # Create report request
+    async def process(self, input: DetailedReportInput) -> DetailedReportOutput:
+        """
+        Process report generation request with typed input/output.
+
+        Args:
+            input: Typed input with query, search_results, report_type, etc.
+
+        Returns:
+            DetailedReportOutput with executive_summary, findings, recommendations, etc.
+        """
+        # Create report request from typed input
         request = ReportRequest(
-            query=query,
-            search_results=search_results,
-            context=dspy_input.get("context", {}),
-            report_type=report_type,
-            include_visual_analysis=include_visual,
-            include_technical_details=include_technical,
-            include_recommendations=include_recommendations,
-            max_results_to_analyze=max_results,
+            query=input.query,
+            search_results=input.search_results,
+            context=input.context or {},
+            report_type=input.report_type,
+            include_visual_analysis=input.include_visual_analysis,
+            include_technical_details=input.include_technical_details,
+            include_recommendations=input.include_recommendations,
+            max_results_to_analyze=input.max_results_to_analyze,
         )
 
         # Generate report
         result = await self._generate_report(request)
 
-        return {
-            "query": query,
-            "executive_summary": result.executive_summary,
-            "detailed_findings": result.detailed_findings,
-            "visual_analysis": result.visual_analysis,
-            "technical_details": result.technical_details,
-            "recommendations": result.recommendations,
-            "confidence_assessment": result.confidence_assessment,
-            "thinking_process": {
+        return DetailedReportOutput(
+            executive_summary=result.executive_summary,
+            detailed_findings=result.detailed_findings,
+            visual_analysis=result.visual_analysis,
+            technical_details=result.technical_details,
+            recommendations=result.recommendations,
+            confidence_assessment=result.confidence_assessment,
+            thinking_process={
                 "content_analysis": result.thinking_phase.content_analysis,
                 "visual_assessment": result.thinking_phase.visual_assessment,
                 "technical_findings": result.thinking_phase.technical_findings,
@@ -774,58 +853,10 @@ technical accuracy, and actionable insights. Visual analysis {'included' if requ
                 "gaps": result.thinking_phase.gaps_and_limitations,
                 "reasoning": result.thinking_phase.reasoning,
             },
-            "metadata": result.metadata,
-        }
+            metadata=result.metadata,
+        )
 
-    def _dspy_to_a2a_output(self, dspy_output: Any) -> Dict[str, Any]:
-        """Convert DSPy report output to A2A format"""
-        if isinstance(dspy_output, dict):
-            return {
-                "status": "success",
-                "agent": self.agent_name,
-                **dspy_output,
-            }
-        else:
-            return {
-                "status": "success",
-                "agent": self.agent_name,
-                "output": str(dspy_output),
-            }
-
-    def _get_agent_skills(self) -> List[Dict[str, Any]]:
-        """Define detailed report agent skills for A2A protocol"""
-        return [
-            {
-                "name": "generate_detailed_report",
-                "description": "Generate comprehensive detailed reports with visual and technical analysis",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "search_results": {"type": "array"},
-                        "report_type": {"type": "string", "enum": ["comprehensive", "technical", "analytical"]},
-                        "include_visual_analysis": {"type": "boolean", "default": True},
-                        "include_technical_details": {"type": "boolean", "default": True},
-                        "include_recommendations": {"type": "boolean", "default": True},
-                        "max_results_to_analyze": {"type": "integer", "default": 20},
-                    },
-                    "required": ["query", "search_results"],
-                },
-            },
-            {
-                "name": "relationship_aware_report",
-                "description": "Generate reports with relationship and entity context",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "routing_decision": {"type": "object"},
-                        "search_results": {"type": "array"},
-                        "report_type": {"type": "string"},
-                    },
-                    "required": ["routing_decision", "search_results"],
-                },
-            },
-        ]
+    # Note: _dspy_to_a2a_output and _get_agent_skills handled by A2AAgent base class
 
 
 # --- FastAPI Server ---
@@ -856,7 +887,8 @@ async def startup_event():
             tenant_id = "test_tenant"
 
     try:
-        detailed_report_agent = DetailedReportAgent(tenant_id=tenant_id)
+        deps = DetailedReportDeps(tenant_id=tenant_id)
+        detailed_report_agent = DetailedReportAgent(deps=deps)
         logger.info(f"Detailed report agent initialized for tenant: {tenant_id}")
     except Exception as e:
         logger.error(f"Failed to initialize detailed report agent: {e}")
@@ -887,7 +919,7 @@ async def get_agent_card():
     """Agent card with capabilities"""
     return {
         "name": "DetailedReportAgent",
-        "description": "Generates comprehensive detailed reports with visual and technical analysis",
+        "description": "Type-safe detailed reports with visual and technical analysis",
         "url": "/process",
         "version": "2.0.0",
         "protocol": "a2a",
@@ -899,7 +931,7 @@ async def get_agent_card():
             "comprehensive_analysis",
             "relationship_aware_reporting",
         ],
-        "skills": detailed_report_agent._get_agent_skills() if detailed_report_agent else [],
+        "skills": detailed_report_agent.get_agent_skills() if detailed_report_agent else [],
     }
 
 

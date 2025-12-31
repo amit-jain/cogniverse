@@ -885,7 +885,7 @@ class AdvancedRoutingOptimizer:
             word in query_lower
             for word in ["video", "visual", "watch", "clip", "footage"]
         ):
-            agent = "video_search_agent"
+            agent = "search_agent"
             confidence = 0.8
             reasoning = "Query contains video-related keywords"
         elif any(
@@ -903,7 +903,7 @@ class AdvancedRoutingOptimizer:
             reasoning = "Query requests detailed analysis"
         else:
             # Default to video search for general queries
-            agent = "video_search_agent"
+            agent = "search_agent"
             confidence = 0.6
             reasoning = "Default routing to video search agent"
 
@@ -1054,7 +1054,7 @@ class AdvancedRoutingOptimizer:
         improved = baseline_prediction.copy()
 
         # Apply agent preference learning
-        agent = baseline_prediction.get("recommended_agent", "video_search_agent")
+        agent = baseline_prediction.get("recommended_agent", "search_agent")
         if agent in self.metrics.agent_preferences:
             # Boost confidence if this agent has performed well historically
             agent_performance = self.metrics.agent_preferences[agent]
@@ -1085,9 +1085,9 @@ class AdvancedRoutingOptimizer:
 
         # Occasionally suggest different agent (small probability)
         if np.random.random() < 0.1:
-            agents = ["video_search_agent", "summarizer_agent", "detailed_report_agent"]
+            agents = ["search_agent", "summarizer_agent", "detailed_report_agent"]
             current_agent = baseline_prediction.get(
-                "recommended_agent", "video_search_agent"
+                "recommended_agent", "search_agent"
             )
             other_agents = [a for a in agents if a != current_agent]
             if other_agents:

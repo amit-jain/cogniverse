@@ -13,13 +13,13 @@ import asyncio
 import os
 
 import pytest
-from cogniverse_agents.detailed_report_agent import DetailedReportAgent
+from cogniverse_agents.detailed_report_agent import DetailedReportAgent, DetailedReportDeps
 from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
 from cogniverse_agents.routing.relationship_extraction_tools import (
     RelationshipExtractorTool,
 )
-from cogniverse_agents.routing_agent import RoutingAgent
-from cogniverse_agents.summarizer_agent import SummarizerAgent
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_agents.summarizer_agent import SummarizerAgent, SummarizerDeps
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
 
@@ -44,7 +44,8 @@ class TestCompleteMultiAgentOrchestration:
             provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        routing_agent = RoutingAgent(deps=deps)
 
         # Test video search query
         video_query = "Find videos of robots playing soccer"
@@ -81,7 +82,8 @@ class TestCompleteMultiAgentOrchestration:
 
     def test_summarization_workflow(self):
         """Test summarization agent workflow with structured data"""
-        summarizer = SummarizerAgent(tenant_id="test_tenant")
+        deps = SummarizerDeps(tenant_id="test_tenant")
+        summarizer = SummarizerAgent(deps=deps)
 
         # Test with sample search results
 
@@ -94,7 +96,8 @@ class TestCompleteMultiAgentOrchestration:
 
     def test_detailed_report_workflow(self):
         """Test detailed report generation workflow"""
-        reporter = DetailedReportAgent(tenant_id="test_tenant")
+        deps = DetailedReportDeps(tenant_id="test_tenant")
+        reporter = DetailedReportAgent(deps=deps)
 
         # Test with comprehensive data structure
 
@@ -158,8 +161,8 @@ class TestCompleteMultiAgentOrchestration:
         import logging
         from unittest.mock import patch
 
-        from cogniverse_agents.routing_agent import RoutingConfig
         from cogniverse_foundation.config.utils import create_default_config_manager
+        from cogniverse_foundation.telemetry.config import TelemetryConfig
 
         # Use default config manager
         config_manager = create_default_config_manager()
@@ -182,25 +185,28 @@ class TestCompleteMultiAgentOrchestration:
                 "cogniverse_agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
             ),
             patch(
-                "cogniverse_agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
+                "cogniverse_core.agents.a2a_agent.A2AAgent.__init__",
                 return_value=None,
             ),
         ):
-            routing_config = RoutingConfig(
+            # Create a mock routing agent manually
+            routing_agent = object.__new__(RoutingAgent)
+            routing_agent.deps = RoutingDeps(
+                tenant_id="test_tenant",
+                telemetry_config=TelemetryConfig(enabled=False),
                 enable_mlflow_tracking=False,
                 enable_relationship_extraction=False,
                 enable_query_enhancement=False,
             )
-            # Create a mock routing agent manually
-            routing_agent = object.__new__(RoutingAgent)
-            routing_agent.config = routing_config
             routing_agent.routing_module = None
             routing_agent._routing_stats = {}
             routing_agent.enable_telemetry = False
             routing_agent.logger = logging.getLogger(__name__)
 
-        summarizer = SummarizerAgent(tenant_id="test_tenant", config_manager=config_manager)
-        reporter = DetailedReportAgent(tenant_id="test_tenant", config_manager=config_manager)
+        summarizer_deps = SummarizerDeps(tenant_id="test_tenant")
+        summarizer = SummarizerAgent(deps=summarizer_deps)
+        reporter_deps = DetailedReportDeps(tenant_id="test_tenant")
+        reporter = DetailedReportAgent(deps=reporter_deps)
 
         # Verify agents have expected coordination interfaces
         agents = {
@@ -228,7 +234,7 @@ class TestCompleteMultiAgentOrchestration:
         import logging
         from unittest.mock import patch
 
-        from cogniverse_agents.routing_agent import RoutingConfig
+        from cogniverse_foundation.telemetry.config import TelemetryConfig
 
         with (
             patch(
@@ -247,18 +253,19 @@ class TestCompleteMultiAgentOrchestration:
                 "cogniverse_agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
             ),
             patch(
-                "cogniverse_agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
+                "cogniverse_core.agents.a2a_agent.A2AAgent.__init__",
                 return_value=None,
             ),
         ):
-            routing_config = RoutingConfig(
+            # Create a mock routing agent manually
+            routing_agent = object.__new__(RoutingAgent)
+            routing_agent.deps = RoutingDeps(
+                tenant_id="test_tenant",
+                telemetry_config=TelemetryConfig(enabled=False),
                 enable_mlflow_tracking=False,
                 enable_relationship_extraction=False,
                 enable_query_enhancement=False,
             )
-            # Create a mock routing agent manually
-            routing_agent = object.__new__(RoutingAgent)
-            routing_agent.config = routing_config
             routing_agent.routing_module = None
             routing_agent._routing_stats = {}
             routing_agent.enable_telemetry = False
@@ -293,8 +300,8 @@ class TestCompleteMultiAgentOrchestration:
         import logging
         from unittest.mock import patch
 
-        from cogniverse_agents.routing_agent import RoutingConfig
         from cogniverse_foundation.config.utils import create_default_config_manager
+        from cogniverse_foundation.telemetry.config import TelemetryConfig
 
         agents = []
 
@@ -320,25 +327,28 @@ class TestCompleteMultiAgentOrchestration:
                     "cogniverse_agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
                 ),
                 patch(
-                    "cogniverse_agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
-                        return_value=None,
-                    ),
-                ):
-                    routing_config = RoutingConfig(
-                        enable_mlflow_tracking=False,
-                        enable_relationship_extraction=False,
-                        enable_query_enhancement=False,
-                    )
-                    # Create a mock routing agent manually
-                    routing_agent = object.__new__(RoutingAgent)
-                    routing_agent.config = routing_config
-                    routing_agent.routing_module = None
-                    routing_agent._routing_stats = {}
-                    routing_agent.enable_telemetry = False
-                    routing_agent.logger = logging.getLogger(__name__)
-                    agents.append(routing_agent)
-                    agents.append(SummarizerAgent(tenant_id="test_tenant", config_manager=config_manager))
-                    agents.append(DetailedReportAgent(tenant_id="test_tenant", config_manager=config_manager))
+                    "cogniverse_core.agents.a2a_agent.A2AAgent.__init__",
+                    return_value=None,
+                ),
+            ):
+                # Create a mock routing agent manually
+                routing_agent = object.__new__(RoutingAgent)
+                routing_agent.deps = RoutingDeps(
+                    tenant_id="test_tenant",
+                    telemetry_config=TelemetryConfig(enabled=False),
+                    enable_mlflow_tracking=False,
+                    enable_relationship_extraction=False,
+                    enable_query_enhancement=False,
+                )
+                routing_agent.routing_module = None
+                routing_agent._routing_stats = {}
+                routing_agent.enable_telemetry = False
+                routing_agent.logger = logging.getLogger(__name__)
+                agents.append(routing_agent)
+                summarizer_deps = SummarizerDeps(tenant_id="test_tenant")
+                agents.append(SummarizerAgent(deps=summarizer_deps))
+                reporter_deps = DetailedReportDeps(tenant_id="test_tenant")
+                agents.append(DetailedReportAgent(deps=reporter_deps))
 
             # Try to create video agent (may fail due to Vespa) - skip to avoid hanging
             try:
@@ -379,7 +389,7 @@ class TestSystemScalability:
         import logging
         from unittest.mock import patch
 
-        from cogniverse_agents.routing_agent import RoutingConfig
+        from cogniverse_foundation.telemetry.config import TelemetryConfig
 
         with (
             patch(
@@ -398,18 +408,19 @@ class TestSystemScalability:
                 "cogniverse_agents.routing_agent.RoutingAgent._initialize_mlflow_tracking"
             ),
             patch(
-                "cogniverse_agents.dspy_a2a_agent_base.DSPyA2AAgentBase.__init__",
+                "cogniverse_core.agents.a2a_agent.A2AAgent.__init__",
                 return_value=None,
             ),
         ):
-            routing_config = RoutingConfig(
+            # Create a mock routing agent manually
+            routing_agent = object.__new__(RoutingAgent)
+            routing_agent.deps = RoutingDeps(
+                tenant_id="test_tenant",
+                telemetry_config=TelemetryConfig(enabled=False),
                 enable_mlflow_tracking=False,
                 enable_relationship_extraction=False,
                 enable_query_enhancement=False,
             )
-            # Create a mock routing agent manually
-            routing_agent = object.__new__(RoutingAgent)
-            routing_agent.config = routing_config
             routing_agent.routing_module = None
             routing_agent._routing_stats = {}
             routing_agent.enable_telemetry = False
@@ -444,13 +455,10 @@ class TestSystemScalability:
 
     def test_memory_usage_stability(self):
         """Test that repeated operations don't cause memory issues"""
-        from cogniverse_foundation.config.utils import create_default_config_manager
-
-        # Use default config manager
-        config_manager = create_default_config_manager()
-
-        summarizer = SummarizerAgent(tenant_id="test_tenant", config_manager=config_manager)
-        reporter = DetailedReportAgent(tenant_id="test_tenant", config_manager=config_manager)
+        summarizer_deps = SummarizerDeps(tenant_id="test_tenant")
+        summarizer = SummarizerAgent(deps=summarizer_deps)
+        reporter_deps = DetailedReportDeps(tenant_id="test_tenant")
+        reporter = DetailedReportAgent(deps=reporter_deps)
 
         # Simulate repeated operations
         for i in range(10):

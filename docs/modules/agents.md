@@ -44,7 +44,7 @@ The Agents package (`cogniverse-agents`) provides concrete agent implementations
 
 - **Tenant-Aware**: All agents require `tenant_id` parameter
 - **Memory-Enabled**: Integration with Mem0 via MemoryAwareMixin (from core)
-- **Base Class Inheritance**: Extend DSPyA2AAgentBase from cogniverse_core
+- **Base Class Inheritance**: Extend A2AAgent[InputT, OutputT, DepsT] from cogniverse_core with type-safe generics
 - **DSPy 3.0 Integration**: A2A protocol + DSPy modules for optimization
 - **Production-Ready**: Health checks, graceful degradation, telemetry
 
@@ -52,12 +52,13 @@ The Agents package (`cogniverse-agents`) provides concrete agent implementations
 
 ```python
 # Agents package depends on:
-from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentBase, AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.health_mixin import HealthMixin
 from cogniverse_core.telemetry.manager import TelemetryManager
-from cogniverse_core.config.unified_config import SystemConfig
+from cogniverse_foundation.config.unified_config import SystemConfig
 ```
 
 ---
@@ -121,7 +122,7 @@ libs/agents/cogniverse_agents/
 
 **Location**: `libs/agents/cogniverse_agents/routing_agent.py` (top level)
 **Purpose**: Intelligent query routing with relationship extraction and DSPy 3.0 optimization
-**Base Classes**: `DSPyA2AAgentBase`, `MemoryAwareMixin`
+**Base Classes**: `A2AAgent[RoutingInput, RoutingOutput, RoutingDeps]`, `MemoryAwareMixin`
 
 #### Architecture
 
@@ -150,46 +151,79 @@ graph TB
 ```python
 # libs/agents/cogniverse_agents/routing_agent.py
 
-from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.telemetry.manager import TelemetryManager
+from pydantic import Field
 import dspy
 
-class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin):
+
+# Type-safe input/output definitions
+class RoutingInput(AgentInput):
+    """Input for routing agent."""
+    query: str = Field(..., description="User query to route")
+    context: dict = Field(default_factory=dict, description="Optional context")
+
+
+class RoutingOutput(AgentOutput):
+    """Output from routing agent."""
+    recommended_agent: str = Field(..., description="Recommended agent name")
+    confidence: float = Field(..., description="Routing confidence")
+    reasoning: str = Field(..., description="Routing reasoning")
+    enhanced_query: str = Field("", description="Enhanced query with context")
+
+
+class RoutingDeps(AgentDeps):
+    """Dependencies for routing agent."""
+    enable_relationship_extraction: bool = False
+    enable_query_enhancement: bool = False
+    enable_caching: bool = True
+
+
+class RoutingAgent(A2AAgent[RoutingInput, RoutingOutput, RoutingDeps], MemoryAwareMixin):
     """
     Intelligent query routing with relationship extraction.
 
     Multi-tenant aware - each tenant gets isolated routing context.
+    Type-safe with generic input/output/deps types.
     """
 
-    def __init__(
-        self,
-        tenant_id: str,  # REQUIRED - no default tenant
-        config: Optional[SystemConfig] = None
-    ):
+    def __init__(self, deps: RoutingDeps, port: int = 8001):
         """
         Initialize routing agent for specific tenant.
 
         Args:
-            tenant_id: Tenant identifier (e.g., "acme", "acme:production")
-            config: Optional system configuration
+            deps: RoutingDeps with tenant_id and configuration
+            port: A2A HTTP server port
         """
-        super().__init__(tenant_id=tenant_id, config=config)
+        config = A2AAgentConfig(
+            agent_name="routing_agent",
+            agent_description="Intelligent query routing with DSPy optimization",
+            capabilities=["routing", "query_enhancement"],
+            port=port,
+        )
+        super().__init__(deps=deps, config=config, dspy_module=None)
 
         # Initialize telemetry (tenant-scoped)
         self.telemetry = TelemetryManager.get_instance(
-            tenant_id=tenant_id,
+            tenant_id=deps.tenant_id,
             project_name="routing_agent"
         )  # Creates project: {tenant_id}_routing_agent
 
         # Initialize memory (tenant-scoped)
         self.initialize_memory(
             agent_name="routing_agent",
-            tenant_id=tenant_id
+            tenant_id=deps.tenant_id
         )
 
         # DSPy modules (shared, but decisions per-tenant)
         self._init_dspy_modules()
+
+    async def process(self, input: RoutingInput) -> RoutingOutput:
+        """Type-safe processing with IDE autocomplete support."""
+        # Implementation handles routing logic
+        ...
 ```
 
 #### Key Methods
@@ -326,7 +360,7 @@ routing_agent_config = {
 
 **Location**: `libs/agents/cogniverse_agents/video_search_agent.py` (top level)
 **Purpose**: Multi-modal video search with ColPali and VideoPrism embeddings
-**Base Classes**: `DSPyA2AAgentBase`, `MemoryAwareMixin`
+**Base Classes**: `A2AAgent[VideoSearchInput, VideoSearchOutput, VideoSearchDeps]`, `MemoryAwareMixin`
 
 #### Multi-Modal Support
 
@@ -358,12 +392,35 @@ graph LR
 ```python
 # libs/agents/cogniverse_agents/video_search_agent.py
 
-from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_vespa.vespa_search_client import VespaSearchClient
 from cogniverse_vespa.tenant_schema_manager import TenantSchemaManager
+from pydantic import Field
 
-class VideoSearchAgent(DSPyA2AAgentBase, MemoryAwareMixin):
+
+class VideoSearchInput(AgentInput):
+    """Input for video search."""
+    query: str = Field(..., description="Search query")
+    top_k: int = Field(10, description="Number of results")
+    modality: str = Field("text", description="Input modality")
+
+
+class VideoSearchOutput(AgentOutput):
+    """Output from video search."""
+    results: list = Field(default_factory=list, description="Search results")
+    metadata: dict = Field(default_factory=dict, description="Search metadata")
+
+
+class VideoSearchDeps(AgentDeps):
+    """Dependencies for video search agent."""
+    vespa_host: str = "localhost"
+    vespa_port: int = 8080
+    profile: str = "video_colpali_smol500_mv_frame"
+
+
+class VideoSearchAgent(A2AAgent[VideoSearchInput, VideoSearchOutput, VideoSearchDeps], MemoryAwareMixin):
     """
     Multi-modal video search agent with tenant isolation.
 
@@ -373,47 +430,50 @@ class VideoSearchAgent(DSPyA2AAgentBase, MemoryAwareMixin):
     - Image-to-video search (visual similarity)
     """
 
-    def __init__(
-        self,
-        tenant_id: str,  # REQUIRED
-        vespa_host: str = "localhost",
-        vespa_port: int = 8080,
-        profile: str = "video_colpali_smol500_mv_frame"
-    ):
+    def __init__(self, deps: VideoSearchDeps, port: int = 8002):
         """
         Initialize video search agent.
 
         Args:
-            tenant_id: Tenant identifier
-            vespa_host: Vespa endpoint
-            vespa_port: Vespa port
-            profile: Search profile (determines schema)
+            deps: VideoSearchDeps with tenant_id and configuration
+            port: A2A HTTP server port
         """
-        super().__init__(tenant_id=tenant_id)
+        config = A2AAgentConfig(
+            agent_name="video_search_agent",
+            agent_description="Multi-modal video search with ColPali/VideoPrism",
+            capabilities=["video_search", "multimodal_search"],
+            port=port,
+        )
+        super().__init__(deps=deps, config=config, dspy_module=None)
 
         # Ensure tenant schema exists
         schema_manager = TenantSchemaManager(
-            vespa_url=vespa_host,
-            vespa_port=vespa_port
+            vespa_url=deps.vespa_host,
+            vespa_port=deps.vespa_port
         )
-        schema_manager.ensure_tenant_schema_exists(tenant_id, profile)
+        schema_manager.ensure_tenant_schema_exists(deps.tenant_id, deps.profile)
 
         # Initialize Vespa client with tenant schema
-        tenant_schema = schema_manager.get_tenant_schema_name(tenant_id, profile)
+        tenant_schema = schema_manager.get_tenant_schema_name(deps.tenant_id, deps.profile)
         self.vespa_client = VespaSearchClient(
-            host=vespa_host,
-            port=vespa_port,
+            host=deps.vespa_host,
+            port=deps.vespa_port,
             schema=tenant_schema  # e.g., video_colpali_smol500_mv_frame_acme
         )
 
         # Initialize telemetry
         self.telemetry = TelemetryManager.get_instance(
-            tenant_id=tenant_id,
+            tenant_id=deps.tenant_id,
             project_name="video_search"
         )
 
         # Initialize memory
-        self.initialize_memory("video_search", tenant_id)
+        self.initialize_memory("video_search", deps.tenant_id)
+
+    async def process(self, input: VideoSearchInput) -> VideoSearchOutput:
+        """Type-safe search processing."""
+        results = await self.search_by_text(input.query, input.top_k)
+        return VideoSearchOutput(results=results)
 ```
 
 #### Key Methods
@@ -554,7 +614,7 @@ results_startup = await agent_startup.search_by_text("cooking videos")
 
 **Location**: `libs/agents/cogniverse_agents/composing_agent.py` (top level)
 **Purpose**: Multi-agent workflow orchestration and coordination
-**Base Classes**: `DSPyA2AAgentBase`
+**Base Classes**: `A2AAgent[ComposingInput, ComposingOutput, ComposingDeps]`
 
 #### Architecture
 
@@ -589,33 +649,63 @@ graph TB
 ```python
 # libs/agents/cogniverse_agents/composing_agent.py
 
-from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
-from cogniverse_agents.routing_agent import RoutingAgent
-from cogniverse_agents.video_search_agent import VideoSearchAgent
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_agents.video_search_agent import VideoSearchAgent, VideoSearchDeps
 from cogniverse_agents.routing.parallel_executor import ParallelAgentExecutor
+from pydantic import Field
 
-class ComposingAgent(DSPyA2AAgentBase):
+
+class ComposingInput(AgentInput):
+    """Input for composing agent."""
+    query: str = Field(..., description="User query")
+    options: dict = Field(default_factory=dict, description="Processing options")
+
+
+class ComposingOutput(AgentOutput):
+    """Output from composing agent."""
+    results: list = Field(default_factory=list, description="Aggregated results")
+    routing_decision: dict = Field(default_factory=dict, description="Routing decision")
+    confidence: float = Field(0.0, description="Overall confidence")
+
+
+class ComposingDeps(AgentDeps):
+    """Dependencies for composing agent."""
+    max_concurrent_agents: int = 10
+
+
+class ComposingAgent(A2AAgent[ComposingInput, ComposingOutput, ComposingDeps]):
     """
     Orchestrates multi-agent workflows with tenant context.
 
     Coordinates execution of routing, search, and optimization agents.
     """
 
-    def __init__(self, tenant_id: str):
-        super().__init__(tenant_id=tenant_id)
+    def __init__(self, deps: ComposingDeps, port: int = 8000):
+        config = A2AAgentConfig(
+            agent_name="composing_agent",
+            agent_description="Multi-agent workflow orchestration",
+            capabilities=["orchestration", "coordination"],
+            port=port,
+        )
+        super().__init__(deps=deps, config=config, dspy_module=None)
 
-        # Initialize sub-agents (all tenant-aware)
-        self.routing_agent = RoutingAgent(tenant_id=tenant_id)
-        self.video_agent = VideoSearchAgent(tenant_id=tenant_id)
+        # Initialize sub-agents (all tenant-aware via deps)
+        routing_deps = RoutingDeps(tenant_id=deps.tenant_id)
+        self.routing_agent = RoutingAgent(deps=routing_deps)
+
+        video_deps = VideoSearchDeps(tenant_id=deps.tenant_id)
+        self.video_agent = VideoSearchAgent(deps=video_deps)
 
         # Parallel executor
         self.parallel_executor = ParallelAgentExecutor(
-            max_concurrent_agents=10
+            max_concurrent_agents=deps.max_concurrent_agents
         )
 
         # Telemetry
         self.telemetry = TelemetryManager.get_instance(
-            tenant_id=tenant_id,
+            tenant_id=deps.tenant_id,
             project_name="composing_agent"
         )
 ```
@@ -684,7 +774,7 @@ async def process_query(
 
 **Location**: `libs/agents/cogniverse_agents/profile_selection_agent.py`
 **Purpose**: LLM-based intelligent backend profile selection and ensemble composition
-**Base Classes**: `DSPyA2AAgentBase`
+**Base Classes**: `A2AAgent[ProfileSelectionInput, ProfileSelectionOutput, ProfileSelectionDeps]`
 **Port**: 8011
 
 #### Overview
@@ -777,10 +867,33 @@ class ProfileSelectionSignature(dspy.Signature):
 #### Class Definition
 
 ```python
-from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from pydantic import Field
 import dspy
 
-class ProfileSelectionAgent(DSPyA2AAgentBase):
+
+class ProfileSelectionInput(AgentInput):
+    """Input for profile selection."""
+    query: str = Field(..., description="Query to analyze")
+    entities: list = Field(default_factory=list, description="Extracted entities")
+    available_profiles: list = Field(default_factory=list, description="Available profiles")
+
+
+class ProfileSelectionOutput(AgentOutput):
+    """Output from profile selection."""
+    selected_profiles: list = Field(default_factory=list, description="Selected profile names")
+    use_ensemble: bool = Field(False, description="Whether to use ensemble mode")
+    reasoning: str = Field("", description="Selection reasoning")
+    confidence: float = Field(0.0, description="Selection confidence")
+
+
+class ProfileSelectionDeps(AgentDeps):
+    """Dependencies for profile selection agent."""
+    model: str = "ollama/smollm2:latest"
+
+
+class ProfileSelectionAgent(A2AAgent[ProfileSelectionInput, ProfileSelectionOutput, ProfileSelectionDeps]):
     """
     Intelligent profile selection agent using DSPy and small LLMs.
 
@@ -788,23 +901,17 @@ class ProfileSelectionAgent(DSPyA2AAgentBase):
     optimal backend profiles for search.
     """
 
-    def __init__(
-        self,
-        agent_name: str = "profile_selection_agent",
-        model: str = "ollama/smollm2:latest",
-        port: int = 8011
-    ):
+    def __init__(self, deps: ProfileSelectionDeps, port: int = 8011):
         """
         Initialize profile selection agent.
 
         Args:
-            agent_name: Agent identifier
-            model: LLM model for profile selection (via Ollama)
+            deps: ProfileSelectionDeps with tenant_id and model config
             port: A2A HTTP server port
         """
         # Configure DSPy with Ollama
         lm = dspy.LM(
-            model=model,
+            model=deps.model,
             api_base="http://localhost:11434",
             api_key="ollama"
         )
@@ -813,13 +920,26 @@ class ProfileSelectionAgent(DSPyA2AAgentBase):
         # Create DSPy module
         self.profile_selector = dspy.ChainOfThought(ProfileSelectionSignature)
 
-        # Initialize base with A2A protocol
-        super().__init__(
-            agent_name=agent_name,
+        config = A2AAgentConfig(
+            agent_name="profile_selection_agent",
             agent_description="Intelligent backend profile selection for multi-modal search",
-            dspy_module=self.profile_selector,
             capabilities=["profile_selection", "ensemble_composition"],
-            port=port
+            port=port,
+        )
+        super().__init__(deps=deps, config=config, dspy_module=self.profile_selector)
+
+    async def process(self, input: ProfileSelectionInput) -> ProfileSelectionOutput:
+        """Type-safe profile selection."""
+        result = self.profile_selector(
+            query=input.query,
+            entities=input.entities,
+            available_profiles=input.available_profiles
+        )
+        return ProfileSelectionOutput(
+            selected_profiles=result.selected_profiles,
+            use_ensemble=result.use_ensemble,
+            reasoning=result.reasoning,
+            confidence=result.confidence
         )
 ```
 
@@ -995,7 +1115,7 @@ def _get_profile_capabilities(self) -> Dict[str, Dict]:
 
 **Location**: `libs/agents/cogniverse_agents/entity_extraction_agent.py`
 **Purpose**: Fast entity and relationship extraction for query enhancement
-**Base Classes**: `DSPyA2AAgentBase`
+**Base Classes**: `A2AAgent[EntityExtractionInput, EntityExtractionOutput, EntityExtractionDeps]`
 **Port**: 8010
 
 #### Overview
@@ -1034,11 +1154,33 @@ graph LR
 #### Class Definition
 
 ```python
-from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from pydantic import Field
 from gliner import GLiNER
 import spacy
 
-class EntityExtractionAgent(DSPyA2AAgentBase):
+
+class EntityExtractionInput(AgentInput):
+    """Input for entity extraction."""
+    query: str = Field(..., description="Query to extract entities from")
+
+
+class EntityExtractionOutput(AgentOutput):
+    """Output from entity extraction."""
+    entities: list = Field(default_factory=list, description="Extracted entities")
+    relationships: list = Field(default_factory=list, description="Extracted relationships")
+    entity_count: int = Field(0, description="Number of entities found")
+    relationship_count: int = Field(0, description="Number of relationships found")
+
+
+class EntityExtractionDeps(AgentDeps):
+    """Dependencies for entity extraction agent."""
+    gliner_model: str = "urchade/gliner_multi-v2.1"
+    spacy_model: str = "en_core_web_sm"
+
+
+class EntityExtractionAgent(A2AAgent[EntityExtractionInput, EntityExtractionOutput, EntityExtractionDeps]):
     """
     Fast entity and relationship extraction agent.
 
@@ -1046,34 +1188,38 @@ class EntityExtractionAgent(DSPyA2AAgentBase):
     Optimized for low latency (<100ms typical).
     """
 
-    def __init__(
-        self,
-        agent_name: str = "entity_extraction_agent",
-        gliner_model: str = "urchade/gliner_multi-v2.1",
-        port: int = 8010
-    ):
+    def __init__(self, deps: EntityExtractionDeps, port: int = 8010):
         """
         Initialize entity extraction agent.
 
         Args:
-            agent_name: Agent identifier
-            gliner_model: GLiNER model for NER
+            deps: EntityExtractionDeps with tenant_id and model config
             port: A2A HTTP server port
         """
         # Load GLiNER (lazy loading on first use)
         self._gliner_model = None
-        self._gliner_model_name = gliner_model
+        self._gliner_model_name = deps.gliner_model
 
         # Load spaCy
-        self._nlp = spacy.load("en_core_web_sm")
+        self._nlp = spacy.load(deps.spacy_model)
 
-        # Initialize base
-        super().__init__(
-            agent_name=agent_name,
+        config = A2AAgentConfig(
+            agent_name="entity_extraction_agent",
             agent_description="Fast entity and relationship extraction for query enhancement",
-            dspy_module=None,  # No DSPy module needed
             capabilities=["entity_extraction", "relationship_extraction"],
-            port=port
+            port=port,
+        )
+        super().__init__(deps=deps, config=config, dspy_module=None)
+
+    async def process(self, input: EntityExtractionInput) -> EntityExtractionOutput:
+        """Type-safe entity extraction."""
+        entities = self._extract_entities(input.query)
+        relationships = self._extract_relationships(input.query, entities)
+        return EntityExtractionOutput(
+            entities=entities,
+            relationships=relationships,
+            entity_count=len(entities),
+            relationship_count=len(relationships)
         )
 ```
 
@@ -1254,7 +1400,7 @@ def _extract_relationships(
 
 **Location**: `libs/agents/cogniverse_agents/orchestrator_agent.py`
 **Purpose**: Multi-agent workflow coordination with planning and action phases
-**Base Classes**: `DSPyA2AAgentBase`
+**Base Classes**: `A2AAgent[OrchestrationInput, OrchestrationOutput, OrchestratorDeps]`
 **Port**: 8001
 
 #### Overview
@@ -1313,11 +1459,31 @@ sequenceDiagram
 #### Class Definition
 
 ```python
-from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_agents.agent_registry import AgentRegistry
+from pydantic import Field
 import asyncio
 
-class OrchestratorAgent(DSPyA2AAgentBase):
+
+class OrchestrationInput(AgentInput):
+    """Input for orchestration."""
+    query: str = Field(..., description="Query to orchestrate")
+    options: dict = Field(default_factory=dict, description="Orchestration options")
+
+
+class OrchestrationOutput(AgentOutput):
+    """Output from orchestration."""
+    results: list = Field(default_factory=list, description="Search results")
+    metadata: dict = Field(default_factory=dict, description="Orchestration metadata")
+
+
+class OrchestratorDeps(AgentDeps):
+    """Dependencies for orchestrator agent."""
+    agent_registry_url: str = "http://localhost:8000"
+
+
+class OrchestratorAgent(A2AAgent[OrchestrationInput, OrchestrationOutput, OrchestratorDeps]):
     """
     Multi-agent workflow orchestrator with planning and action phases.
 
@@ -1325,30 +1491,31 @@ class OrchestratorAgent(DSPyA2AAgentBase):
     to execute complex multi-modal queries.
     """
 
-    def __init__(
-        self,
-        agent_name: str = "orchestrator_agent",
-        agent_registry_url: str = "http://localhost:8000",
-        port: int = 8001
-    ):
+    def __init__(self, deps: OrchestratorDeps, port: int = 8001):
         """
         Initialize orchestrator agent.
 
         Args:
-            agent_name: Agent identifier
-            agent_registry_url: URL of AgentRegistry service
+            deps: OrchestratorDeps with tenant_id and registry URL
             port: A2A HTTP server port
         """
         # Agent registry for discovery
-        self.registry = AgentRegistry(base_url=agent_registry_url)
+        self.registry = AgentRegistry(base_url=deps.agent_registry_url)
 
-        # Initialize base
-        super().__init__(
-            agent_name=agent_name,
+        config = A2AAgentConfig(
+            agent_name="orchestrator_agent",
             agent_description="Multi-agent workflow orchestration with planning and action phases",
-            dspy_module=None,  # No DSPy module needed
             capabilities=["orchestration", "workflow_management"],
-            port=port
+            port=port,
+        )
+        super().__init__(deps=deps, config=config, dspy_module=None)
+
+    async def process(self, input: OrchestrationInput) -> OrchestrationOutput:
+        """Type-safe orchestration processing."""
+        result = await self.orchestrate(input.query, input.options)
+        return OrchestrationOutput(
+            results=result.results,
+            metadata=result.metadata
         )
 ```
 
@@ -1823,85 +1990,96 @@ results = await search_agent.search_ensemble(
 
 ## Agent Architecture
 
-### DSPy 3.0 + A2A Protocol Base Class
+### Type-Safe A2AAgent Base Class with Generics
 
-All agents extend `DSPyA2AAgentBase` from `cogniverse_core`:
+All agents extend `A2AAgent[InputT, OutputT, DepsT]` from `cogniverse_core`, providing compile-time type safety:
 
 ```python
-# libs/core/cogniverse_core/agents/dspy_a2a_base.py
+# libs/core/cogniverse_core/agents/a2a_agent.py
 
-class DSPyA2AAgentBase(ABC):
+from cogniverse_core.agents.base import AgentBase, AgentDeps, AgentInput, AgentOutput
+from typing import Generic, TypeVar
+import dspy
+
+InputT = TypeVar("InputT", bound=AgentInput)
+OutputT = TypeVar("OutputT", bound=AgentOutput)
+DepsT = TypeVar("DepsT", bound=AgentDeps)
+
+
+class A2AAgentConfig(BaseModel):
+    """Configuration for A2A agents."""
+    agent_name: str
+    agent_description: str
+    capabilities: list[str] = []
+    port: int = 8000
+    version: str = "1.0.0"
+
+
+class A2AAgent(AgentBase[InputT, OutputT, DepsT]):
     """
-    Base class that bridges DSPy 3.0 modules with A2A protocol.
+    Type-safe base class that bridges DSPy 3.0 modules with A2A protocol.
 
     Architecture:
+    - Generic Types: InputT, OutputT, DepsT for compile-time type checking
     - A2A Protocol Layer: Standard endpoints for agent communication
     - DSPy 3.0 Core: Advanced AI capabilities and optimization
-    - Conversion Layer: A2A ↔ DSPy data format conversion
+    - Pydantic Validation: Automatic input/output validation
 
     Features:
+    - Type-safe process(input: InputT) -> OutputT method
     - Standard A2A endpoints (/agent.json, /tasks/send, /health)
-    - Automatic data conversion between A2A and DSPy formats
-    - Error handling and fallback mechanisms
-    - Performance tracking and observability
+    - IDE autocomplete and type checking support
+    - Multi-tenant support via DepsT.tenant_id
     - Multi-modal support (text, images, video, audio)
     """
 
     def __init__(
         self,
-        agent_name: str,
-        agent_description: str,
-        dspy_module: dspy.Module,
-        capabilities: List[str],
-        port: int = 8000,
-        version: str = "1.0.0"
+        deps: DepsT,
+        config: A2AAgentConfig,
+        dspy_module: Optional[dspy.Module] = None,
     ):
         """
-        Initialize DSPy-A2A agent.
+        Initialize type-safe A2A agent.
 
         Args:
-            agent_name: Name for A2A protocol
-            agent_description: Agent card description
-            dspy_module: Core DSPy 3.0 module
-            capabilities: List of capabilities
-            port: A2A HTTP server port
-            version: Agent version
+            deps: Agent dependencies including tenant_id
+            config: A2AAgentConfig with name, description, etc.
+            dspy_module: Optional DSPy 3.0 module
         """
-        # A2A Protocol Configuration
-        self.agent_name = agent_name
-        self.agent_description = agent_description
-        self.capabilities = capabilities
-        self.port = port
-        self.version = version
+        super().__init__(deps=deps)
 
-        # DSPy 3.0 Core
+        # A2A Protocol Configuration
+        self.config = config
         self.dspy_module = dspy_module
 
         # FastAPI app for A2A endpoints
         self.app = FastAPI(
-            title=f"{agent_name} A2A Agent",
-            description=agent_description,
-            version=version
+            title=f"{config.agent_name} A2A Agent",
+            description=config.agent_description,
+            version=config.version
         )
 
         # A2A Client for inter-agent communication
         self.a2a_client = A2AClient()
 
     @abstractmethod
-    async def _process_with_dspy(self, dspy_input: Dict) -> Any:
+    async def process(self, input: InputT) -> OutputT:
         """
-        Process request using DSPy module.
+        Type-safe processing method.
 
-        Must be implemented by subclass to define DSPy processing logic.
+        Must be implemented by subclass. IDE provides autocomplete
+        for both input fields and return type.
         """
         pass
 ```
 
-**Key Differences from Traditional Base Classes:**
-- **No built-in tenant_id**: Agents implement multi-tenancy via mixins (MemoryAwareMixin) or custom logic
-- **DSPy 3.0 Integration**: Core is a DSPy module, not just configuration
-- **A2A Protocol**: Built-in FastAPI server with standard A2A endpoints
-- **Abstract Method**: `_process_with_dspy()` instead of `execute()`
+**Key Benefits of Type-Safe Architecture:**
+- **Generic Types**: `A2AAgent[InputT, OutputT, DepsT]` enables IDE autocomplete
+- **Pydantic Validation**: Input/output automatically validated at runtime
+- **Deps Pattern**: `deps.tenant_id` replaces individual constructor parameters
+- **Abstract process()**: Clear contract with type-safe signature
+- **A2A Protocol**: Built-in FastAPI server with standard endpoints
 
 ### MemoryAwareMixin
 
@@ -2144,40 +2322,51 @@ class TenantAwareAgentMixin:
 
 #### Usage in Agents
 
-**With Multiple Inheritance (Explicit __init__ calls)**:
+**With Type-Safe A2AAgent (Recommended)**:
 
 ```python
 # libs/agents/cogniverse_agents/routing_agent.py
 
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps
+from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+
+
+class RoutingDeps(AgentDeps):
+    """Dependencies include tenant_id from base + custom config"""
+    enable_caching: bool = True
+
+
+class RoutingAgent(A2AAgent[RoutingInput, RoutingOutput, RoutingDeps], MemoryAwareMixin):
+    """Routing agent with type-safe deps and memory support"""
+
+    def __init__(self, deps: RoutingDeps, port: int = 8001):
+        # Initialize A2AAgent with deps (tenant_id via deps.tenant_id)
+        config = A2AAgentConfig(agent_name="routing_agent", ...)
+        super().__init__(deps=deps, config=config, dspy_module=None)
+
+        # Initialize memory support
+        self.initialize_memory("routing_agent", deps.tenant_id)
+
+        # Now deps.tenant_id is available for agent logic
+        logger.info(f"RoutingAgent initialized for tenant: {deps.tenant_id}")
+```
+
+**Legacy Mixin Pattern (For Backward Compatibility)**:
+
+```python
 from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 
-class RoutingAgent(TenantAwareAgentMixin, MemoryAwareMixin):
-    """Routing agent with tenant and memory support"""
-
-    def __init__(self, tenant_id: str, **kwargs):
-        # Initialize tenant support FIRST (validates tenant_id)
-        TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
-
-        # Then initialize memory support
-        MemoryAwareMixin.__init__(self, tenant_id=tenant_id)
-
-        # Now self.tenant_id is available for agent logic
-        logger.info(f"RoutingAgent initialized for tenant: {self.tenant_id}")
-```
-
-**With Multiple Inheritance (Using super() - Alternative)**:
-
-```python
-class VideoSearchAgent(TenantAwareAgentMixin, MemoryAwareMixin):
-    """Video search agent with tenant and memory support"""
+class LegacyAgent(TenantAwareAgentMixin, MemoryAwareMixin):
+    """Legacy agent using mixin pattern"""
 
     def __init__(self, tenant_id: str, **kwargs):
         # Using super() with MRO chain
         super().__init__(tenant_id=tenant_id, **kwargs)
 
         # Tenant validation already complete
-        logger.info(f"VideoSearchAgent initialized for tenant: {self.tenant_id}")
+        logger.info(f"Agent initialized for tenant: {self.tenant_id}")
 ```
 
 #### Key Methods
@@ -2302,10 +2491,11 @@ assert agent_a.memory_manager is not agent_b.memory_manager
 ### Example 1: Basic Routing
 
 ```python
-from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 
-# Initialize agent for tenant
-agent = RoutingAgent(tenant_id="acme")
+# Initialize agent for tenant using deps
+deps = RoutingDeps(tenant_id="acme", enable_caching=True)
+agent = RoutingAgent(deps=deps)
 
 # Route query
 decision = await agent.route_query(
@@ -2321,15 +2511,16 @@ print(f"Confidence: {decision.confidence}")
 ### Example 2: Video Search
 
 ```python
-from cogniverse_agents.video_search_agent import VideoSearchAgent
+from cogniverse_agents.video_search_agent import VideoSearchAgent, VideoSearchDeps
 
-# Initialize agent
-agent = VideoSearchAgent(
+# Initialize agent with deps
+deps = VideoSearchDeps(
     tenant_id="acme",
     vespa_host="localhost",
     vespa_port=8080,
     profile="video_colpali_smol500_mv_frame"
 )
+agent = VideoSearchAgent(deps=deps)
 
 # Text search
 results = await agent.search_by_text(
@@ -2345,10 +2536,11 @@ for result in results:
 ### Example 3: Multi-Agent Orchestration
 
 ```python
-from cogniverse_agents.composing_agent import ComposingAgent
+from cogniverse_agents.composing_agent import ComposingAgent, ComposingDeps
 
-# Initialize composing agent
-orchestrator = ComposingAgent(tenant_id="acme")
+# Initialize composing agent with deps
+deps = ComposingDeps(tenant_id="acme", max_concurrent_agents=10)
+orchestrator = ComposingAgent(deps=deps)
 
 # Process complex query
 response = await orchestrator.process_query(
@@ -2367,11 +2559,12 @@ print(f"Confidence: {response['confidence']}")
 ### Example 4: Memory-Aware Search
 
 ```python
-from cogniverse_agents.video_search_agent import VideoSearchAgent
+from cogniverse_agents.video_search_agent import VideoSearchAgent, VideoSearchDeps
 
 # Initialize with memory
-agent = VideoSearchAgent(tenant_id="acme")
-agent.initialize_memory("video_search", "acme")
+deps = VideoSearchDeps(tenant_id="acme")
+agent = VideoSearchAgent(deps=deps)
+agent.initialize_memory("video_search", deps.tenant_id)
 
 # First search
 results1 = await agent.search_by_text("cooking tutorials")
@@ -2399,19 +2592,21 @@ results2 = await agent.search_by_text("advanced cooking techniques")
 # tests/agents/unit/test_routing_agent.py
 
 import pytest
-from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 
 class TestRoutingAgent:
     def test_initialization(self):
-        """Test agent initialization with tenant_id"""
-        agent = RoutingAgent(tenant_id="test_tenant")
+        """Test agent initialization with deps"""
+        deps = RoutingDeps(tenant_id="test_tenant")
+        agent = RoutingAgent(deps=deps)
 
-        assert agent.tenant_id == "test_tenant"
+        assert agent.deps.tenant_id == "test_tenant"
         assert agent.telemetry is not None
 
     async def test_route_query(self):
         """Test query routing"""
-        agent = RoutingAgent(tenant_id="test_tenant")
+        deps = RoutingDeps(tenant_id="test_tenant")
+        agent = RoutingAgent(deps=deps)
 
         decision = await agent.route_query(
             query="machine learning videos"
@@ -2423,10 +2618,12 @@ class TestRoutingAgent:
 
     def test_tenant_isolation(self):
         """Verify tenant isolation"""
-        agent_a = RoutingAgent(tenant_id="tenant_a")
-        agent_b = RoutingAgent(tenant_id="tenant_b")
+        deps_a = RoutingDeps(tenant_id="tenant_a")
+        deps_b = RoutingDeps(tenant_id="tenant_b")
+        agent_a = RoutingAgent(deps=deps_a)
+        agent_b = RoutingAgent(deps=deps_b)
 
-        assert agent_a.tenant_id != agent_b.tenant_id
+        assert agent_a.deps.tenant_id != agent_b.deps.tenant_id
         # Memory managers should be different instances
         agent_a.initialize_memory("routing", "tenant_a")
         agent_b.initialize_memory("routing", "tenant_b")
@@ -2507,22 +2704,24 @@ def cleanup_tenant_schemas(test_tenant_id):
 
 ## Best Practices
 
-### 1. Always Pass Tenant ID
+### 1. Always Use Deps with Tenant ID
 
 ```python
-# ✅ Good: Explicit tenant_id
-agent = RoutingAgent(tenant_id="acme")
+# ✅ Good: Explicit deps with tenant_id
+deps = RoutingDeps(tenant_id="acme", enable_caching=True)
+agent = RoutingAgent(deps=deps)
 
-# ❌ Bad: No tenant context
-agent = RoutingAgent()  # Raises ValueError
+# ❌ Bad: No deps
+agent = RoutingAgent()  # TypeError: missing deps
 ```
 
 ### 2. Initialize Memory When Needed
 
 ```python
 # If agent needs memory
-agent = VideoSearchAgent(tenant_id="acme")
-agent.initialize_memory("video_search", "acme")
+deps = VideoSearchDeps(tenant_id="acme")
+agent = VideoSearchAgent(deps=deps)
+agent.initialize_memory("video_search", deps.tenant_id)
 
 # Memory automatically used in searches
 results = await agent.search_by_text("query")
@@ -2532,7 +2731,8 @@ results = await agent.search_by_text("query")
 
 ```python
 # Telemetry automatically initialized
-agent = RoutingAgent(tenant_id="acme")
+deps = RoutingDeps(tenant_id="acme")
+agent = RoutingAgent(deps=deps)
 
 # All operations traced to Phoenix project: acme_routing_agent
 decision = await agent.route_query("query")
@@ -2543,10 +2743,12 @@ decision = await agent.route_query("query")
 ```python
 # Always verify tenants are isolated
 def test_tenant_isolation():
-    agent_a = RoutingAgent(tenant_id="tenant_a")
-    agent_b = RoutingAgent(tenant_id="tenant_b")
+    deps_a = RoutingDeps(tenant_id="tenant_a")
+    deps_b = RoutingDeps(tenant_id="tenant_b")
+    agent_a = RoutingAgent(deps=deps_a)
+    agent_b = RoutingAgent(deps=deps_b)
 
-    assert agent_a.tenant_id != agent_b.tenant_id
+    assert agent_a.deps.tenant_id != agent_b.deps.tenant_id
     assert agent_a.telemetry.project_name != agent_b.telemetry.project_name
 ```
 

@@ -8,9 +8,6 @@ from unittest.mock import AsyncMock, Mock, mock_open, patch
 import dspy
 import pytest
 from cogniverse_agents.detailed_report_agent import DetailedReportAgent
-
-# Phase 1-3 imports for integration tests
-from cogniverse_agents.dspy_a2a_agent_base import DSPyA2AAgentBase, SimpleDSPyA2AAgent
 from cogniverse_agents.dspy_agent_optimizer import (
     DSPyAgentOptimizerPipeline,
     DSPyAgentPromptOptimizer,
@@ -47,7 +44,58 @@ from cogniverse_agents.search_agent import SearchAgent
 
 # Agent imports
 from cogniverse_agents.summarizer_agent import SummarizerAgent
+
+# Phase 1-3 imports for integration tests
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_foundation.config.utils import create_default_config_manager
+from pydantic import Field
+
+
+# Test fixture classes for A2AAgent testing (replaces old DSPyA2AAgentBase tests)
+class SimpleInput(AgentInput):
+    """Simple input for test agent"""
+    query: str = Field("", description="Query text")
+    context: str = Field("", description="Optional context")
+
+
+class SimpleOutput(AgentOutput):
+    """Simple output for test agent"""
+    result: str = Field("", description="Processing result")
+    confidence: float = Field(0.0, description="Confidence score")
+
+
+class SimpleDeps(AgentDeps):
+    """Simple deps for test agent"""
+    pass  # Only needs tenant_id from base
+
+
+class SimpleDSPyA2AAgent(A2AAgent[SimpleInput, SimpleOutput, SimpleDeps]):
+    """
+    Simple test agent that extends A2AAgent.
+    Replaces old SimpleDSPyA2AAgent from deleted dspy_a2a_agent_base.py
+    """
+
+    def __init__(self, port: int = 8000):
+        deps = SimpleDeps(tenant_id="test_tenant")
+        config = A2AAgentConfig(
+            agent_name="simple_test_agent",
+            agent_description="Simple agent for testing",
+            capabilities=["testing"],
+            port=port,
+        )
+        super().__init__(deps=deps, config=config, dspy_module=None)
+
+    async def process(self, input: SimpleInput) -> SimpleOutput:
+        """Process input and return result"""
+        return SimpleOutput(
+            result=f"Processed: {input.query}",
+            confidence=0.95,
+        )
+
+
+# Alias for backward compatibility with tests
+DSPyA2AAgentBase = A2AAgent
 
 
 @pytest.mark.unit
@@ -240,15 +288,18 @@ class TestDSPyAgentIntegration:
     @patch("cogniverse_agents.routing_agent.AdvancedRoutingOptimizer")
     def test_routing_agent_dspy_integration(self, mock_optimizer, mock_routing_module, telemetry_manager_without_phoenix):
         """Test DSPy integration in RoutingAgent."""
+        from cogniverse_agents.routing_agent import RoutingDeps
+
         # Mock the routing modules to avoid loading models
         mock_routing_instance = Mock()
         mock_routing_module.return_value = mock_routing_instance
         mock_optimizer.return_value = Mock()
 
-        agent = RoutingAgent(
+        deps = RoutingDeps(
             tenant_id="test_tenant",
             telemetry_config=telemetry_manager_without_phoenix.config
         )
+        agent = RoutingAgent(deps=deps)
 
         # Should have DSPy capabilities (routing_module is the DSPy component)
         assert hasattr(agent, "routing_module")
@@ -261,7 +312,9 @@ class TestDSPyAgentIntegration:
     @patch("cogniverse_core.config.utils.get_config")
     @patch("cogniverse_agents.summarizer_agent.VLMInterface")
     def test_summarizer_agent_dspy_integration(self, mock_vlm, mock_config):
-        """Test DSPy integration in SummarizerAgent."""
+        """Test type-safe A2AAgent integration in SummarizerAgent."""
+        from cogniverse_agents.summarizer_agent import SummarizerDeps
+
         mock_vlm.return_value = Mock()
         mock_config.return_value = {
             "llm": {
@@ -271,22 +324,26 @@ class TestDSPyAgentIntegration:
             }
         }
 
-        agent = SummarizerAgent(tenant_id="test_tenant", config_manager=create_default_config_manager())
+        deps = SummarizerDeps(tenant_id="test_tenant")
+        agent = SummarizerAgent(deps=deps)
 
-        # Should have DSPy capabilities
-        assert hasattr(agent, "dspy_enabled")
-        assert hasattr(agent, "get_optimized_prompt")
-        assert hasattr(agent, "get_optimized_summary_prompt")
+        # Should have type-safe A2AAgent structure
+        assert hasattr(agent, "deps")
+        assert hasattr(agent, "config")
+        assert hasattr(agent, "process")
+        assert agent.deps.tenant_id == "test_tenant"
 
-        # Test DSPy metadata
-        metadata = agent.get_dspy_metadata()
-        assert "enabled" in metadata
-        assert metadata["agent_type"] in ["summary_generation", "query_analysis"]
+        # Should have summarization capabilities
+        assert hasattr(agent, "summarize_with_routing_decision")
+        assert hasattr(agent, "summarize_with_relationships")
+        assert callable(agent.summarize_with_relationships)
 
     @patch("cogniverse_core.config.utils.get_config")
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
     def test_detailed_report_agent_dspy_integration(self, mock_vlm, mock_config):
-        """Test DSPy integration in DetailedReportAgent."""
+        """Test type-safe A2AAgent integration in DetailedReportAgent."""
+        from cogniverse_agents.detailed_report_agent import DetailedReportDeps
+
         mock_vlm.return_value = Mock()
         mock_config.return_value = {
             "llm": {
@@ -296,17 +353,18 @@ class TestDSPyAgentIntegration:
             }
         }
 
-        agent = DetailedReportAgent(tenant_id="test_tenant", config_manager=create_default_config_manager())
+        deps = DetailedReportDeps(tenant_id="test_tenant")
+        agent = DetailedReportAgent(deps=deps)
 
-        # Should have DSPy capabilities
-        assert hasattr(agent, "dspy_enabled")
-        assert hasattr(agent, "get_optimized_prompt")
-        assert hasattr(agent, "get_optimized_report_prompt")
+        # Should have type-safe A2AAgent structure
+        assert hasattr(agent, "deps")
+        assert hasattr(agent, "config")
+        assert hasattr(agent, "process")
+        assert agent.deps.tenant_id == "test_tenant"
 
-        # Test DSPy metadata
-        metadata = agent.get_dspy_metadata()
-        assert "enabled" in metadata
-        assert metadata["agent_type"] in ["detailed_report", "query_analysis"]
+        # Should have report generation capabilities
+        assert hasattr(agent, "generate_report_with_routing_decision")
+        assert callable(agent.generate_report_with_routing_decision)
 
     @patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent")
     def test_query_analysis_tool_dspy_integration(self, mock_routing_agent):
@@ -648,8 +706,7 @@ class TestDSPyEndToEndIntegration:
 class TestDSPy30A2ABaseIntegration:
     """Test DSPy 3.0 + A2A base integration layer (Phase 1.2).
 
-    This tests the new dspy_a2a_agent_base.py implementation that will
-    replace the old DSPyIntegrationMixin approach.
+    This tests the new A2AAgent implementation with type-safe generics.
     """
 
     @pytest.fixture
@@ -669,107 +726,64 @@ class TestDSPy30A2ABaseIntegration:
     def test_dspy30_agent_initialization(self, mock_dspy30_module):
         """Test DSPy 3.0 agent initialization with A2A protocol"""
 
-        # Create concrete implementation for testing
-        class TestDSPy30Agent(DSPyA2AAgentBase):
-            async def _process_with_dspy(self, dspy_input):
-                return await self.dspy_module.forward(**dspy_input)
+        # Create concrete implementation for testing using type-safe pattern
+        class TestDSPy30Agent(A2AAgent[SimpleInput, SimpleOutput, SimpleDeps]):
+            async def process(self, input: SimpleInput) -> SimpleOutput:
+                result = await self.dspy_module.forward(query=input.query)
+                return SimpleOutput(
+                    result=getattr(result, "response", str(result)),
+                    confidence=getattr(result, "confidence", 0.0)
+                )
 
-            def _dspy_to_a2a_output(self, dspy_output):
-                return {
-                    "status": "success",
-                    "response": getattr(dspy_output, "response", str(dspy_output)),
-                    "confidence": getattr(dspy_output, "confidence", 0.0),
-                    "agent": self.agent_name,
-                }
-
-            def _get_agent_skills(self):
-                return [
-                    {
-                        "name": "test_skill",
-                        "description": "Test skill",
-                        "input_schema": {},
-                        "output_schema": {},
-                    }
-                ]
-
-        agent = TestDSPy30Agent(
+        deps = SimpleDeps(tenant_id="test_tenant")
+        config = A2AAgentConfig(
             agent_name="TestDSPy30Agent",
             agent_description="DSPy 3.0 test agent",
-            dspy_module=mock_dspy30_module,
             capabilities=["dspy30_processing", "a2a_protocol"],
             port=8999,
         )
+        agent = TestDSPy30Agent(deps=deps, config=config, dspy_module=mock_dspy30_module)
 
-        assert agent.agent_name == "TestDSPy30Agent"
-        assert "dspy30_processing" in agent.capabilities
-        assert "a2a_protocol" in agent.capabilities
+        assert agent.config.agent_name == "TestDSPy30Agent"
+        assert "dspy30_processing" in agent.config.capabilities
+        assert "a2a_protocol" in agent.config.capabilities
         assert agent.dspy_module == mock_dspy30_module
         assert hasattr(agent, "app")  # FastAPI app for A2A
         assert hasattr(agent, "a2a_client")  # A2A client for inter-agent communication
 
     def test_a2a_to_dspy_conversion_enhanced(self):
-        """Test enhanced A2A to DSPy conversion with DSPy 3.0 features"""
+        """Test type-safe input/output processing with A2AAgent"""
 
         agent = SimpleDSPyA2AAgent(port=8998)
 
-        # Test multimodal A2A task
-        a2a_task = {
-            "id": "dspy30_multimodal_task",
-            "messages": [
-                {
-                    "role": "user",
-                    "parts": [
-                        {"type": "text", "text": "Analyze this video with DSPy 3.0"},
-                        {
-                            "type": "video",
-                            "video_data": b"mock_video",
-                            "filename": "test.mp4",
-                        },
-                        {
-                            "type": "data",
-                            "data": {
-                                "context": "dspy30_analysis",
-                                "use_advanced_reasoning": True,
-                                "enable_mlflow_tracking": True,
-                            },
-                        },
-                    ],
-                }
-            ],
-        }
+        # Test that agent has type-safe input/output
+        assert hasattr(agent, 'process')
+        assert hasattr(agent, 'deps')
+        assert hasattr(agent, 'config')
 
-        dspy_input = agent._a2a_to_dspy_input(a2a_task)
-
-        assert dspy_input["query"] == "Analyze this video with DSPy 3.0"
-        assert dspy_input["video_data"] == b"mock_video"
-        assert dspy_input["context"] == "dspy30_analysis"
-        assert dspy_input["use_advanced_reasoning"] is True
-        assert dspy_input["enable_mlflow_tracking"] is True
+        # Verify agent configuration
+        assert agent.config.agent_name == "simple_test_agent"
+        assert agent.deps.tenant_id == "test_tenant"
+        assert "testing" in agent.config.capabilities
 
     @pytest.mark.asyncio
     async def test_dspy30_async_processing(self):
-        """Test DSPy 3.0 async processing capabilities"""
+        """Test DSPy 3.0 async processing via type-safe process() method"""
 
         agent = SimpleDSPyA2AAgent(port=8997)
 
-        # Test async processing
-        dspy_input = {
-            "query": "Test DSPy 3.0 async processing",
-            "context": "async_test",
-        }
+        # Test async processing via type-safe process() method
+        input_data = SimpleInput(
+            query="Test DSPy 3.0 async processing",
+            context="async_test"
+        )
 
-        with patch.object(agent.dspy_module, "forward") as mock_forward:
-            mock_result = Mock()
-            mock_result.response = "Async processed result"
-            mock_result.confidence = 0.95
-            mock_forward.return_value = mock_result
+        result = await agent.process(input_data)
 
-            result = await agent._process_with_dspy(dspy_input)
-
-            assert result.response == "Async processed result"
-            assert result.confidence == 0.95
-            # DSPy may call forward multiple times internally, so check it was called with correct args
-            mock_forward.assert_called_with(query="Test DSPy 3.0 async processing")
+        # Verify type-safe output
+        assert isinstance(result, SimpleOutput)
+        assert "Processed:" in result.result
+        assert result.confidence == 0.95
 
 
 @pytest.mark.unit
@@ -1986,27 +2000,24 @@ class TestDSPyComponentsIntegration:
             "source_agent": "user_interface",
         }
 
-        # Test Phase 1: A2A to DSPy conversion
+        # Test Phase 1: A2A to process flow
         # Create agent with proper constructor
         agent = SimpleDSPyA2AAgent(port=8000)
 
-        # Test A2A message processing by testing the base functionality
-        # Since we don't need to actually run DSPy modules, test the structure
-        assert hasattr(agent, "_a2a_to_dspy_input")
-        assert hasattr(agent, "_process_with_dspy")
-        assert hasattr(agent, "_dspy_to_a2a_output")
+        # Test A2A agent has expected attributes from new type-safe API
+        # Since we migrated from DSPyA2AAgentBase to A2AAgent, check new API
+        assert hasattr(agent, "process")  # New type-safe process method
+        assert hasattr(agent, "deps")  # Dependencies object
+        assert hasattr(agent, "config")  # A2A config
+        assert hasattr(agent, "agent_name")  # From A2A config
+        assert hasattr(agent, "capabilities")  # From A2A config
 
-        # Verify A2A message processing structure
-        # Mock the internal method to avoid DSPy execution
-        with patch.object(agent, "_a2a_to_dspy_input") as mock_convert:
-            mock_convert.return_value = {
-                "query": "robots playing soccer in competitions",
-                "context": "video search request",
-            }
+        # Verify the agent can process typed input
+        from cogniverse_core.agents.a2a_agent import A2AAgent
 
-            dspy_input = agent._a2a_to_dspy_input(a2a_message)
-            assert dspy_input["query"] == "robots playing soccer in competitions"
-            assert "context" in dspy_input
+        assert isinstance(agent, A2AAgent)
+        assert agent.tenant_id == "test_tenant"
+        assert agent.agent_name == "simple_test_agent"
 
     def test_phase2_phase3_relationship_to_enhancement_flow(self):
         """Test flow from relationship extraction (Phase 2) to query enhancement (Phase 3)"""
@@ -2094,20 +2105,23 @@ class TestDSPyComponentsIntegration:
         # Create agent with proper constructor
         agent = SimpleDSPyA2AAgent(port=8000)
 
-        # Test error handling by mocking the processing method to simulate failures
+        # Test error handling by mocking the process method to simulate failures
+        # The new A2AAgent uses typed `process` method instead of `_process_with_dspy`
 
         with patch.object(
-            agent, "_process_with_dspy", new_callable=AsyncMock
+            agent, "process", new_callable=AsyncMock
         ) as mock_process:
-            # Mock a failure response
-            mock_error_result = {"error": "Test DSPy module failure", "status": "error"}
-            mock_process.return_value = mock_error_result
+            # Mock a failure by raising an exception
+            mock_process.side_effect = ValueError("Test DSPy module failure")
 
-            # For synchronous test, we'll validate the mock result directly
-            result = mock_error_result
+            # Verify the agent has error handling capability
+            # Test that errors are properly handled (in production, the A2A endpoint catches)
+            import asyncio
 
-            # Should return error information, not crash
-            assert "error" in result or "status" in result
+            with pytest.raises(ValueError, match="Test DSPy module failure"):
+                asyncio.run(
+                    agent.process(SimpleInput(query="test"))
+                )
 
     def test_data_structure_consistency_across_phases(self):
         """Test data structures remain consistent as they flow through phases"""
@@ -2306,19 +2320,22 @@ class TestRoutingAgent:
     @pytest.mark.ci_fast
     def test_routing_agent_initialization(self, telemetry_manager_without_phoenix):
         """Test Enhanced Routing Agent initialization"""
-        from cogniverse_agents.routing_agent import RoutingConfig
+        from cogniverse_agents.routing_agent import RoutingDeps
 
         # Test with default config
-        agent = RoutingAgent(
+        deps = RoutingDeps(
             tenant_id="test_tenant",
             telemetry_config=telemetry_manager_without_phoenix.config
         )
+        agent = RoutingAgent(deps=deps)
         assert agent is not None
-        assert hasattr(agent, "config")
+        assert hasattr(agent, "deps")  # Config now stored in deps
         assert hasattr(agent, "enhanced_system_available")
 
-        # Test with custom config
-        custom_config = RoutingConfig(
+        # Test with custom config via deps (RoutingDeps contains all config)
+        custom_deps = RoutingDeps(
+            tenant_id="test_tenant",
+            telemetry_config=telemetry_manager_without_phoenix.config,
             model_name="smollm3:3b",
             base_url="http://localhost:11434/v1",
             confidence_threshold=0.8,
@@ -2326,21 +2343,19 @@ class TestRoutingAgent:
             enable_query_enhancement=True,
         )
 
-        custom_agent = RoutingAgent(
-            tenant_id="test_tenant",
-            config=custom_config,
-            telemetry_config=telemetry_manager_without_phoenix.config
-        )
-        assert custom_agent.config.confidence_threshold == 0.8
-        assert custom_agent.config.enable_relationship_extraction is True
+        custom_agent = RoutingAgent(deps=custom_deps)
+        assert custom_agent.deps.confidence_threshold == 0.8
+        assert custom_agent.deps.enable_relationship_extraction is True
 
     def test_orchestration_need_assessment(self, telemetry_manager_without_phoenix):
         """Test orchestration need assessment logic"""
+        from cogniverse_agents.routing_agent import RoutingDeps
 
-        agent = RoutingAgent(
+        deps = RoutingDeps(
             tenant_id="test_tenant",
             telemetry_config=telemetry_manager_without_phoenix.config
         )
+        agent = RoutingAgent(deps=deps)
 
         # Simple query - should not need orchestration
         simple_entities = [{"text": "robot", "label": "ENTITY", "confidence": 0.9}]
@@ -2384,11 +2399,13 @@ class TestRoutingAgent:
 
     def test_orchestration_signals_detection(self, telemetry_manager_without_phoenix):
         """Test orchestration signals detection"""
+        from cogniverse_agents.routing_agent import RoutingDeps
 
-        agent = RoutingAgent(
+        deps = RoutingDeps(
             tenant_id="test_tenant",
             telemetry_config=telemetry_manager_without_phoenix.config
         )
+        agent = RoutingAgent(deps=deps)
 
         entities = [
             {"text": "test", "label": "TEST", "confidence": 0.8}
@@ -2662,7 +2679,7 @@ class TestA2AGateway:
             video_request, datetime.now(), "test error"
         )
 
-        assert response.agent == "video_search_agent"
+        assert response.agent == "search_agent"  # Unified search agent
         assert response.confidence == 0.2  # Low emergency confidence
         assert "Emergency" in response.reasoning
         assert response.routing_method == "emergency_fallback"
@@ -2928,12 +2945,14 @@ class TestSystemIntegration:
     def test_enhanced_routing_to_orchestration_flow(self, telemetry_manager_without_phoenix):
         """Test flow from enhanced routing to orchestration"""
         from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
+        from cogniverse_agents.routing_agent import RoutingDeps
 
         # Create components
-        router = RoutingAgent(
+        deps = RoutingDeps(
             tenant_id="test_tenant",
             telemetry_config=telemetry_manager_without_phoenix.config
         )
+        router = RoutingAgent(deps=deps)
         orchestrator = MultiAgentOrchestrator(
             tenant_id="test_tenant",
             routing_agent=router,
@@ -3001,12 +3020,14 @@ class TestSystemIntegration:
 
     def test_phase4_component_initialization_order(self, telemetry_manager_without_phoenix):
         """Test Phase 4 components initialize in correct order without circular dependencies"""
+        from cogniverse_agents.routing_agent import RoutingDeps
 
         # Test 1: Enhanced Routing Agent (independent)
-        router = RoutingAgent(
+        deps = RoutingDeps(
             tenant_id="test_tenant",
             telemetry_config=telemetry_manager_without_phoenix.config
         )
+        router = RoutingAgent(deps=deps)
         assert router is not None
 
         # Test 2: Workflow Intelligence (independent)
@@ -3032,12 +3053,14 @@ class TestSystemIntegration:
         """Test error handling consistency across Phase 4 components"""
         from cogniverse_agents.a2a_gateway import A2AGateway
         from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
+        from cogniverse_agents.routing_agent import RoutingDeps
         from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
 
         # All components should handle initialization errors gracefully
         try:
             # Test with invalid config that might cause errors
-            router = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
+            deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
+            router = RoutingAgent(deps=deps)
             orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
             intelligence = WorkflowIntelligence(enable_persistence=False)
             gateway = A2AGateway(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
@@ -3057,10 +3080,12 @@ class TestSystemIntegration:
         """Test statistics reporting consistency across Phase 4 components"""
         from cogniverse_agents.a2a_gateway import A2AGateway
         from cogniverse_agents.multi_agent_orchestrator import MultiAgentOrchestrator
+        from cogniverse_agents.routing_agent import RoutingDeps
         from cogniverse_agents.workflow_intelligence import WorkflowIntelligence
 
         # All statistics should return dict with consistent structure
-        router = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
+        deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
+        router = RoutingAgent(deps=deps)
         router_stats = router.get_routing_statistics()
         assert isinstance(router_stats, dict)
         assert "total_queries" in router_stats
@@ -3086,16 +3111,17 @@ class TestSystemIntegration:
 
 @pytest.mark.unit
 class TestVideoSearchAgent:
-    """Unit tests for Enhanced Video Search Agent"""
+    """Unit tests for Enhanced Search Agent (renamed from Video Search Agent)"""
 
     @patch("cogniverse_core.config.utils.get_config")
     def test_video_search_agent_initialization(self, mock_video_config):
-        """Test Enhanced Video Search Agent initialization"""
+        """Test Enhanced Search Agent initialization"""
+        from cogniverse_agents.search_agent import SearchAgentDeps
 
         # Mock the required dependencies
-        with patch("cogniverse_agents.video_search_agent.get_backend_registry") as mock_registry:
+        with patch("cogniverse_agents.search_agent.get_backend_registry") as mock_registry:
             with patch(
-                "cogniverse_agents.video_search_agent.QueryEncoderFactory"
+                "cogniverse_agents.search_agent.QueryEncoderFactory"
             ) as mock_encoder_factory:
                 # Create a mock config that returns profiles dict
                 mock_video_config.return_value = {
@@ -3118,14 +3144,15 @@ class TestVideoSearchAgent:
                 # Mock schema_loader
                 mock_schema_loader = Mock()
 
-                agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
+                deps = SearchAgentDeps(tenant_id="test_tenant")
+                agent = SearchAgent(deps=deps, schema_loader=mock_schema_loader)
                 assert agent is not None
                 assert hasattr(agent, "search_backend")
-                assert hasattr(agent, "config")
+                assert hasattr(agent, "search_config")  # SearchAgent uses search_config
 
     def test_relationship_aware_search_params(self):
         """Test RelationshipAwareSearchParams structure"""
-        from cogniverse_agents.video_search_agent import (
+        from cogniverse_agents.search_agent import (
             RelationshipAwareSearchParams,
         )
 
@@ -3154,7 +3181,7 @@ class TestVideoSearchAgent:
 
     def test_enhanced_search_context(self):
         """Test SearchContext structure"""
-        from cogniverse_agents.video_search_agent import (
+        from cogniverse_agents.search_agent import (
             RelationshipAwareSearchParams,
             SearchContext,
         )
@@ -3180,7 +3207,7 @@ class TestVideoSearchAgent:
         assert context.routing_metadata["agent"] == "video_search_agent"
 
     @patch("cogniverse_core.config.utils.get_config")
-    @patch("cogniverse_agents.video_search_agent.get_backend_registry")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
     def test_relevance_score_calculation(self, mock_registry, mock_encoder_config):
         """Test relevance score calculation with relationship context"""
 
@@ -3195,7 +3222,7 @@ class TestVideoSearchAgent:
         }
 
         with patch(
-            "cogniverse_agents.video_search_agent.QueryEncoderFactory"
+            "cogniverse_agents.search_agent.QueryEncoderFactory"
         ) as mock_encoder_factory:
             # Mock backend registry
             mock_search_backend = Mock()
@@ -3207,7 +3234,9 @@ class TestVideoSearchAgent:
             # Mock schema_loader
             mock_schema_loader = Mock()
 
-            agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
+            from cogniverse_agents.search_agent import SearchAgentDeps as SearchDeps1
+            deps = SearchDeps1(tenant_id="test_tenant")
+            agent = SearchAgent(deps=deps, schema_loader=mock_schema_loader)
 
             # Test result with entity matches
             result = {
@@ -3238,9 +3267,10 @@ class TestVideoSearchAgent:
             assert relevance <= 1.0
 
     @patch("cogniverse_core.config.utils.get_config")
-    @patch("cogniverse_agents.video_search_agent.get_backend_registry")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
     def test_entity_matching_logic(self, mock_registry, mock_encoder_config):
         """Test entity matching in results"""
+        from cogniverse_agents.search_agent import SearchAgentDeps
 
         # Mock encoder config
         mock_encoder_config.return_value = {
@@ -3253,7 +3283,7 @@ class TestVideoSearchAgent:
         }
 
         with patch(
-            "cogniverse_agents.video_search_agent.QueryEncoderFactory"
+            "cogniverse_agents.search_agent.QueryEncoderFactory"
         ) as mock_encoder_factory:
             # Mock backend registry
             mock_search_backend = Mock()
@@ -3265,7 +3295,8 @@ class TestVideoSearchAgent:
             # Mock schema_loader
             mock_schema_loader = Mock()
 
-            agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
+            deps = SearchAgentDeps(tenant_id="test_tenant")
+            agent = SearchAgent(deps=deps, schema_loader=mock_schema_loader)
 
             # Mock the method since it might not exist in the actual implementation
             agent._find_matching_entities = Mock(
@@ -3298,9 +3329,10 @@ class TestVideoSearchAgent:
             assert "soccer" in matched_texts
 
     @patch("cogniverse_core.config.utils.get_config")
-    @patch("cogniverse_agents.video_search_agent.get_backend_registry")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
     def test_search_result_enhancement(self, mock_registry, mock_encoder_config):
         """Test search result enhancement with relationships"""
+        from cogniverse_agents.search_agent import SearchAgentDeps
 
         # Mock encoder config
         mock_encoder_config.return_value = {
@@ -3313,7 +3345,7 @@ class TestVideoSearchAgent:
         }
 
         with patch(
-            "cogniverse_agents.video_search_agent.QueryEncoderFactory"
+            "cogniverse_agents.search_agent.QueryEncoderFactory"
         ) as mock_encoder_factory:
             # Mock backend registry
             mock_search_backend = Mock()
@@ -3325,7 +3357,8 @@ class TestVideoSearchAgent:
             # Mock schema_loader
             mock_schema_loader = Mock()
 
-            agent = SearchAgent(tenant_id="test_tenant", schema_loader=mock_schema_loader)
+            deps = SearchAgentDeps(tenant_id="test_tenant")
+            agent = SearchAgent(deps=deps, schema_loader=mock_schema_loader)
 
             # Mock the method since it might not exist in the actual implementation
             enhanced_results = [

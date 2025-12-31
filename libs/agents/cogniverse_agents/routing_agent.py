@@ -14,23 +14,26 @@ Key Features:
 - Enhances queries with relationship context
 - Maintains A2A protocol compatibility
 - Full telemetry and MLflow integration
+- Type-safe input/output with Pydantic validation
 """
 
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
+from pydantic import ConfigDict, Field
+
 if TYPE_CHECKING:
-    from cogniverse_foundation.telemetry.config import TelemetryConfig
+    pass  # Type hints are inline now
 
 # DSPy 3.0 imports
 import dspy
 
-# Phase 1-3 component imports
-from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
+# Type-safe agent base
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 
 # Production features from RoutingAgent
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
@@ -70,22 +73,59 @@ from cogniverse_agents.search.multi_modal_reranker import (
 # A2A protocol imports
 
 
-@dataclass
-class RoutingDecision:
-    """Structured routing decision with confidence and reasoning"""
+# =============================================================================
+# Type-Safe Input/Output/Dependencies Models
+# =============================================================================
 
-    query: str
-    recommended_agent: str
-    confidence: float
-    reasoning: str
-    fallback_agents: List[str] = field(default_factory=list)
-    enhanced_query: str = ""
-    entities: List[Dict[str, Any]] = field(default_factory=list)
-    relationships: List[Dict[str, Any]] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    timestamp: datetime = field(default_factory=datetime.now)
 
-    # Legacy compatibility properties
+class RoutingInput(AgentInput):
+    """
+    Type-safe input for routing agent.
+
+    All fields are validated by Pydantic at runtime.
+    IDE provides autocomplete for all fields.
+    """
+
+    query: str = Field(..., description="User query to route")
+    context: Optional[str] = Field(None, description="Optional context information")
+    require_orchestration: Optional[bool] = Field(
+        None, description="Force orchestration decision"
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RoutingOutput(AgentOutput):
+    """
+    Type-safe output from routing agent.
+
+    Replaces the RoutingDecision dataclass with Pydantic validation.
+    """
+
+    query: str = Field(..., description="Original query")
+    recommended_agent: str = Field(..., description="Agent to route to")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Routing confidence")
+    reasoning: str = Field(..., description="Reasoning for the decision")
+    fallback_agents: List[str] = Field(
+        default_factory=list, description="Fallback agents if primary fails"
+    )
+    enhanced_query: str = Field("", description="Enhanced query with context")
+    entities: List[Dict[str, Any]] = Field(
+        default_factory=list, description="Extracted entities"
+    )
+    relationships: List[Dict[str, Any]] = Field(
+        default_factory=list, description="Extracted relationships"
+    )
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict, description="Additional metadata"
+    )
+    timestamp: datetime = Field(
+        default_factory=datetime.now, description="Decision timestamp"
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Compatibility properties for existing code
     @property
     def extracted_entities(self) -> List[Dict[str, Any]]:
         return self.entities
@@ -99,22 +139,30 @@ class RoutingDecision:
         return self.metadata
 
 
-@dataclass
-class RoutingConfig:
-    """Configuration for Enhanced Routing Agent"""
+class RoutingDeps(AgentDeps):
+    """
+    Type-safe dependencies for routing agent.
+
+    Contains configuration and services the agent needs.
+    tenant_id is inherited from AgentDeps (required for multi-tenancy).
+    """
+
+    telemetry_config: Any = Field(..., description="Telemetry configuration")
 
     # DSPy LM Configuration (defaults to local SmolLM 3B)
-    model_name: str = "smollm3:3b"
-    base_url: str = "http://localhost:11434/v1"
-    api_key: str = "dummy"  # Not needed for local Ollama
+    model_name: str = Field("smollm3:3b", description="DSPy model name")
+    base_url: str = Field(
+        "http://localhost:11434/v1", description="Model API base URL"
+    )
+    api_key: str = Field("dummy", description="API key (not needed for local Ollama)")
 
     # Routing thresholds
-    confidence_threshold: float = 0.7
-    relationship_weight: float = 0.3
-    enhancement_weight: float = 0.4
+    confidence_threshold: float = Field(0.7, description="Min confidence threshold")
+    relationship_weight: float = Field(0.3, description="Weight for relationships")
+    enhancement_weight: float = Field(0.4, description="Weight for enhancement")
 
     # Agent capabilities mapping
-    agent_capabilities: Dict[str, List[str]] = field(
+    agent_capabilities: Dict[str, List[str]] = Field(
         default_factory=lambda: {
             "search_agent": [
                 "video_content_search",
@@ -134,43 +182,74 @@ class RoutingConfig:
                 "data_correlation",
                 "in_depth_investigation",
             ],
-        }
+        },
+        description="Agent capability mapping",
     )
 
     # Enable/disable features
-    enable_relationship_extraction: bool = True
-    enable_query_enhancement: bool = True
-    enable_fallback_routing: bool = True
-    enable_confidence_calibration: bool = True
-    enable_advanced_optimization: bool = True
+    enable_relationship_extraction: bool = Field(
+        True, description="Enable relationship extraction"
+    )
+    enable_query_enhancement: bool = Field(True, description="Enable query enhancement")
+    enable_fallback_routing: bool = Field(True, description="Enable fallback routing")
+    enable_confidence_calibration: bool = Field(
+        True, description="Enable confidence calibration"
+    )
+    enable_advanced_optimization: bool = Field(
+        True, description="Enable GRPO optimization"
+    )
 
     # Production features
-    enable_caching: bool = True
-    cache_size_per_modality: int = 1000
-    cache_ttl_seconds: int = 300
-    enable_parallel_execution: bool = True
-    max_concurrent_agents: int = 5
-    enable_memory: bool = False  # Disabled by default (requires Mem0)
-    enable_contextual_analysis: bool = True
-    enable_metrics_tracking: bool = True
-    enable_multi_modal_reranking: bool = True
-    enable_cross_modal_optimization: bool = True
+    enable_caching: bool = Field(True, description="Enable result caching")
+    cache_size_per_modality: int = Field(1000, description="Cache size per modality")
+    cache_ttl_seconds: int = Field(300, description="Cache TTL in seconds")
+    enable_parallel_execution: bool = Field(
+        True, description="Enable parallel execution"
+    )
+    max_concurrent_agents: int = Field(5, description="Max concurrent agents")
+    enable_memory: bool = Field(False, description="Enable memory (requires Mem0)")
+    enable_contextual_analysis: bool = Field(
+        True, description="Enable contextual analysis"
+    )
+    enable_metrics_tracking: bool = Field(True, description="Enable metrics tracking")
+    enable_multi_modal_reranking: bool = Field(
+        True, description="Enable multi-modal reranking"
+    )
+    enable_cross_modal_optimization: bool = Field(
+        True, description="Enable cross-modal optimization"
+    )
 
     # Advanced optimization configuration
-    optimizer_config: Optional[AdvancedOptimizerConfig] = None
-    optimization_storage_dir: str = "data/optimization"
+    optimizer_config: Optional[AdvancedOptimizerConfig] = Field(
+        None, description="GRPO optimizer config"
+    )
+    optimization_storage_dir: str = Field(
+        "data/optimization", description="Optimization storage dir"
+    )
 
     # MLflow integration configuration
-    enable_mlflow_tracking: bool = (
-        False  # Disabled by default to avoid connection issues
+    enable_mlflow_tracking: bool = Field(False, description="Enable MLflow tracking")
+    mlflow_experiment_name: str = Field(
+        "routing_agent", description="MLflow experiment name"
     )
-    mlflow_experiment_name: str = "routing_agent"
-    mlflow_tracking_uri: str = "http://localhost:5000"
+    mlflow_tracking_uri: str = Field(
+        "http://localhost:5000", description="MLflow tracking URI"
+    )
+
+    model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True)
 
 
-class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
+# Backward compatibility alias
+RoutingDecision = RoutingOutput
+
+
+class RoutingAgent(
+    A2AAgent[RoutingInput, RoutingOutput, RoutingDeps],
+    MemoryAwareMixin,
+    TenantAwareAgentMixin,
+):
     """
-    Routing Agent with complete production features and advanced optimization
+    Type-safe Routing Agent with complete production features.
 
     This agent combines all routing capabilities:
     - DSPy 3.0 with local SmolLM 3B for intelligent routing
@@ -178,60 +257,69 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
     - Full production features (caching, parallel execution, memory)
     - Advanced optimization (GRPO, SIMBA)
     - Multi-modal reranking and cross-modal optimization
+    - Type-safe input/output with Pydantic validation
+
+    Type Parameters (inherited from A2AAgent):
+        RoutingInput: Query, context, orchestration flag
+        RoutingOutput: Agent recommendation, confidence, entities, relationships
+        RoutingDeps: Telemetry config, model config, feature flags
     """
 
     def __init__(
         self,
-        tenant_id: str,
-        telemetry_config: "TelemetryConfig",
-        config: Optional[RoutingConfig] = None,
+        deps: RoutingDeps,
         port: int = 8001,
     ):
         """
-        Initialize Routing Agent
+        Initialize Routing Agent with typed dependencies.
 
         Args:
-            tenant_id: Tenant identifier (REQUIRED)
-            telemetry_config: Telemetry configuration (REQUIRED)
-            config: Routing configuration
+            deps: Typed dependencies including tenant_id, telemetry_config, and all settings
             port: A2A server port
 
         Raises:
-            ValueError: If tenant_id is empty or None
+            TypeError: If deps is not RoutingDeps
+            ValidationError: If deps fails Pydantic validation
         """
-        # Initialize tenant support via TenantAwareAgentMixin
-        # This validates tenant_id and stores it (eliminates duplication)
-        TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
+        # Note: tenant_id is now provided via AgentBase.deps.tenant_id (property)
+        # TenantAwareAgentMixin is still inherited for config loading utilities
+        # but we skip its __init__ since AgentBase handles tenant_id validation
 
-        self.config = config or RoutingConfig()
-        self.telemetry_config = telemetry_config
+        # Store telemetry config for production components
+        self.telemetry_config = deps.telemetry_config
         self.logger = logging.getLogger(__name__)
 
         # Initialize DSPy 3.0 with local SmolLM
-        self._configure_dspy()
+        self._configure_dspy(deps)
 
         # Initialize Phase 2 & 3 components
-        self._initialize_enhancement_pipeline()
+        self._initialize_enhancement_pipeline(deps)
 
         # Initialize DSPy routing module
         self._initialize_routing_module()
 
         # Initialize Phase 6: Advanced optimization
-        self._initialize_advanced_optimizer()
+        self._initialize_advanced_optimizer(deps)
 
         # Initialize Phase 6.4: MLflow integration
-        self._initialize_mlflow_tracking()
+        self._initialize_mlflow_tracking(deps)
 
         # Initialize production features
-        self._initialize_production_components()
+        self._initialize_production_components(deps)
 
-        # Initialize A2A base with DSPy module
-        super().__init__(
+        # Create A2A config from deps
+        a2a_config = A2AAgentConfig(
             agent_name="routing_agent",
             agent_description="Intelligent routing with relationship extraction and query enhancement",
-            dspy_module=self.routing_module,
-            capabilities=self._get_routing_capabilities(),
+            capabilities=self._get_routing_capabilities(deps),
             port=port,
+        )
+
+        # Initialize A2A base with typed deps
+        super().__init__(
+            deps=deps,
+            config=a2a_config,
+            dspy_module=self.routing_module,
         )
 
         self._routing_stats = {
@@ -246,12 +334,12 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
     def enhanced_system_available(self) -> bool:
         """Check if enhanced routing features are available"""
         has_relationship_extraction = (
-            self.config.enable_relationship_extraction
+            self.deps.enable_relationship_extraction
             and self.relationship_extractor is not None
         )
 
         has_query_enhancement = (
-            self.config.enable_query_enhancement and self.query_enhancer is not None
+            self.deps.enable_query_enhancement and self.query_enhancer is not None
         )
 
         has_routing_module = self.routing_module is not None
@@ -260,14 +348,14 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
             has_relationship_extraction and has_query_enhancement and has_routing_module
         )
 
-    def _configure_dspy(self) -> None:
+    def _configure_dspy(self, deps: RoutingDeps) -> None:
         """Configure DSPy 3.0 with local SmolLM via Ollama"""
         try:
             # Configure DSPy to use local SmolLM 3B via Ollama
             lm = LM(
-                model=self.config.model_name,
-                base_url=self.config.base_url,
-                api_key=self.config.api_key,
+                model=deps.model_name,
+                base_url=deps.base_url,
+                api_key=deps.api_key,
                 # Additional LM configurations
                 max_tokens=1000,
                 temperature=0.1,  # Low temperature for consistent routing decisions
@@ -276,7 +364,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
 
             dspy.settings.configure(lm=lm)
             self.logger.info(
-                f"DSPy configured with {self.config.model_name} at {self.config.base_url}"
+                f"DSPy configured with {deps.model_name} at {deps.base_url}"
             )
 
         except Exception as e:
@@ -284,18 +372,22 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
             # Fallback to mock for development/testing
             self.logger.warning("Falling back to mock LM for development")
 
-    def _initialize_enhancement_pipeline(self) -> None:
+    def _initialize_enhancement_pipeline(self, deps: RoutingDeps) -> None:
         """Initialize Phase 2 & 3 components"""
         try:
             # Phase 2: Relationship extraction
-            if self.config.enable_relationship_extraction:
+            if deps.enable_relationship_extraction:
                 self.relationship_extractor = RelationshipExtractorTool()
                 self.logger.info("Relationship extraction tool initialized")
+            else:
+                self.relationship_extractor = None
 
             # Phase 3: Query enhancement
-            if self.config.enable_query_enhancement:
+            if deps.enable_query_enhancement:
                 self.query_enhancer = QueryEnhancementPipeline()
                 self.logger.info("Query enhancement pipeline initialized")
+            else:
+                self.query_enhancer = None
 
         except Exception as e:
             self.logger.error(f"Failed to initialize enhancement pipeline: {e}")
@@ -337,19 +429,19 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         self.routing_module = FallbackRoutingModule()
         self.logger.warning("Using fallback routing module")
 
-    def _initialize_advanced_optimizer(self) -> None:
+    def _initialize_advanced_optimizer(self, deps: RoutingDeps) -> None:
         """Initialize Phase 6: Advanced optimization"""
         try:
-            if self.config.enable_advanced_optimization:
+            if deps.enable_advanced_optimization:
                 optimizer_config = (
-                    self.config.optimizer_config or AdvancedOptimizerConfig()
+                    deps.optimizer_config or AdvancedOptimizerConfig()
                 )
                 self.grpo_optimizer = AdvancedRoutingOptimizer(
-                    tenant_id=self.tenant_id,
+                    tenant_id=deps.tenant_id,
                     config=optimizer_config,
-                    base_storage_dir=self.config.optimization_storage_dir,
+                    base_storage_dir=deps.optimization_storage_dir,
                 )
-                self.logger.info(f"Advanced routing optimizer initialized for tenant: {self.tenant_id}")
+                self.logger.info(f"Advanced routing optimizer initialized for tenant: {deps.tenant_id}")
             else:
                 self.grpo_optimizer = None
                 self.logger.info("Advanced optimization disabled")
@@ -358,13 +450,13 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
             self.logger.error(f"Failed to initialize advanced optimizer: {e}")
             self.grpo_optimizer = None
 
-    def _initialize_mlflow_tracking(self) -> None:
+    def _initialize_mlflow_tracking(self, deps: RoutingDeps) -> None:
         """Initialize Phase 6.4: MLflow tracking integration"""
         try:
-            if self.config.enable_mlflow_tracking:
+            if deps.enable_mlflow_tracking:
                 mlflow_config = ExperimentConfig(
-                    experiment_name=self.config.mlflow_experiment_name,
-                    tracking_uri=self.config.mlflow_tracking_uri,
+                    experiment_name=deps.mlflow_experiment_name,
+                    tracking_uri=deps.mlflow_tracking_uri,
                     description="Enhanced routing agent with DSPy 3.0, GRPO, SIMBA, and adaptive thresholds",
                     tags={
                         "component": "routing_agent",
@@ -380,7 +472,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
 
                 self.mlflow_integration = MLflowIntegration(
                     config=mlflow_config,
-                    storage_dir=f"{self.config.optimization_storage_dir}/mlflow",
+                    storage_dir=f"{deps.optimization_storage_dir}/mlflow",
                 )
                 self.logger.info("MLflow tracking integration initialized")
             else:
@@ -391,84 +483,84 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
             self.logger.error(f"Failed to initialize MLflow tracking: {e}")
             self.mlflow_integration = None
 
-    def _initialize_production_components(self) -> None:
+    def _initialize_production_components(self, deps: RoutingDeps) -> None:
         """Initialize production-ready components from RoutingAgent"""
         try:
             # Initialize telemetry manager
             if self.telemetry_config.enabled:
                 from cogniverse_foundation.telemetry.manager import TelemetryManager
                 self.telemetry_manager = TelemetryManager(config=self.telemetry_config)
-                self.logger.info("📊 Telemetry manager initialized")
+                self.logger.info("Telemetry manager initialized")
             else:
                 self.telemetry_manager = None
 
             # Initialize caching
-            if self.config.enable_caching:
+            if deps.enable_caching:
                 self.cache_manager = ModalityCacheManager(
-                    cache_size_per_modality=self.config.cache_size_per_modality
+                    cache_size_per_modality=deps.cache_size_per_modality
                 )
-                self.logger.info("💾 Cache manager initialized")
+                self.logger.info("Cache manager initialized")
             else:
                 self.cache_manager = None
 
             # Initialize parallel execution
-            if self.config.enable_parallel_execution:
+            if deps.enable_parallel_execution:
                 self.parallel_executor = ParallelAgentExecutor(
-                    max_concurrent_agents=self.config.max_concurrent_agents
+                    max_concurrent_agents=deps.max_concurrent_agents
                 )
-                self.logger.info("⚡ Parallel executor initialized")
+                self.logger.info("Parallel executor initialized")
             else:
                 self.parallel_executor = None
 
             # Initialize memory system (if enabled)
-            if self.config.enable_memory:
+            if deps.enable_memory:
                 try:
                     # MemoryAwareMixin provides memory initialization
                     self.initialize_memory(
                         agent_name="routing_agent",
-                        tenant_id=self.tenant_id,
+                        tenant_id=deps.tenant_id,
                     )
-                    self.logger.info(f"🧠 Memory system initialized for tenant: {self.tenant_id}")
+                    self.logger.info(f"Memory system initialized for tenant: {deps.tenant_id}")
                 except Exception as e:
                     self.logger.warning(f"Failed to initialize memory: {e}")
 
             # Initialize contextual analysis
-            if self.config.enable_contextual_analysis:
+            if deps.enable_contextual_analysis:
                 self.contextual_analyzer = ContextualAnalyzer(
                     max_history_size=50,
                     context_window_minutes=30,
                     min_preference_count=3
                 )
-                self.logger.info("📊 Contextual analyzer initialized")
+                self.logger.info("Contextual analyzer initialized")
             else:
                 self.contextual_analyzer = None
 
             # Initialize metrics tracking
-            if self.config.enable_metrics_tracking:
+            if deps.enable_metrics_tracking:
                 self.metrics_tracker = ModalityMetricsTracker(window_size=1000)
-                self.logger.info("📈 Metrics tracker initialized")
+                self.logger.info("Metrics tracker initialized")
             else:
                 self.metrics_tracker = None
 
             # Initialize multi-modal reranking
-            if self.config.enable_multi_modal_reranking:
+            if deps.enable_multi_modal_reranking:
                 self.multi_modal_reranker = MultiModalReranker()
-                self.logger.info("🎯 Multi-modal reranker initialized")
+                self.logger.info("Multi-modal reranker initialized")
             else:
                 self.multi_modal_reranker = None
 
             # Initialize cross-modal optimization
-            if self.config.enable_cross_modal_optimization:
-                self.cross_modal_optimizer = CrossModalOptimizer(tenant_id=self.tenant_id)
-                self.logger.info("🔄 Cross-modal optimizer initialized")
+            if deps.enable_cross_modal_optimization:
+                self.cross_modal_optimizer = CrossModalOptimizer(tenant_id=deps.tenant_id)
+                self.logger.info("Cross-modal optimizer initialized")
             else:
                 self.cross_modal_optimizer = None
 
             # Initialize lazy executor (always on for efficiency)
             self.lazy_executor = LazyModalityExecutor()
-            self.logger.info("💤 Lazy executor initialized")
+            self.logger.info("Lazy executor initialized")
 
-            self.logger.info("✅ Production components initialized successfully")
+            self.logger.info("Production components initialized successfully")
 
         except Exception as e:
             self.logger.error(f"Failed to initialize production components: {e}")
@@ -482,21 +574,21 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
             self.cross_modal_optimizer = None
             self.lazy_executor = None
 
-    def _get_routing_capabilities(self) -> List[str]:
+    def _get_routing_capabilities(self, deps: RoutingDeps) -> List[str]:
         """Get routing agent capabilities"""
         capabilities = ["intelligent_routing", "query_analysis", "agent_orchestration"]
 
-        if self.config.enable_relationship_extraction:
+        if deps.enable_relationship_extraction:
             capabilities.extend(
                 ["relationship_extraction", "entity_recognition", "semantic_analysis"]
             )
 
-        if self.config.enable_query_enhancement:
+        if deps.enable_query_enhancement:
             capabilities.extend(
                 ["query_enhancement", "query_rewriting", "context_enrichment"]
             )
 
-        if self.config.enable_advanced_optimization:
+        if deps.enable_advanced_optimization:
             capabilities.extend(
                 [
                     "advanced_optimization",
@@ -505,25 +597,25 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
                 ]
             )
 
-        if self.config.enable_mlflow_tracking:
+        if deps.enable_mlflow_tracking:
             capabilities.extend(
                 ["mlflow_tracking", "experiment_management", "performance_monitoring"]
             )
 
         # Production capabilities
-        if self.config.enable_caching:
+        if deps.enable_caching:
             capabilities.append("result_caching")
-        if self.config.enable_parallel_execution:
+        if deps.enable_parallel_execution:
             capabilities.append("parallel_agent_execution")
-        if self.config.enable_memory:
+        if deps.enable_memory:
             capabilities.append("conversation_memory")
-        if self.config.enable_contextual_analysis:
+        if deps.enable_contextual_analysis:
             capabilities.append("contextual_analysis")
-        if self.config.enable_metrics_tracking:
+        if deps.enable_metrics_tracking:
             capabilities.append("performance_metrics")
-        if self.config.enable_multi_modal_reranking:
+        if deps.enable_multi_modal_reranking:
             capabilities.append("multi_modal_reranking")
-        if self.config.enable_cross_modal_optimization:
+        if deps.enable_cross_modal_optimization:
             capabilities.append("cross_modal_optimization")
 
         return capabilities
@@ -551,7 +643,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         context: Optional[str] = None,
         tenant_id: Optional[str] = None,
         require_orchestration: Optional[bool] = None,
-    ) -> RoutingDecision:
+    ) -> RoutingOutput:
         """
         Enhanced query routing with relationship extraction and query enhancement
 
@@ -595,7 +687,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
                 if self.cache_manager:
                     cached_decision = self.cache_manager.get_cached_result_any_modality(
                         query=query,
-                        ttl_seconds=self.config.cache_ttl_seconds
+                        ttl_seconds=self.deps.cache_ttl_seconds
                     )
                     if cached_decision:
                         self.logger.info(f"Cache hit for query: {query[:50]}...")
@@ -742,7 +834,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         """Phase 2: Extract relationships and entities from query"""
         if (
-            not self.config.enable_relationship_extraction
+            not self.deps.enable_relationship_extraction
             or not self.relationship_extractor
         ):
             return [], []
@@ -776,7 +868,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         relationships: List[Dict[str, Any]],
     ) -> Tuple[str, Dict[str, Any]]:
         """Phase 3: Enhance query with relationship context"""
-        if not self.config.enable_query_enhancement or not self.query_enhancer:
+        if not self.deps.enable_query_enhancement or not self.query_enhancer:
             return query, {}
 
         try:
@@ -877,7 +969,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
             }
 
             # Apply confidence calibration if enabled
-            if self.config.enable_confidence_calibration:
+            if self.deps.enable_confidence_calibration:
                 routing_info["confidence"] = self._calibrate_confidence(
                     routing_info["confidence"],
                     len(entities),
@@ -945,20 +1037,20 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
 
         # Boost confidence if we have relationship information
         if relationship_count > 0:
-            confidence += self.config.relationship_weight * min(
+            confidence += self.deps.relationship_weight * min(
                 relationship_count / 3, 0.15
             )
 
         # Boost confidence if query was enhanced
         if query_enhanced:
-            confidence += self.config.enhancement_weight * 0.1
+            confidence += self.deps.enhancement_weight * 0.1
 
         # Ensure confidence stays in valid range
         return min(max(confidence, 0.0), 1.0)
 
     def _get_fallback_agents(self, primary_agent: str) -> List[str]:
         """Get fallback agents based on primary recommendation"""
-        if not self.config.enable_fallback_routing:
+        if not self.deps.enable_fallback_routing:
             return []
 
         fallback_mapping = {
@@ -1094,7 +1186,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
             ),
         }
 
-    def _create_fallback_decision(self, query: str, error: str) -> RoutingDecision:
+    def _create_fallback_decision(self, query: str, error: str) -> RoutingOutput:
         """Create fallback routing decision when processing fails"""
         return RoutingDecision(
             query=query,
@@ -1110,7 +1202,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
 
     def _update_routing_stats(self, decision: RoutingDecision) -> None:
         """Update routing statistics for telemetry"""
-        if decision.confidence >= self.config.confidence_threshold:
+        if decision.confidence >= self.deps.confidence_threshold:
             self._routing_stats["successful_routes"] += 1
 
         self._routing_stats["confidence_scores"].append(decision.confidence)
@@ -1152,100 +1244,31 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
 
         return stats
 
-    # DSPyA2AAgentBase implementation
-    async def _process(self, dspy_input: Dict[str, Any]) -> Any:
-        """Process input - delegates to _process_with_dspy for backward compatibility"""
-        return await self._process_with_dspy(dspy_input)
+    # ==========================================================================
+    # Type-safe process method (required by AgentBase)
+    # ==========================================================================
 
-    async def _process_with_dspy(self, dspy_input: Dict[str, Any]) -> Any:
-        """Process A2A input with DSPy routing logic"""
-        query = dspy_input.get("query", "")
-        context = dspy_input.get("context")
-        # Backward compatibility: Accept both tenant_id (preferred) and user_id (legacy)
-        tenant_id = dspy_input.get("tenant_id") or dspy_input.get("user_id")
+    async def process(self, input: RoutingInput) -> RoutingOutput:
+        """
+        Process typed routing input and return typed output.
 
-        routing_decision = await self.route_query(query, context, tenant_id)
+        This is the main entry point for the agent. The A2AAgent base class
+        handles conversion from A2A protocol format to RoutingInput and
+        from RoutingOutput back to A2A format.
 
-        return {
-            "agent": routing_decision.recommended_agent,
-            "confidence": routing_decision.confidence,
-            "reasoning": routing_decision.reasoning,
-            "enhanced_query": routing_decision.enhanced_query,
-            "fallback_agents": routing_decision.fallback_agents,
-            "entities": routing_decision.extracted_entities,
-            "relationships": routing_decision.extracted_relationships,
-            "metadata": routing_decision.routing_metadata,
-        }
+        Args:
+            input: Validated RoutingInput with query, context, require_orchestration
 
-    def _dspy_to_a2a_output(self, dspy_output: Any) -> Dict[str, Any]:
-        """Convert DSPy routing output to A2A format"""
-        if isinstance(dspy_output, dict):
-            return {
-                "status": "success",
-                "routing_decision": dspy_output,
-                "agent": self.agent_name,
-                "timestamp": datetime.now().isoformat(),
-            }
-        else:
-            return {
-                "status": "success",
-                "routing_decision": str(dspy_output),
-                "agent": self.agent_name,
-                "timestamp": datetime.now().isoformat(),
-            }
-
-    def _get_agent_skills(self) -> List[Dict[str, Any]]:
-        """Define enhanced routing agent skills for A2A protocol"""
-        base_skills = [
-            {
-                "name": "route_query",
-                "description": "Route queries to appropriate agents with relationship-aware intelligence",
-                "input_schema": {
-                    "query": "string",
-                    "context": "string (optional)",
-                    "tenant_id": "string (optional)",
-                },
-                "output_schema": {
-                    "recommended_agent": "string",
-                    "confidence": "number",
-                    "reasoning": "string",
-                    "enhanced_query": "string",
-                    "entities": "array",
-                    "relationships": "array",
-                },
-            }
-        ]
-
-        if self.config.enable_relationship_extraction:
-            base_skills.extend(
-                [
-                    {
-                        "name": "extract_relationships",
-                        "description": "Extract entities and relationships from text",
-                        "input_schema": {"query": "string"},
-                        "output_schema": {
-                            "entities": "array",
-                            "relationships": "array",
-                        },
-                    }
-                ]
-            )
-
-        if self.config.enable_query_enhancement:
-            base_skills.append(
-                {
-                    "name": "enhance_query",
-                    "description": "Enhance queries with relationship context",
-                    "input_schema": {
-                        "query": "string",
-                        "entities": "array",
-                        "relationships": "array",
-                    },
-                    "output_schema": {"enhanced_query": "string", "metadata": "object"},
-                }
-            )
-
-        return base_skills
+        Returns:
+            RoutingOutput with agent recommendation, confidence, entities, relationships
+        """
+        # Delegate to route_query which does all the work
+        return await self.route_query(
+            query=input.query,
+            context=input.context,
+            tenant_id=self.deps.tenant_id,
+            require_orchestration=input.require_orchestration,
+        )
 
     async def record_routing_outcome(
         self,
@@ -1331,7 +1354,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         enable_query_enhancement: bool = True,
         context: Optional[str] = None,
         tenant_id: Optional[str] = None,
-    ) -> RoutingDecision:
+    ) -> RoutingOutput:
         """
         Analyze query and route with relationship extraction and enhancement
 
@@ -1349,11 +1372,11 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
             Routing decision with relationship context
         """
         # Temporarily override config settings if needed
-        original_rel_setting = self.config.enable_relationship_extraction
-        original_enh_setting = self.config.enable_query_enhancement
+        original_rel_setting = self.deps.enable_relationship_extraction
+        original_enh_setting = self.deps.enable_query_enhancement
 
-        self.config.enable_relationship_extraction = enable_relationship_extraction
-        self.config.enable_query_enhancement = enable_query_enhancement
+        self.deps.enable_relationship_extraction = enable_relationship_extraction
+        self.deps.enable_query_enhancement = enable_query_enhancement
 
         try:
             decision = await self.route_query(
@@ -1364,8 +1387,8 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
 
         finally:
             # Restore original settings
-            self.config.enable_relationship_extraction = original_rel_setting
-            self.config.enable_query_enhancement = original_enh_setting
+            self.deps.enable_relationship_extraction = original_rel_setting
+            self.deps.enable_query_enhancement = original_enh_setting
 
     def get_grpo_status(self) -> Dict[str, Any]:
         """Get GRPO optimization status and metrics"""
@@ -1405,7 +1428,7 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
                 "experiment_summary": self.mlflow_integration.get_experiment_summary(),
                 "current_run_active": self.mlflow_integration.current_run is not None,
                 "total_samples_logged": self.mlflow_integration.total_samples_logged,
-                "tracking_uri": self.config.mlflow_tracking_uri,
+                "tracking_uri": self.deps.mlflow_tracking_uri,
             }
 
         except Exception as e:
@@ -1423,8 +1446,8 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
 
         additional_tags = {
             "agent_type": "routing_agent",
-            "grpo_enabled": self.config.enable_grpo_optimization,
-            "simba_enabled": self.config.enable_query_enhancement,
+            "grpo_enabled": self.deps.enable_advanced_optimization,
+            "simba_enabled": self.deps.enable_query_enhancement,
             "adaptive_thresholds_enabled": True,
             **(tags or {}),
         }
@@ -1508,70 +1531,98 @@ class RoutingAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
 
 
 def create_routing_agent(
-    config: Optional[RoutingConfig] = None, port: int = 8001
+    tenant_id: str,
+    telemetry_config: Any,
+    port: int = 8001,
+    **kwargs: Any,
 ) -> RoutingAgent:
-    """Factory function to create Routing Agent"""
-    return RoutingAgent(config=config, port=port)
+    """
+    Factory function to create Routing Agent with typed dependencies.
+
+    Args:
+        tenant_id: Tenant identifier (required)
+        telemetry_config: Telemetry configuration (required)
+        port: A2A server port
+        **kwargs: Additional RoutingDeps fields (model_name, enable_caching, etc.)
+
+    Returns:
+        Configured RoutingAgent instance
+    """
+    deps = RoutingDeps(
+        tenant_id=tenant_id,
+        telemetry_config=telemetry_config,
+        **kwargs,
+    )
+    return RoutingAgent(deps=deps, port=port)
 
 
-def create_default_routing_config() -> RoutingConfig:
-    """Create default routing configuration"""
-    return RoutingConfig()
+def create_default_routing_deps(
+    tenant_id: str, telemetry_config: Any
+) -> RoutingDeps:
+    """Create default routing dependencies"""
+    return RoutingDeps(tenant_id=tenant_id, telemetry_config=telemetry_config)
 
 
 # Example usage and configuration
 if __name__ == "__main__":
     import asyncio
+    from dataclasses import dataclass
+
+    @dataclass
+    class MockTelemetryConfig:
+        enabled: bool = False
 
     async def main():
-        # Create enhanced routing agent with local SmolLM 3B and MLflow tracking
-        config = RoutingConfig(
+        # Create typed dependencies with all settings
+        deps = RoutingDeps(
+            tenant_id="demo-tenant",
+            telemetry_config=MockTelemetryConfig(enabled=False),
             model_name="smollm3:3b",
             base_url="http://localhost:11434/v1",
             confidence_threshold=0.7,
             enable_relationship_extraction=True,
             enable_query_enhancement=True,
-            enable_grpo_optimization=True,
-            enable_mlflow_tracking=True,
+            enable_advanced_optimization=True,
+            enable_mlflow_tracking=False,  # Disabled for demo
             mlflow_experiment_name="enhanced_routing_demo",
             mlflow_tracking_uri="http://localhost:5000",
         )
 
-        agent = create_routing_agent(config, port=8001)
+        # Create agent with typed deps
+        agent = RoutingAgent(deps=deps, port=8001)
 
-        # Start MLflow run for this demonstration
-        with agent.start_mlflow_run(run_name="routing_demo", tags={"demo": "true"}):
-            # Test queries
-            test_queries = [
-                "Show me videos of robots playing soccer in tournaments",
-                "Summarize the key findings from the latest AI research papers",
-                "Generate a detailed report on renewable energy trends",
-            ]
+        # Test queries using typed input
+        test_queries = [
+            "Show me videos of robots playing soccer in tournaments",
+            "Summarize the key findings from the latest AI research papers",
+            "Generate a detailed report on renewable energy trends",
+        ]
 
-            for query in test_queries:
-                print(f"\nProcessing: {query}")
-                decision = await agent.route_query(query)
-                print(
-                    f"Route to: {decision.recommended_agent} (confidence: {decision.confidence:.3f})"
-                )
-                print(f"Enhanced query: {decision.enhanced_query}")
-                print(f"Entities: {len(decision.entities)}")
-                print(f"Relationships: {len(decision.relationships)}")
+        for query in test_queries:
+            print(f"\nProcessing: {query}")
 
-                # Simulate routing outcome for GRPO learning
-                await agent.record_routing_outcome(
-                    decision=decision,
-                    search_quality=0.8,
-                    agent_success=True,
-                    processing_time=0.15,
-                    user_satisfaction=0.85,
-                )
+            # Use typed input
+            routing_input = RoutingInput(query=query)
 
-            # Log optimization metrics
-            await agent.log_optimization_metrics()
+            # Process returns typed output
+            decision: RoutingOutput = await agent.process(routing_input)
 
-            # Save model to registry
-            await agent.save_dspy_model("demo_routing_model", "Demo model from example")
+            print(
+                f"Route to: {decision.recommended_agent} "
+                f"(confidence: {decision.confidence:.3f})"
+            )
+            print(f"Enhanced query: {decision.enhanced_query}")
+            print(f"Entities: {len(decision.entities)}")
+            print(f"Relationships: {len(decision.relationships)}")
+
+            # Simulate routing outcome for GRPO learning
+            await agent.record_routing_outcome(
+                decision=decision,
+                search_quality=0.8,
+                agent_success=True,
+                processing_time=0.15,
+                user_satisfaction=0.85,
+            )
 
         # Print statistics
         print("\nRouting Statistics:")

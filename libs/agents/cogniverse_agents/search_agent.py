@@ -25,9 +25,9 @@ from typing import Any, Dict, List, Literal, Optional
 import dspy
 import numpy as np
 import uvicorn
-from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
-from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 from cogniverse_core.registries.backend_registry import get_backend_registry
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -39,6 +39,55 @@ from cogniverse_agents.routing_agent import RoutingDecision
 from cogniverse_agents.tools.a2a_utils import DataPart, TextPart
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Type-Safe Input/Output/Dependencies
+# =============================================================================
+
+
+class SearchInput(AgentInput):
+    """Type-safe input for search operations"""
+
+    query: str = Field(..., description="Search query")
+    modality: str = Field("video", description="Content modality (video/image/text/audio/document)")
+    top_k: int = Field(10, description="Number of results to return")
+    profiles: Optional[List[str]] = Field(None, description="List of profiles for ensemble search")
+    rrf_k: int = Field(60, description="RRF constant for fusion")
+    video_data: Optional[bytes] = Field(None, description="Video data for video-based search")
+    video_filename: Optional[str] = Field(None, description="Video filename")
+    image_data: Optional[bytes] = Field(None, description="Image data for image-based search")
+    image_filename: Optional[str] = Field(None, description="Image filename")
+    start_date: Optional[str] = Field(None, description="Start date filter")
+    end_date: Optional[str] = Field(None, description="End date filter")
+
+
+class SearchOutput(AgentOutput):
+    """Type-safe output from search operations"""
+
+    query: str = Field(..., description="Original query")
+    enhanced_query: Optional[str] = Field(None, description="DSPy-enhanced query")
+    modality: str = Field("video", description="Content modality")
+    search_mode: str = Field("single_profile", description="Search mode: single_profile, ensemble")
+    profile: Optional[str] = Field(None, description="Active profile (for single mode)")
+    profiles: Optional[List[str]] = Field(None, description="Profiles used (for ensemble mode)")
+    rrf_k: Optional[int] = Field(None, description="RRF constant (for ensemble mode)")
+    results: List[Dict[str, Any]] = Field(default_factory=list, description="Search results")
+    total_results: int = Field(0, description="Total number of results")
+
+
+class SearchAgentDeps(AgentDeps):
+    """Dependencies for search agent"""
+
+    # schema_loader and config_manager are stored as Any because they are not pydantic models
+    # They are set after initialization
+    backend_url: str = Field("http://localhost", description="Backend URL")
+    backend_port: int = Field(8080, description="Backend port")
+    backend_config_port: Optional[int] = Field(None, description="Backend config port")
+    profile: Optional[str] = Field(None, description="Active profile")
+    backend_type: str = Field("vespa", description="Backend type")
+    model_name: Optional[str] = Field(None, description="Model name")
+    auto_create_memory_schema: bool = Field(True, description="Auto-create memory schema")
 
 
 # DSPy Module for Generic Search
@@ -267,9 +316,9 @@ class ContentProcessor:
 
 
 # --- Generic Multi-Modal Search Agent ---
-class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
+class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAgentDeps]):
     """
-    Generic multi-modal search agent with full A2A protocol support.
+    Type-safe generic multi-modal search agent with full A2A protocol support.
 
     Supports search across multiple modalities:
     - Video content search
@@ -281,19 +330,26 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
     Enhanced with memory capabilities, relationship-aware search, and ensemble search.
     """
 
-    def __init__(self, tenant_id: str, schema_loader=None, config_manager=None, port: int = 8002, **kwargs):
+    def __init__(
+        self,
+        deps: SearchAgentDeps,
+        schema_loader=None,
+        config_manager=None,
+        port: int = 8002,
+    ):
         """
-        Initialize generic search agent
+        Initialize generic search agent with typed dependencies.
 
         Args:
-            tenant_id: Tenant identifier (REQUIRED - no default)
+            deps: Typed dependencies with tenant_id and configuration
             schema_loader: SchemaLoader instance (REQUIRED for dependency injection)
-            config_manager: ConfigManager instance (REQUIRED for dependency injection)
+            config_manager: ConfigManager instance (optional, will create default if None)
             port: A2A server port
-            **kwargs: Additional configuration options
 
         Raises:
-            ValueError: If tenant_id is empty or None or schema_loader is None
+            TypeError: If deps is not SearchAgentDeps
+            ValidationError: If deps fails Pydantic validation
+            ValueError: If schema_loader is None
         """
         if schema_loader is None:
             raise ValueError(
@@ -313,28 +369,21 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
 
         # Store dependencies for use in initialization
         self.schema_loader = schema_loader
-        self.config_manager = config_manager
+        self._config_manager = config_manager
 
-        # Initialize tenant support via TenantAwareAgentMixin
-        # Pass config_manager so it uses the injected instance instead of creating a new one
-        TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id, config_manager=config_manager)
+        # Note: MemoryAwareMixin is initialized via cooperative inheritance
+        # in super().__init__() call later. Memory will be initialized after
+        # calling initialize_memory() explicitly.
 
-        # Initialize memory mixin
-        MemoryAwareMixin.__init__(self)
+        logger.info(f"Initializing SearchAgent for tenant: {deps.tenant_id}...")
 
-        logger.info(f"Initializing SearchAgent for tenant: {tenant_id}...")
+        # Use deps values, with environment variable fallbacks
+        backend_url = deps.backend_url or os.getenv("BACKEND_URL", "http://localhost")
 
-        # Check environment variables first, then kwargs, then defaults
-        backend_url = kwargs.get("backend_url") or os.getenv(
-            "BACKEND_URL", "http://localhost"
-        )
-
-        # Handle port from env var or kwargs
+        # Handle port from env var or deps
         env_port = os.getenv("BACKEND_PORT")
-        kwargs_port = kwargs.get("backend_port")
-
-        if kwargs_port:
-            backend_port = int(kwargs_port)
+        if deps.backend_port != 8080:  # Non-default means explicitly set
+            backend_port = deps.backend_port
         elif env_port:
             backend_port = int(env_port)
             if ":" in backend_url and backend_url.count(":") >= 2:
@@ -349,40 +398,72 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         backend_host = backend_url.replace("http://", "").replace("https://", "")
 
         # Get config port for schema deployment
-        backend_config_port = kwargs.get("backend_config_port")
+        backend_config_port = deps.backend_config_port
         if not backend_config_port:
             if backend_port == 8080:
                 backend_config_port = 19071
             else:
                 backend_config_port = backend_port + 10991
 
+        # Create DSPy search module
+        self.search_module = GenericSearchModule()
+
+        # Create A2A config
+        a2a_config = A2AAgentConfig(
+            agent_name="search_agent",
+            agent_description="Type-safe multi-modal search with text, video, image, audio, and document support",
+            capabilities=[
+                "search",
+                "multi_modal_search",
+                "video_search",
+                "image_search",
+                "text_search",
+                "audio_search",
+                "document_search",
+                "relationship_aware_search",
+                "ensemble_search",
+            ],
+            port=port,
+            version="4.0.0",
+        )
+
+        # Initialize A2A base - this also sets up config_manager
+        super().__init__(deps=deps, config=a2a_config, dspy_module=self.search_module)
+
+        # Override config_manager with the injected one
+        self.config_manager = config_manager
+
+        # Load tenant-specific configuration (separate from A2AAgentConfig in self.config)
+        from cogniverse_foundation.config.utils import get_config
+        self.search_config = get_config(tenant_id=deps.tenant_id, config_manager=config_manager)
+
         # Initialize memory for search agent
         memory_initialized = self.initialize_memory(
             agent_name="search_agent",
-            tenant_id=tenant_id,
+            tenant_id=deps.tenant_id,
             backend_host=backend_host,
             backend_port=backend_port,
             backend_config_port=backend_config_port,
-            auto_create_schema=kwargs.get("auto_create_memory_schema", True),
+            auto_create_schema=deps.auto_create_memory_schema,
             config_manager=self.config_manager,
             schema_loader=self.schema_loader,
         )
         if memory_initialized:
-            logger.info(f"✅ Memory initialized for search_agent (tenant: {tenant_id})")
+            logger.info(f"✅ Memory initialized for search_agent (tenant: {deps.tenant_id})")
         else:
             logger.info("ℹ️  Memory disabled or not configured for search_agent")
 
         # Get model from active profile
         active_profile = (
             os.getenv("BACKEND_PROFILE")
-            or kwargs.get("profile")
-            or self.config.get("active_video_profile")
+            or deps.profile
+            or self.search_config.get("active_video_profile")
             or "video_colpali_smol500_mv_frame"
         )
 
         self.active_profile = active_profile
 
-        backend_config_data = self.config.get("backend", {})
+        backend_config_data = self.search_config.get("backend", {})
         profiles = backend_config_data.get("profiles", {})
 
         if active_profile and active_profile in profiles:
@@ -393,15 +474,15 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
                 "embedding_type", "frame_based"
             )
         else:
-            model_name = kwargs.get("model_name", "vidore/colsmol-500m")
+            model_name = deps.model_name or "vidore/colsmol-500m"
             self.embedding_type = "frame_based"
 
-        backend_type = kwargs.get("backend_type") or self.config.get("backend_type", "vespa")
+        backend_type = deps.backend_type or self.search_config.get("backend_type", "vespa")
 
         # Initialize search backend via backend registry
         try:
             logger.info("Generic Search Agent configuration:")
-            logger.info(f"  - Tenant ID: {tenant_id}")
+            logger.info(f"  - Tenant ID: {deps.tenant_id}")
             logger.info(f"  - Backend Type: {backend_type}")
             logger.info(f"  - Backend URL: {backend_url}")
             logger.info(f"  - Backend Port: {backend_port}")
@@ -413,21 +494,21 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
                 "port": backend_port,
                 "config_port": backend_config_port,
                 "schema_name": active_profile,
-                "tenant_id": tenant_id,
+                "tenant_id": deps.tenant_id,
                 "profile": active_profile,
                 "backend": backend_config_data,
             }
 
             registry = get_backend_registry()
             self.search_backend = registry.get_search_backend(
-                backend_type, tenant_id, backend_config,
+                backend_type, deps.tenant_id, backend_config,
                 config_manager=self.config_manager,
                 schema_loader=self.schema_loader
             )
 
             logger.info(
                 f"Search backend initialized at {backend_url}:{backend_port} "
-                f"for tenant {tenant_id} with profile {active_profile}"
+                f"for tenant {deps.tenant_id} with profile {active_profile}"
             )
         except Exception as e:
             logger.error(f"Failed to initialize search backend: {e}")
@@ -446,30 +527,7 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
         # Initialize content processor
         self.content_processor = ContentProcessor(self.query_encoder)
 
-        # Initialize DSPy search module
-        self.search_module = GenericSearchModule()
-
-        # Initialize DSPyA2AAgentBase with search module
-        DSPyA2AAgentBase.__init__(
-            self,
-            agent_name="search_agent",
-            agent_description="Generic multi-modal search with text, video, image, audio, and document support",
-            dspy_module=self.search_module,
-            capabilities=[
-                "search",
-                "multi_modal_search",
-                "video_search",
-                "image_search",
-                "text_search",
-                "audio_search",
-                "document_search",
-                "relationship_aware_search",
-                "ensemble_search",
-            ],
-            port=port,
-        )
-
-        logger.info("SearchAgent initialization complete")
+        logger.info(f"SearchAgent initialized for tenant: {deps.tenant_id}")
 
     def _fuse_results_rrf(
         self,
@@ -564,7 +622,7 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
             """Encode query for specific profile"""
             try:
                 # Get profile config
-                backend_config_data = self.config.get("backend", {})
+                backend_config_data = self.search_config.get("backend", {})
                 profiles_config = backend_config_data.get("profiles", {})
 
                 if profile_name not in profiles_config:
@@ -582,7 +640,7 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
                     # Create temporary encoder for this profile
                     from cogniverse_agents.query.encoders import QueryEncoderFactory
                     encoder = QueryEncoderFactory.create_encoder(
-                        profile_name, model_name, config=self.config
+                        profile_name, model_name, config=self.search_config
                     )
                     embeddings = encoder.encode(query)
 
@@ -1372,59 +1430,66 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
 
         return result
 
-    # DSPyA2AAgentBase implementation
-    async def _process(self, dspy_input: Dict[str, Any]) -> Any:
-        """Process A2A input - routes to appropriate search method based on input type"""
-        query = dspy_input.get("query", "")
-        modality = dspy_input.get("modality", "video")
-        top_k = dspy_input.get("top_k", 10)
+    # ==========================================================================
+    # Type-safe process method (required by AgentBase)
+    # ==========================================================================
+
+    async def process(self, input: SearchInput) -> SearchOutput:
+        """
+        Process search request with typed input/output.
+
+        Args:
+            input: Typed input with query, modality, top_k, etc.
+
+        Returns:
+            SearchOutput with results and metadata
+        """
+        query = input.query
+        modality = input.modality
+        top_k = input.top_k
 
         # Check for ensemble mode (multiple profiles)
-        profiles = dspy_input.get("profiles")
-        if profiles and isinstance(profiles, list) and len(profiles) > 1:
-            logger.info(f"Ensemble mode detected: {len(profiles)} profiles")
-            rrf_k = dspy_input.get("rrf_k", 60)
-
-            # Extract additional kwargs (exclude keys we're passing explicitly)
-            ensemble_kwargs = {k: v for k, v in dspy_input.items()
-                             if k not in ["query", "profiles", "modality", "top_k", "rrf_k"]}
+        if input.profiles and len(input.profiles) > 1:
+            logger.info(f"Ensemble mode detected: {len(input.profiles)} profiles")
 
             results = await self._search_ensemble(
                 query=query,
-                profiles=profiles,
+                profiles=input.profiles,
                 modality=modality,
                 top_k=top_k,
-                rrf_k=rrf_k,
-                **ensemble_kwargs
+                rrf_k=input.rrf_k,
+                start_date=input.start_date,
+                end_date=input.end_date,
             )
-            return {
-                "query": query,
-                "modality": modality,
-                "search_mode": "ensemble",
-                "profiles": profiles,
-                "rrf_k": rrf_k,
-                "results": results,
-                "total_results": len(results),
-            }
+            return SearchOutput(
+                query=query,
+                enhanced_query=None,
+                modality=modality,
+                search_mode="ensemble",
+                profile=None,
+                profiles=input.profiles,
+                rrf_k=input.rrf_k,
+                results=results,
+                total_results=len(results),
+            )
 
         # Route based on input type
-        if "video_data" in dspy_input:
+        enhanced_query = None
+        if input.video_data:
             # Video-based search
             results = self._search_by_video(
-                video_data=dspy_input["video_data"],
-                filename=dspy_input.get("video_filename", "video.mp4"),
+                video_data=input.video_data,
+                filename=input.video_filename or "video.mp4",
                 modality=modality,
                 top_k=top_k,
-                **dspy_input
             )
-        elif "image_data" in dspy_input:
+        elif input.image_data:
             # Image-based search
             results = self._search_by_image(
-                image_data=dspy_input["image_data"],
-                filename=dspy_input.get("image_filename", "image.jpg"),
+                image_data=input.image_data,
+                filename=input.image_filename or "image.jpg",
                 modality=modality,
                 top_k=top_k,
-                **dspy_input
             )
         else:
             # Text-based search with optional DSPy optimization
@@ -1435,105 +1500,32 @@ class SearchAgent(DSPyA2AAgentBase, MemoryAwareMixin, TenantAwareAgentMixin):
                 if hasattr(dspy_result, "enhanced_query") and hasattr(dspy_result, "confidence"):
                     if dspy_result.confidence > 0.7:
                         search_query = dspy_result.enhanced_query
+                        enhanced_query = search_query
                         logger.info(f"Using DSPy-enhanced query: {search_query}")
             except Exception as e:
                 logger.warning(f"DSPy optimization failed: {e}, using original query")
-
-            # Extract additional kwargs (exclude keys we're passing explicitly)
-            search_kwargs = {k: v for k, v in dspy_input.items()
-                           if k not in ["query", "modality", "top_k"]}
 
             results = self._search_by_text(
                 query=search_query,
                 modality=modality,
                 top_k=top_k,
-                **search_kwargs
+                start_date=input.start_date,
+                end_date=input.end_date,
             )
 
-        return {
-            "query": query,
-            "enhanced_query": search_query if "search_query" in locals() and search_query != query else None,
-            "modality": modality,
-            "search_mode": "single_profile",
-            "profile": self.active_profile,
-            "results": results,
-            "total_results": len(results),
-        }
+        return SearchOutput(
+            query=query,
+            enhanced_query=enhanced_query,
+            modality=modality,
+            search_mode="single_profile",
+            profile=self.active_profile,
+            profiles=None,
+            rrf_k=None,
+            results=results,
+            total_results=len(results),
+        )
 
-    def _dspy_to_a2a_output(self, dspy_output: Any) -> Dict[str, Any]:
-        """Convert DSPy search output to A2A format"""
-        if isinstance(dspy_output, dict):
-            return {
-                "status": "success",
-                "agent": self.agent_name,
-                **dspy_output,
-            }
-        else:
-            return {
-                "status": "success",
-                "agent": self.agent_name,
-                "output": str(dspy_output),
-            }
-
-    def _get_agent_skills(self) -> List[Dict[str, Any]]:
-        """Define search agent skills for A2A protocol"""
-        return [
-            {
-                "name": "textSearch",
-                "description": "Search content using text queries across multiple modalities",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "modality": {"type": "string", "enum": ["video", "image", "text", "audio", "document"]},
-                        "top_k": {"type": "integer", "default": 10},
-                        "start_date": {"type": "string", "format": "date"},
-                        "end_date": {"type": "string", "format": "date"},
-                    },
-                    "required": ["query"],
-                },
-            },
-            {
-                "name": "videoSearch",
-                "description": "Search content using video files as queries",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "video_data": {"type": "string", "format": "binary"},
-                        "filename": {"type": "string"},
-                        "modality": {"type": "string", "default": "video"},
-                        "top_k": {"type": "integer", "default": 10},
-                    },
-                    "required": ["video_data"],
-                },
-            },
-            {
-                "name": "imageSearch",
-                "description": "Search content using image files as queries",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "image_data": {"type": "string", "format": "binary"},
-                        "filename": {"type": "string"},
-                        "modality": {"type": "string", "default": "video"},
-                        "top_k": {"type": "integer", "default": 10},
-                    },
-                    "required": ["image_data"],
-                },
-            },
-            {
-                "name": "relationshipAwareSearch",
-                "description": "Search with relationship context and entity extraction",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "routing_decision": {"type": "object"},
-                        "top_k": {"type": "integer", "default": 10},
-                    },
-                    "required": ["routing_decision"],
-                },
-            },
-        ]
+    # Note: _dspy_to_a2a_output and _get_agent_skills handled by A2AAgent base class
 
 
 # --- FastAPI Server ---
@@ -1562,13 +1554,20 @@ async def startup_event():
             logger.warning("PYTEST_CURRENT_TEST detected - using 'test_tenant' as tenant_id")
             tenant_id = "test_tenant"
 
-    agent_config = {
-        "backend_url": os.getenv("BACKEND_URL", "http://localhost"),
-        "backend_port": int(os.getenv("BACKEND_PORT", 8080)),
-    }
-
     try:
-        search_agent = SearchAgent(tenant_id=tenant_id, **agent_config)
+        # Create deps with configuration from environment
+        deps = SearchAgentDeps(
+            tenant_id=tenant_id,
+            backend_url=os.getenv("BACKEND_URL", "http://localhost"),
+            backend_port=int(os.getenv("BACKEND_PORT", 8080)),
+        )
+
+        # Note: schema_loader is required for SearchAgent
+        # In production, inject via proper dependency container
+        from cogniverse_core.schemas.schema_loader import SchemaLoader
+        schema_loader = SchemaLoader()
+
+        search_agent = SearchAgent(deps=deps, schema_loader=schema_loader)
         logger.info(f"Generic search agent initialized for tenant: {tenant_id}")
     except Exception as e:
         logger.error(f"Failed to initialize search agent: {e}")
@@ -1601,7 +1600,7 @@ async def get_agent_card():
     """Agent card with enhanced capabilities"""
     return {
         "name": "SearchAgent",
-        "description": "Generic multi-modal search with text, video, image, audio, and document support",
+        "description": "Type-safe multi-modal search with text, video, image, audio, and document support",
         "url": "/process",
         "version": "4.0.0",
         "protocol": "a2a",
@@ -1615,7 +1614,7 @@ async def get_agent_card():
             "multi_modal_search",
             "relationship_aware_search",
         ],
-        "skills": search_agent._get_agent_skills() if search_agent else [],
+        "skills": search_agent.get_agent_skills() if search_agent else [],
     }
 
 

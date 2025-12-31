@@ -32,6 +32,7 @@ import dspy
 # Enhanced routing imports
 from cogniverse_agents.routing_agent import (
     RoutingAgent,
+    RoutingDeps,
 )
 
 # A2A protocol imports
@@ -151,10 +152,11 @@ class MultiAgentOrchestrator:
         self.logger = logging.getLogger(__name__)
 
         # Initialize routing agent
-        self.routing_agent = routing_agent or RoutingAgent(
-            tenant_id=tenant_id,
-            telemetry_config=telemetry_config
-        )
+        if routing_agent:
+            self.routing_agent = routing_agent
+        else:
+            deps = RoutingDeps(tenant_id=tenant_id, telemetry_config=telemetry_config)
+            self.routing_agent = RoutingAgent(deps=deps)
 
         # Configure available agents and their capabilities
         self.available_agents = available_agents or self._get_default_agents()
@@ -195,7 +197,7 @@ class MultiAgentOrchestrator:
     def _get_default_agents(self) -> Dict[str, Dict[str, Any]]:
         """Get default agent configuration"""
         return {
-            "video_search_agent": {
+            "search_agent": {
                 "capabilities": [
                     "video_content_search",
                     "visual_query_analysis",
@@ -252,7 +254,7 @@ class MultiAgentOrchestrator:
                     workflow_tasks=[
                         {
                             "task_id": "search",
-                            "agent": "video_search_agent",
+                            "agent": "search_agent",
                             "query": query,
                             "dependencies": [],
                         },
@@ -396,13 +398,13 @@ class MultiAgentOrchestrator:
             for i, task_data in enumerate(tasks_data):
                 if isinstance(task_data, dict):
                     task_id = task_data.get("task_id", f"task_{i}")
-                    agent_name = task_data.get("agent", "video_search_agent")
+                    agent_name = task_data.get("agent", "search_agent")
                     task_query = task_data.get("query", query)
                     dependencies = set(task_data.get("dependencies", []))
                 else:
                     # Fallback parsing
                     task_id = f"task_{i}"
-                    agent_name = "video_search_agent"
+                    agent_name = "search_agent"
                     task_query = query
                     dependencies = set()
 
@@ -1158,7 +1160,7 @@ class MultiAgentOrchestrator:
         tasks = [
             WorkflowTask(
                 task_id="search",
-                agent_name="video_search_agent",
+                agent_name="search_agent",
                 query=query,
                 dependencies=set(),
             ),

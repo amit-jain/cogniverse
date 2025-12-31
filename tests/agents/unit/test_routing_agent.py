@@ -1,20 +1,24 @@
 """
 Unit tests for RoutingAgent
 
-NOTE: RoutingAgent has been refactored to use DSPy-based routing.
-Many of these tests need to be updated to test the new interface.
-Tests for the old interface (analyze_and_route, agent_registry, etc.) are skipped.
+NOTE: RoutingAgent has been refactored to use type-safe base classes.
+Tests use the new typed API with RoutingDeps, RoutingInput, RoutingOutput.
 """
 
 
 import pytest
-from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import (
+    RoutingAgent,
+    RoutingDeps,
+    RoutingInput,
+    RoutingOutput,
+)
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 
 @pytest.mark.unit
 class TestRoutingAgentLegacy:
-    """Legacy test cases for old RoutingAgent interface - needs refactoring"""
+    """Test cases for RoutingAgent with typed interface"""
 
     @pytest.fixture
     def mock_system_config(self):
@@ -34,17 +38,25 @@ class TestRoutingAgentLegacy:
             "reasoning": "Detected video content request",
         }
 
+    @pytest.fixture
+    def routing_deps(self):
+        """Create RoutingDeps for testing"""
+        telemetry_config = TelemetryConfig(enabled=False)
+        return RoutingDeps(
+            tenant_id="test_tenant",
+            telemetry_config=telemetry_config,
+        )
+
     @pytest.mark.ci_fast
     def test_routing_agent_initialization(
-        self, mock_system_config
+        self, mock_system_config, routing_deps
     ):
-        """Test RoutingAgent initialization"""
-        # RoutingAgent now uses DSPy-based approach and doesn't have system_config/agent_registry
-        # Test that basic initialization works
-        telemetry_config = TelemetryConfig(enabled=False)
-        agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        """Test RoutingAgent initialization with typed deps"""
+        agent = RoutingAgent(deps=routing_deps)
 
-        assert agent.config is not None
+        # deps is now the config
+        assert agent.deps is not None
+        assert agent.deps.tenant_id == "test_tenant"
         assert hasattr(agent, "routing_module")
         assert hasattr(agent, "logger")
 

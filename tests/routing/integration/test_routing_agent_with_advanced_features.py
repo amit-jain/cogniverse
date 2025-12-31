@@ -13,7 +13,7 @@ Validates:
 
 
 import pytest
-from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
 
@@ -22,30 +22,25 @@ class TestRoutingAgentWithAdvancedFeatures:
     """Test RoutingAgent with advanced features integrated"""
 
     @pytest.fixture
-    def mock_config(self):
-        """Mock system configuration"""
-        from cogniverse_agents.routing_agent import RoutingConfig
-
-        # Create a RoutingConfig with test values
-        config = RoutingConfig()
-        config.enable_query_enhancement = True
-        config.enable_contextual_analysis = True
-        config.enable_dspy_optimization = False  # Disable to avoid LLM dependency
-        config.enable_relationship_extraction = True
-        config.enable_caching = True
-        config.enable_advanced_optimization = False
-        config.enable_mlflow_tracking = False
-        return config
-
-    @pytest.fixture
-    async def routing_agent(self, mock_config):
-        """Create RoutingAgent instance with mocked dependencies"""
+    async def routing_agent(self):
+        """Create RoutingAgent instance with typed dependencies"""
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
             provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        agent = RoutingAgent(tenant_id="test-tenant", config=mock_config, telemetry_config=telemetry_config)
+        deps = RoutingDeps(
+            tenant_id="test-tenant",
+            telemetry_config=telemetry_config,
+            enable_query_enhancement=True,
+            enable_contextual_analysis=True,
+            enable_dspy_optimization=False,  # Disable to avoid LLM dependency
+            enable_relationship_extraction=True,
+            enable_caching=True,
+            enable_advanced_optimization=False,
+            enable_mlflow_tracking=False,
+        )
+        agent = RoutingAgent(deps=deps)
         yield agent
 
     @pytest.mark.asyncio

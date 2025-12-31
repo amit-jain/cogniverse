@@ -11,10 +11,11 @@ from typing import Any, Dict, List, Optional
 
 import dspy
 import uvicorn
-from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
-from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.vlm_interface import VLMInterface
 from fastapi import FastAPI, HTTPException
+from pydantic import Field
 
 # Enhanced routing support
 from cogniverse_agents.routing_agent import RoutingDecision
@@ -24,6 +25,41 @@ from cogniverse_agents.tools.a2a_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Type-Safe Input/Output/Dependencies
+# =============================================================================
+
+
+class SummarizerInput(AgentInput):
+    """Type-safe input for summarization"""
+
+    query: str = Field(..., description="Query for summarization")
+    search_results: List[Dict[str, Any]] = Field(default_factory=list, description="Results to summarize")
+    summary_type: str = Field("comprehensive", description="Type: brief, comprehensive, bullet_points")
+    include_visual_analysis: bool = Field(True, description="Include visual analysis")
+    max_results_to_analyze: int = Field(10, description="Maximum results to analyze")
+    context: Optional[Dict[str, Any]] = Field(None, description="Additional context")
+
+
+class SummarizerOutput(AgentOutput):
+    """Type-safe output from summarization"""
+
+    summary: str = Field(..., description="Generated summary")
+    key_points: List[str] = Field(default_factory=list, description="Key points")
+    visual_insights: List[str] = Field(default_factory=list, description="Visual insights")
+    confidence_score: float = Field(0.0, description="Confidence score")
+    thinking_process: Dict[str, Any] = Field(default_factory=dict, description="Thinking phase details")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+
+
+class SummarizerDeps(AgentDeps):
+    """Dependencies for summarizer agent"""
+
+    max_summary_length: int = Field(500, description="Maximum summary length")
+    thinking_enabled: bool = Field(True, description="Enable thinking phase")
+    visual_analysis_enabled: bool = Field(True, description="Enable visual analysis")
 
 
 # DSPy Signatures and Module
@@ -124,49 +160,33 @@ class SummaryResult:
     enhancement_applied: bool = False
 
 
-class SummarizerAgent(DSPyA2AAgentBase, TenantAwareAgentMixin):
+class SummarizerAgent(A2AAgent[SummarizerInput, SummarizerOutput, SummarizerDeps]):
     """
-    Intelligent summarizer agent with full A2A support, VLM integration, and thinking phase.
-    Provides comprehensive analysis and summarization of search results.
+    Type-safe intelligent summarizer agent with full A2A support, VLM integration,
+    and thinking phase. Provides comprehensive analysis and summarization of search results.
     """
 
-    def __init__(self, tenant_id: str, port: int = 8003, **kwargs):
+    def __init__(self, deps: SummarizerDeps, port: int = 8003):
         """
-        Initialize summarizer agent
+        Initialize summarizer agent with typed dependencies.
 
         Args:
-            tenant_id: Tenant identifier (REQUIRED - no default)
+            deps: Typed dependencies with tenant_id and configuration
             port: A2A server port
-            **kwargs: Additional configuration options
 
         Raises:
-            ValueError: If tenant_id is empty or None
+            TypeError: If deps is not SummarizerDeps
+            ValidationError: If deps fails Pydantic validation
         """
-        # Initialize tenant support via TenantAwareAgentMixin
-        TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
-
-        logger.info(f"Initializing SummarizerAgent for tenant: {tenant_id}...")
-
-        # Initialize DSPy components
-        self._initialize_vlm_client()
+        logger.info(f"Initializing SummarizerAgent for tenant: {deps.tenant_id}...")
 
         # Create DSPy summarization module
         self.summarization_module = SummarizationModule()
 
-        # Initialize VLM for visual analysis
-        self.vlm = VLMInterface(config_manager=self.config_manager, tenant_id=self.tenant_id)
-
-        # Configuration
-        self.max_summary_length = kwargs.get("max_summary_length", 500)
-        self.thinking_enabled = kwargs.get("thinking_enabled", True)
-        self.visual_analysis_enabled = kwargs.get("visual_analysis_enabled", True)
-
-        # Initialize DSPyA2AAgentBase with summarization module
-        DSPyA2AAgentBase.__init__(
-            self,
+        # Create A2A config
+        config = A2AAgentConfig(
             agent_name="summarizer_agent",
-            agent_description="Intelligent summarization with visual analysis and thinking phase",
-            dspy_module=self.summarization_module,
+            agent_description="Type-safe summarization with visual analysis and thinking phase",
             capabilities=[
                 "summarization",
                 "visual_analysis",
@@ -175,16 +195,54 @@ class SummarizerAgent(DSPyA2AAgentBase, TenantAwareAgentMixin):
                 "relationship_aware_summarization",
             ],
             port=port,
+            version="2.0.0",
         )
 
-        logger.info("SummarizerAgent initialization complete")
+        # Initialize A2A base
+        super().__init__(deps=deps, config=config, dspy_module=self.summarization_module)
+
+        # Create config manager for VLM and other services
+        from cogniverse_foundation.config.utils import create_default_config_manager
+        self._config_manager = create_default_config_manager()
+
+        # Initialize DSPy components
+        self._initialize_vlm_client()
+
+        # Initialize VLM for visual analysis
+        self.vlm = VLMInterface(config_manager=self._config_manager, tenant_id=self.deps.tenant_id)
+
+        # Configuration from deps
+        self.max_summary_length = deps.max_summary_length
+        self.thinking_enabled = deps.thinking_enabled
+        self.visual_analysis_enabled = deps.visual_analysis_enabled
+
+        logger.info(f"SummarizerAgent initialized for tenant: {deps.tenant_id}")
 
     def _initialize_vlm_client(self):
         """Initialize DSPy LM from configuration"""
-        llm_config = self.config.get("llm", {})
-        model_name = llm_config.get("model_name")
-        base_url = llm_config.get("base_url")
-        api_key = llm_config.get("api_key")
+        import os
+
+        from cogniverse_foundation.config.utils import (
+            create_default_config_manager,
+            get_config,
+        )
+
+        # Get system config for LLM settings
+        config_manager = create_default_config_manager()
+        system_config = get_config(tenant_id=self.deps.tenant_id, config_manager=config_manager)
+
+        # Try to get LLM config from system config or environment
+        if system_config and hasattr(system_config, 'get') and callable(system_config.get):
+            llm_config = system_config.get("llm", {})
+        elif system_config and hasattr(system_config, 'llm'):
+            llm_config = system_config.llm if isinstance(system_config.llm, dict) else {}
+        else:
+            llm_config = {}
+
+        # Fall back to environment variables if not in config
+        model_name = llm_config.get("model_name") or os.environ.get("LLM_MODEL_NAME", "gemma3:4b")
+        base_url = llm_config.get("base_url") or os.environ.get("LLM_BASE_URL", "http://localhost:11434")
+        api_key = llm_config.get("api_key") or os.environ.get("LLM_API_KEY")
 
         if not all([model_name, base_url]):
             raise ValueError(
@@ -264,6 +322,20 @@ class SummarizerAgent(DSPyA2AAgentBase, TenantAwareAgentMixin):
         except Exception as e:
             logger.error(f"Summarization failed: {e}")
             raise
+
+    async def summarize(self, request: SummaryRequest) -> SummaryResult:
+        """
+        Public method to generate comprehensive summary.
+
+        This is a public alias for _summarize that provides the expected interface.
+
+        Args:
+            request: Summarization request
+
+        Returns:
+            Complete summary result
+        """
+        return await self._summarize(request)
 
     async def _thinking_phase(self, request: SummaryRequest) -> ThinkingPhase:
         """
@@ -743,89 +815,47 @@ and structure summary based on identified themes and content categories.
 
         return result
 
-    # DSPyA2AAgentBase implementation
-    async def _process(self, dspy_input: Dict[str, Any]) -> Any:
-        """Process A2A input - performs summarization"""
-        query = dspy_input.get("query", "")
-        search_results = dspy_input.get("search_results", [])
-        summary_type = dspy_input.get("summary_type", "comprehensive")
-        include_visual_analysis = dspy_input.get("include_visual_analysis", True)
-        max_results = dspy_input.get("max_results_to_analyze", 10)
+    # ==========================================================================
+    # Type-safe process method (required by AgentBase)
+    # ==========================================================================
 
-        # Create summary request
+    async def process(self, input: SummarizerInput) -> SummarizerOutput:
+        """
+        Process summarization request with typed input/output.
+
+        Args:
+            input: Typed input with query, search_results, summary_type, etc.
+
+        Returns:
+            SummarizerOutput with summary, key_points, visual_insights, etc.
+        """
+        # Create summary request from typed input
         request = SummaryRequest(
-            query=query,
-            search_results=search_results,
-            context=dspy_input.get("context", {}),
-            summary_type=summary_type,
-            include_visual_analysis=include_visual_analysis,
-            max_results_to_analyze=max_results,
+            query=input.query,
+            search_results=input.search_results,
+            context=input.context or {},
+            summary_type=input.summary_type,
+            include_visual_analysis=input.include_visual_analysis,
+            max_results_to_analyze=input.max_results_to_analyze,
         )
 
         # Perform summarization
         result = await self._summarize(request)
 
-        return {
-            "query": query,
-            "summary": result.summary,
-            "key_points": result.key_points,
-            "visual_insights": result.visual_insights,
-            "confidence_score": result.confidence_score,
-            "thinking_process": {
+        return SummarizerOutput(
+            summary=result.summary,
+            key_points=result.key_points,
+            visual_insights=result.visual_insights,
+            confidence_score=result.confidence_score,
+            thinking_process={
                 "themes": result.thinking_phase.key_themes,
                 "categories": result.thinking_phase.content_categories,
                 "reasoning": result.thinking_phase.reasoning,
             },
-            "metadata": result.metadata,
-        }
+            metadata=result.metadata,
+        )
 
-    def _dspy_to_a2a_output(self, dspy_output: Any) -> Dict[str, Any]:
-        """Convert DSPy summarization output to A2A format"""
-        if isinstance(dspy_output, dict):
-            return {
-                "status": "success",
-                "agent": self.agent_name,
-                **dspy_output,
-            }
-        else:
-            return {
-                "status": "success",
-                "agent": self.agent_name,
-                "output": str(dspy_output),
-            }
-
-    def _get_agent_skills(self) -> List[Dict[str, Any]]:
-        """Define summarizer agent skills for A2A protocol"""
-        return [
-            {
-                "name": "generate_summary",
-                "description": "Generate intelligent summaries with visual analysis and key insights",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "search_results": {"type": "array"},
-                        "summary_type": {"type": "string", "enum": ["brief", "comprehensive", "bullet_points"]},
-                        "include_visual_analysis": {"type": "boolean", "default": True},
-                        "max_results_to_analyze": {"type": "integer", "default": 10},
-                    },
-                    "required": ["query", "search_results"],
-                },
-            },
-            {
-                "name": "relationship_aware_summary",
-                "description": "Generate summaries with relationship and entity context",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "routing_decision": {"type": "object"},
-                        "search_results": {"type": "array"},
-                        "summary_type": {"type": "string"},
-                    },
-                    "required": ["routing_decision", "search_results"],
-                },
-            },
-        ]
+    # Note: _dspy_to_a2a_output and _get_agent_skills handled by A2AAgent base class
 
 
 # --- FastAPI Server ---
@@ -856,7 +886,8 @@ async def startup_event():
             tenant_id = "test_tenant"
 
     try:
-        summarizer_agent = SummarizerAgent(tenant_id=tenant_id)
+        deps = SummarizerDeps(tenant_id=tenant_id)
+        summarizer_agent = SummarizerAgent(deps=deps)
         logger.info(f"Summarizer agent initialized for tenant: {tenant_id}")
     except Exception as e:
         logger.error(f"Failed to initialize summarizer agent: {e}")
@@ -887,7 +918,7 @@ async def get_agent_card():
     """Agent card with capabilities"""
     return {
         "name": "SummarizerAgent",
-        "description": "Intelligent summarization with visual analysis and thinking phase",
+        "description": "Type-safe summarization with visual analysis and thinking phase",
         "url": "/process",
         "version": "2.0.0",
         "protocol": "a2a",
@@ -899,7 +930,7 @@ async def get_agent_card():
             "content_analysis",
             "relationship_aware_summarization",
         ],
-        "skills": summarizer_agent._get_agent_skills() if summarizer_agent else [],
+        "skills": summarizer_agent.get_agent_skills() if summarizer_agent else [],
     }
 
 

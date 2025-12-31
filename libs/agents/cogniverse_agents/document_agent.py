@@ -9,39 +9,67 @@ Enables comparison and auto-strategy selection based on query type.
 """
 
 import logging
-from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import dspy
-from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
-from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
 from cogniverse_core.common.models.model_loaders import get_or_load_model
+from pydantic import Field
 
 from cogniverse_agents.query.encoders import ColPaliQueryEncoder
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class DocumentResult:
+# =============================================================================
+# Type-Safe Models
+# =============================================================================
+
+
+class DocumentResult(AgentOutput):
     """Result from document search"""
 
-    document_id: str
-    document_url: str
-    title: str
-    page_number: Optional[int] = None
-    page_count: Optional[int] = None
-    document_type: str = "pdf"
-    content_preview: str = ""
-    relevance_score: float = 0.0
-    strategy_used: str = "unknown"  # visual, text, or hybrid
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    document_id: str = Field(..., description="Document identifier")
+    document_url: str = Field(..., description="Document URL")
+    title: str = Field(..., description="Document title")
+    page_number: Optional[int] = Field(None, description="Page number")
+    page_count: Optional[int] = Field(None, description="Total page count")
+    document_type: str = Field("pdf", description="Document type")
+    content_preview: str = Field("", description="Content preview")
+    relevance_score: float = Field(0.0, description="Relevance score")
+    strategy_used: str = Field("unknown", description="Strategy: visual, text, hybrid")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
 
 
-class DocumentAgent(TenantAwareAgentMixin, MemoryAwareMixin, DSPyA2AAgentBase):
+class DocumentSearchInput(AgentInput):
+    """Type-safe input for document search"""
+
+    query: str = Field(..., description="Search query")
+    strategy: str = Field("auto", description="Strategy: visual, text, hybrid, auto")
+    limit: int = Field(20, description="Number of results")
+
+
+class DocumentSearchOutput(AgentOutput):
+    """Type-safe output from document search"""
+
+    results: List[DocumentResult] = Field(default_factory=list, description="Search results")
+    count: int = Field(0, description="Number of results")
+
+
+class DocumentAgentDeps(AgentDeps):
+    """Dependencies for document agent"""
+
+    vespa_endpoint: str = Field("http://localhost:8080", description="Vespa endpoint")
+    colpali_model: str = Field("vidore/colsmol-500m", description="ColPali model name")
+
+
+class DocumentAgent(
+    MemoryAwareMixin, A2AAgent[DocumentSearchInput, DocumentSearchOutput, DocumentAgentDeps]
+):
     """
-    Document analysis and search with dual strategy support
+    Type-safe document analysis and search with dual strategy support.
     Enhanced with memory capabilities for learning from search patterns.
 
     Implements both:
@@ -51,28 +79,18 @@ class DocumentAgent(TenantAwareAgentMixin, MemoryAwareMixin, DSPyA2AAgentBase):
     Enables comparison and auto-strategy selection based on query type.
     """
 
-    def __init__(
-        self,
-        tenant_id: str,
-        vespa_endpoint: str = "http://localhost:8080",
-        colpali_model: str = "vidore/colsmol-500m",
-        port: int = 8007,
-    ):
+    def __init__(self, deps: DocumentAgentDeps, port: int = 8007):
         """
-        Initialize Document Agent with dual strategy support
+        Initialize Document Agent with typed dependencies.
 
         Args:
-            tenant_id: Tenant identifier (REQUIRED - no default)
-            vespa_endpoint: Vespa endpoint URL
-            colpali_model: ColPali model for visual strategy
+            deps: Typed dependencies with tenant_id, vespa_endpoint, colpali_model
             port: A2A server port
 
         Raises:
-            ValueError: If tenant_id is empty or None
+            TypeError: If deps is not DocumentAgentDeps
+            ValidationError: If deps fails Pydantic validation
         """
-        # Initialize tenant support via TenantAwareAgentMixin
-        TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
-
         # Initialize memory mixin
         MemoryAwareMixin.__init__(self)
 
@@ -93,12 +111,10 @@ class DocumentAgent(TenantAwareAgentMixin, MemoryAwareMixin, DSPyA2AAgentBase):
                     result=f"Searching documents: {query} (strategy: {strategy})"
                 )
 
-        # Initialize A2A base
-        DSPyA2AAgentBase.__init__(
-            self,
+        # Create A2A config
+        config = A2AAgentConfig(
             agent_name="DocumentAgent",
-            agent_description="Document search with visual and text strategies",
-            dspy_module=DocumentSearchModule(),
+            agent_description="Type-safe document search with visual and text strategies",
             capabilities=[
                 "document_search",
                 "visual_search",
@@ -109,20 +125,23 @@ class DocumentAgent(TenantAwareAgentMixin, MemoryAwareMixin, DSPyA2AAgentBase):
             version="1.0.0",
         )
 
+        # Initialize A2A base
+        super().__init__(deps=deps, config=config, dspy_module=DocumentSearchModule())
+
         # Initialize memory for document agent
         memory_initialized = self.initialize_memory(
             agent_name="document_agent",
-            tenant_id=tenant_id,
+            tenant_id=deps.tenant_id,
         )
         if memory_initialized:
             logger.info(
-                f"✅ Memory initialized for document_agent (tenant: {tenant_id})"
+                f"✅ Memory initialized for document_agent (tenant: {deps.tenant_id})"
             )
         else:
             logger.info("ℹ️  Memory disabled or not configured for document_agent")
 
-        self._vespa_endpoint = vespa_endpoint
-        self._colpali_model_name = colpali_model
+        self._vespa_endpoint = deps.vespa_endpoint
+        self._colpali_model_name = deps.colpali_model
 
         # Lazy load models
         self._colpali_model = None
@@ -130,7 +149,10 @@ class DocumentAgent(TenantAwareAgentMixin, MemoryAwareMixin, DSPyA2AAgentBase):
         self._query_encoder = None
         self._text_embedding_model = None
 
-        logger.info("📄 Initialized DocumentAgent with dual strategy support")
+        logger.info(
+            f"Initialized DocumentAgent for tenant: {deps.tenant_id}, "
+            f"colpali: {deps.colpali_model}"
+        )
 
     @property
     def colpali_model(self):
@@ -503,72 +525,37 @@ class DocumentAgent(TenantAwareAgentMixin, MemoryAwareMixin, DSPyA2AAgentBase):
 
         return results
 
-    # DSPyA2AAgentBase abstract method implementations
-    async def _process(self, dspy_input: Dict[str, Any]) -> Any:
-        """Process input - delegates to _process_with_dspy for backward compatibility"""
-        return await self._process_with_dspy(dspy_input)
+    # ==========================================================================
+    # Type-safe process method (required by AgentBase)
+    # ==========================================================================
 
-    async def _process_with_dspy(self, dspy_input: Dict[str, Any]) -> Dict[str, Any]:
-        """Process document search request"""
-        query = dspy_input.get("query", "")
-        strategy = dspy_input.get("strategy", "auto")
-        limit = dspy_input.get("limit", 20)
+    async def process(self, input: DocumentSearchInput) -> DocumentSearchOutput:
+        """
+        Process document search request with typed input/output.
 
+        Args:
+            input: Typed input with query, strategy, limit
+
+        Returns:
+            DocumentSearchOutput with results and count
+        """
         results = await self.search_documents(
-            query=query, strategy=strategy, limit=limit
+            query=input.query,
+            strategy=input.strategy,
+            limit=input.limit,
         )
 
-        return {"results": results, "count": len(results)}
+        return DocumentSearchOutput(results=results, count=len(results))
 
-    def _dspy_to_a2a_output(self, dspy_output: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert DSPy output to A2A format"""
-        results = dspy_output.get("results", [])
-
-        return {
-            "status": "success",
-            "result_type": "document_search_results",
-            "count": len(results),
-            "results": [
-                {
-                    "document_id": r.document_id,
-                    "document_url": r.document_url,
-                    "title": r.title,
-                    "page_number": r.page_number,
-                    "page_count": r.page_count,
-                    "document_type": r.document_type,
-                    "content_preview": r.content_preview,
-                    "relevance_score": r.relevance_score,
-                    "strategy_used": r.strategy_used,
-                    "metadata": r.metadata,
-                }
-                for r in results
-            ],
-        }
-
-    def _get_agent_skills(self) -> List[Dict[str, Any]]:
-        """Define agent skills for A2A protocol"""
-        return [
-            {
-                "name": "search_documents",
-                "description": "Search documents using visual, text, or hybrid strategies",
-                "parameters": {
-                    "query": {"type": "string", "required": True},
-                    "strategy": {
-                        "type": "string",
-                        "required": False,
-                        "default": "auto",
-                    },
-                    "limit": {"type": "integer", "required": False, "default": 20},
-                },
-            },
-        ]
+    # Note: _dspy_to_a2a_output and _get_agent_skills handled by A2AAgent base class
 
 
 if __name__ == "__main__":
     import asyncio
 
     async def test_agent():
-        agent = DocumentAgent()
+        deps = DocumentAgentDeps(tenant_id="default")
+        agent = DocumentAgent(deps=deps)
         results = await agent.search_documents(
             "machine learning algorithms", strategy="auto"
         )

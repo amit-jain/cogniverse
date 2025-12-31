@@ -30,23 +30,23 @@ class TenantAwareAgentMixin:
     - Context helpers: Provides utilities for tenant-scoped operations
     - Config integration: Optionally loads tenant-specific configuration
 
-    Usage:
-        class MyAgent(DSPyA2AAgentBase, TenantAwareAgentMixin):
+    Usage with type-safe A2AAgent (preferred):
+        class MyAgentDeps(AgentDeps):
+            pass  # Only needs tenant_id from base
+
+        class MyAgent(A2AAgent[MyInput, MyOutput, MyAgentDeps]):
+            def __init__(self, deps: MyAgentDeps, port: int = 8000):
+                # A2AAgent automatically handles tenant_id via deps.tenant_id
+                super().__init__(deps=deps, config=..., dspy_module=...)
+
+                # Now self.tenant_id is available via deps
+                print(f"Agent initialized for tenant: {deps.tenant_id}")
+
+    Legacy usage (for backward compatibility only):
+        class MyAgent(A2AAgent, TenantAwareAgentMixin):
             def __init__(self, tenant_id: str, **kwargs):
-                # Initialize tenant support FIRST
                 TenantAwareAgentMixin.__init__(self, tenant_id)
-
-                # Then initialize other base classes
-                DSPyA2AAgentBase.__init__(self, ...)
-
-                # Now self.tenant_id is available
-                print(f"Agent initialized for tenant: {self.tenant_id}")
-
-    Alternative usage with super():
-        class MyAgent(DSPyA2AAgentBase, TenantAwareAgentMixin):
-            def __init__(self, tenant_id: str, **kwargs):
-                # Using super() with MRO chain
-                super().__init__(tenant_id=tenant_id, **kwargs)
+                super().__init__(...)
 
     Key Benefits:
     - Eliminates ~10 lines of duplicated validation code per agent

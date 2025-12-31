@@ -11,10 +11,40 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 import dspy
-from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Type-Safe Input/Output/Dependencies
+# =============================================================================
+
+
+class OrchestratorInput(AgentInput):
+    """Type-safe input for orchestration"""
+
+    query: str = Field(..., description="Query to orchestrate")
+
+
+class OrchestratorOutput(AgentOutput):
+    """Type-safe output from orchestration"""
+
+    query: str = Field(..., description="Original query")
+    plan_steps: List[Dict[str, Any]] = Field(default_factory=list, description="Orchestration plan steps")
+    parallel_groups: List[List[int]] = Field(default_factory=list, description="Parallel execution groups")
+    plan_reasoning: str = Field("", description="Plan reasoning")
+    agent_results: Dict[str, Any] = Field(default_factory=dict, description="Results from each agent")
+    final_output: Dict[str, Any] = Field(default_factory=dict, description="Aggregated final output")
+    execution_summary: str = Field("", description="Summary of execution")
+
+
+class OrchestratorDeps(AgentDeps):
+    """Dependencies for orchestrator agent"""
+
+    pass  # Only needs tenant_id from base
 
 
 class AgentType(str, Enum):
@@ -115,9 +145,9 @@ class OrchestrationModule(dspy.Module):
         )
 
 
-class OrchestratorAgent(DSPyA2AAgentBase):
+class OrchestratorAgent(A2AAgent[OrchestratorInput, OrchestratorOutput, OrchestratorDeps]):
     """
-    Autonomous A2A agent for multi-agent orchestration.
+    Type-safe autonomous A2A agent for multi-agent orchestration.
 
     Implements two-phase orchestration:
     1. Planning Phase: Analyze query and create execution plan
@@ -132,29 +162,31 @@ class OrchestratorAgent(DSPyA2AAgentBase):
 
     def __init__(
         self,
-        tenant_id: str = "default",
+        deps: OrchestratorDeps,
         agent_registry: Optional[Dict[AgentType, Any]] = None,
         port: int = 8013,
     ):
         """
-        Initialize OrchestratorAgent
+        Initialize OrchestratorAgent with typed dependencies.
 
         Args:
-            tenant_id: Tenant identifier
+            deps: Typed dependencies with tenant_id
             agent_registry: Registry of available agents
             port: Port for A2A server
+
+        Raises:
+            TypeError: If deps is not OrchestratorDeps
+            ValidationError: If deps fails Pydantic validation
         """
-        self.tenant_id = tenant_id
         self.agent_registry = agent_registry or {}
 
         # Initialize DSPy module
         orchestration_module = OrchestrationModule()
 
-        # Initialize base class
-        super().__init__(
+        # Create A2A config
+        config = A2AAgentConfig(
             agent_name="orchestrator_agent",
-            agent_description="Autonomous orchestration with planning and action phases",
-            dspy_module=orchestration_module,
+            agent_description="Type-safe orchestration with planning and action phases",
             capabilities=[
                 "orchestration",
                 "planning",
@@ -166,29 +198,36 @@ class OrchestratorAgent(DSPyA2AAgentBase):
             version="1.0.0",
         )
 
+        # Initialize base class
+        super().__init__(deps=deps, config=config, dspy_module=orchestration_module)
+
         logger.info(
-            f"OrchestratorAgent initialized for tenant: {tenant_id}, "
+            f"OrchestratorAgent initialized for tenant: {deps.tenant_id}, "
             f"agents: {len(self.agent_registry)}"
         )
 
-    async def _process(self, dspy_input: Dict[str, Any]) -> OrchestrationResult:
+    # ==========================================================================
+    # Type-safe process method (required by AgentBase)
+    # ==========================================================================
+
+    async def process(self, input: OrchestratorInput) -> OrchestratorOutput:
         """
-        Process orchestration request with planning and action phases
+        Process orchestration request with typed input/output.
 
         Args:
-            dspy_input: Input with 'query' field
+            input: Typed input with query field
 
         Returns:
-            OrchestrationResult with plan, agent results, and final output
+            OrchestratorOutput with plan, agent results, and final output
         """
-        query = dspy_input.get("query", "")
+        query = input.query
 
         if not query:
-            return OrchestrationResult(
+            return OrchestratorOutput(
                 query="",
-                plan=OrchestrationPlan(
-                    query="", steps=[], reasoning="Empty query, no orchestration needed"
-                ),
+                plan_steps=[],
+                parallel_groups=[],
+                plan_reasoning="Empty query, no orchestration needed",
                 agent_results={},
                 final_output={"status": "error", "message": "Empty query"},
                 execution_summary="No execution performed",
@@ -206,9 +245,18 @@ class OrchestratorAgent(DSPyA2AAgentBase):
         # Generate summary
         execution_summary = self._generate_summary(plan, agent_results)
 
-        return OrchestrationResult(
+        return OrchestratorOutput(
             query=query,
-            plan=plan,
+            plan_steps=[
+                {
+                    "agent_type": step.agent_type.value,
+                    "reasoning": step.reasoning,
+                    "depends_on": step.depends_on,
+                }
+                for step in plan.steps
+            ],
+            parallel_groups=plan.parallel_groups,
+            plan_reasoning=plan.reasoning,
             agent_results=agent_results,
             final_output=final_output,
             execution_summary=execution_summary,
@@ -435,87 +483,7 @@ class OrchestratorAgent(DSPyA2AAgentBase):
             f"Plan: {plan.reasoning}"
         )
 
-    def _dspy_to_a2a_output(self, dspy_output: Any) -> Dict[str, Any]:
-        """Convert OrchestrationResult to A2A format"""
-        if isinstance(dspy_output, OrchestrationResult):
-            return {
-                "status": "success",
-                "agent": self.agent_name,
-                "query": dspy_output.query,
-                "plan": {
-                    "steps": [
-                        {
-                            "agent_type": step.agent_type.value,
-                            "reasoning": step.reasoning,
-                            "depends_on": step.depends_on,
-                        }
-                        for step in dspy_output.plan.steps
-                    ],
-                    "parallel_groups": dspy_output.plan.parallel_groups,
-                    "reasoning": dspy_output.plan.reasoning,
-                },
-                "agent_results": dspy_output.agent_results,
-                "final_output": dspy_output.final_output,
-                "execution_summary": dspy_output.execution_summary,
-            }
-        else:
-            return {
-                "status": "success",
-                "agent": self.agent_name,
-                "output": str(dspy_output),
-            }
-
-    def _get_agent_skills(self) -> List[Dict[str, Any]]:
-        """Define agent skills for A2A protocol"""
-        return [
-            {
-                "name": "orchestrate",
-                "description": "Orchestrate multi-agent query processing with planning and execution",
-                "input_schema": {"query": "string"},
-                "output_schema": {
-                    "query": "string",
-                    "plan": {
-                        "steps": "array of agent steps",
-                        "parallel_groups": "array of parallel step groups",
-                        "reasoning": "string",
-                    },
-                    "agent_results": "dictionary of agent results",
-                    "final_output": "aggregated final output",
-                    "execution_summary": "string",
-                },
-                "examples": [
-                    {
-                        "input": {"query": "Show me videos about machine learning"},
-                        "output": {
-                            "query": "Show me videos about machine learning",
-                            "plan": {
-                                "steps": [
-                                    {
-                                        "agent_type": "query_enhancement",
-                                        "reasoning": "Enhance query with ML synonyms and context",
-                                    },
-                                    {
-                                        "agent_type": "entity_extraction",
-                                        "reasoning": "Extract ML-related entities",
-                                    },
-                                    {
-                                        "agent_type": "profile_selection",
-                                        "reasoning": "Select video-based profile",
-                                    },
-                                    {
-                                        "agent_type": "search",
-                                        "reasoning": "Execute search with selected profile",
-                                    },
-                                ],
-                                "parallel_groups": [[0, 1]],
-                                "reasoning": "Enhance and extract entities in parallel, then select profile and search",
-                            },
-                            "execution_summary": "Executed 4/4 steps successfully",
-                        },
-                    }
-                ],
-            }
-        ]
+    # Note: _dspy_to_a2a_output and _get_agent_skills handled by A2AAgent base class
 
 
 # FastAPI app for standalone deployment
@@ -539,7 +507,8 @@ async def startup_event():
     import os
 
     tenant_id = os.getenv("TENANT_ID", "default")
-    orchestrator_agent = OrchestratorAgent(tenant_id=tenant_id)
+    deps = OrchestratorDeps(tenant_id=tenant_id)
+    orchestrator_agent = OrchestratorAgent(deps=deps)
     logger.info("OrchestratorAgent started")
 
 
@@ -568,7 +537,7 @@ async def process_task(task: Dict[str, Any]):
 
 
 if __name__ == "__main__":
-
-    agent = OrchestratorAgent(tenant_id="default", port=8013)
+    deps = OrchestratorDeps(tenant_id="default")
+    agent = OrchestratorAgent(deps=deps, port=8013)
     logger.info("Starting OrchestratorAgent on port 8013...")
-    agent.run()
+    agent.start()

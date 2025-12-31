@@ -37,7 +37,7 @@ class UnifiedOptimizer:
     3. If certain agent execution orders work better (search→summarize→report
        vs search→report) → Router learns optimal agent_execution_order
 
-    4. If AgentPerformance shows video_search_agent has 50% success rate →
+    4. If AgentPerformance shows search_agent has 50% success rate →
        Don't exclude the agent, instead learn when it performs well vs poorly
     """
 

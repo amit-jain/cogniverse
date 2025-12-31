@@ -18,17 +18,17 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from cogniverse_foundation.telemetry.config import TelemetryConfig
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from cogniverse_agents.multi_agent_orchestrator import (
     MultiAgentOrchestrator,
 )
-
-# Routing imports
+from cogniverse_agents.routing.config import RoutingConfig
 from cogniverse_agents.routing_agent import (
     RoutingAgent,
-    RoutingConfig,
+    RoutingDeps,
 )
 
 # No longer need fallback routing - RoutingAgent has all features
@@ -130,6 +130,8 @@ class A2AGateway:
 
     def __init__(
         self,
+        tenant_id: str = "default",
+        telemetry_config: Optional["TelemetryConfig"] = None,
         routing_config: Optional[RoutingConfig] = None,
         enable_orchestration: bool = True,
         port: int = 8000,
@@ -137,6 +139,8 @@ class A2AGateway:
         self.logger = logging.getLogger(__name__)
 
         # Configuration
+        self.tenant_id = tenant_id
+        self.telemetry_config = telemetry_config
         self.enable_orchestration = enable_orchestration
         self.port = port
 
@@ -161,11 +165,14 @@ class A2AGateway:
     ) -> None:
         """Initialize routing and orchestration system"""
         try:
-            # Initialize routing agent
+            # Initialize routing agent with deps pattern
+            deps = RoutingDeps(
+                tenant_id=self.tenant_id,
+                telemetry_config=self.telemetry_config,
+            )
             self.router = RoutingAgent(
-                config=config or RoutingConfig(),
+                deps=deps,
                 port=self.port + 1,  # Use different port to avoid conflicts
-                enable_telemetry=True,
             )
 
             # Initialize multi-agent orchestrator
@@ -348,7 +355,7 @@ class A2AGateway:
             word in query_lower
             for word in ["video", "visual", "image", "watch", "show"]
         ):
-            agent = "video_search_agent"
+            agent = "search_agent"
             reasoning = "Emergency routing based on video keywords"
         elif any(
             word in query_lower
@@ -363,7 +370,7 @@ class A2AGateway:
             agent = "detailed_report_agent"
             reasoning = "Emergency routing based on analysis keywords"
         else:
-            agent = "video_search_agent"  # Default fallback
+            agent = "search_agent"  # Default fallback
             reasoning = "Emergency routing with default agent"
 
         return A2AQueryResponse(

@@ -8,7 +8,7 @@ Unit tests for cache and metrics integration in RoutingAgent:
 from unittest.mock import MagicMock, patch
 
 import pytest
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingConfig
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 
@@ -23,14 +23,21 @@ class TestRoutingAgentCacheMetrics:
         from cogniverse_foundation.telemetry.manager import TelemetryManager
         TelemetryManager._instance = None
 
-        # Create minimal config for testing
-        config = RoutingConfig(
+        # Create telemetry config
+        telemetry_config = TelemetryConfig(
+            enabled=False,  # Disable telemetry for unit tests (cache/metrics don't need it)
+            provider_config={}
+        )
+
+        # Create deps with test configuration
+        deps = RoutingDeps(
+            tenant_id="test_tenant",
+            telemetry_config=telemetry_config,
             enable_caching=True,
             enable_metrics_tracking=True,
             enable_parallel_execution=True,
             enable_contextual_analysis=True,
             enable_memory=False,  # Disabled for unit tests
-            enable_mlflow_tracking=False,  # Disabled for unit tests
             enable_advanced_optimization=False,  # Disabled for unit tests
             enable_relationship_extraction=False,  # Disabled for faster tests
             enable_query_enhancement=False,  # Disabled for faster tests
@@ -39,14 +46,10 @@ class TestRoutingAgentCacheMetrics:
         # Mock all external dependencies to avoid network calls and delays
         # Use patch.object for dspy.settings.configure to avoid attribute cleanup issues
         with patch.object(RoutingAgent, "_configure_dspy", return_value=None), \
-             patch("cogniverse_agents.dspy_a2a_agent_base.FastAPI"), \
-             patch("cogniverse_agents.dspy_a2a_agent_base.A2AClient"), \
+             patch("cogniverse_core.agents.a2a_agent.FastAPI"), \
+             patch("cogniverse_core.agents.a2a_agent.A2AClient"), \
              patch("cogniverse_agents.routing.cross_modal_optimizer.ModalitySpanCollector"):
-            telemetry_config = TelemetryConfig(
-                enabled=False,  # Disable telemetry for unit tests (cache/metrics don't need it)
-                provider_config={}
-            )
-            agent = RoutingAgent(tenant_id="test_tenant", config=config, port=8001, telemetry_config=telemetry_config)
+            agent = RoutingAgent(deps=deps, port=8001)
 
             # Yield agent for test use
             yield agent

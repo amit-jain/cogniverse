@@ -28,10 +28,12 @@ async def generate_routing_spans(env_config: dict):
     """Helper to generate routing spans by running RoutingAgent queries"""
     import time
 
-    from cogniverse_agents.routing_agent import RoutingAgent, RoutingConfig
+    from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 
-    # Create routing config
-    routing_config = RoutingConfig(
+    # Create routing deps
+    deps = RoutingDeps(
+        tenant_id=env_config["tenant_id"],
+        telemetry_config=env_config["telemetry_config"],
         model_name="ollama/gemma3:4b",
         base_url="http://localhost:11434",
         api_key="dummy",
@@ -39,11 +41,7 @@ async def generate_routing_spans(env_config: dict):
     )
 
     # Create routing agent
-    agent = RoutingAgent(
-        tenant_id=env_config["tenant_id"],
-        config=routing_config,
-        telemetry_config=env_config["telemetry_config"]
-    )
+    agent = RoutingAgent(deps=deps)
 
     # Process test queries to generate routing spans
     test_queries = [

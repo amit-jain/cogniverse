@@ -212,7 +212,7 @@ class WorkflowIntelligence:
                 self, workflow_history: str, current_query: str, agent_performance: str
             ):
                 return dspy.Prediction(
-                    optimized_sequence=["video_search_agent", "summarizer_agent"],
+                    optimized_sequence=["search_agent", "summarizer_agent"],
                     optimization_strategy="fallback",
                     expected_improvement=0.1,
                     reasoning="Fallback optimization using default sequence",
@@ -223,7 +223,7 @@ class WorkflowIntelligence:
                 return dspy.Prediction(
                     template_name="generic_template",
                     template_description="Generic workflow template",
-                    task_sequence=[{"agent": "video_search_agent", "task": "search"}],
+                    task_sequence=[{"agent": "search_agent", "task": "search"}],
                     applicability_criteria=["general queries"],
                 )
 
@@ -538,7 +538,7 @@ class WorkflowIntelligence:
             task_id = f"optimized_task_{i}"
 
             # Determine task query based on agent capabilities
-            if agent_name == "video_search_agent":
+            if agent_name == "search_agent":
                 task_query = initial_plan.original_query
             elif agent_name == "summarizer_agent":
                 task_query = f"Summarize results for: {initial_plan.original_query}"
@@ -622,7 +622,7 @@ class WorkflowIntelligence:
 
         for i, task_spec in enumerate(template.task_sequence):
             task_id = f"template_task_{i}"
-            agent_name = task_spec.get("agent", "video_search_agent")
+            agent_name = task_spec.get("agent", "search_agent")
             task_type = task_spec.get("task", "process")
 
             # Generate appropriate query based on task type

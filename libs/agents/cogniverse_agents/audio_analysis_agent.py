@@ -12,30 +12,57 @@ from typing import Any, Dict, List, Optional
 
 import dspy
 import numpy as np
-from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
-from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
     AudioEmbeddingGenerator,
 )
 from cogniverse_runtime.ingestion.processors.audio_transcriber import AudioTranscriber
+from pydantic import Field as PydanticField
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class AudioResult:
+# =============================================================================
+# Type-Safe Models
+# =============================================================================
+
+
+class AudioResult(AgentOutput):
     """Result from audio search"""
 
-    audio_id: str
-    audio_url: str
-    title: str
-    transcript: str
-    duration: float
-    relevance_score: float
-    speaker_labels: List[str] = field(default_factory=list)
-    detected_events: List[str] = field(default_factory=list)
-    language: str = "unknown"
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    audio_id: str = PydanticField(..., description="Audio identifier")
+    audio_url: str = PydanticField(..., description="Audio URL")
+    title: str = PydanticField("", description="Audio title")
+    transcript: str = PydanticField("", description="Audio transcript")
+    duration: float = PydanticField(0.0, description="Duration in seconds")
+    relevance_score: float = PydanticField(0.0, description="Relevance score")
+    speaker_labels: List[str] = PydanticField(default_factory=list, description="Speaker labels")
+    detected_events: List[str] = PydanticField(default_factory=list, description="Detected events")
+    language: str = PydanticField("unknown", description="Detected language")
+    metadata: Dict[str, Any] = PydanticField(default_factory=dict, description="Additional metadata")
+
+
+class AudioSearchInput(AgentInput):
+    """Type-safe input for audio search"""
+
+    query: str = PydanticField(..., description="Search query")
+    search_mode: str = PydanticField("hybrid", description="Search mode: transcript, acoustic, hybrid")
+    limit: int = PydanticField(20, description="Number of results")
+
+
+class AudioSearchOutput(AgentOutput):
+    """Type-safe output from audio search"""
+
+    results: List[AudioResult] = PydanticField(default_factory=list, description="Search results")
+    count: int = PydanticField(0, description="Number of results")
+
+
+class AudioAnalysisDeps(AgentDeps):
+    """Dependencies for audio analysis agent"""
+
+    vespa_endpoint: str = PydanticField("http://localhost:8080", description="Vespa endpoint")
+    whisper_model_size: str = PydanticField("base", description="Whisper model size")
 
 
 @dataclass
@@ -79,9 +106,9 @@ class MusicClassification:
     instruments: List[str] = field(default_factory=list)
 
 
-class AudioAnalysisAgent(TenantAwareAgentMixin, DSPyA2AAgentBase):
+class AudioAnalysisAgent(A2AAgent[AudioSearchInput, AudioSearchOutput, AudioAnalysisDeps]):
     """
-    Audio content analysis using Whisper and Vespa
+    Type-safe audio content analysis using Whisper and Vespa.
 
     Capabilities:
     - Speech transcription using existing AudioTranscriber
@@ -91,28 +118,18 @@ class AudioAnalysisAgent(TenantAwareAgentMixin, DSPyA2AAgentBase):
     - Real Vespa backend integration
     """
 
-    def __init__(
-        self,
-        tenant_id: str,
-        vespa_endpoint: str = "http://localhost:8080",
-        whisper_model_size: str = "base",
-        port: int = 8006,
-    ):
+    def __init__(self, deps: AudioAnalysisDeps, port: int = 8006):
         """
-        Initialize Audio Analysis Agent
+        Initialize Audio Analysis Agent with typed dependencies.
 
         Args:
-            tenant_id: Tenant identifier (REQUIRED - no default)
-            vespa_endpoint: Vespa endpoint URL
-            whisper_model_size: Whisper model size (tiny, base, small, medium, large)
+            deps: Typed dependencies with tenant_id, vespa_endpoint, whisper_model_size
             port: A2A server port
 
         Raises:
-            ValueError: If tenant_id is empty or None
+            TypeError: If deps is not AudioAnalysisDeps
+            ValidationError: If deps fails Pydantic validation
         """
-        # Initialize tenant support via TenantAwareAgentMixin
-        TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
-
         # Create DSPy module
         class AudioSearchSignature(dspy.Signature):
             query: str = dspy.InputField(desc="Audio search query")
@@ -130,26 +147,28 @@ class AudioAnalysisAgent(TenantAwareAgentMixin, DSPyA2AAgentBase):
                     result=f"Searching audio: {query} (mode: {mode})"
                 )
 
-        # Initialize A2A base explicitly to avoid MRO issues with TenantAwareAgentMixin
-        DSPyA2AAgentBase.__init__(
-            self,
+        # Create A2A config
+        config = A2AAgentConfig(
             agent_name="AudioAnalysisAgent",
-            agent_description="Audio analysis using Whisper and acoustic models",
-            dspy_module=AudioSearchModule(),
+            agent_description="Type-safe audio analysis using Whisper and acoustic models",
             capabilities=["audio_search", "transcription", "hybrid_search"],
             port=port,
             version="1.0.0",
         )
 
-        self._vespa_endpoint = vespa_endpoint
-        self._whisper_model_size = whisper_model_size
+        # Initialize A2A base
+        super().__init__(deps=deps, config=config, dspy_module=AudioSearchModule())
+
+        self._vespa_endpoint = deps.vespa_endpoint
+        self._whisper_model_size = deps.whisper_model_size
 
         # Initialize components (lazy loading)
         self._audio_transcriber = None
         self._embedding_generator = None
 
         logger.info(
-            f"🎵 Initialized AudioAnalysisAgent (Whisper: {whisper_model_size})"
+            f"Initialized AudioAnalysisAgent for tenant: {deps.tenant_id}, "
+            f"whisper: {deps.whisper_model_size}"
         )
 
     @property
@@ -538,88 +557,26 @@ class AudioAnalysisAgent(TenantAwareAgentMixin, DSPyA2AAgentBase):
             # Local path
             return audio_url
 
-    # DSPyA2AAgentBase abstract method implementations
-    async def _process(self, dspy_input: Dict[str, Any]) -> Any:
-        """Process input - delegates to _process_with_dspy for backward compatibility"""
-        return await self._process_with_dspy(dspy_input)
+    # ==========================================================================
+    # Type-safe process method (required by AgentBase)
+    # ==========================================================================
 
-    async def _process_with_dspy(self, dspy_input: Dict[str, Any]) -> Dict[str, Any]:
-        """Process audio search request"""
-        query = dspy_input.get("query", "")
-        search_mode = dspy_input.get("search_mode", "hybrid")
-        limit = dspy_input.get("limit", 20)
+    async def process(self, input: AudioSearchInput) -> AudioSearchOutput:
+        """
+        Process audio search request with typed input/output.
 
+        Args:
+            input: Typed input with query, search_mode, limit
+
+        Returns:
+            AudioSearchOutput with results and count
+        """
         results = await self.search_audio(
-            query=query, search_mode=search_mode, limit=limit
+            query=input.query,
+            search_mode=input.search_mode,
+            limit=input.limit,
         )
 
-        return {"results": results, "count": len(results)}
+        return AudioSearchOutput(results=results, count=len(results))
 
-    def _dspy_to_a2a_output(self, dspy_output: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert audio search results to A2A response format"""
-        results = dspy_output.get("results", [])
-
-        return {
-            "status": "success",
-            "result_type": "audio_search_results",
-            "count": dspy_output.get("count", 0),
-            "results": [
-                {
-                    "audio_id": r.audio_id,
-                    "audio_url": r.audio_url,
-                    "title": r.title,
-                    "transcript": r.transcript,
-                    "duration": r.duration,
-                    "relevance_score": r.relevance_score,
-                    "speaker_labels": r.speaker_labels,
-                    "detected_events": r.detected_events,
-                    "language": r.language,
-                }
-                for r in results
-            ],
-        }
-
-    def _get_agent_skills(self) -> List[Dict[str, Any]]:
-        """Define audio analysis agent skills for A2A protocol"""
-        return [
-            {
-                "name": "search_audio",
-                "description": "Search audio by transcript or acoustic similarity",
-                "input": {"query": "str", "search_mode": "str", "limit": "int"},
-                "output": {"results": "List[AudioResult]", "count": "int"},
-            },
-            {
-                "name": "transcribe_audio",
-                "description": "Transcribe audio using Whisper",
-                "input": {"audio_url": "str", "language": "str"},
-                "output": {"text": "str", "segments": "List", "language": "str"},
-            },
-            {
-                "name": "detect_audio_events",
-                "description": "Detect sounds, music, and speech segments",
-                "input": {"audio_url": "str", "event_types": "List[str]"},
-                "output": {"events": "List[AudioEvent]"},
-            },
-            {
-                "name": "identify_speakers",
-                "description": "Speaker diarization - identify who spoke when",
-                "input": {"audio_url": "str", "num_speakers": "int"},
-                "output": {"segments": "List[SpeakerSegment]"},
-            },
-            {
-                "name": "classify_music",
-                "description": "Classify music genre, mood, and tempo",
-                "input": {"audio_url": "str"},
-                "output": {"genre": "str", "mood": "str", "tempo": "float"},
-            },
-            {
-                "name": "find_similar_audio",
-                "description": "Find acoustically or semantically similar audio",
-                "input": {
-                    "reference_audio_url": "str",
-                    "similarity_type": "str",
-                    "limit": "int",
-                },
-                "output": {"results": "List[AudioResult]"},
-            },
-        ]
+    # Note: _dspy_to_a2a_output and _get_agent_skills handled by A2AAgent base class

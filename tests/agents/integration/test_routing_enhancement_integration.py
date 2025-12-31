@@ -17,7 +17,7 @@ from cogniverse_agents.result_enhancement_engine import (
 )
 
 # Phase 4 imports
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDecision
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDecision, RoutingDeps
 
 # Phase 5 imports
 
@@ -99,14 +99,16 @@ class TestRoutingToEnhancedSearchIntegration:
                 mock_pipeline_class.return_value = mock_pipeline
 
                 # Test complete routing with enhancement
-                from cogniverse_agents.routing_agent import RoutingConfig
+                from cogniverse_agents.routing_agent import RoutingDeps
 
-                config = RoutingConfig(
+                deps = RoutingDeps(
+                    tenant_id="test_tenant",
+                    telemetry_config=telemetry_manager_without_phoenix.config,
                     enable_mlflow_tracking=False,
                     enable_relationship_extraction=True,
                     enable_query_enhancement=True,
                 )
-                routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config, config=config)
+                routing_agent = RoutingAgent(deps=deps)
 
                 routing_decision = (
                     await routing_agent.analyze_and_route_with_relationships(
@@ -142,7 +144,11 @@ class TestRoutingToEnhancedSearchIntegration:
         """Test orchestration need assessment between routing and orchestrator"""
 
         # Create components
-        routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
+        deps = RoutingDeps(
+            tenant_id="test_tenant",
+            telemetry_config=telemetry_manager_without_phoenix.config,
+        )
+        routing_agent = RoutingAgent(deps=deps)
         orchestrator = MultiAgentOrchestrator(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config, routing_agent=routing_agent)
 
         # Test complex query that should trigger orchestration
@@ -560,12 +566,15 @@ class TestRoutingEnhancementErrorHandlingIntegration:
             mock_extractor_class.return_value = mock_extractor
 
             # Create routing agent
-            from cogniverse_agents.routing_agent import RoutingConfig
+            from cogniverse_agents.routing_agent import RoutingDeps
 
-            config = RoutingConfig(
-                enable_mlflow_tracking=False, enable_relationship_extraction=True
+            deps = RoutingDeps(
+                tenant_id="test_tenant",
+                telemetry_config=telemetry_manager_without_phoenix.config,
+                enable_mlflow_tracking=False,
+                enable_relationship_extraction=True,
             )
-            routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config, config=config)
+            routing_agent = RoutingAgent(deps=deps)
 
             # Test that routing falls back gracefully
             try:

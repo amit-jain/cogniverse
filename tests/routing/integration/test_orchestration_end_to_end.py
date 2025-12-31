@@ -9,7 +9,7 @@ Tests the complete orchestration workflow:
 
 
 import pytest
-from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
 
@@ -20,19 +20,19 @@ class TestOrchestrationEndToEnd:
     @pytest.fixture
     async def routing_agent(self):
         """Create routing agent for testing"""
-        from cogniverse_agents.routing_agent import RoutingConfig
-
-        config = RoutingConfig(
-            model_name="ollama/gemma3:4b",
-            base_url="http://localhost:11434",
-            confidence_threshold=0.7,
-        )
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
             provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        agent = RoutingAgent(tenant_id="test-tenant", config=config, telemetry_config=telemetry_config)
+        deps = RoutingDeps(
+            tenant_id="test-tenant",
+            telemetry_config=telemetry_config,
+            model_name="ollama/gemma3:4b",
+            base_url="http://localhost:11434",
+            confidence_threshold=0.7,
+        )
+        agent = RoutingAgent(deps=deps)
         yield agent
 
     async def test_multi_modal_query_triggers_orchestration(self, routing_agent):
@@ -161,19 +161,19 @@ class TestRoutingDecisions:
 
     async def test_multi_modal_routing_decision(self, router_config):
         """Test multi-modal routing decision"""
-        from cogniverse_agents.routing_agent import RoutingConfig
-
-        config = RoutingConfig(
-            model_name="ollama/gemma3:4b",
-            base_url="http://localhost:11434",
-            confidence_threshold=0.7,
-        )
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
             provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        agent = RoutingAgent(tenant_id="test-tenant", config=config, telemetry_config=telemetry_config)
+        deps = RoutingDeps(
+            tenant_id="test-tenant",
+            telemetry_config=telemetry_config,
+            model_name="ollama/gemma3:4b",
+            base_url="http://localhost:11434",
+            confidence_threshold=0.7,
+        )
+        agent = RoutingAgent(deps=deps)
 
         result = await agent.route_query(
             "Find videos and documents about AI",
@@ -185,19 +185,19 @@ class TestRoutingDecisions:
 
     async def test_summary_routing_decision(self, router_config):
         """Test summary routing decision"""
-        from cogniverse_agents.routing_agent import RoutingConfig
-
-        config = RoutingConfig(
-            model_name="ollama/gemma3:4b",
-            base_url="http://localhost:11434",
-            confidence_threshold=0.7,
-        )
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
             provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        agent = RoutingAgent(tenant_id="test-tenant", config=config, telemetry_config=telemetry_config)
+        deps = RoutingDeps(
+            tenant_id="test-tenant",
+            telemetry_config=telemetry_config,
+            model_name="ollama/gemma3:4b",
+            base_url="http://localhost:11434",
+            confidence_threshold=0.7,
+        )
+        agent = RoutingAgent(deps=deps)
 
         result = await agent.route_query(
             "Summarize this content",
@@ -209,19 +209,19 @@ class TestRoutingDecisions:
 
     async def test_detailed_report_routing_decision(self, router_config):
         """Test detailed report routing decision"""
-        from cogniverse_agents.routing_agent import RoutingConfig
-
-        config = RoutingConfig(
-            model_name="ollama/gemma3:4b",
-            base_url="http://localhost:11434",
-            confidence_threshold=0.7,
-        )
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
             provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        agent = RoutingAgent(tenant_id="test-tenant", config=config, telemetry_config=telemetry_config)
+        deps = RoutingDeps(
+            tenant_id="test-tenant",
+            telemetry_config=telemetry_config,
+            model_name="ollama/gemma3:4b",
+            base_url="http://localhost:11434",
+            confidence_threshold=0.7,
+        )
+        agent = RoutingAgent(deps=deps)
 
         result = await agent.route_query(
             "Provide detailed analysis of this topic",

@@ -22,7 +22,7 @@ from cogniverse_core.common.a2a_utils import (
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_foundation.config.utils import get_config
 
-from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,11 @@ class A2ARoutingAgent:
         self.tenant_id = tenant_id
         self.config_manager = config_manager
         self.config = get_config(tenant_id=tenant_id, config_manager=config_manager)
-        self.routing_agent = routing_agent or RoutingAgent(tenant_id=tenant_id, config_manager=config_manager)
+        if routing_agent:
+            self.routing_agent = routing_agent
+        else:
+            deps = RoutingDeps(tenant_id=tenant_id)
+            self.routing_agent = RoutingAgent(deps=deps)
         self.http_client = httpx.AsyncClient(timeout=30.0)
 
         # Initialize agent registry

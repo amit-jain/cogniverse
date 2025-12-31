@@ -1,5 +1,5 @@
 """
-QueryEnhancementAgent - Autonomous A2A agent for query enhancement and expansion.
+QueryEnhancementAgent - Type-safe A2A agent for query enhancement and expansion.
 
 Enhances user queries by adding synonyms, context, related terms, and rephrasing
 to improve search quality and recall.
@@ -9,17 +9,29 @@ import logging
 from typing import Any, Dict, List
 
 import dspy
-from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
-from pydantic import BaseModel, Field
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from pydantic import Field
 
 logger = logging.getLogger(__name__)
 
 
-class QueryEnhancementResult(BaseModel):
-    """Result of query enhancement"""
+# =============================================================================
+# Type-Safe Input/Output/Dependencies
+# =============================================================================
 
-    original_query: str
-    enhanced_query: str
+
+class QueryEnhancementInput(AgentInput):
+    """Type-safe input for query enhancement"""
+
+    query: str = Field(..., description="Query to enhance")
+
+
+class QueryEnhancementOutput(AgentOutput):
+    """Type-safe output from query enhancement"""
+
+    original_query: str = Field(..., description="Original query")
+    enhanced_query: str = Field(..., description="Enhanced query")
     expansion_terms: List[str] = Field(
         default_factory=list, description="Additional search terms"
     )
@@ -29,8 +41,18 @@ class QueryEnhancementResult(BaseModel):
     context_additions: List[str] = Field(
         default_factory=list, description="Contextual additions"
     )
-    confidence: float = Field(ge=0.0, le=1.0, description="Enhancement confidence")
-    reasoning: str = Field(description="Explanation of enhancements")
+    confidence: float = Field(0.0, ge=0.0, le=1.0, description="Enhancement confidence")
+    reasoning: str = Field("", description="Explanation of enhancements")
+
+
+class QueryEnhancementDeps(AgentDeps):
+    """Dependencies for query enhancement agent"""
+
+    pass  # Only needs tenant_id from base
+
+
+# Backward compatibility alias
+QueryEnhancementResult = QueryEnhancementOutput
 
 
 class QueryEnhancementSignature(dspy.Signature):
@@ -94,9 +116,11 @@ class QueryEnhancementModule(dspy.Module):
         )
 
 
-class QueryEnhancementAgent(DSPyA2AAgentBase):
+class QueryEnhancementAgent(
+    A2AAgent[QueryEnhancementInput, QueryEnhancementOutput, QueryEnhancementDeps]
+):
     """
-    Autonomous A2A agent for query enhancement.
+    Type-safe A2A agent for query enhancement.
 
     Capabilities:
     - Query expansion with related terms
@@ -106,24 +130,21 @@ class QueryEnhancementAgent(DSPyA2AAgentBase):
     - Ambiguity resolution
     """
 
-    def __init__(self, tenant_id: str = "default", port: int = 8012):
+    def __init__(self, deps: QueryEnhancementDeps, port: int = 8012):
         """
-        Initialize QueryEnhancementAgent
+        Initialize QueryEnhancementAgent with typed dependencies.
 
         Args:
-            tenant_id: Tenant identifier
+            deps: Typed dependencies with tenant_id
             port: Port for A2A server
         """
-        self.tenant_id = tenant_id
-
         # Initialize DSPy module
         enhancement_module = QueryEnhancementModule()
 
-        # Initialize base class
-        super().__init__(
+        # Create A2A config
+        config = A2AAgentConfig(
             agent_name="query_enhancement_agent",
-            agent_description="Autonomous query enhancement with expansion and context",
-            dspy_module=enhancement_module,
+            agent_description="Type-safe query enhancement with expansion and context",
             capabilities=[
                 "query_enhancement",
                 "query_expansion",
@@ -135,19 +156,22 @@ class QueryEnhancementAgent(DSPyA2AAgentBase):
             version="1.0.0",
         )
 
-        logger.info(f"QueryEnhancementAgent initialized for tenant: {tenant_id}")
+        # Initialize base class
+        super().__init__(deps=deps, config=config, dspy_module=enhancement_module)
 
-    async def _process(self, dspy_input: Dict[str, Any]) -> QueryEnhancementResult:
+        logger.info(f"QueryEnhancementAgent initialized for tenant: {deps.tenant_id}")
+
+    async def process(self, input: QueryEnhancementInput) -> QueryEnhancementOutput:
         """
-        Process query enhancement request
+        Process query enhancement request with typed input/output.
 
         Args:
-            dspy_input: Input with 'query' field
+            input: Typed input with query field
 
         Returns:
-            QueryEnhancementResult with enhanced query and expansions
+            QueryEnhancementOutput with enhanced query and expansions
         """
-        query = dspy_input.get("query", "")
+        query = input.query
 
         if not query:
             return QueryEnhancementResult(
@@ -186,67 +210,7 @@ class QueryEnhancementAgent(DSPyA2AAgentBase):
             reasoning=result.reasoning,
         )
 
-    def _dspy_to_a2a_output(self, dspy_output: Any) -> Dict[str, Any]:
-        """Convert QueryEnhancementResult to A2A format"""
-        if isinstance(dspy_output, QueryEnhancementResult):
-            return {
-                "status": "success",
-                "agent": self.agent_name,
-                "original_query": dspy_output.original_query,
-                "enhanced_query": dspy_output.enhanced_query,
-                "expansion_terms": dspy_output.expansion_terms,
-                "synonyms": dspy_output.synonyms,
-                "context_additions": dspy_output.context_additions,
-                "confidence": dspy_output.confidence,
-                "reasoning": dspy_output.reasoning,
-            }
-        else:
-            return {
-                "status": "success",
-                "agent": self.agent_name,
-                "output": str(dspy_output),
-            }
-
-    def _get_agent_skills(self) -> List[Dict[str, Any]]:
-        """Define agent skills for A2A protocol"""
-        return [
-            {
-                "name": "enhance_query",
-                "description": "Enhance query with synonyms, expansions, and context",
-                "input_schema": {"query": "string"},
-                "output_schema": {
-                    "original_query": "string",
-                    "enhanced_query": "string",
-                    "expansion_terms": "array of strings",
-                    "synonyms": "array of strings",
-                    "context_additions": "array of strings",
-                    "confidence": "float",
-                    "reasoning": "string",
-                },
-                "examples": [
-                    {
-                        "input": {"query": "ML tutorials"},
-                        "output": {
-                            "original_query": "ML tutorials",
-                            "enhanced_query": "machine learning tutorials and guides",
-                            "expansion_terms": [
-                                "deep learning",
-                                "neural networks",
-                                "AI",
-                            ],
-                            "synonyms": ["machine learning", "artificial intelligence"],
-                            "context_additions": [
-                                "beginner",
-                                "introduction",
-                                "fundamentals",
-                            ],
-                            "confidence": 0.85,
-                            "reasoning": "Expanded ML acronym and added related AI terms",
-                        },
-                    }
-                ],
-            }
-        ]
+    # Note: _dspy_to_a2a_output and _get_agent_skills handled by A2AAgent base class
 
 
 # FastAPI app for standalone deployment
@@ -270,7 +234,8 @@ async def startup_event():
     import os
 
     tenant_id = os.getenv("TENANT_ID", "default")
-    query_agent = QueryEnhancementAgent(tenant_id=tenant_id)
+    deps = QueryEnhancementDeps(tenant_id=tenant_id)
+    query_agent = QueryEnhancementAgent(deps=deps)
     logger.info("QueryEnhancementAgent started")
 
 
@@ -299,7 +264,7 @@ async def process_task(task: Dict[str, Any]):
 
 
 if __name__ == "__main__":
-
-    agent = QueryEnhancementAgent(tenant_id="default", port=8012)
+    deps = QueryEnhancementDeps(tenant_id="default")
+    agent = QueryEnhancementAgent(deps=deps, port=8012)
     logger.info("Starting QueryEnhancementAgent on port 8012...")
-    agent.run()
+    agent.start()

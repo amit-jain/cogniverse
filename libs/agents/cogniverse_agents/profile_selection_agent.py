@@ -1,5 +1,5 @@
 """
-ProfileSelectionAgent - Autonomous A2A agent for selecting optimal backend profiles.
+ProfileSelectionAgent - Type-safe A2A agent for selecting optimal backend profiles.
 
 Uses LLM-based reasoning (SmolLM) to analyze queries and select the most appropriate
 backend profile based on query characteristics, modality, and complexity.
@@ -9,7 +9,8 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import dspy
-from cogniverse_core.agents.dspy_a2a_base import DSPyA2AAgentBase
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -23,19 +24,52 @@ class ProfileCandidate(BaseModel):
     reasoning: str = Field(description="Why this profile was selected")
 
 
-class ProfileSelectionResult(BaseModel):
-    """Result of profile selection"""
+# =============================================================================
+# Type-Safe Input/Output/Dependencies
+# =============================================================================
 
-    query: str
-    selected_profile: str
-    confidence: float = Field(ge=0.0, le=1.0)
-    reasoning: str
-    query_intent: str = Field(description="Detected query intent")
-    modality: str = Field(description="Target modality")
-    complexity: str = Field(description="Query complexity: simple, medium, complex")
+
+class ProfileSelectionInput(AgentInput):
+    """Type-safe input for profile selection"""
+
+    query: str = Field(..., description="Query to analyze")
+    available_profiles: Optional[List[str]] = Field(
+        None, description="Available profiles to choose from"
+    )
+
+
+class ProfileSelectionOutput(AgentOutput):
+    """Type-safe output from profile selection"""
+
+    query: str = Field(..., description="Original query")
+    selected_profile: str = Field(..., description="Selected profile")
+    confidence: float = Field(0.0, ge=0.0, le=1.0, description="Confidence score")
+    reasoning: str = Field("", description="Selection reasoning")
+    query_intent: str = Field("", description="Detected query intent")
+    modality: str = Field("video", description="Target modality")
+    complexity: str = Field("simple", description="Query complexity")
     alternatives: List[ProfileCandidate] = Field(
         default_factory=list, description="Alternative profiles"
     )
+
+
+class ProfileSelectionDeps(AgentDeps):
+    """Dependencies for profile selection agent"""
+
+    available_profiles: List[str] = Field(
+        default_factory=lambda: [
+            "video_colpali_base",
+            "video_colpali_large",
+            "video_videoprism_base",
+            "image_colpali_base",
+            "text_bge_base",
+        ],
+        description="Default available profiles",
+    )
+
+
+# Backward compatibility alias
+ProfileSelectionResult = ProfileSelectionOutput
 
 
 class ProfileSelectionSignature(dspy.Signature):
@@ -115,9 +149,11 @@ class ProfileSelectionModule(dspy.Module):
         )
 
 
-class ProfileSelectionAgent(DSPyA2AAgentBase):
+class ProfileSelectionAgent(
+    A2AAgent[ProfileSelectionInput, ProfileSelectionOutput, ProfileSelectionDeps]
+):
     """
-    Autonomous A2A agent for backend profile selection.
+    Type-safe A2A agent for backend profile selection.
 
     Uses LLM-based reasoning (SmolLM or similar small model) to analyze queries
     and select the optimal backend profile based on:
@@ -133,37 +169,21 @@ class ProfileSelectionAgent(DSPyA2AAgentBase):
     - Alternative profile suggestions
     """
 
-    def __init__(
-        self,
-        tenant_id: str = "default",
-        available_profiles: Optional[List[str]] = None,
-        port: int = 8011,
-    ):
+    def __init__(self, deps: ProfileSelectionDeps, port: int = 8011):
         """
-        Initialize ProfileSelectionAgent
+        Initialize ProfileSelectionAgent with typed dependencies.
 
         Args:
-            tenant_id: Tenant identifier
-            available_profiles: List of available backend profiles
+            deps: Typed dependencies with tenant_id and available_profiles
             port: Port for A2A server
         """
-        self.tenant_id = tenant_id
-        self.available_profiles = available_profiles or [
-            "video_colpali_base",
-            "video_colpali_large",
-            "video_videoprism_base",
-            "image_colpali_base",
-            "text_bge_base",
-        ]
-
         # Initialize DSPy module
         selection_module = ProfileSelectionModule()
 
-        # Initialize base class
-        super().__init__(
+        # Create A2A config
+        config = A2AAgentConfig(
             agent_name="profile_selection_agent",
-            agent_description="Autonomous profile selection with LLM-based reasoning",
-            dspy_module=selection_module,
+            agent_description="Type-safe profile selection with LLM-based reasoning",
             capabilities=[
                 "profile_selection",
                 "query_analysis",
@@ -175,29 +195,32 @@ class ProfileSelectionAgent(DSPyA2AAgentBase):
             version="1.0.0",
         )
 
+        # Initialize base class
+        super().__init__(deps=deps, config=config, dspy_module=selection_module)
+
         logger.info(
-            f"ProfileSelectionAgent initialized for tenant: {tenant_id}, "
-            f"profiles: {len(self.available_profiles)}"
+            f"ProfileSelectionAgent initialized for tenant: {deps.tenant_id}, "
+            f"profiles: {len(deps.available_profiles)}"
         )
 
-    async def _process(self, dspy_input: Dict[str, Any]) -> ProfileSelectionResult:
+    async def process(self, input: ProfileSelectionInput) -> ProfileSelectionOutput:
         """
-        Process profile selection request
+        Process profile selection request with typed input/output.
 
         Args:
-            dspy_input: Input with 'query' and optional 'available_profiles'
+            input: Typed input with query and optional available_profiles
 
         Returns:
-            ProfileSelectionResult with selected profile and reasoning
+            ProfileSelectionOutput with selected profile and reasoning
         """
-        query = dspy_input.get("query", "")
-        profiles = dspy_input.get("available_profiles", self.available_profiles)
+        query = input.query
+        profiles = input.available_profiles or self.deps.available_profiles
 
         if not query:
             return ProfileSelectionResult(
                 query="",
                 selected_profile=(
-                    self.available_profiles[0] if self.available_profiles else "default"
+                    self.deps.available_profiles[0] if self.deps.available_profiles else "default"
                 ),
                 confidence=0.0,
                 reasoning="Empty query, using default profile",
@@ -267,68 +290,7 @@ class ProfileSelectionAgent(DSPyA2AAgentBase):
         alternatives.sort(key=lambda x: x.score, reverse=True)
         return alternatives[:3]
 
-    def _dspy_to_a2a_output(self, dspy_output: Any) -> Dict[str, Any]:
-        """Convert ProfileSelectionResult to A2A format"""
-        if isinstance(dspy_output, ProfileSelectionResult):
-            return {
-                "status": "success",
-                "agent": self.agent_name,
-                "query": dspy_output.query,
-                "selected_profile": dspy_output.selected_profile,
-                "confidence": dspy_output.confidence,
-                "reasoning": dspy_output.reasoning,
-                "query_intent": dspy_output.query_intent,
-                "modality": dspy_output.modality,
-                "complexity": dspy_output.complexity,
-                "alternatives": [a.model_dump() for a in dspy_output.alternatives],
-            }
-        else:
-            return {
-                "status": "success",
-                "agent": self.agent_name,
-                "output": str(dspy_output),
-            }
-
-    def _get_agent_skills(self) -> List[Dict[str, Any]]:
-        """Define agent skills for A2A protocol"""
-        return [
-            {
-                "name": "select_profile",
-                "description": "Select optimal backend profile using LLM reasoning",
-                "input_schema": {
-                    "query": "string",
-                    "available_profiles": "optional array of strings",
-                },
-                "output_schema": {
-                    "selected_profile": "string",
-                    "confidence": "float",
-                    "reasoning": "string",
-                    "query_intent": "string",
-                    "modality": "string",
-                    "complexity": "string",
-                    "alternatives": "array of {profile_name, score, reasoning}",
-                },
-                "examples": [
-                    {
-                        "input": {
-                            "query": "Show me videos about machine learning",
-                            "available_profiles": [
-                                "video_colpali_base",
-                                "text_bge_base",
-                            ],
-                        },
-                        "output": {
-                            "selected_profile": "video_colpali_base",
-                            "confidence": 0.9,
-                            "reasoning": "Query requests video content, best matched by video_colpali_base",
-                            "query_intent": "video_search",
-                            "modality": "video",
-                            "complexity": "simple",
-                        },
-                    }
-                ],
-            }
-        ]
+    # Note: _dspy_to_a2a_output and _get_agent_skills handled by A2AAgent base class
 
 
 # FastAPI app for standalone deployment
@@ -352,7 +314,8 @@ async def startup_event():
     import os
 
     tenant_id = os.getenv("TENANT_ID", "default")
-    profile_agent = ProfileSelectionAgent(tenant_id=tenant_id)
+    deps = ProfileSelectionDeps(tenant_id=tenant_id)
+    profile_agent = ProfileSelectionAgent(deps=deps)
     logger.info("ProfileSelectionAgent started")
 
 
@@ -381,7 +344,7 @@ async def process_task(task: Dict[str, Any]):
 
 
 if __name__ == "__main__":
-
-    agent = ProfileSelectionAgent(tenant_id="default", port=8011)
+    deps = ProfileSelectionDeps(tenant_id="default")
+    agent = ProfileSelectionAgent(deps=deps, port=8011)
     logger.info("Starting ProfileSelectionAgent on port 8011...")
-    agent.run()
+    agent.start()

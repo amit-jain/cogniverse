@@ -61,7 +61,7 @@ sequenceDiagram
     participant Runtime as Runtime Server
 
     Note over Agent: Agent Initialization
-    Agent->>Agent: DSPyA2AAgentBase.__init__()
+    Agent->>Agent: A2AAgent.__init__(deps, config)
     Agent->>Agent: Load configuration
     Agent->>Agent: _self_register()
 
@@ -84,7 +84,7 @@ sequenceDiagram
 
     Note over Runtime,Agent: Task Execution
     Runtime->>Agent: POST /tasks/send (A2A message)
-    Agent->>Agent: _process(dspy_input)
+    Agent->>Agent: process(input: InputT) -> OutputT
     Agent-->>Runtime: A2A response
 ```
 
@@ -385,8 +385,8 @@ stateDiagram-v2
     ServerStartup --> Ready: uvicorn.run()
 
     Ready --> Processing: Receive A2A Task
-    Processing --> DSPyProcessing: _process(dspy_input)
-    DSPyProcessing --> ResponseSent: _dspy_to_a2a_output()
+    Processing --> DSPyProcessing: process(input: InputT)
+    DSPyProcessing --> ResponseSent: Return OutputT
     ResponseSent --> Ready: Return A2A Response
 
     Ready --> HealthCheck: GET /health
@@ -402,7 +402,7 @@ stateDiagram-v2
     end note
 
     note right of Processing
-        DSPy-powered processing
+        Type-safe processing
         Multi-tenant isolation
         Telemetry tracking
     end note
