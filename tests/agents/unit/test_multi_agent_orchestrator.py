@@ -157,15 +157,15 @@ class TestMultiAgentOrchestrator:
 
         default_agents = orchestrator._get_default_agents()
 
-        assert "video_search_agent" in default_agents
+        assert "search_agent" in default_agents
         assert "summarizer_agent" in default_agents
         assert "detailed_report_agent" in default_agents
 
-        # Check video search agent config
-        video_agent = default_agents["video_search_agent"]
-        assert "video_content_search" in video_agent["capabilities"]
-        assert "endpoint" in video_agent
-        assert "timeout_seconds" in video_agent
+        # Check search agent config
+        search_agent = default_agents["search_agent"]
+        assert "video_content_search" in search_agent["capabilities"]
+        assert "endpoint" in search_agent
+        assert "timeout_seconds" in search_agent
 
     @patch("cogniverse_agents.multi_agent_orchestrator.RoutingAgent")
     @patch("cogniverse_agents.multi_agent_orchestrator.A2AClient")

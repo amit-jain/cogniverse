@@ -21,13 +21,22 @@ import logging
 import uuid
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 # DSPy 3.0 imports
 import dspy
 
 # A2A protocol imports
 from cogniverse_core.common.a2a_utils import A2AClient
+
+# Checkpoint types for durable execution
+from cogniverse_agents.orchestrator.checkpoint_types import (
+    CheckpointConfig,
+    CheckpointLevel,
+    CheckpointStatus,
+    TaskCheckpoint,
+    WorkflowCheckpoint,
+)
 
 # Enhanced routing imports
 from cogniverse_agents.routing_agent import (
@@ -42,6 +51,11 @@ from cogniverse_agents.workflow.types import (
     WorkflowStatus,
     WorkflowTask,
 )
+
+if TYPE_CHECKING:
+    from cogniverse_agents.orchestrator.checkpoint_storage import (
+        WorkflowCheckpointStorage,
+    )
 
 # Workflow intelligence (import after types to avoid circular dependency)
 from cogniverse_agents.workflow_intelligence import (
@@ -124,6 +138,8 @@ class MultiAgentOrchestrator:
         workflow_timeout_minutes: int = 15,
         enable_workflow_intelligence: bool = True,
         optimization_strategy: OptimizationStrategy = OptimizationStrategy.BALANCED,
+        checkpoint_config: Optional[CheckpointConfig] = None,
+        checkpoint_storage: Optional["WorkflowCheckpointStorage"] = None,
     ):
         """
         Initialize Multi-Agent Orchestrator
@@ -136,6 +152,8 @@ class MultiAgentOrchestrator:
             workflow_timeout_minutes: Workflow timeout in minutes
             enable_workflow_intelligence: Enable workflow intelligence
             optimization_strategy: Optimization strategy
+            checkpoint_config: Configuration for durable execution checkpoints
+            checkpoint_storage: Storage backend for checkpoints (Phoenix-based)
 
         Raises:
             ValueError: If tenant_id is empty or None
@@ -145,6 +163,10 @@ class MultiAgentOrchestrator:
 
         self.tenant_id = tenant_id
         self.logger = logging.getLogger(__name__)
+
+        # Durable execution configuration
+        self.checkpoint_config = checkpoint_config or CheckpointConfig(enabled=False)
+        self.checkpoint_storage = checkpoint_storage
 
         # Initialize routing agent
         if routing_agent:
@@ -283,6 +305,7 @@ class MultiAgentOrchestrator:
         context: Optional[str] = None,
         user_id: Optional[str] = None,
         preferences: Optional[Dict[str, Any]] = None,
+        resume_from_workflow_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Process a complex query using multi-agent orchestration
@@ -292,10 +315,17 @@ class MultiAgentOrchestrator:
             context: Additional context
             user_id: User identifier
             preferences: User preferences for processing
+            resume_from_workflow_id: If provided, resume from latest checkpoint of this workflow
 
         Returns:
             Orchestrated result from multiple agents
         """
+        # Handle resume case
+        if resume_from_workflow_id:
+            return await self._resume_workflow(
+                resume_from_workflow_id, context, user_id, preferences
+            )
+
         workflow_id = f"workflow_{uuid.uuid4().hex[:8]}"
         self.orchestration_stats["total_workflows"] += 1
 
@@ -305,7 +335,7 @@ class MultiAgentOrchestrator:
                 workflow_id, query, context, user_id, preferences
             )
 
-            # Step 2: Execute the workflow
+            # Step 2: Execute the workflow (with checkpointing if enabled)
             await self._execute_workflow(workflow_plan)
 
             # Step 3: Aggregate and synthesize results
@@ -484,23 +514,51 @@ class MultiAgentOrchestrator:
 
         return execution_order
 
-    async def _execute_workflow(self, workflow_plan: WorkflowPlan) -> bool:
-        """Execute workflow according to the plan"""
+    async def _execute_workflow(
+        self, workflow_plan: WorkflowPlan, start_phase: int = 0
+    ) -> bool:
+        """
+        Execute workflow according to the plan with optional checkpointing
+
+        Args:
+            workflow_plan: The workflow plan to execute
+            start_phase: Phase index to start from (for resume)
+
+        Returns:
+            True if workflow completed successfully
+        """
         workflow_plan.status = WorkflowStatus.RUNNING
-        workflow_plan.start_time = datetime.now()
+        if workflow_plan.start_time is None:
+            workflow_plan.start_time = datetime.now()
         self.active_workflows[workflow_plan.workflow_id] = workflow_plan
 
         try:
-            self.logger.info(f"Executing workflow {workflow_plan.workflow_id}")
+            self.logger.info(
+                f"Executing workflow {workflow_plan.workflow_id} "
+                f"(starting from phase {start_phase + 1}/{len(workflow_plan.execution_order)})"
+            )
 
-            # Execute tasks in planned order
-            for phase_num, task_ids in enumerate(workflow_plan.execution_order):
+            # Execute tasks in planned order, starting from start_phase
+            for phase_num, task_ids in enumerate(
+                workflow_plan.execution_order[start_phase:], start=start_phase
+            ):
                 self.logger.debug(f"Executing phase {phase_num + 1}: {task_ids}")
 
                 # Run tasks in parallel within this phase
+                # Skip tasks that are already completed (for resume)
                 phase_tasks = [
-                    task for task in workflow_plan.tasks if task.task_id in task_ids
+                    task
+                    for task in workflow_plan.tasks
+                    if task.task_id in task_ids
+                    and task.status != TaskStatus.COMPLETED
                 ]
+
+                if not phase_tasks:
+                    self.logger.debug(
+                        f"Phase {phase_num + 1} skipped - all tasks already completed"
+                    )
+                    continue
+
                 phase_results = await asyncio.gather(
                     *[self._execute_task(task, workflow_plan) for task in phase_tasks],
                     return_exceptions=True,
@@ -515,11 +573,28 @@ class MultiAgentOrchestrator:
                         failed_tasks.append(task.task_id)
                         self.logger.error(f"Task {task.task_id} failed: {result}")
 
+                # Checkpoint after phase completion (if enabled)
+                if self._should_checkpoint_phase():
+                    await self._save_checkpoint(
+                        workflow_plan,
+                        current_phase=phase_num + 1,
+                        status=CheckpointStatus.ACTIVE,
+                    )
+
                 # Decide whether to continue or abort
                 if failed_tasks and not self._can_continue_with_failures(
                     workflow_plan, failed_tasks
                 ):
                     workflow_plan.status = WorkflowStatus.FAILED
+
+                    # Save failed checkpoint
+                    if self._should_checkpoint_phase():
+                        await self._save_checkpoint(
+                            workflow_plan,
+                            current_phase=phase_num,
+                            status=CheckpointStatus.FAILED,
+                        )
+
                     self.logger.error(
                         f"Workflow aborted due to critical task failures: {failed_tasks}"
                     )
@@ -535,6 +610,15 @@ class MultiAgentOrchestrator:
                 workflow_plan.status = WorkflowStatus.FAILED
 
             workflow_plan.end_time = datetime.now()
+
+            # Save completed checkpoint
+            if self._should_checkpoint_phase():
+                await self._save_checkpoint(
+                    workflow_plan,
+                    current_phase=len(workflow_plan.execution_order),
+                    status=CheckpointStatus.COMPLETED,
+                )
+
             self.logger.info(
                 f"Workflow {workflow_plan.workflow_id} {workflow_plan.status.value}: "
                 f"{len(completed_tasks)}/{len(workflow_plan.tasks)} tasks completed"
@@ -545,6 +629,20 @@ class MultiAgentOrchestrator:
         except Exception as e:
             workflow_plan.status = WorkflowStatus.FAILED
             workflow_plan.end_time = datetime.now()
+
+            # Save failed checkpoint
+            if self._should_checkpoint_phase():
+                try:
+                    await self._save_checkpoint(
+                        workflow_plan,
+                        current_phase=0,
+                        status=CheckpointStatus.FAILED,
+                    )
+                except Exception as checkpoint_error:
+                    self.logger.warning(
+                        f"Failed to save failure checkpoint: {checkpoint_error}"
+                    )
+
             self.logger.error(f"Workflow execution failed: {e}")
             return False
 
@@ -662,6 +760,257 @@ class MultiAgentOrchestrator:
         )
 
         return failed_count / total_tasks < 0.5
+
+    # ============================================================================
+    # Durable Execution: Checkpoint Methods
+    # ============================================================================
+
+    def _should_checkpoint_phase(self) -> bool:
+        """Check if phase-level checkpointing is enabled"""
+        if not self.checkpoint_config.enabled:
+            return False
+        if self.checkpoint_storage is None:
+            return False
+        return self.checkpoint_config.level in (
+            CheckpointLevel.PHASE,
+            CheckpointLevel.PHASE_AND_TASK,
+        )
+
+    def _should_checkpoint_task(self) -> bool:
+        """Check if task-level checkpointing is enabled"""
+        if not self.checkpoint_config.enabled:
+            return False
+        if self.checkpoint_storage is None:
+            return False
+        return self.checkpoint_config.level in (
+            CheckpointLevel.TASK,
+            CheckpointLevel.PHASE_AND_TASK,
+        )
+
+    async def _save_checkpoint(
+        self,
+        workflow_plan: WorkflowPlan,
+        current_phase: int,
+        status: CheckpointStatus,
+    ) -> Optional[str]:
+        """
+        Save a checkpoint of the current workflow state
+
+        Args:
+            workflow_plan: Current workflow plan
+            current_phase: Index of the current phase (0-based, points to next phase to execute)
+            status: Checkpoint status
+
+        Returns:
+            Checkpoint ID if saved, None if checkpointing not enabled
+        """
+        if self.checkpoint_storage is None:
+            return None
+
+        try:
+            # Build task states from workflow plan
+            task_states = {}
+            for task in workflow_plan.tasks:
+                task_states[task.task_id] = TaskCheckpoint(
+                    task_id=task.task_id,
+                    agent_name=task.agent_name,
+                    query=task.query,
+                    dependencies=list(task.dependencies),
+                    status=task.status.value,
+                    result=task.result,
+                    error=task.error,
+                    retry_count=task.retry_count,
+                    start_time=task.start_time,
+                    end_time=task.end_time,
+                )
+
+            # Create checkpoint
+            checkpoint = WorkflowCheckpoint(
+                checkpoint_id=f"ckpt_{uuid.uuid4().hex[:12]}",
+                workflow_id=workflow_plan.workflow_id,
+                tenant_id=self.tenant_id,
+                workflow_status=workflow_plan.status.value,
+                current_phase=current_phase,
+                original_query=workflow_plan.original_query,
+                execution_order=workflow_plan.execution_order,
+                metadata=workflow_plan.metadata,
+                task_states=task_states,
+                checkpoint_time=datetime.now(),
+                checkpoint_status=status,
+                parent_checkpoint_id=None,
+                resume_count=0,
+            )
+
+            # Save to storage
+            checkpoint_id = await self.checkpoint_storage.save_checkpoint(checkpoint)
+
+            self.logger.info(
+                f"Saved checkpoint {checkpoint_id} for workflow {workflow_plan.workflow_id} "
+                f"(phase {current_phase}, status: {status.value})"
+            )
+
+            return checkpoint_id
+
+        except Exception as e:
+            self.logger.error(f"Failed to save checkpoint: {e}")
+            return None
+
+    async def _resume_workflow(
+        self,
+        workflow_id: str,
+        context: Optional[str] = None,
+        user_id: Optional[str] = None,
+        preferences: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Resume a workflow from its latest checkpoint
+
+        Args:
+            workflow_id: ID of workflow to resume
+            context: Optional additional context
+            user_id: User identifier
+            preferences: User preferences
+
+        Returns:
+            Orchestrated result from resuming the workflow
+        """
+        if self.checkpoint_storage is None:
+            return {
+                "workflow_id": workflow_id,
+                "status": "failed",
+                "error": "Checkpoint storage not configured - cannot resume workflow",
+            }
+
+        try:
+            # Get latest checkpoint
+            checkpoint = await self.checkpoint_storage.get_latest_checkpoint(workflow_id)
+
+            if checkpoint is None:
+                return {
+                    "workflow_id": workflow_id,
+                    "status": "failed",
+                    "error": f"No checkpoint found for workflow {workflow_id}",
+                }
+
+            self.logger.info(
+                f"Resuming workflow {workflow_id} from checkpoint {checkpoint.checkpoint_id} "
+                f"(phase {checkpoint.current_phase}, resume #{checkpoint.resume_count + 1})"
+            )
+
+            # Mark old checkpoint as superseded
+            await self.checkpoint_storage.mark_checkpoint_status(
+                checkpoint.checkpoint_id, CheckpointStatus.SUPERSEDED
+            )
+
+            # Reconstruct workflow plan from checkpoint
+            workflow_plan = self._reconstruct_workflow_plan(checkpoint)
+
+            # Update metadata with resume info
+            workflow_plan.metadata["resumed_from_checkpoint"] = checkpoint.checkpoint_id
+            workflow_plan.metadata["resume_count"] = checkpoint.resume_count + 1
+            if context:
+                workflow_plan.metadata["resume_context"] = context
+
+            self.orchestration_stats["total_workflows"] += 1
+
+            # Execute from checkpoint phase
+            await self._execute_workflow(workflow_plan, start_phase=checkpoint.current_phase)
+
+            # Aggregate results
+            final_result = await self._aggregate_results(workflow_plan)
+
+            # Update stats
+            self._update_orchestration_stats(
+                workflow_plan, success=(workflow_plan.status == WorkflowStatus.COMPLETED)
+            )
+
+            return {
+                "workflow_id": workflow_id,
+                "status": "completed" if workflow_plan.status == WorkflowStatus.COMPLETED else "failed",
+                "result": final_result,
+                "resumed_from": checkpoint.checkpoint_id,
+                "resume_count": checkpoint.resume_count + 1,
+                "execution_summary": {
+                    "total_tasks": len(workflow_plan.tasks),
+                    "completed_tasks": len(
+                        [t for t in workflow_plan.tasks if t.status == TaskStatus.COMPLETED]
+                    ),
+                    "skipped_phases": checkpoint.current_phase,
+                    "execution_time": (
+                        (workflow_plan.end_time - workflow_plan.start_time).total_seconds()
+                        if workflow_plan.end_time and workflow_plan.start_time
+                        else 0
+                    ),
+                    "agents_used": list(set(t.agent_name for t in workflow_plan.tasks)),
+                },
+                "metadata": workflow_plan.metadata,
+            }
+
+        except Exception as e:
+            self.logger.error(f"Failed to resume workflow {workflow_id}: {e}")
+            self.orchestration_stats["failed_workflows"] += 1
+
+            return {
+                "workflow_id": workflow_id,
+                "status": "failed",
+                "error": str(e),
+            }
+
+    def _reconstruct_workflow_plan(self, checkpoint: WorkflowCheckpoint) -> WorkflowPlan:
+        """
+        Reconstruct a WorkflowPlan from a checkpoint
+
+        Args:
+            checkpoint: Checkpoint to reconstruct from
+
+        Returns:
+            WorkflowPlan with task states restored
+        """
+        # Rebuild tasks from checkpoint
+        tasks = []
+        for task_id, task_checkpoint in checkpoint.task_states.items():
+            task = WorkflowTask(
+                task_id=task_checkpoint.task_id,
+                agent_name=task_checkpoint.agent_name,
+                query=task_checkpoint.query,
+                dependencies=set(task_checkpoint.dependencies),
+                status=TaskStatus(task_checkpoint.status),
+                result=task_checkpoint.result,
+                error=task_checkpoint.error,
+                retry_count=task_checkpoint.retry_count,
+                start_time=task_checkpoint.start_time,
+                end_time=task_checkpoint.end_time,
+            )
+            tasks.append(task)
+
+        # Sort tasks to maintain consistent ordering
+        tasks.sort(key=lambda t: t.task_id)
+
+        # Rebuild workflow plan
+        workflow_plan = WorkflowPlan(
+            workflow_id=checkpoint.workflow_id,
+            original_query=checkpoint.original_query,
+            tasks=tasks,
+            execution_order=checkpoint.execution_order,
+            status=WorkflowStatus(checkpoint.workflow_status),
+            metadata=checkpoint.metadata.copy(),
+        )
+
+        return workflow_plan
+
+    async def get_resumable_workflows(self) -> List[Dict[str, Any]]:
+        """
+        Get list of workflows that can be resumed
+
+        Returns:
+            List of resumable workflow summaries
+        """
+        if self.checkpoint_storage is None:
+            return []
+
+        return await self.checkpoint_storage.get_resumable_workflows(
+            tenant_id=self.tenant_id
+        )
 
     async def _aggregate_results(self, workflow_plan: WorkflowPlan) -> Dict[str, Any]:
         """Cross-modal fusion of results from completed tasks"""
