@@ -3,7 +3,7 @@
 **Package:** `cogniverse_agents` (Implementation Layer)
 **Location:** `libs/agents/cogniverse_agents/`
 **Purpose:** Agent implementations for multi-agent RAG system with multi-tenant support
-**Last Updated:** 2025-11-13
+**Last Updated:** 2026-01-01
 
 ---
 
@@ -23,6 +23,7 @@
 5. [Multi-Tenant Integration](#multi-tenant-integration)
 6. [Usage Examples](#usage-examples)
 7. [Testing](#testing)
+8. [Durable Execution (Workflow Checkpointing)](#durable-execution-workflow-checkpointing)
 
 ---
 
@@ -2754,6 +2755,184 @@ def test_tenant_isolation():
 
 ---
 
+## Durable Execution (Workflow Checkpointing)
+
+### Overview
+
+The `MultiAgentOrchestrator` supports durable execution through workflow checkpointing. This enables:
+
+- **Checkpoint**: Save workflow state after each phase
+- **Resume**: Restart failed workflows from the last checkpoint
+- **Replay**: Skip completed tasks and use cached results
+- **Fault Tolerance**: Recover from process restarts or failures
+
+### Checkpoint Types
+
+```python
+from cogniverse_agents.orchestrator.checkpoint_types import (
+    CheckpointConfig,
+    CheckpointLevel,
+    CheckpointStatus,
+    TaskCheckpoint,
+    WorkflowCheckpoint,
+)
+
+# Checkpoint granularity
+class CheckpointLevel(Enum):
+    PHASE = "phase"           # Checkpoint after each phase (default)
+    TASK = "task"             # Checkpoint after each task
+    PHASE_AND_TASK = "both"   # Checkpoint at both levels
+
+# Checkpoint lifecycle
+class CheckpointStatus(Enum):
+    ACTIVE = "active"         # Current checkpoint
+    SUPERSEDED = "superseded" # Replaced by newer checkpoint
+    FAILED = "failed"         # Workflow failed at this checkpoint
+    COMPLETED = "completed"   # Workflow completed successfully
+```
+
+### Enabling Checkpointing
+
+```python
+from cogniverse_agents.orchestrator import MultiAgentOrchestrator
+from cogniverse_agents.orchestrator.checkpoint_types import CheckpointConfig, CheckpointLevel
+from cogniverse_agents.orchestrator.checkpoint_storage import WorkflowCheckpointStorage
+
+# Create checkpoint storage (Phoenix span-based)
+storage = WorkflowCheckpointStorage(
+    project_name="workflow_checkpoints",
+    tenant_id="acme"
+)
+
+# Configure checkpointing
+config = CheckpointConfig(
+    enabled=True,
+    level=CheckpointLevel.PHASE,
+    project_name="workflow_checkpoints",
+    retain_completed_hours=24 * 7,   # Keep completed for 7 days
+    retain_failed_hours=24 * 30      # Keep failed for 30 days
+)
+
+# Create orchestrator with checkpointing
+orchestrator = MultiAgentOrchestrator(
+    tenant_id="acme",
+    checkpoint_config=config,
+    checkpoint_storage=storage
+)
+```
+
+### Resuming Failed Workflows
+
+```python
+# Get list of resumable workflows
+resumable = await orchestrator.get_resumable_workflows()
+# Returns: [{"workflow_id": "wf_123", "original_query": "...", ...}, ...]
+
+# Resume a specific workflow
+result = await orchestrator.process_complex_query(
+    query="Original query (ignored when resuming)",
+    resume_from_workflow_id="wf_123"
+)
+```
+
+### Resume Algorithm
+
+```
+1. Load latest ACTIVE checkpoint for workflow_id
+2. Reconstruct WorkflowPlan from checkpoint
+3. For each phase from checkpoint.current_phase:
+   - Skip tasks with status=COMPLETED (use cached result)
+   - Execute tasks with status=WAITING/READY/FAILED
+   - Save checkpoint after phase completion
+4. Mark old checkpoint as SUPERSEDED
+5. Return aggregated result
+```
+
+### Checkpoint Storage
+
+Checkpoints are stored as Phoenix spans following the same pattern as `ApprovalStorageImpl`:
+
+```python
+class WorkflowCheckpointStorage:
+    """Phoenix span-based checkpoint storage"""
+
+    async def save_checkpoint(checkpoint: WorkflowCheckpoint) -> str
+    async def get_latest_checkpoint(workflow_id: str) -> Optional[WorkflowCheckpoint]
+    async def get_checkpoint_by_id(checkpoint_id: str) -> Optional[WorkflowCheckpoint]
+    async def mark_checkpoint_status(checkpoint_id: str, status: CheckpointStatus)
+    async def list_workflow_checkpoints(workflow_id: str) -> List[WorkflowCheckpoint]
+    async def get_resumable_workflows(tenant_id: Optional[str]) -> List[Dict]
+```
+
+### Workflow Checkpoint Structure
+
+```python
+@dataclass
+class WorkflowCheckpoint:
+    checkpoint_id: str              # Unique checkpoint ID
+    workflow_id: str                # Workflow being checkpointed
+    tenant_id: str                  # Tenant identifier
+    workflow_status: str            # Current workflow status
+    current_phase: int              # Phase index (0-based)
+    original_query: str             # Original user query
+    execution_order: List[List[str]] # Task execution phases
+    metadata: Dict[str, Any]        # Additional metadata
+    task_states: Dict[str, TaskCheckpoint]  # Task states
+    checkpoint_time: datetime       # When checkpoint was created
+    checkpoint_status: CheckpointStatus     # Active/superseded/etc.
+    parent_checkpoint_id: Optional[str]     # For forking
+    resume_count: int               # Number of resume attempts
+
+@dataclass
+class TaskCheckpoint:
+    task_id: str                    # Task identifier
+    agent_name: str                 # Agent that executed task
+    query: str                      # Task query
+    dependencies: List[str]         # Task dependencies
+    status: str                     # completed/running/failed/waiting
+    result: Optional[Dict]          # Task result (if completed)
+    error: Optional[str]            # Error message (if failed)
+    retry_count: int                # Number of retries
+    start_time: Optional[datetime]  # When task started
+    end_time: Optional[datetime]    # When task completed
+```
+
+### Example: Complete Checkpoint Flow
+
+```python
+from cogniverse_agents.orchestrator import MultiAgentOrchestrator
+from cogniverse_agents.orchestrator.checkpoint_types import CheckpointConfig
+from cogniverse_agents.orchestrator.checkpoint_storage import WorkflowCheckpointStorage
+
+# Setup
+storage = WorkflowCheckpointStorage(project_name="checkpoints", tenant_id="acme")
+config = CheckpointConfig(enabled=True)
+orchestrator = MultiAgentOrchestrator(
+    tenant_id="acme",
+    checkpoint_config=config,
+    checkpoint_storage=storage
+)
+
+# Execute workflow (checkpoints saved automatically after each phase)
+try:
+    result = await orchestrator.process_complex_query(
+        "Find videos about machine learning and summarize them"
+    )
+except Exception as e:
+    print(f"Workflow failed: {e}")
+
+    # Get resumable workflows
+    resumable = await orchestrator.get_resumable_workflows()
+    if resumable:
+        # Resume from last checkpoint
+        result = await orchestrator.process_complex_query(
+            query="",  # Ignored when resuming
+            resume_from_workflow_id=resumable[0]["workflow_id"]
+        )
+```
+
+---
+
 ## Related Documentation
 
 ### Architecture Documentation
@@ -2771,4 +2950,4 @@ def test_tenant_isolation():
 
 ---
 
-**Summary**: The Agents package provides tenant-aware agent implementations that integrate with the core SDK. All agents require `tenant_id`, use tenant-specific schemas, and support memory, telemetry, and health checks. The package now includes intelligent profile selection (ProfileSelectionAgent), entity extraction (EntityExtractionAgent), multi-agent orchestration (OrchestratorAgent), and ensemble search with RRF fusion (SearchAgent).
+**Summary**: The Agents package provides tenant-aware agent implementations that integrate with the core SDK. All agents require `tenant_id`, use tenant-specific schemas, and support memory, telemetry, and health checks. The package now includes intelligent profile selection (ProfileSelectionAgent), entity extraction (EntityExtractionAgent), multi-agent orchestration (OrchestratorAgent), ensemble search with RRF fusion (SearchAgent), and **durable execution with workflow checkpointing** for fault-tolerant long-running workflows.
