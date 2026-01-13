@@ -2,14 +2,14 @@
 
 **Last Updated:** 2025-11-13
 **Module Path:** `tests/system/`, `tests/agents/e2e/`
-**Purpose:** End-to-end integration testing and system validation across the 10-package layered architecture
+**Purpose:** End-to-end integration testing and system validation across the 11-package layered architecture
 
 ---
 
 ## Module Overview
 
 ### Purpose
-The System Integration module validates Cogniverse's 10-package layered architecture:
+The System Integration module validates Cogniverse's 11-package layered architecture:
 - **End-to-End Workflows**: Complete user query to result flows across all layers
 - **Component Integration**: Multi-agent communication and coordination
 - **Backend Integration**: Vespa, Phoenix, Mem0 connectivity
@@ -456,4 +456,4 @@ def test_dashboard_integration():
 
 ---
 
-**Next**: For detailed instrumentation and telemetry patterns, see [Phoenix Telemetry Integration](../modules/telemetry-phoenix.md)
+**Next**: For detailed instrumentation and telemetry patterns, see [Phoenix Telemetry Integration](../modules/telemetry.md)

@@ -1,7 +1,7 @@
 # Istio Service Mesh Guide
 
 **Last Updated:** 2025-11-13
-**Architecture:** UV Workspace with 10 packages in layered architecture
+**Architecture:** UV Workspace with 11 packages in layered architecture
 **Purpose:** Deploy Istio service mesh for mTLS, traffic control, and observability on K3s/K8s
 **Telemetry:** Integrated with Phoenix (no Jaeger needed)
 

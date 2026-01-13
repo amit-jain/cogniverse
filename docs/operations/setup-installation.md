@@ -1,7 +1,7 @@
 # Cogniverse Setup & Installation Guide
 
 **Last Updated:** 2025-11-13
-**Architecture:** UV Workspace with 10 packages in layered architecture
+**Architecture:** UV Workspace with 11 packages in layered architecture
 **Purpose:** Production-ready installation and setup guide for Cogniverse multi-agent RAG system
 
 ---
@@ -107,11 +107,11 @@ curl http://localhost:11434/api/tags
 
 ## UV Workspace Structure
 
-Cogniverse uses a **UV workspace** with 10 packages in layered architecture:
+Cogniverse uses a **UV workspace** with 11 packages in layered architecture:
 
 ```
 cogniverse/
-├── libs/                         # SDK Packages (UV workspace - 10 packages)
+├── libs/                         # SDK Packages (UV workspace - 11 packages)
 │   # FOUNDATION LAYER (Pure Interfaces)
 │   ├── sdk/                      # cogniverse_sdk
 │   │   ├── pyproject.toml
@@ -307,7 +307,7 @@ EOF
 # List installed packages
 uv pip list | grep cogniverse
 
-# Expected output (all 10 packages):
+# Expected output (all 11 packages):
 # cogniverse-sdk                 0.1.0
 # cogniverse-foundation          0.1.0
 # cogniverse-core                0.1.0
@@ -434,7 +434,7 @@ uv run ruff format .
 ### Package Import Verification
 
 ```python
-# Verify package imports work correctly for all 10 packages
+# Verify package imports work correctly for all 11 packages
 python -c "
 # Foundation Layer
 from cogniverse_sdk.interfaces.backend import Backend
@@ -458,7 +458,7 @@ from cogniverse_synthetic.service import SyntheticDataService
 from cogniverse_runtime.main import app
 from cogniverse_dashboard.app import run_dashboard
 
-print('✅ All 10 packages imported successfully!')
+print('✅ All 11 packages imported successfully!')
 "
 ```
 
@@ -514,7 +514,7 @@ uv build
 
 ## Common Import Patterns
 
-After installation, use these import patterns for all 10 packages:
+After installation, use these import patterns for all 11 packages:
 
 ```python
 # ===== FOUNDATION LAYER =====

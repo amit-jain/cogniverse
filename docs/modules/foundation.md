@@ -593,7 +593,7 @@ uv run pytest tests/foundation/ --cov=cogniverse_foundation --cov-report=html
 
 - [Core Module](./core.md) - Agent base classes that use configuration and telemetry
 - [Configuration System Guide](../CONFIGURATION_SYSTEM.md) - Detailed configuration guide
-- [Telemetry Phoenix Module](./telemetry-phoenix.md) - Phoenix provider implementation
+- [Telemetry Module](./telemetry.md) - Phoenix provider implementation
 - [Multi-Tenant Architecture](../architecture/multi-tenant.md) - Tenant isolation patterns
 
 ---

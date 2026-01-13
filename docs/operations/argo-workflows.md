@@ -1,7 +1,7 @@
 # Argo Workflows Guide
 
 **Last Updated:** 2025-11-13
-**Architecture:** UV Workspace with 10 packages - Kubernetes-based batch processing with Argo Workflows
+**Architecture:** UV Workspace with 11 packages - Kubernetes-based batch processing with Argo Workflows
 **Purpose:** Complete guide for batch operations and scheduled tasks
 
 ---

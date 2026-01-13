@@ -384,7 +384,7 @@ class OptimizedSearchService:
 
 ## 7. Complete Configuration Flow
 
-### Configuration Loading Order (10-Package Architecture)
+### Configuration Loading Order (11-Package Architecture)
 
 1. **config.json** (cogniverse-foundation) → Main configuration with profiles
    - Location: `/home/user/cogniverse/configs/config.json`
@@ -509,7 +509,7 @@ if schema_dim != embedding_dim:
 **Last Updated**: 2025-11-13
 **Status**: Production Ready
 
-**Package Architecture Note**: Schema-driven processing spans multiple packages in the 10-package layered architecture:
+**Package Architecture Note**: Schema-driven processing spans multiple packages in the 11-package layered architecture:
 - **Foundation Layer**: cogniverse-sdk (schema interfaces), cogniverse-foundation (config)
 - **Core Layer**: cogniverse-core (schema registries, base processing)
 - **Implementation Layer**: cogniverse-vespa (schema management, deployment), cogniverse-agents (schema-based agents)

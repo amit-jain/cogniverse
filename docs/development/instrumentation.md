@@ -2,7 +2,7 @@
 
 **Last Updated:** 2025-11-13
 **Module Path:** `libs/foundation/cogniverse_foundation/telemetry/`, `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/`, `libs/evaluation/cogniverse_evaluation/phoenix/`
-**Architecture:** 10-package layered architecture (foundation → evaluation/telemetry-phoenix)
+**Architecture:** 11-package layered architecture (foundation → evaluation/telemetry-phoenix)
 **Purpose:** Phoenix-powered observability and multi-tenant telemetry
 
 ---

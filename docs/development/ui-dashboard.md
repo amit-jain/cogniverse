@@ -2,7 +2,7 @@
 
 **Last Updated:** 2025-11-13
 **Module Path:** `scripts/*_tab.py`
-**Architecture:** 10-package layered architecture
+**Architecture:** 11-package layered architecture
 **SDK Packages:** Uses dashboard (application layer) + agents, telemetry-phoenix (implementation layer) + core, evaluation (core layer) + foundation (foundation layer)
 **Purpose:** Interactive Streamlit dashboards for system monitoring, configuration management, optimization, and visualization
 
@@ -771,7 +771,7 @@ For long-running optimizations, submit Argo Workflows:
 - ✅ **Batch Processing**: Run DSPy optimization as Kubernetes workflows
 - ✅ **Multiple Optimizers**: GEPA, Bootstrap, SIMBA, MIPRO
 - ✅ **Golden Datasets**: Use evaluation datasets from data/testset/evaluation/
-- 🔜 **Synthetic Data**: Coming soon for DSPy module optimizers
+- ✅ **Synthetic Data**: DSPy-driven data generation via cogniverse-synthetic module
 
 **Configuration**:
 - **Tenant ID**: Target tenant for optimization
@@ -1480,7 +1480,7 @@ progress.empty()  # Remove progress bar when done
 
 ## Summary
 
-The UI/Dashboard module provides comprehensive web-based interfaces leveraging the 10-package layered architecture:
+The UI/Dashboard module provides comprehensive web-based interfaces leveraging the 11-package layered architecture:
 
 **Layer Integration:**
 - **Foundation Layer**: Telemetry foundations from `cogniverse-foundation`
@@ -1536,7 +1536,7 @@ from cogniverse_vespa.backends import VespaSearchBackend
 from cogniverse_dashboard.ui.components import render_metrics_tab
 ```
 
-This module serves as the primary user interface for system monitoring, configuration management, and data exploration in the Cogniverse platform, demonstrating clean separation of concerns across the 10-package layered architecture.
+This module serves as the primary user interface for system monitoring, configuration management, and data exploration in the Cogniverse platform, demonstrating clean separation of concerns across the 11-package layered architecture.
 
 ---
 

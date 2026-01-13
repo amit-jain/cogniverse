@@ -22,7 +22,7 @@
 
 ## Overview
 
-Cogniverse is structured as a **UV workspace monorepo** containing 10 packages in a layered architecture. This architecture supports multi-modal content processing (video, audio, images, documents, text, dataframes) with multi-agent orchestration and provides:
+Cogniverse is structured as a **UV workspace monorepo** containing 11 packages in a layered architecture. This architecture supports multi-modal content processing (video, audio, images, documents, text, dataframes) with multi-agent orchestration and provides:
 
 - **Modular Design**: Clear separation of concerns across Foundation, Core, Implementation, and Application layers
 - **Dependency Management**: Explicit package boundaries with workspace-based dependency resolution
@@ -33,7 +33,7 @@ Cogniverse is structured as a **UV workspace monorepo** containing 10 packages i
 
 ### Key Statistics
 
-- **Total Packages**: 10 packages in layered architecture
+- **Total Packages**: 11 packages in layered architecture
 - **Workspace Location**: `libs/` directory
 - **Python Version**: >= 3.11 (sdk, foundation) or >= 3.12 (all others)
 - **Build System**: Hatchling for all packages
@@ -1402,7 +1402,7 @@ uv run pytest -v  # Full suite
 
 ## Summary
 
-Cogniverse SDK uses a **UV workspace** with **10 packages in layered architecture** for multi-modal content processing:
+Cogniverse SDK uses a **UV workspace** with **11 packages in layered architecture** for multi-modal content processing:
 
 **Foundation Layer:**
 1. **cogniverse-sdk**: Pure backend interfaces, universal document model (zero internal dependencies)

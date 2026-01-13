@@ -712,9 +712,9 @@ packages/
 
 ## Related Documentation
 
-- [10-Package Architecture](../ARCHITECTURE.md) - Overall system architecture
-- [Routing Agents](../agents/routing.md) - Query routing module (uses this system)
-- [DSPy Integration](../dspy/integration.md) - DSPy optimization integration
+- [11-Package Architecture](./architecture/overview.md) - Overall system architecture
+- [Routing Module](./modules/routing.md) - Query routing module (uses this system)
+- [Optimization Module](./modules/optimization.md) - DSPy optimization integration
 
 ## API Reference
 

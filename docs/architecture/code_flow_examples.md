@@ -499,10 +499,10 @@ with telemetry.trace("search_request", tenant_id) as trace:
 **Last Updated**: 2025-11-13
 **Status**: Production Ready
 
-**Package Architecture Note**: Code examples use Cogniverse's 10-package layered architecture:
+**Package Architecture Note**: Code examples use Cogniverse's 11-package layered architecture:
 - **Foundation Layer**: cogniverse-sdk, cogniverse-foundation (config, telemetry)
 - **Core Layer**: cogniverse-core (base agents, memory), cogniverse-evaluation (experiments), cogniverse-telemetry-phoenix (Phoenix integration)
 - **Implementation Layer**: cogniverse-agents (routing, search), cogniverse-vespa (backends), cogniverse-synthetic (data generation)
 - **Application Layer**: cogniverse-runtime (ingestion, API), cogniverse-dashboard (UI)
 
-All code examples follow the correct import paths for the 10-package structure located in `/home/user/cogniverse/libs/*/`.
+All code examples follow the correct import paths for the 11-package structure located in `/home/user/cogniverse/libs/*/`.

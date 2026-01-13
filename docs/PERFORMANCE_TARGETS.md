@@ -260,7 +260,7 @@ uv run python scripts/generate_performance_report.py --period weekly
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 2.1 | 2025-11-13 | Updated for 10-package layered architecture |
+| 2.1 | 2025-11-13 | Updated for 11-package layered architecture |
 | 2.0 | 2025-10-04 | Complete rewrite for multi-agent architecture |
 | 1.5 | 2025-09-15 | Added DSPy optimization targets |
 | 1.0 | 2025-08-01 | Initial performance targets |
@@ -268,4 +268,4 @@ uv run python scripts/generate_performance_report.py --period weekly
 ---
 
 **Last Updated**: 2025-11-13
-**Status**: Production - 10-Package Layered Architecture v2.1
+**Status**: Production - 11-Package Layered Architecture v2.1

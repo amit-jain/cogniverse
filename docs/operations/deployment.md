@@ -1,7 +1,7 @@
 # Deployment Guide
 
 **Last Updated:** 2025-11-13
-**Architecture:** UV Workspace with 10 packages in layered architecture
+**Architecture:** UV Workspace with 11 packages in layered architecture
 **Purpose:** Deployment patterns for Cogniverse multi-agent system with multi-tenant support
 
 ---
@@ -293,7 +293,7 @@ app = modal.App("cogniverse")
 image = (
     modal.Image.debian_slim()
     .pip_install("uv")
-    .copy_local_dir("libs", "/app/libs")  # Copy all 10 packages
+    .copy_local_dir("libs", "/app/libs")  # Copy all 11 packages
     .workdir("/app")
     .run_commands(
         "apt-get update && apt-get install -y ffmpeg git",
@@ -563,7 +563,7 @@ for dir in libs/*/; do
   (cd "$dir" && uv build)
 done
 
-# Packages created in dist/ directory (all 10 packages):
+# Packages created in dist/ directory (all 11 packages):
 # Foundation Layer:
 # - cogniverse_sdk-0.1.0-py3-none-any.whl
 # - cogniverse_foundation-0.1.0-py3-none-any.whl

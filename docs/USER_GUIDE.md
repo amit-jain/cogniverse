@@ -1,6 +1,6 @@
 # Cogniverse User Guide
 
-**Version:** 2.0.0 | **Last Updated:** 2025-11-13 | **Status:** Production Ready
+**Version:** 2.1.0 | **Last Updated:** 2025-01-13 | **Status:** Production Ready
 
 Complete guide for using Cogniverse - the multi-agent system for multi-modal content analysis and search.
 
@@ -1127,7 +1127,7 @@ uv run python scripts/run_ingestion.py \
 
 ---
 
-**Version**: 2.0.0
-**Architecture**: UV Workspace (10 Packages - Layered Architecture)
-**Last Updated**: 2025-11-13
+**Version**: 2.1.0
+**Architecture**: UV Workspace (11 Packages - Layered Architecture)
+**Last Updated**: 2025-01-13
 **Status**: Production Ready

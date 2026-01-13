@@ -1,7 +1,7 @@
 # Pytest Best Practices
 
 **Last Updated:** 2025-11-13
-**Architecture:** UV Workspace with 10-package layered architecture and multi-tenant support
+**Architecture:** UV Workspace with 11-package layered architecture and multi-tenant support
 **Purpose:** Guide for writing and running tests in the Cogniverse project
 
 ---
@@ -642,7 +642,7 @@ tests/
 ```
 
 **Related Documentation:**
-- [10-Package Architecture](../ARCHITECTURE.md)
+- [11-Package Architecture](../architecture/overview.md)
 - [Multi-Tenant Architecture](../architecture/multi-tenant.md)
 - [Package Development Guide](../development/package-development.md)
 

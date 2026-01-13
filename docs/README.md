@@ -1,6 +1,6 @@
 # Cogniverse Documentation
 
-**Version:** 2.0.0 | **Last Updated:** 2025-11-24 | **Status:** Production Ready
+**Version:** 2.1.0 | **Last Updated:** 2025-01-13 | **Status:** Production Ready
 
 Complete documentation for Cogniverse - the multi-agent system with 11-package layered architecture.
 
@@ -11,10 +11,12 @@ Complete documentation for Cogniverse - the multi-agent system with 11-package l
 ### For Users
 
 **Getting Started:**
+- **[Quick Start](QUICKSTART.md)** - 5-minute getting started guide
 - **[Setup & Installation](operations/setup-installation.md)** - Complete installation guide (UV workspace, Docker, services)
 - **[User Guide](USER_GUIDE.md)** - Complete user guide with features, operations, and API reference
+- **[Glossary](GLOSSARY.md)** - Domain terms and concepts reference
 - **[Configuration Guide](operations/configuration.md)** - Multi-tenant configuration and profiles
-- **[Troubleshooting](operations/troubleshooting.md)** - Common issues and solutions
+- **[Troubleshooting](TROUBLESHOOTING.md)** - Common issues and solutions
 
 **Operations:**
 - **[Deployment Guide](operations/deployment.md)** - Docker, Kubernetes, Modal deployment
@@ -27,12 +29,12 @@ Complete documentation for Cogniverse - the multi-agent system with 11-package l
 
 **Core Guides:**
 - **[Developer Guide](DEVELOPER_GUIDE.md)** - Complete developer onboarding (setup, workflows, best practices)
-- **[Contributing Guide](CONTRIBUTING.md)** - How to contribute code (coming soon)
-- **[Testing Guide](testing/TESTING_GUIDE.md)** - Comprehensive testing documentation (coming soon)
+- **[Creating Agents Tutorial](tutorials/creating-agents.md)** - Step-by-step guide to building custom agents
+- **[Testing Guide](testing/TESTING_GUIDE.md)** - Comprehensive testing documentation
 - **[Code Style](development/code-style.md)** - Code standards and conventions
 
 **Architecture:**
-- **[Architecture Overview](architecture/overview.md)** - 10-package layered architecture
+- **[Architecture Overview](architecture/overview.md)** - 11-package layered architecture
 - **[SDK Architecture](architecture/sdk-architecture.md)** - UV workspace deep-dive
 - **[Multi-Tenant Architecture](architecture/multi-tenant.md)** - Complete tenant isolation
 - **[Multi-Agent Interactions](architecture/multi-agent-interactions.md)** - Agent communication flows with 8 Mermaid diagrams (orchestrator, registry, workflows)
@@ -44,22 +46,22 @@ Complete documentation for Cogniverse - the multi-agent system with 11-package l
 
 *Foundation Layer:*
 - **[SDK Module](modules/sdk.md)** - Pure backend interfaces, Document model
-- **[Foundation Module](modules/foundation.md)** - Config base, telemetry interfaces (coming soon)
+- **[Foundation Module](modules/foundation.md)** - ConfigManager, TelemetryManager, multi-tenant infrastructure
 
 *Core Layer:*
-- **[Core Module](modules/common.md)** - Base classes, registries, memory
+- **[Core Module](modules/core.md)** - AgentBase, A2AAgent, mixins, registries, memory
 - **[Evaluation Module](modules/evaluation.md)** - Experiments, metrics, datasets
-- **[Telemetry Phoenix Module](modules/telemetry-phoenix.md)** - Phoenix provider plugin (coming soon)
+- **[Telemetry Module](modules/telemetry.md)** - Phoenix provider, OpenTelemetry integration
 
 *Implementation Layer:*
 - **[Agents Module](modules/agents.md)** - Routing, search, orchestration agents
 - **[Vespa Module](modules/backends.md)** - Vespa backend, tenant schemas
 - **[Fine-Tuning Module](modules/finetuning.md)** - LLM fine-tuning pipeline (SFT, DPO, evaluation, dashboard)
-- **[Synthetic Module](modules/synthetic.md)** - Synthetic data generation (coming soon)
+- **[Synthetic Module](modules/synthetic.md)** - DSPy-driven synthetic data generation
 
 *Application Layer:*
-- **[Runtime Module](modules/runtime.md)** - FastAPI server, ingestion (coming soon)
-- **[Dashboard Module](modules/dashboard.md)** - Streamlit UI, analytics (coming soon)
+- **[Runtime Module](modules/runtime.md)** - FastAPI server, video ingestion pipeline
+- **[Dashboard Module](modules/dashboard.md)** - Streamlit UI, Phoenix analytics
 
 **Other Module Docs:**
 - **[Routing Module](modules/routing.md)** - Query routing and optimization
@@ -92,7 +94,7 @@ Complete documentation for Cogniverse - the multi-agent system with 11-package l
 - **[Performance Targets](PERFORMANCE_TARGETS.md)** - Performance goals and benchmarks
 
 **Testing:**
-- **[Testing Guide](testing/TESTING_GUIDE.md)** - Comprehensive testing (coming soon)
+- **[Testing Guide](testing/TESTING_GUIDE.md)** - Comprehensive testing documentation
 - **[Pytest Best Practices](testing/pytest-best-practices.md)** - Testing patterns
 - **[Comprehensive Testing Plan](operations/comprehensive-testing-plan.md)** - Test strategy
 
@@ -135,9 +137,9 @@ Cogniverse uses a **UV workspace** with 11 packages in layered architecture:
 2. [cogniverse-foundation](modules/foundation.md) - Config base, telemetry interfaces
 
 **Core Layer:**
-3. [cogniverse-core](modules/common.md) - Base classes, registries, memory
+3. [cogniverse-core](modules/core.md) - Base classes, registries, memory
 4. [cogniverse-evaluation](modules/evaluation.md) - Experiments, metrics, datasets
-5. [cogniverse-telemetry-phoenix](modules/telemetry-phoenix.md) - Phoenix provider (plugin)
+5. [cogniverse-telemetry-phoenix](modules/telemetry.md) - Phoenix provider (plugin)
 
 **Implementation Layer:**
 6. [cogniverse-agents](modules/agents.md) - Routing, search, orchestration
@@ -186,14 +188,17 @@ Cogniverse uses a **UV workspace** with 11 packages in layered architecture:
 
 | Section | Status | Last Updated |
 |---------|--------|--------------|
+| Quick Start | ✅ Complete | 2025-01-13 |
 | Setup & Installation | ✅ Complete | 2025-11-13 |
 | User Guide | ✅ Complete | 2025-11-13 |
 | Developer Guide | ✅ Complete | 2025-11-13 |
-| Architecture Docs | ✅ Complete | 2025-10-15 |
-| SDK Module Doc | ✅ Complete | 2025-11-13 |
-| Other Module Docs | ⚠️ Partial | 2025-10-15 |
-| Testing Guide | 🚧 In Progress | - |
-| Contributing Guide | 🚧 In Progress | - |
+| Creating Agents Tutorial | ✅ Complete | 2025-01-13 |
+| Architecture Docs | ✅ Complete | 2025-01-13 |
+| Module Docs (all 11) | ✅ Complete | 2025-01-13 |
+| Testing Guide | ✅ Complete | 2025-01-13 |
+| Code Style Guide | ✅ Complete | 2025-01-13 |
+| Troubleshooting | ✅ Complete | 2025-01-13 |
+| Glossary | ✅ Complete | 2025-01-13 |
 
 **Legend:**
 - ✅ Complete and production-ready
@@ -203,7 +208,7 @@ Cogniverse uses a **UV workspace** with 11 packages in layered architecture:
 
 ---
 
-**Version**: 2.0.0
+**Version**: 2.1.0
 **Architecture**: UV Workspace (11 Packages - Layered Architecture)
-**Last Updated**: 2025-11-24
+**Last Updated**: 2025-01-13
 **Status**: Production Ready

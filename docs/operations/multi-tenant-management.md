@@ -1,7 +1,7 @@
 # Multi-Tenant Management Guide
 
 **Last Updated:** 2025-11-13
-**Architecture:** UV Workspace with 10 packages in layered architecture
+**Architecture:** UV Workspace with 11 packages in layered architecture
 **Purpose:** Comprehensive guide for multi-tenant architecture with schema-per-tenant isolation
 
 ---
@@ -765,4 +765,4 @@ curl -X DELETE http://localhost:8001/tenants/acme:staging
 - [Deployment Guide](deployment.md) - Multi-tenant deployment procedures
 - [Configuration Guide](configuration.md) - Multi-tenant configuration spanning foundation and core layers
 - [Multi-Tenant Operations](multi-tenant-ops.md) - Day-to-day tenant operations
-- [Architecture Documentation](../architecture/sdk-architecture.md) - 10-package layered architecture
+- [Architecture Documentation](../architecture/sdk-architecture.md) - 11-package layered architecture

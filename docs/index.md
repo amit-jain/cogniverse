@@ -70,7 +70,7 @@ Cogniverse is a technical framework for building production multi-agent systems 
 git clone <repository-url>
 cd cogniverse
 
-# Install UV workspace (all 10 packages)
+# Install UV workspace (all 11 packages)
 uv sync
 
 # Start infrastructure services

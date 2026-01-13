@@ -1,7 +1,7 @@
 # Cogniverse System Flows & Architecture Scenarios
 
 **Last Updated:** 2025-11-13
-**Purpose:** Comprehensive system flows with 10-package layered SDK architecture and multi-tenant patterns
+**Purpose:** Comprehensive system flows with 11-package layered SDK architecture and multi-tenant patterns
 **Format:** Mermaid diagrams showing package boundaries and tenant context
 
 ---
@@ -21,7 +21,7 @@
 
 ## Overall System Architecture
 
-### 10-Package Layered Architecture
+### 11-Package Layered Architecture
 
 ```mermaid
 graph TB
@@ -1072,9 +1072,9 @@ sequenceDiagram
 
 ## Key Takeaways
 
-### 10-Package Architecture Principles
+### 11-Package Architecture Principles
 1. **Layered Structure**: Foundation → Core → Implementation → Application
-2. **Package Boundaries**: Clear separation across 10 packages with explicit dependencies
+2. **Package Boundaries**: Clear separation across 11 packages with explicit dependencies
 3. **Dependency Flow**:
    - Foundation Layer (sdk, foundation): Zero cross-layer dependencies
    - Core Layer (core, evaluation, telemetry-phoenix): Depends on Foundation
@@ -1090,7 +1090,7 @@ sequenceDiagram
 3. **Per-Tenant Singletons**: Mem0MemoryManager maintains isolated instances
 4. **Tenant-Scoped Telemetry**: Phoenix projects per tenant for complete observability
 
-### Critical Integration Points Across 10 Packages
+### Critical Integration Points Across 11 Packages
 1. **runtime (Application) ↔ vespa (Implementation)**: Automatic schema routing via TenantSchemaManager
 2. **agents (Implementation) ↔ vespa (Implementation)**: Tenant-aware search clients with schema resolution
 3. **core (Core) ↔ vespa (Implementation)**: Memory using Vespa backend (agent_memories_{tenant_id})
@@ -1098,7 +1098,7 @@ sequenceDiagram
 5. **evaluation (Core) ↔ telemetry-phoenix (Core Plugin)**: Experiment tracking via Phoenix
 6. **All packages ↔ sdk (Foundation)**: Common interfaces and document models
 
-### Data Flow Patterns (10-Package Architecture)
+### Data Flow Patterns (11-Package Architecture)
 1. **Request Flow**:
    - User → runtime (Application)
    - → Middleware extracts tenant_id
@@ -1135,7 +1135,7 @@ sequenceDiagram
 
 ---
 
-**Version**: 3.0 (10-Package Layered Architecture + Multi-Tenancy)
+**Version**: 3.0 (11-Package Layered Architecture + Multi-Tenancy)
 **Last Updated**: 2025-11-13
 **Status**: Production-Ready
 

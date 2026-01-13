@@ -353,7 +353,7 @@ dist/
 
 #### Build Process
 
-1. **Validation:** Checks package structure and version format for all 10 packages
+1. **Validation:** Checks package structure and version format for all 11 packages
 2. **Layer-Aware Dependency Order:** Builds packages layer-by-layer respecting dependencies
    - Foundation layer (sdk, foundation)
    - Core layer (evaluation, core)

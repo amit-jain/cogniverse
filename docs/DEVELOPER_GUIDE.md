@@ -64,9 +64,9 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/common/ -v
 
 ## System Architecture
 
-### 10-Package Layered Architecture
+### 11-Package Layered Architecture
 
-Cogniverse uses a **UV workspace** with 10 packages in layered architecture:
+Cogniverse uses a **UV workspace** with 11 packages in layered architecture:
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -150,7 +150,7 @@ uv --version
 git clone <repository-url>
 cd cogniverse
 
-# Install workspace (all 10 packages + dependencies)
+# Install workspace (all 11 packages + dependencies)
 uv sync
 
 # Activate virtual environment
@@ -179,7 +179,7 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/common/ -v
 # Verify all packages installed
 uv pip list | grep cogniverse
 
-# Expected: 10 packages (sdk, foundation, core, evaluation, etc.)
+# Expected: 11 packages (sdk, foundation, core, evaluation, etc.)
 ```
 
 ### IDE Setup
@@ -654,7 +654,7 @@ Brief description of changes
 ```
 feat: Add BM25 rerank search strategy
 fix: Resolve tensor encoding issue in ColPali embeddings
-docs: Update architecture overview with 10-package structure
+docs: Update architecture overview with 11-package structure
 refactor: Extract tenant context logic to middleware
 test: Add integration tests for routing agent
 ```
@@ -813,6 +813,6 @@ uv run pytest tests/agents/ -v -s  # -s shows print statements
 ---
 
 **Version**: 2.0.0
-**Architecture**: UV Workspace (10 Packages - Layered Architecture)
+**Architecture**: UV Workspace (11 Packages - Layered Architecture)
 **Last Updated**: 2025-11-13
 **Status**: Production Ready

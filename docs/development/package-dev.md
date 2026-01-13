@@ -211,7 +211,7 @@ uv sync
 
 # Verify installation
 uv pip list | grep cogniverse
-# Expected (10 packages in dependency order):
+# Expected (11 packages in dependency order):
 # cogniverse-sdk                   0.1.0
 # cogniverse-foundation            0.1.0
 # cogniverse-evaluation            0.1.0
@@ -483,7 +483,7 @@ uv sync
 
 **Understanding uv.lock:**
 ```bash
-# View lockfile (contains exact versions for all 10 packages + dependencies)
+# View lockfile (contains exact versions for all 11 packages + dependencies)
 cat uv.lock
 
 # Regenerate lockfile (after pyproject.toml changes)
@@ -553,7 +553,7 @@ done
 # cogniverse_sdk-0.1.0.tar.gz
 # cogniverse_foundation-0.1.0-py3-none-any.whl
 # cogniverse_foundation-0.1.0.tar.gz
-# ... (all 10 packages)
+# ... (all 11 packages)
 ```
 
 **Build Individual Package:**
@@ -665,7 +665,7 @@ import cogniverse_dashboard
 assert cogniverse_sdk.__version__ == "0.1.0"
 assert cogniverse_foundation.__version__ == "0.1.0"
 assert cogniverse_core.__version__ == "0.1.0"
-# ... verify all 10 packages
+# ... verify all 11 packages
 
 # Test basic functionality
 config = SystemConfig(tenant_id="test")
@@ -674,7 +674,7 @@ assert config.tenant_id == "test"
 telemetry = get_telemetry_manager()
 assert telemetry is not None
 
-print("✅ All 10 packages installed and verified")
+print("✅ All 11 packages installed and verified")
 ```
 
 ---
@@ -1222,14 +1222,14 @@ jobs:
 
 ## Summary
 
-This guide covers comprehensive UV workspace package development with 10-package layered architecture:
+This guide covers comprehensive UV workspace package development with 11-package layered architecture:
 
-1. **Package Architecture**: 10-package structure with 4-layer dependency hierarchy
+1. **Package Architecture**: 11-package structure with 4-layer dependency hierarchy
 2. **Development Workflows**: Layer-aware editable installs, cross-layer development
 3. **Dependency Management**: Layer-specific dependencies and workspace-level dependencies
 4. **Building**: Distribution packages with wheels and source distributions in dependency order
 5. **Testing**: Per-layer and integration testing strategies
-6. **Versioning**: Semantic versioning and release process for all 10 packages
+6. **Versioning**: Semantic versioning and release process for all 11 packages
 7. **Best Practices**: Layer organization, imports, documentation, CI/CD
 
 **Key Principles for Layered Architecture:**
@@ -1252,7 +1252,7 @@ This guide covers comprehensive UV workspace package development with 10-package
 - [Scripts & Operations](scripts-operations.md) - Operational scripts
 - [Testing Guide](../testing/testing-guide.md) - Layer-aware testing strategies
 - [Deployment Guide](../operations/deployment.md) - Production deployment
-- [Publishing Guide](publishing-guide.md) - 10-package publishing workflow
+- [Publishing Guide](publishing-guide.md) - 11-package publishing workflow
 
 ---
 

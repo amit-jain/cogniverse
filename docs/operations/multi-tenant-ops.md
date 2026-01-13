@@ -1,7 +1,7 @@
 # Multi-Tenant Operations Guide
 
 **Last Updated:** 2025-11-13
-**Architecture:** UV Workspace with 10 packages - Schema-per-Tenant Isolation
+**Architecture:** UV Workspace with 11 packages - Schema-per-Tenant Isolation
 **Purpose:** Comprehensive guide for multi-tenant deployment, operations, and management
 
 ---

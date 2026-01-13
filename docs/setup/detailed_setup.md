@@ -1,6 +1,6 @@
 # Getting Started with Cogniverse
 
-**Architecture**: 10-Package Layered System
+**Architecture**: 11-Package Layered System
 **Last Updated**: 2025-11-13
 
 Welcome to Cogniverse! This guide will help you get your sophisticated multi-agent video search system up and running quickly.
@@ -389,7 +389,7 @@ Once you have the system running:
 
 ## Package Architecture Overview
 
-Cogniverse uses a 10-package layered architecture:
+Cogniverse uses a 11-package layered architecture:
 
 ### SDK Layer
 - `cogniverse-sdk`: Interfaces and type contracts
@@ -415,6 +415,6 @@ Cogniverse uses a 10-package layered architecture:
 ### Evaluation Layer
 - `cogniverse-evaluation`: Metrics, experiments, Phoenix integration
 
-For detailed architecture documentation, see [ARCHITECTURE.md](../ARCHITECTURE.md).
+For detailed architecture documentation, see [Architecture Overview](../architecture/overview.md).
 
 Your sophisticated multi-agent video search system is now ready to help you find information across video content with natural language queries!

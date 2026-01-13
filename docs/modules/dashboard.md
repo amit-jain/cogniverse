@@ -557,7 +557,7 @@ uv run pytest tests/dashboard/ --cov=cogniverse_dashboard --cov-report=html
 - [Core Module](./core.md) - Memory and orchestration
 - [Foundation Module](./foundation.md) - Configuration and telemetry
 - [Evaluation Module](./evaluation.md) - Experiment tracking
-- [Telemetry Phoenix Module](./telemetry-phoenix.md) - Phoenix provider
+- [Telemetry Module](./telemetry.md) - Phoenix provider
 - [Runtime Module](./runtime.md) - FastAPI companion application
 
 ---

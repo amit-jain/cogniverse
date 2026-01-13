@@ -1,7 +1,7 @@
 # Docker Deployment Guide
 
 **Last Updated:** 2025-11-13
-**Architecture:** UV Workspace with 10 packages in layered architecture - Multi-Tenant Support
+**Architecture:** UV Workspace with 11 packages in layered architecture - Multi-Tenant Support
 **Purpose:** Complete guide for deploying Cogniverse using Docker Compose
 
 ---

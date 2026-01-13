@@ -1,7 +1,7 @@
 # Multi-Tenant Architecture Diagrams
 
 **Last Updated:** 2025-11-13
-**Purpose:** Comprehensive visual documentation of multi-tenant architecture patterns with 10-package layered structure
+**Purpose:** Comprehensive visual documentation of multi-tenant architecture patterns with 11-package layered structure
 
 ---
 
@@ -86,7 +86,7 @@ graph TB
     style Mem0 fill:#ffe0e0
 ```
 
-### Tenant Isolation Layers (10-Package Architecture)
+### Tenant Isolation Layers (11-Package Architecture)
 
 ```mermaid
 graph TB
@@ -269,7 +269,7 @@ graph TB
 
 ## Tenant Data Flow
 
-### Video Ingestion Flow (Tenant-Specific - 10-Package Architecture)
+### Video Ingestion Flow (Tenant-Specific - 11-Package Architecture)
 
 ```mermaid
 sequenceDiagram
@@ -309,7 +309,7 @@ sequenceDiagram
     Script-->>User: Video ingested for acme_corp
 ```
 
-### Search Flow (Tenant-Isolated - 10-Package Architecture)
+### Search Flow (Tenant-Isolated - 11-Package Architecture)
 
 ```mermaid
 sequenceDiagram
@@ -775,7 +775,7 @@ graph TB
 
 ## Summary
 
-This diagram collection provides comprehensive visual documentation of multi-tenant architecture across the **10-package layered structure**:
+This diagram collection provides comprehensive visual documentation of multi-tenant architecture across the **11-package layered structure**:
 
 1. **Tenant Isolation**: Complete separation at schema, project, and memory levels across all layers
 2. **Schema-Per-Tenant**: Naming convention with `_tenant_id` suffix managed by cogniverse-vespa
@@ -788,7 +788,7 @@ This diagram collection provides comprehensive visual documentation of multi-ten
 - **Schema Isolation**: Each tenant has dedicated Vespa schemas (Implementation Layer)
 - **Project Isolation**: Each tenant has dedicated Phoenix project (Core Layer Plugin)
 - **Memory Isolation**: User IDs prefixed with tenant_id (Core Layer)
-- **No Cross-Tenant Access**: Firewall at every layer of the 10-package architecture
+- **No Cross-Tenant Access**: Firewall at every layer of the 11-package architecture
 - **Shared Infrastructure**: Single Vespa/Phoenix instances serve all tenants
 - **Configuration-Driven**: Tenant isolation configured via cogniverse-foundation
 
@@ -797,14 +797,14 @@ This diagram collection provides comprehensive visual documentation of multi-ten
 - Phoenix projects: `{tenant_id}_project` (cogniverse-telemetry-phoenix)
 - Memory user IDs: `{tenant_id}_{user_id}` (cogniverse-core)
 
-**10-Package Architecture Integration:**
+**11-Package Architecture Integration:**
 - **Foundation Layer**: Provides UnifiedConfig with tenant_id, TelemetryManager base
 - **Core Layer**: Manages agent context, memory, and cache with tenant isolation
 - **Implementation Layer**: Vespa backend applies tenant suffixes, agents enforce isolation
 - **Application Layer**: Runtime and dashboard respect tenant boundaries
 
 **Related Documentation:**
-- [10-Package Architecture Guide](../architecture/10-package-architecture.md)
+- [11-Package Architecture Guide](../architecture/overview.md)
 - [Multi-Tenant Architecture](../architecture/multi-tenant.md)
 - [Multi-Tenant Operations](../operations/multi-tenant-ops.md)
 - [Configuration Guide](../operations/configuration.md)

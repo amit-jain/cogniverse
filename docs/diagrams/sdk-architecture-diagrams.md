@@ -1,7 +1,7 @@
 # SDK Architecture Diagrams
 
 **Last Updated:** 2025-11-13
-**Purpose:** Comprehensive visual documentation of UV workspace SDK architecture with 10-package layered structure
+**Purpose:** Comprehensive visual documentation of UV workspace SDK architecture with 11-package layered structure
 
 ---
 
@@ -16,7 +16,7 @@
 
 ## Package Dependency Graph
 
-### High-Level Package Dependencies (10-Package Structure)
+### High-Level Package Dependencies (11-Package Structure)
 
 ```mermaid
 graph TB
@@ -417,7 +417,7 @@ graph TB
 
 ## Cross-Package Data Flow
 
-### Video Ingestion Flow Across Packages (10-Package Architecture)
+### Video Ingestion Flow Across Packages (11-Package Architecture)
 
 ```mermaid
 sequenceDiagram
@@ -464,7 +464,7 @@ sequenceDiagram
     Agents-->>Script: Process result
 ```
 
-### Query Routing Flow Across Packages (10-Package Architecture)
+### Query Routing Flow Across Packages (11-Package Architecture)
 
 ```mermaid
 sequenceDiagram
@@ -503,7 +503,7 @@ sequenceDiagram
     Runtime-->>User: Routing response
 ```
 
-### Search Flow Across Packages (10-Package Architecture)
+### Search Flow Across Packages (11-Package Architecture)
 
 ```mermaid
 sequenceDiagram
@@ -548,7 +548,7 @@ sequenceDiagram
 
 ## Import Patterns
 
-### Correct Import Patterns by Package (10-Package Architecture)
+### Correct Import Patterns by Package (11-Package Architecture)
 
 ```mermaid
 graph TB
@@ -610,7 +610,7 @@ graph TB
     style VespaSchema fill:#93C47D
 ```
 
-### Package Import Dependencies (Valid Paths - 10 Packages)
+### Package Import Dependencies (Valid Paths - 11 Packages)
 
 ```mermaid
 graph TB
@@ -757,7 +757,7 @@ graph TB
     style Local fill:#f5e1ff
 ```
 
-### Workspace Sync Flow (10-Package Structure)
+### Workspace Sync Flow (11-Package Structure)
 
 ```mermaid
 sequenceDiagram
@@ -795,10 +795,10 @@ sequenceDiagram
     UV->>VEnv: Install 3rd-party dependencies
     VEnv-->>UV: Dependencies installed
 
-    UV-->>Dev: ✅ Workspace synced (10 packages)
+    UV-->>Dev: ✅ Workspace synced (11 packages)
 ```
 
-### Package Release Flow (10-Package Structure)
+### Package Release Flow (11-Package Structure)
 
 ```mermaid
 graph TB
@@ -853,18 +853,18 @@ graph TB
     style PublishApp fill:#B4A7D6,color:#fff
 ```
 
-### Deployment Architecture (10-Package Structure)
+### Deployment Architecture (11-Package Structure)
 
 ```mermaid
 graph TB
     subgraph "Development Environment"
-        DevWorkspace[UV Workspace<br/>uv sync<br/>10 packages editable]
+        DevWorkspace[UV Workspace<br/>uv sync<br/>11 packages editable]
         DevTests[Local Tests<br/>pytest]
     end
 
     subgraph "CI/CD Pipeline"
         GitHub[GitHub Actions]
-        BuildAll[Build all 10 packages]
+        BuildAll[Build all 11 packages]
         TestAll[Test all packages]
         PublishPyPI[Publish to PyPI]
     end
@@ -912,7 +912,7 @@ graph TB
 
 ## Summary
 
-This diagram collection provides comprehensive visual documentation of the **10-package layered architecture**:
+This diagram collection provides comprehensive visual documentation of the **11-package layered architecture**:
 
 1. **Package Dependencies**: Clear 4-layer hierarchy (Foundation → Core → Implementation → Application)
 2. **Internal Structure**: Detailed breakdown of each package's modules by layer
@@ -920,7 +920,7 @@ This diagram collection provides comprehensive visual documentation of the **10-
 4. **Import Patterns**: Valid and invalid import paths with layer enforcement
 5. **Build & Deploy**: Complete pipeline from development to production
 
-**10-Package Architecture Layers:**
+**11-Package Architecture Layers:**
 
 | Layer | Packages | Purpose | Color |
 |-------|----------|---------|-------|
@@ -933,11 +933,11 @@ This diagram collection provides comprehensive visual documentation of the **10-
 - **Layered Dependencies**: Each layer only depends on layers below it
 - **No Circular Dependencies**: Strict unidirectional flow prevents coupling
 - **Separation of Concerns**: Foundation provides interfaces, Core provides orchestration, Implementation provides specifics
-- **UV Workspace**: Enables editable installs for all 10 packages during development
+- **UV Workspace**: Enables editable installs for all 11 packages during development
 - **Tenant Isolation**: Maintained across all layers via configuration and naming conventions
 
 **Related Documentation:**
 - [SDK Architecture](../architecture/sdk-architecture.md)
-- [10-Package Architecture Guide](../architecture/10-package-architecture.md)
+- [11-Package Architecture Guide](../architecture/overview.md)
 - [Package Development](../development/package-dev.md)
 - [Multi-Tenant Architecture](../architecture/multi-tenant.md)

@@ -2,7 +2,7 @@
 
 **Spans**: SDK (interfaces), Foundation (base), Core (system configuration)
 
-Multi-tenant, versioned configuration system with pluggable storage backends for the Cogniverse 10-package architecture.
+Multi-tenant, versioned configuration system with pluggable storage backends for the Cogniverse 11-package architecture.
 
 ## Overview
 
@@ -729,7 +729,7 @@ except ConnectionError:
 
 ## Related Documentation
 
-- [10-Package Architecture](ARCHITECTURE.md) - System design
+- [11-Package Architecture](architecture/overview.md) - System design
 - [Multi-Tenant System](multi-tenant-system.md) - Tenant isolation
 - [Agent Orchestration](agent-orchestration.md) - Agent configuration
 - [Optimization System](optimization-system.md) - DSPy optimizer configuration

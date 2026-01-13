@@ -1,7 +1,7 @@
 # Cogniverse Multi-Tenant Architecture
 
 **Last Updated:** 2025-11-13
-**Purpose:** Comprehensive guide to Cogniverse's multi-tenant architecture with schema-per-tenant isolation across 10-package layered architecture
+**Purpose:** Comprehensive guide to Cogniverse's multi-tenant architecture with schema-per-tenant isolation across 11-package layered architecture
 **Audience:** DevOps, SRE, and developers implementing or operating multi-tenant features
 
 ---
@@ -36,7 +36,7 @@ Cogniverse uses **physical tenant isolation** via dedicated Vespa schemas per te
 - **Per-Tenant Memory**: Mem0 memory manager instances are per-tenant singletons
 - **Isolated Telemetry**: Phoenix projects are per-tenant for trace isolation
 
-### Key Components (10-Package Architecture)
+### Key Components (11-Package Architecture)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -1675,7 +1675,7 @@ if stats["tenants_cached"] > 1000:
 
 Cogniverse's multi-tenant architecture provides **physical isolation** via dedicated Vespa schemas per tenant:
 
-**Key Components Across 10-Package Architecture**:
+**Key Components Across 11-Package Architecture**:
 - **TenantSchemaManager** (cogniverse-vespa): Schema lifecycle and routing
 - **Mem0MemoryManager** (cogniverse-core): Per-tenant memory isolation
 - **TelemetryProvider** (cogniverse-foundation): Per-tenant trace isolation base
@@ -1697,7 +1697,7 @@ Cogniverse's multi-tenant architecture provides **physical isolation** via dedic
 - ✅ Easy tenant onboarding/offboarding
 
 For implementation details, see:
-- [SDK Architecture](./sdk-architecture.md) - 10-package layered structure
+- [SDK Architecture](./sdk-architecture.md) - 11-package layered structure
 - [System Flows](./system-flows.md) - Multi-tenant request flows across packages
 - [Architecture Overview](./overview.md) - Complete system architecture
 

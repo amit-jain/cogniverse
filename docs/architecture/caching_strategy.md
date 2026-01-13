@@ -499,7 +499,7 @@ self.telemetry.increment_counter(
 **Last Updated**: 2025-11-13
 **Status**: Production Ready
 
-**Package Architecture Note**: The caching system integrates with Cogniverse's 10-package layered architecture:
+**Package Architecture Note**: The caching system integrates with Cogniverse's 11-package layered architecture:
 - **Foundation Layer**: cogniverse-sdk (interfaces), cogniverse-foundation (telemetry base)
 - **Core Layer**: cogniverse-core (memory, common utilities)
 - **Implementation Layer**: cogniverse-vespa (Vespa backends), cogniverse-agents (agent integration)

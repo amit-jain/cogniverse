@@ -2,8 +2,8 @@
 
 **Last Updated:** 2025-11-13
 **Module Path:** `scripts/`
-**Architecture:** 10-package layered architecture
-**SDK Packages:** Uses all 10 packages (foundation → core → implementation → application)
+**Architecture:** 11-package layered architecture
+**SDK Packages:** Uses all 11 packages (foundation → core → implementation → application)
 **Purpose:** Operational scripts for system deployment, ingestion, optimization, experimentation, and tenant-aware management
 
 ---

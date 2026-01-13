@@ -134,7 +134,7 @@ open http://localhost:8501
 
 | Goal | Documentation |
 |------|---------------|
-| Understand the architecture | [10-Package Architecture](./architecture/10-package-architecture.md) |
+| Understand the architecture | [Architecture Overview](./architecture/overview.md) |
 | Create a custom agent | [Creating Agents Tutorial](./tutorials/creating-agents.md) |
 | Learn key concepts | [Glossary](./GLOSSARY.md) |
 | Deep dive into modules | [Core Module](./modules/core.md), [Foundation](./modules/foundation.md) |

@@ -1,7 +1,7 @@
 # Cogniverse Study Guide: Configuration Management
 
 **Last Updated:** 2025-11-13
-**Architecture:** UV Workspace with 10 packages in layered architecture
+**Architecture:** UV Workspace with 11 packages in layered architecture
 **Packages:** `cogniverse_sdk`, `cogniverse_foundation`, `cogniverse_core`
 **Module Path:** `libs/foundation/cogniverse_foundation/config/` and `libs/core/cogniverse_core/config/`
 **Purpose:** Multi-tenant, versioned configuration system with pluggable storage backends and schema-per-tenant isolation
