@@ -218,6 +218,80 @@ value = config_manager.get_config_value(
 )
 ```
 
+### Configuration Inheritance
+
+The configuration system uses a layered inheritance model where tenant-specific settings override system defaults:
+
+```mermaid
+flowchart TB
+    subgraph Sources["Configuration Sources"]
+        EnvVars[Environment Variables<br/>COGNIVERSE_CONFIG, etc.]
+        ConfigFile[config.json<br/>Auto-discovered]
+        SQLite[SQLite Store<br/>Persisted configs]
+    end
+
+    subgraph Layers["Configuration Layers"]
+        direction TB
+        SystemDefaults[System Defaults<br/>Hardcoded fallbacks]
+        GlobalConfig[Global Configuration<br/>config.json profiles]
+        TenantOverlay[Tenant Overlay<br/>Per-tenant overrides]
+        RuntimeOverride[Runtime Override<br/>API/query-time params]
+    end
+
+    subgraph Resolution["Resolution Order (Bottom Wins)"]
+        Final[Final Configuration<br/>Merged result]
+    end
+
+    EnvVars --> GlobalConfig
+    ConfigFile --> GlobalConfig
+    SQLite --> TenantOverlay
+
+    SystemDefaults --> Final
+    GlobalConfig --> Final
+    TenantOverlay --> Final
+    RuntimeOverride --> Final
+
+    style Sources fill:#e1f5ff
+    style Layers fill:#fff4e1
+    style Resolution fill:#e1ffe1
+```
+
+**Configuration Resolution Example:**
+
+```python
+# System default (hardcoded)
+max_frames = 50
+
+# Global config (config.json) - overrides default
+"profiles": {
+    "video_colpali_mv_frame": {
+        "max_frames": 100
+    }
+}
+
+# Tenant overlay (SQLite) - overrides global
+config_manager.set_backend_config(
+    tenant_id="premium_tenant",
+    config=BackendConfig(profiles={
+        "video_colpali_mv_frame": {"max_frames": 200}
+    })
+)
+
+# Runtime override (query param) - overrides all
+result = await search(query, max_frames=300)
+
+# Final: premium_tenant gets max_frames=300 for this query
+```
+
+**Resolution Priority (highest to lowest):**
+
+| Priority | Source | Scope | Example |
+|----------|--------|-------|---------|
+| 1 (highest) | Runtime Override | Per-request | Query params, API args |
+| 2 | Tenant Overlay | Per-tenant | `ConfigManager.set_*_config()` |
+| 3 | Global Config | All tenants | `config.json` profiles |
+| 4 (lowest) | System Defaults | Fallback | Hardcoded in classes |
+
 ---
 
 ## Telemetry System

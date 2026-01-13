@@ -2791,6 +2791,52 @@ class CheckpointStatus(Enum):
     COMPLETED = "completed"   # Workflow completed successfully
 ```
 
+### Checkpoint State Machine
+
+The following diagram shows the lifecycle of workflow checkpoints:
+
+```mermaid
+stateDiagram-v2
+    [*] --> ACTIVE: save_checkpoint()
+
+    ACTIVE --> SUPERSEDED: New checkpoint created<br/>(workflow continues)
+    ACTIVE --> COMPLETED: Workflow succeeded<br/>(all phases done)
+    ACTIVE --> FAILED: Workflow error<br/>(unrecoverable)
+
+    SUPERSEDED --> [*]: Retained for history<br/>(cleanup after retention period)
+
+    FAILED --> ACTIVE: resume_workflow()<br/>(creates new checkpoint)
+
+    COMPLETED --> [*]: Retained for audit<br/>(cleanup after retention period)
+
+    note right of ACTIVE
+        Current checkpoint for workflow
+        Only one ACTIVE per workflow_id
+        Contains full task states
+    end note
+
+    note right of SUPERSEDED
+        Historical checkpoint
+        Enables time-travel debugging
+        Can fork from any checkpoint
+    end note
+
+    note left of FAILED
+        Workflow stopped at this phase
+        Can be resumed
+        Retains all completed task results
+    end note
+```
+
+**State Transitions:**
+| From | To | Trigger | Action |
+|------|-----|---------|--------|
+| (none) | ACTIVE | `save_checkpoint()` | Create new checkpoint with workflow state |
+| ACTIVE | SUPERSEDED | New phase starts | Previous checkpoint marked superseded |
+| ACTIVE | COMPLETED | All phases done | Workflow succeeded, mark complete |
+| ACTIVE | FAILED | Unrecoverable error | Workflow stopped, can resume later |
+| FAILED | ACTIVE | `resume_workflow()` | New checkpoint created from failed state |
+
 ### Enabling Checkpointing
 
 ```python

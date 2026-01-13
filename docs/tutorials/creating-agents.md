@@ -28,6 +28,59 @@ AgentBase[InputT, OutputT, DepsT]  # Generic base class
             └── YourCustomAgent  # Your implementation
 ```
 
+### Agent Creation Flowchart
+
+```mermaid
+flowchart TB
+    Start([Start: New Agent Needed]) --> DefineTypes
+
+    subgraph Types["Step 1: Define Types"]
+        DefineTypes[Define Input Type<br/>extends AgentInput] --> DefineOutput[Define Output Type<br/>extends AgentOutput]
+        DefineOutput --> DefineDeps[Define Dependencies<br/>extends AgentDeps]
+    end
+
+    DefineDeps --> CreateClass
+
+    subgraph Class["Step 2: Create Agent Class"]
+        CreateClass[Create Agent Class<br/>extends A2AAgent] --> SetMetadata[Set AGENT_NAME<br/>DESCRIPTION, CAPABILITIES]
+        SetMetadata --> ChooseMixins{Need Mixins?}
+        ChooseMixins -->|Memory| AddMemory[Add MemoryMixin]
+        ChooseMixins -->|Telemetry| AddTelemetry[Add TelemetryMixin]
+        ChooseMixins -->|Health| AddHealth[Add HealthCheckMixin]
+        ChooseMixins -->|None| SkipMixins[Skip]
+        AddMemory --> ImplementProcess
+        AddTelemetry --> ImplementProcess
+        AddHealth --> ImplementProcess
+        SkipMixins --> ImplementProcess
+    end
+
+    ImplementProcess --> DSPy
+
+    subgraph Process["Step 3: Implement Process"]
+        DSPy{Use DSPy?}
+        DSPy -->|Yes| CreateSignature[Create DSPy Signature]
+        CreateSignature --> CreateModule[Create DSPy Module]
+        CreateModule --> CallModule[Call Module in process()]
+        DSPy -->|No| DirectImpl[Direct Implementation]
+        CallModule --> ReturnOutput
+        DirectImpl --> ReturnOutput[Return OutputT]
+    end
+
+    ReturnOutput --> Register
+
+    subgraph Deploy["Step 4: Register & Test"]
+        Register[Register in AgentRegistry] --> WriteTests[Write Unit Tests]
+        WriteTests --> Integration[Integration Test]
+    end
+
+    Integration --> Done([Agent Ready])
+
+    style Types fill:#e1f5ff
+    style Class fill:#fff4e1
+    style Process fill:#f5e1ff
+    style Deploy fill:#e1ffe1
+```
+
 By the end of this tutorial, you'll have created a `SummarizationAgent` that:
 - Accepts text content and summarization parameters
 - Uses a DSPy module for LLM-driven summarization
