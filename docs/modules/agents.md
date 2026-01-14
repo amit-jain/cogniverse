@@ -22,8 +22,9 @@
 4. [Agent Architecture](#agent-architecture)
 5. [Multi-Tenant Integration](#multi-tenant-integration)
 6. [Usage Examples](#usage-examples)
-7. [Testing](#testing)
-8. [Durable Execution (Workflow Checkpointing)](#durable-execution-workflow-checkpointing)
+7. [Streaming API](#streaming-api)
+8. [Testing](#testing)
+9. [Durable Execution (Workflow Checkpointing)](#durable-execution-workflow-checkpointing)
 
 ---
 
@@ -47,6 +48,7 @@ The Agents package (`cogniverse-agents`) provides concrete agent implementations
 - **Memory-Enabled**: Integration with Mem0 via MemoryAwareMixin (from core)
 - **Base Class Inheritance**: Extend A2AAgent[InputT, OutputT, DepsT] from cogniverse_core with type-safe generics
 - **DSPy 3.0 Integration**: A2A protocol + DSPy modules for optimization
+- **Streaming Support**: OpenAI-style `stream=True` parameter for progressive results
 - **Production-Ready**: Health checks, graceful degradation, telemetry
 
 ### Package Dependencies
@@ -2579,6 +2581,112 @@ agent.remember_success(
 results2 = await agent.search_by_text("advanced cooking techniques")
 # Memory context: "User previously searched 'cooking tutorials' with high relevance"
 # Query enhanced with context
+```
+
+### Example 5: Streaming Results
+
+```python
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
+
+# Initialize agent
+deps = SearchAgentDeps(
+    tenant_id="acme",
+    backend_url="http://localhost",
+    backend_port=8080,
+    profile="video_colpali_smol500_mv_frame"
+)
+agent = SearchAgent(deps=deps)
+
+# Non-streaming call (returns SearchOutput)
+result = await agent.process({"query": "machine learning", "top_k": 10})
+print(f"Found {result.total_results} results")
+
+# Streaming call (returns AsyncGenerator)
+async for event in agent.process({"query": "machine learning", "top_k": 10}, stream=True):
+    if event["type"] == "status":
+        print(f"Status: {event['message']}")
+    elif event["type"] == "partial":
+        print(f"Partial results: {event['data']}")
+    elif event["type"] == "final":
+        print(f"Final: {event['data']}")
+```
+
+**Event Types:**
+- `status` - Progress updates (e.g., "Searching...", "Encoding query...")
+- `partial` - Intermediate results (e.g., results from first profile in ensemble)
+- `token` - DSPy token streaming for reasoning fields
+- `task_complete` - Workflow task completion (orchestrator)
+- `final` - Complete result
+- `error` - Error information
+
+---
+
+## Streaming API
+
+All agents support OpenAI-style streaming via the `stream=True` parameter on the `process()` method.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Agent.process()                         │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │  stream=False (default)        stream=True            │  │
+│  │  ────────────────────          ─────────────          │  │
+│  │  → _process_impl()             → _process_stream_impl()│  │
+│  │  → Returns OutputT             → Yields Dict events    │  │
+│  └───────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Method Pattern
+
+When creating agents, override `_process_impl()` for core logic:
+
+```python
+class MyAgent(A2AAgent[MyInput, MyOutput, MyDeps]):
+
+    async def _process_impl(self, input: MyInput) -> MyOutput:
+        """Core processing logic (required)."""
+        # Your implementation
+        return MyOutput(...)
+
+    async def _process_stream_impl(
+        self, input: MyInput
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Streaming logic (optional, has default implementation)."""
+        yield {"type": "status", "message": "Processing..."}
+        result = await self._process_impl(input)
+        yield {"type": "final", "data": result.model_dump()}
+```
+
+### HTTP SSE Integration
+
+The A2A endpoint `/tasks/send` supports streaming via `stream` field:
+
+```python
+# Non-streaming request
+POST /tasks/send
+{"query": "...", "context": "..."}
+→ Returns JSON
+
+# Streaming request
+POST /tasks/send
+{"query": "...", "context": "...", "stream": true}
+→ Returns Server-Sent Events (SSE)
+```
+
+### Event Format
+
+All streaming events are plain dicts with a `type` field:
+
+```python
+{"type": "status", "phase": "encoding", "message": "Encoding query..."}
+{"type": "partial", "data": {"results_so_far": 5}}
+{"type": "token", "field": "reasoning", "text": "The query..."}
+{"type": "task_complete", "task": "entity_extraction", "success": True}
+{"type": "final", "data": {"results": [...], "total": 10}}
+{"type": "error", "message": "Search backend unavailable"}
 ```
 
 ---

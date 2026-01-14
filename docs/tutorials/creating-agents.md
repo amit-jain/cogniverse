@@ -203,7 +203,14 @@ class SummarizationAgent(A2AAgent[SummarizationInput, SummarizationOutput, Summa
 
 ## Step 4: Implement the Process Method
 
-The `process` method is where your agent's logic lives.
+Agents use a two-method pattern for processing:
+- `_process_impl()` - Core logic (you implement this)
+- `process()` - Public API that supports streaming (inherited from base)
+
+The base class `process()` method handles:
+- Dict-to-typed-input conversion
+- Streaming vs non-streaming routing
+- Input validation
 
 ```python
 # libs/agents/cogniverse_agents/summarization/agent.py (continued)
@@ -233,9 +240,9 @@ class SummarizationAgent(A2AAgent[SummarizationInput, SummarizationOutput, Summa
         """Initialize DSPy module."""
         pass  # Implemented in Step 5
 
-    async def process(self, input: SummarizationInput) -> SummarizationOutput:
+    async def _process_impl(self, input: SummarizationInput) -> SummarizationOutput:
         """
-        Summarize the provided content.
+        Core processing logic. Override this method (not process()).
 
         Args:
             input: SummarizationInput with content and parameters
@@ -300,11 +307,59 @@ class SummarizationAgent(A2AAgent[SummarizationInput, SummarizationOutput, Summa
         }
 ```
 
+### Calling the Agent
+
+```python
+# Standard call (returns SummarizationOutput)
+result = await agent.process(input)
+print(result.summary)
+
+# With dict input (auto-converted to SummarizationInput)
+result = await agent.process({"content": "...", "max_length": 100})
+
+# Streaming call (returns AsyncGenerator)
+async for event in agent.process(input, stream=True):
+    if event["type"] == "status":
+        print(f"Status: {event['message']}")
+    elif event["type"] == "final":
+        print(f"Result: {event['data']}")
+```
+
 `★ Insight ─────────────────────────────────────`
-- `process()` is async to support I/O-bound operations (LLM calls, network requests)
-- Always handle errors gracefully - return an output with error info rather than raising
+- Override `_process_impl()` not `process()` - the base handles streaming/validation
+- `process()` accepts both typed inputs and dicts (auto-converts)
+- Use `stream=True` for progressive results (OpenAI-style streaming API)
 - Logging is crucial for debugging agent behavior in production
 `─────────────────────────────────────────────────`
+
+### Adding Streaming Support (Optional)
+
+To provide custom streaming events, override `_process_stream_impl()`:
+
+```python
+from typing import AsyncGenerator, Dict, Any
+
+class SummarizationAgent(A2AAgent[...]):
+    # ... existing code ...
+
+    async def _process_stream_impl(
+        self, input: SummarizationInput
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Stream summarization progress."""
+        yield {"type": "status", "message": "Analyzing content..."}
+
+        # Stream intermediate results
+        key_points = self._extract_key_points(input.content)
+        yield {"type": "partial", "key_points": key_points}
+
+        yield {"type": "status", "message": "Generating summary..."}
+
+        # Final result
+        result = await self._process_impl(input)
+        yield {"type": "final", "data": result.model_dump()}
+```
+
+The default `_process_stream_impl()` simply calls `_process_impl()` and yields the final result.
 
 ---
 
@@ -634,8 +689,8 @@ class SummarizationAgent(A2AAgent[SummarizationInput, SummarizationOutput, Summa
         if self.deps and self.deps.lm:
             dspy.configure(lm=self.deps.lm)
 
-    async def process(self, input: SummarizationInput) -> SummarizationOutput:
-        """Summarize the provided content."""
+    async def _process_impl(self, input: SummarizationInput) -> SummarizationOutput:
+        """Core processing logic. Override _process_impl(), not process()."""
         if not input.content.strip():
             return SummarizationOutput(
                 summary="", key_points=[], confidence=0.0,
@@ -670,6 +725,7 @@ class SummarizationAgent(A2AAgent[SummarizationInput, SummarizationOutput, Summa
 
 ## Next Steps
 
+- **Add streaming**: Override `_process_stream_impl()` for progressive results
 - **Add telemetry**: Use `TelemetryMixin` to add tracing
 - **Add memory**: Use `MemoryMixin` for conversation context
 - **Optimize with DSPy**: Train the module with synthetic data
