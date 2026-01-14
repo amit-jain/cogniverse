@@ -813,7 +813,7 @@ technical accuracy, and actionable insights. Visual analysis {'included' if requ
     # Type-safe process method (required by AgentBase)
     # ==========================================================================
 
-    async def process(self, input: DetailedReportInput) -> DetailedReportOutput:
+    async def _process_impl(self, input: DetailedReportInput) -> DetailedReportOutput:
         """
         Process report generation request with typed input/output.
 

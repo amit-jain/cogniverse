@@ -6,6 +6,8 @@ import dspy
 import pytest
 from cogniverse_agents.query_enhancement_agent import (
     QueryEnhancementAgent,
+    QueryEnhancementDeps,
+    QueryEnhancementInput,
     QueryEnhancementModule,
     QueryEnhancementResult,
 )
@@ -30,7 +32,8 @@ def mock_dspy_lm():
 def query_agent():
     """Create QueryEnhancementAgent for testing"""
     with patch("dspy.ChainOfThought"):
-        agent = QueryEnhancementAgent(tenant_id="test_tenant", port=8012)
+        deps = QueryEnhancementDeps(tenant_id="test_tenant")
+        agent = QueryEnhancementAgent(deps=deps, port=8012)
         return agent
 
 
@@ -115,7 +118,7 @@ class TestQueryEnhancementAgent:
             )
         )
 
-        result = await query_agent._process({"query": "ML tutorials"})
+        result = await query_agent._process_impl(QueryEnhancementInput(query="ML tutorials"))
 
         assert isinstance(result, QueryEnhancementResult)
         assert result.original_query == "ML tutorials"
@@ -128,7 +131,7 @@ class TestQueryEnhancementAgent:
     @pytest.mark.asyncio
     async def test_process_empty_query(self, query_agent):
         """Test processing empty query"""
-        result = await query_agent._process({"query": ""})
+        result = await query_agent._process_impl(QueryEnhancementInput(query=""))
 
         assert result.original_query == ""
         assert result.enhanced_query == ""
@@ -138,8 +141,8 @@ class TestQueryEnhancementAgent:
 
     @pytest.mark.asyncio
     async def test_process_missing_query(self, query_agent):
-        """Test processing with missing query field"""
-        result = await query_agent._process({})
+        """Test processing with missing query field (empty string equivalent)"""
+        result = await query_agent._process_impl(QueryEnhancementInput(query=""))
 
         assert result.original_query == ""
         assert result.enhanced_query == ""
@@ -158,7 +161,7 @@ class TestQueryEnhancementAgent:
             )
         )
 
-        result = await query_agent._process({"query": "test"})
+        result = await query_agent._process_impl(QueryEnhancementInput(query="test"))
 
         assert result.confidence == 0.7  # Default fallback
 
@@ -176,7 +179,7 @@ class TestQueryEnhancementAgent:
             )
         )
 
-        result = await query_agent._process({"query": "simple query"})
+        result = await query_agent._process_impl(QueryEnhancementInput(query="simple query"))
 
         assert len(result.expansion_terms) == 0
         assert len(result.synonyms) == 0
@@ -196,7 +199,7 @@ class TestQueryEnhancementAgent:
             )
         )
 
-        result = await query_agent._process({"query": "Python tutorials"})
+        result = await query_agent._process_impl(QueryEnhancementInput(query="Python tutorials"))
 
         assert len(result.context_additions) == 3
         assert "beginner" in result.context_additions

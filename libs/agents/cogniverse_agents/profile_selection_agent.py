@@ -203,7 +203,12 @@ class ProfileSelectionAgent(
             f"profiles: {len(deps.available_profiles)}"
         )
 
-    async def process(self, input: ProfileSelectionInput) -> ProfileSelectionOutput:
+    @property
+    def available_profiles(self) -> List[str]:
+        """Expose available profiles from deps for convenience."""
+        return self.deps.available_profiles
+
+    async def _process_impl(self, input: ProfileSelectionInput) -> ProfileSelectionOutput:
         """
         Process profile selection request with typed input/output.
 
@@ -290,7 +295,51 @@ class ProfileSelectionAgent(
         alternatives.sort(key=lambda x: x.score, reverse=True)
         return alternatives[:3]
 
-    # Note: _dspy_to_a2a_output and _get_agent_skills handled by A2AAgent base class
+    def _dspy_to_a2a_output(self, result: ProfileSelectionResult) -> Dict[str, Any]:
+        """Convert ProfileSelectionResult to A2A output format."""
+        return {
+            "status": "success",
+            "agent": self.agent_name,
+            "query": result.query,
+            "selected_profile": result.selected_profile,
+            "confidence": result.confidence,
+            "reasoning": result.reasoning,
+            "query_intent": result.query_intent,
+            "modality": result.modality,
+            "complexity": result.complexity,
+            "alternatives": [alt.model_dump() for alt in result.alternatives],
+        }
+
+    def _get_agent_skills(self) -> List[Dict[str, Any]]:
+        """Return agent-specific skills for A2A protocol."""
+        return [
+            {
+                "name": "select_profile",
+                "description": "Select optimal backend profile for query processing",
+                "input_schema": {"query": "string", "available_profiles": "list"},
+                "output_schema": {
+                    "selected_profile": "string",
+                    "confidence": "float",
+                    "query_intent": "string",
+                    "modality": "string",
+                    "complexity": "string",
+                },
+                "examples": [
+                    {
+                        "input": {
+                            "query": "Show me machine learning videos",
+                            "available_profiles": ["video_colpali_base", "text_bge_base"],
+                        },
+                        "output": {
+                            "selected_profile": "video_colpali_base",
+                            "confidence": 0.9,
+                            "query_intent": "video_search",
+                            "modality": "video",
+                        },
+                    }
+                ],
+            }
+        ]
 
 
 # FastAPI app for standalone deployment

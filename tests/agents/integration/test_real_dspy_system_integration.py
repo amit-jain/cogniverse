@@ -8,6 +8,10 @@ WITHOUT extensive mocking. This validates real functionality.
 import asyncio
 
 import pytest
+from cogniverse_agents.detailed_report_agent import (
+    DetailedReportAgent,
+    DetailedReportDeps,
+)
 from cogniverse_agents.routing.adaptive_threshold_learner import (
     AdaptiveThresholdLearner,
 )
@@ -16,7 +20,9 @@ from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementP
 from cogniverse_agents.routing.relationship_extraction_tools import (
     RelationshipExtractorTool,
 )
-from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
+from cogniverse_agents.summarizer_agent import SummarizerAgent, SummarizerDeps
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
 
@@ -148,7 +154,8 @@ class TestDSPySystemIntegration:
             provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        agent = RoutingAgent(deps=deps)
 
         # Test real routing decision logic
         test_query = "Find videos of robots playing soccer"
@@ -203,16 +210,9 @@ class TestMultiAgentSystem:
 
     def test_core_agents_initialization(self):
         """Test that core agents can be initialized"""
-        from cogniverse_agents.detailed_report_agent import DetailedReportAgent
-        from cogniverse_agents.summarizer_agent import SummarizerAgent
-        from cogniverse_foundation.config.utils import create_default_config_manager
-
-        # Use default config manager
-        config_manager = create_default_config_manager()
-
         # Should initialize with proper config
-        summarizer = SummarizerAgent(tenant_id="test_tenant", config_manager=config_manager)
-        reporter = DetailedReportAgent(tenant_id="test_tenant", config_manager=config_manager)
+        summarizer = SummarizerAgent(deps=SummarizerDeps(tenant_id="test_tenant"))
+        reporter = DetailedReportAgent(deps=DetailedReportDeps(tenant_id="test_tenant"))
 
         assert summarizer is not None
         assert reporter is not None
@@ -225,13 +225,11 @@ class TestMultiAgentSystem:
         """Test enhanced video search agent with real configuration"""
         import os
 
-        from cogniverse_agents.search_agent import SearchAgent
-
         # Set required environment for video search
         os.environ["VESPA_SCHEMA"] = "video_colpali_smol500_mv_frame"
 
         try:
-            agent = SearchAgent(tenant_id="test_tenant")
+            agent = SearchAgent(deps=SearchAgentDeps(tenant_id="test_tenant"))
 
             # Should initialize with real config
             assert agent is not None

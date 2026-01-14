@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from cogniverse_agents.detailed_report_agent import (
     DetailedReportAgent,
+    DetailedReportDeps,
     ReportRequest,
     ReportResult,
     ThinkingPhase,
@@ -182,7 +183,7 @@ class TestDetailedReportAgent:
         mock_vlm_instance = Mock()
         mock_vlm_class.return_value = mock_vlm_instance
 
-        agent = DetailedReportAgent(tenant_id="test_tenant", config_manager=create_default_config_manager())
+        agent = DetailedReportAgent(deps=DetailedReportDeps(tenant_id="test_tenant"))
 
         assert agent.config is not None
         assert agent.vlm == mock_vlm_instance
@@ -203,17 +204,20 @@ class TestDetailedReportAgent:
         }
         mock_vlm_class.return_value = Mock()
 
-        agent = DetailedReportAgent(tenant_id="test_tenant", config_manager=create_default_config_manager(),
-            max_report_length=1500,
-            thinking_enabled=False,
-            visual_analysis_enabled=False,
-            technical_analysis_enabled=False,
+        agent = DetailedReportAgent(
+            deps=DetailedReportDeps(
+                tenant_id="test_tenant",
+                max_report_length=1500,
+                thinking_enabled=False,
+                visual_analysis_enabled=False,
+                technical_analysis_enabled=False,
+            )
         )
 
-        assert agent.max_report_length == 1500
-        assert agent.thinking_enabled is False
-        assert agent.visual_analysis_enabled is False
-        assert agent.technical_analysis_enabled is False
+        assert agent.deps.max_report_length == 1500
+        assert agent.deps.thinking_enabled is False
+        assert agent.deps.visual_analysis_enabled is False
+        assert agent.deps.technical_analysis_enabled is False
 
     @pytest.mark.ci_fast
     def test_thinking_phase_creation(self):
@@ -288,7 +292,7 @@ class TestDetailedReportAgent:
 
         # Mock the _initialize_vlm_client to avoid DSPy config issues
         with patch.object(DetailedReportAgent, "_initialize_vlm_client"):
-            agent = DetailedReportAgent(tenant_id="test_tenant", config_manager=create_default_config_manager())
+            agent = DetailedReportAgent(deps=DetailedReportDeps(tenant_id="test_tenant"))
 
         # Create report request
         request = ReportRequest(
@@ -321,7 +325,7 @@ class TestDetailedReportAgent:
 
         # Mock the _initialize_vlm_client to avoid DSPy config issues
         with patch.object(DetailedReportAgent, "_initialize_vlm_client"):
-            agent = DetailedReportAgent(tenant_id="test_tenant", config_manager=create_default_config_manager())
+            agent = DetailedReportAgent(deps=DetailedReportDeps(tenant_id="test_tenant"))
 
         # Empty search results should still generate a report
         request = ReportRequest(
@@ -399,7 +403,7 @@ class TestDetailedReportAgentCoreFunctionality:
             )
             mock_vlm_class.return_value = mock_vlm
 
-            agent = DetailedReportAgent(tenant_id="test_tenant", config_manager=create_default_config_manager())
+            agent = DetailedReportAgent(deps=DetailedReportDeps(tenant_id="test_tenant"))
             agent.vlm = mock_vlm
             return agent
 

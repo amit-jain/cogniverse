@@ -8,7 +8,11 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 import numpy as np
 import pytest
-from cogniverse_agents.document_agent import DocumentAgent, DocumentResult
+from cogniverse_agents.document_agent import (
+    DocumentAgent,
+    DocumentAgentDeps,
+    DocumentResult,
+)
 
 
 class TestDocumentAgent:
@@ -16,7 +20,13 @@ class TestDocumentAgent:
 
     def setup_method(self):
         """Set up test fixtures"""
-        self.agent = DocumentAgent(tenant_id="test_tenant", vespa_endpoint="http://localhost:8080", port=8007)
+        self.agent = DocumentAgent(
+            deps=DocumentAgentDeps(
+                tenant_id="test_tenant",
+                vespa_endpoint="http://localhost:8080",
+            ),
+            port=8007,
+        )
 
     def test_initialization(self):
         """Test agent initialization"""

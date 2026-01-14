@@ -1,8 +1,10 @@
 """
-A2A Protocol Agent with Type Safety
+A2A Protocol Agent with Type Safety and Streaming Support
 
 Extends AgentBase with Google A2A protocol support, DSPy integration,
-and FastAPI endpoints. Type safety is inherited from AgentBase.
+FastAPI endpoints, and SSE streaming. Type safety is inherited from AgentBase.
+
+Streaming: Send {"stream": true} in task to get SSE stream response.
 
 Usage:
     class RoutingInput(AgentInput):
@@ -17,19 +19,24 @@ Usage:
         model_name: str = "smollm3:3b"
 
     class RoutingAgent(A2AAgent[RoutingInput, RoutingOutput, RoutingDeps]):
-        async def process(self, input: RoutingInput) -> RoutingOutput:
+        async def _process_impl(self, input: RoutingInput) -> RoutingOutput:
             # Full type safety, A2A endpoints auto-generated
             return RoutingOutput(recommended_agent="search", confidence=0.9)
+
+    # Non-streaming: POST /tasks/send {"query": "..."}
+    # Streaming: POST /tasks/send {"query": "...", "stream": true}
 """
 
+import json
 import logging
 import time
 import uuid
-from typing import Any, Dict, Generic, List, Optional
+from typing import Any, Dict, Generic, List, Optional, Union
 
 import dspy
 import uvicorn
 from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from cogniverse_core.agents.base import (
@@ -56,13 +63,14 @@ class A2AAgentConfig(BaseModel):
 
 class A2AAgent(AgentBase[InputT, OutputT, DepsT], Generic[InputT, OutputT, DepsT]):
     """
-    Type-safe agent with A2A protocol support.
+    Type-safe agent with A2A protocol support and SSE streaming.
 
     Combines:
     - AgentBase: Type-safe input/output with Pydantic
     - A2A Protocol: Standard endpoints, agent card, inter-agent communication
     - DSPy Integration: AI module support with optimization
     - FastAPI: HTTP server for A2A endpoints
+    - Streaming: SSE support via stream=true in request
 
     Type Parameters:
         InputT: Agent input type (extends AgentInput)
@@ -71,20 +79,16 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT], Generic[InputT, OutputT, DepsT
 
     Example:
         class MyAgent(A2AAgent[MyInput, MyOutput, MyDeps]):
-            async def process(self, input: MyInput) -> MyOutput:
+            async def _process_impl(self, input: MyInput) -> MyOutput:
                 return MyOutput(result=input.query.upper())
 
         # Usage
         deps = MyDeps(tenant_id="tenant-1")
-        agent = MyAgent(
-            deps=deps,
-            config=A2AAgentConfig(
-                agent_name="my_agent",
-                agent_description="My agent",
-                capabilities=["text_processing"],
-            ),
-        )
-        agent.run()  # Starts FastAPI server with A2A endpoints
+        agent = MyAgent(...)
+        agent.start()  # Starts FastAPI server with A2A endpoints
+
+        # Non-streaming: POST /tasks/send {"query": "..."}
+        # Streaming: POST /tasks/send {"query": "...", "stream": true}
     """
 
     def __init__(
@@ -161,15 +165,21 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT], Generic[InputT, OutputT, DepsT
             """Legacy agent card endpoint."""
             return await get_agent_card()
 
-        @self.app.post("/tasks/send")
-        async def handle_task(task: Dict[str, Any]) -> Dict[str, Any]:
+        @self.app.post("/tasks/send", response_model=None)
+        async def handle_task(
+            task: Dict[str, Any]
+        ) -> Union[StreamingResponse, Dict[str, Any]]:
             """
-            Standard A2A task endpoint.
+            Standard A2A task endpoint with streaming support.
 
             Flow: A2A Task → Typed Input → process() → Typed Output → A2A Response
+            Streaming: If task["stream"]=True, returns SSE stream instead of JSON.
             """
             start_time = time.time()
             self.request_count += 1
+
+            # Check if streaming is requested
+            stream = task.get("stream", False)
 
             try:
                 # Extract input from A2A task
@@ -179,22 +189,40 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT], Generic[InputT, OutputT, DepsT
                 # Validate and convert to typed input
                 typed_input = self.validate_input(raw_input)
 
-                # Process with typed method
-                typed_output = await self.process(typed_input)
+                if stream:
+                    # Return SSE streaming response
+                    async def generate():
+                        try:
+                            async for event in self.process(typed_input, stream=True):
+                                yield f"data: {json.dumps(event)}\n\n"
+                        except Exception as e:
+                            error_event = {
+                                "type": "error",
+                                "error": str(e),
+                                "error_type": type(e).__name__,
+                            }
+                            yield f"data: {json.dumps(error_event)}\n\n"
 
-                # Convert to A2A response
-                a2a_response = self._create_a2a_response(typed_output)
+                    return StreamingResponse(
+                        generate(), media_type="text/event-stream"
+                    )
+                else:
+                    # Non-streaming: process and return JSON
+                    typed_output = await self.process(typed_input, stream=False)
 
-                # Track performance
-                processing_time = time.time() - start_time
-                self.total_processing_time += processing_time
+                    # Convert to A2A response
+                    a2a_response = self._create_a2a_response(typed_output)
 
-                logger.info(
-                    f"Task processed in {processing_time:.3f}s "
-                    f"(avg: {self.total_processing_time/self.request_count:.3f}s)"
-                )
+                    # Track performance
+                    processing_time = time.time() - start_time
+                    self.total_processing_time += processing_time
 
-                return a2a_response
+                    logger.info(
+                        f"Task processed in {processing_time:.3f}s "
+                        f"(avg: {self.total_processing_time/self.request_count:.3f}s)"
+                    )
+
+                    return a2a_response
 
             except AgentValidationError as e:
                 self.error_count += 1

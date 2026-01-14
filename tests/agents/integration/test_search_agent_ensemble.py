@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 @pytest.fixture
 def search_agent_with_ensemble_profiles(vespa_with_schema):
     """SearchAgent configured with multiple profiles for ensemble testing"""
-    from cogniverse_agents.search_agent import SearchAgent
+    from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
     vespa_http_port = vespa_with_schema["http_port"]
@@ -34,15 +34,17 @@ def search_agent_with_ensemble_profiles(vespa_with_schema):
     )
 
     # Create SearchAgent with test Vespa parameters
-    search_agent = SearchAgent(
+    deps = SearchAgentDeps(
         tenant_id="test_tenant",
-        schema_loader=schema_loader,
-        config_manager=config_manager,
         backend_url=vespa_url,
         backend_port=vespa_http_port,
         backend_config_port=vespa_config_port,
-        profile="video_colpali_smol500_mv_frame",  # Default profile
-        auto_create_schema=False,  # Schema already deployed
+        profile="video_colpali_smol500_mv_frame",
+    )
+    search_agent = SearchAgent(
+        deps=deps,
+        schema_loader=schema_loader,
+        config_manager=config_manager,
         port=8015,
     )
 
@@ -117,13 +119,12 @@ class TestSearchAgentEnsembleIntegration:
         agent = search_agent_with_ensemble_profiles
 
         # Mock _search_ensemble to capture call
-        original_ensemble = agent._search_ensemble
         agent._search_ensemble = AsyncMock(return_value=[
             {"id": "doc1", "rrf_score": 0.5, "num_profiles": 2}
         ])
 
         # Call with multiple profiles
-        result = await agent._process({
+        result = await agent._process_impl({
             "query": "machine learning videos",
             "profiles": ["profile1", "profile2"],
             "top_k": 10,
@@ -131,9 +132,9 @@ class TestSearchAgentEnsembleIntegration:
         })
 
         # VALIDATE: Ensemble mode detected
-        assert result["search_mode"] == "ensemble"
-        assert result["profiles"] == ["profile1", "profile2"]
-        assert result["rrf_k"] == 60
+        assert result.search_mode == "ensemble"
+        assert result.profiles == ["profile1", "profile2"]
+        assert result.rrf_k == 60
 
         # VALIDATE: _search_ensemble was called
         agent._search_ensemble.assert_called_once()
@@ -159,25 +160,25 @@ class TestSearchAgentEnsembleIntegration:
         agent.search_backend.search = Mock(return_value=[])
 
         # Call without profiles parameter
-        result = await agent._process({
+        result = await agent._process_impl({
             "query": "test query",
             "top_k": 10
         })
 
         # VALIDATE: Single profile mode
-        assert result["search_mode"] == "single_profile"
-        assert "profile" in result
-        assert result["profile"] == agent.active_profile
+        assert result.search_mode == "single_profile"
+        assert result.profile is not None
+        assert result.profile == agent.active_profile
 
         # Call with single profile in list (should still use single mode)
-        result2 = await agent._process({
+        result2 = await agent._process_impl({
             "query": "test query",
             "profiles": ["profile1"],
             "top_k": 10
         })
 
         # VALIDATE: Still single profile mode (only 1 profile)
-        assert result2["search_mode"] == "single_profile"
+        assert result2.search_mode == "single_profile"
 
         logger.info("✅ Single profile fallback validated")
 

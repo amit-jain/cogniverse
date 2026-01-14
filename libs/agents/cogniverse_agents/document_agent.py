@@ -91,8 +91,9 @@ class DocumentAgent(
             TypeError: If deps is not DocumentAgentDeps
             ValidationError: If deps fails Pydantic validation
         """
-        # Initialize memory mixin
-        MemoryAwareMixin.__init__(self)
+        # Note: MemoryAwareMixin is initialized via cooperative inheritance
+        # in super().__init__() call later. Memory will be initialized after
+        # calling initialize_memory() explicitly.
 
         # Create DSPy module
         class DocumentSearchSignature(dspy.Signature):
@@ -529,7 +530,7 @@ class DocumentAgent(
     # Type-safe process method (required by AgentBase)
     # ==========================================================================
 
-    async def process(self, input: DocumentSearchInput) -> DocumentSearchOutput:
+    async def _process_impl(self, input: DocumentSearchInput) -> DocumentSearchOutput:
         """
         Process document search request with typed input/output.
 
@@ -547,7 +548,45 @@ class DocumentAgent(
 
         return DocumentSearchOutput(results=results, count=len(results))
 
-    # Note: _dspy_to_a2a_output and _get_agent_skills handled by A2AAgent base class
+    def _dspy_to_a2a_output(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert DSPy result to A2A output format."""
+        results = result.get("results", [])
+        return {
+            "status": "success",
+            "agent": self.agent_name,
+            "result_type": "document_search_results",
+            "count": result.get("count", len(results)),
+            "results": [r.model_dump() if hasattr(r, "model_dump") else r for r in results],
+        }
+
+    def _get_agent_skills(self) -> List[Dict[str, Any]]:
+        """Return agent-specific skills for A2A protocol."""
+        return [
+            {
+                "name": "search_documents",
+                "description": "Search documents using visual, text, or hybrid strategy",
+                "input_schema": {"query": "string", "strategy": "string", "limit": "integer"},
+                "output_schema": {"results": "list", "count": "integer"},
+            },
+            {
+                "name": "search_visual",
+                "description": "Search documents using ColPali visual understanding (page-as-image)",
+                "input_schema": {"query": "string", "limit": "integer"},
+                "output_schema": {"results": "list"},
+            },
+            {
+                "name": "search_text",
+                "description": "Search documents using text extraction and semantic embeddings",
+                "input_schema": {"query": "string", "limit": "integer"},
+                "output_schema": {"results": "list"},
+            },
+            {
+                "name": "search_hybrid",
+                "description": "Search documents using combined visual and text strategies with RRF",
+                "input_schema": {"query": "string", "limit": "integer"},
+                "output_schema": {"results": "list"},
+            },
+        ]
 
 
 if __name__ == "__main__":

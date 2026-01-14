@@ -8,7 +8,7 @@ Implements two-phase orchestration:
 
 import logging
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import dspy
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
@@ -44,7 +44,7 @@ class OrchestratorOutput(AgentOutput):
 class OrchestratorDeps(AgentDeps):
     """Dependencies for orchestrator agent"""
 
-    pass  # Only needs tenant_id from base
+    agent_registry: Dict[Any, Any] = Field(default_factory=dict, description="Registry of available agents")
 
 
 class AgentType(str, Enum):
@@ -178,7 +178,8 @@ class OrchestratorAgent(A2AAgent[OrchestratorInput, OrchestratorOutput, Orchestr
             TypeError: If deps is not OrchestratorDeps
             ValidationError: If deps fails Pydantic validation
         """
-        self.agent_registry = agent_registry or {}
+        # Use agent_registry from constructor or fall back to deps
+        self.agent_registry = agent_registry if agent_registry is not None else deps.agent_registry
 
         # Initialize DSPy module
         orchestration_module = OrchestrationModule()
@@ -210,16 +211,20 @@ class OrchestratorAgent(A2AAgent[OrchestratorInput, OrchestratorOutput, Orchestr
     # Type-safe process method (required by AgentBase)
     # ==========================================================================
 
-    async def process(self, input: OrchestratorInput) -> OrchestratorOutput:
+    async def _process_impl(self, input: Union[OrchestratorInput, Dict[str, Any]]) -> OrchestratorOutput:
         """
         Process orchestration request with typed input/output.
 
         Args:
-            input: Typed input with query field
+            input: Typed input with query field (or dict)
 
         Returns:
             OrchestratorOutput with plan, agent results, and final output
         """
+        # Handle dict input for backward compatibility with tests
+        if isinstance(input, dict):
+            input = self.validate_input(input)
+
         query = input.query
 
         if not query:
@@ -429,7 +434,7 @@ class OrchestratorAgent(A2AAgent[OrchestratorInput, OrchestratorOutput, Orchestr
 
                 # Execute agent
                 try:
-                    result = await agent._process(agent_input)
+                    result = await agent.process(agent_input)
                     return step.agent_type.value, result
                 except Exception as e:
                     logger.error(f"Agent {step.agent_type.value} execution failed: {e}")
@@ -483,7 +488,58 @@ class OrchestratorAgent(A2AAgent[OrchestratorInput, OrchestratorOutput, Orchestr
             f"Plan: {plan.reasoning}"
         )
 
-    # Note: _dspy_to_a2a_output and _get_agent_skills handled by A2AAgent base class
+    def _dspy_to_a2a_output(self, result: OrchestrationResult) -> Dict[str, Any]:
+        """Convert OrchestrationResult to A2A output format."""
+        return {
+            "status": "success",
+            "agent": self.agent_name,
+            "query": result.query,
+            "plan": {
+                "steps": [
+                    {
+                        "agent_type": step.agent_type.value,
+                        "reasoning": step.reasoning,
+                        "depends_on": step.depends_on,
+                    }
+                    for step in result.plan.steps
+                ],
+                "parallel_groups": result.plan.parallel_groups,
+                "reasoning": result.plan.reasoning,
+            },
+            "agent_results": result.agent_results,
+            "final_output": result.final_output,
+            "execution_summary": result.execution_summary,
+        }
+
+    def _get_agent_skills(self) -> List[Dict[str, Any]]:
+        """Return agent-specific skills for A2A protocol."""
+        return [
+            {
+                "name": "orchestrate",
+                "description": "Orchestrate multi-agent query processing with planning and execution",
+                "input_schema": {"query": "string"},
+                "output_schema": {
+                    "plan": "object",
+                    "agent_results": "object",
+                    "final_output": "object",
+                    "execution_summary": "string",
+                },
+                "examples": [
+                    {
+                        "input": {"query": "Show me machine learning videos"},
+                        "output": {
+                            "plan": {
+                                "steps": [
+                                    {"agent_type": "query_enhancement"},
+                                    {"agent_type": "search"},
+                                ]
+                            },
+                            "execution_summary": "Executed 2/2 steps (2 successful)",
+                        },
+                    }
+                ],
+            }
+        ]
 
 
 # FastAPI app for standalone deployment

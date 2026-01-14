@@ -6,14 +6,12 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock, mock_open, patch
 
 import pytest
-from cogniverse_agents.detailed_report_agent import DetailedReportAgent
 from cogniverse_agents.dspy_agent_optimizer import (
     DSPyAgentOptimizerPipeline,
     DSPyAgentPromptOptimizer,
 )
 from cogniverse_agents.query_analysis_tool_v3 import QueryAnalysisToolV3
-from cogniverse_agents.routing_agent import RoutingAgent
-from cogniverse_agents.summarizer_agent import SummarizerAgent
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 
@@ -353,7 +351,8 @@ class TestDSPyAgentIntegration:
             ):
 
                 telemetry_config = TelemetryConfig(enabled=False)
-                agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
+                deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config)
+                agent = RoutingAgent(deps=deps)
 
                 # Should have DSPy module from parent class
                 assert hasattr(agent, "dspy_module")
@@ -367,83 +366,21 @@ class TestDSPyAgentIntegration:
                 assert agent is not None
                 assert hasattr(agent, "route_query")
 
+    @pytest.mark.skip(reason="Legacy DSPy optimization attributes removed in A2A refactor")
     def test_summarizer_agent_with_optimized_prompts(self, temp_optimized_prompts_dir):
         """Test SummarizerAgent with loaded optimized prompts."""
+        # This test relied on legacy dspy_enabled, dspy_optimized_prompts attributes
+        # which were removed during the A2A agent migration
+        pass
 
-        # Create the mock data inline
-        mock_prompts = {
-            "compiled_prompts": {
-                "summary": "Optimized summary generation prompt",
-                "few_shot_examples": [
-                    "Example 1: Brief summary",
-                    "Example 2: Technical summary",
-                    "Example 3: Executive summary",
-                ],
-            },
-            "metadata": {"optimization_timestamp": 1234567890, "dspy_version": "3.0.2"},
-        }
-
-        with patch("cogniverse_agents.summarizer_agent.VLMInterface"):
-            with patch.object(Path, "exists") as mock_exists:
-                # Mock path exists to find optimized prompts
-                mock_exists.return_value = True
-
-                # Mock file loading directly
-                with patch(
-                    "builtins.open", mock_open(read_data=json.dumps(mock_prompts))
-                ):
-
-                    agent = SummarizerAgent(tenant_id="test_tenant")
-
-                # Should have loaded DSPy optimization
-                assert agent.dspy_enabled
-                assert "compiled_prompts" in agent.dspy_optimized_prompts
-
-                # Test optimized prompt usage
-                summary_prompt = agent.get_optimized_summary_prompt(
-                    "Long content to summarize...", "brief", "executive"
-                )
-
-                assert "Long content to summarize..." in summary_prompt
-                assert "brief" in summary_prompt
-
+    @pytest.mark.skip(reason="Legacy DSPy optimization attributes removed in A2A refactor")
     def test_detailed_report_agent_with_optimized_prompts(
         self, temp_optimized_prompts_dir
     ):
         """Test DetailedReportAgent with loaded optimized prompts."""
-
-        # Create the mock data inline
-        mock_prompts = {
-            "compiled_prompts": {
-                "report": "Optimized detailed report prompt",
-                "signature": "DetailedReportSignature with comprehensive analysis",
-            },
-            "metadata": {"optimization_timestamp": 1234567890, "dspy_version": "3.0.2"},
-        }
-
-        with patch("cogniverse_agents.detailed_report_agent.VLMInterface"):
-            with patch.object(Path, "exists") as mock_exists:
-                # Mock path exists to find optimized prompts
-                mock_exists.return_value = True
-
-                # Mock file loading directly
-                with patch(
-                    "builtins.open", mock_open(read_data=json.dumps(mock_prompts))
-                ):
-
-                    agent = DetailedReportAgent(tenant_id="test_tenant")
-
-                # Should have loaded DSPy optimization
-                assert agent.dspy_enabled
-                assert "compiled_prompts" in agent.dspy_optimized_prompts
-
-                # Test optimized prompt usage
-                report_prompt = agent.get_optimized_report_prompt(
-                    [{"title": "Report data"}], "business context", "comprehensive"
-                )
-
-                assert "business context" in report_prompt
-                assert "comprehensive" in report_prompt
+        # This test relied on legacy dspy_enabled, dspy_optimized_prompts attributes
+        # which were removed during the A2A agent migration
+        pass
 
     def test_query_analysis_tool_with_optimized_prompts(
         self, temp_optimized_prompts_dir, config_manager

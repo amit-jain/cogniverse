@@ -151,7 +151,16 @@ class Mem0MemoryManager:
 
         # Get backend instance with full config including profiles
         # Add agent_memories profile since it may not be in config
-        profiles = config.get("profiles", {})
+        profiles_raw = config.get("profiles", {})
+
+        # Ensure profiles is a dict (handle list format or other edge cases)
+        if isinstance(profiles_raw, dict):
+            profiles = profiles_raw
+        elif isinstance(profiles_raw, list):
+            profiles = {p.get("name", f"profile_{i}"): p for i, p in enumerate(profiles_raw) if isinstance(p, dict)}
+        else:
+            profiles = {}
+
         if base_schema_name not in profiles:
             # Add minimal profile for agent_memories schema
             profiles[base_schema_name] = {

@@ -142,7 +142,7 @@ class EntityExtractionAgent(
 
         logger.info(f"EntityExtractionAgent initialized for tenant: {deps.tenant_id}")
 
-    async def process(self, input: EntityExtractionInput) -> EntityExtractionOutput:
+    async def _process_impl(self, input: EntityExtractionInput) -> EntityExtractionOutput:
         """
         Process entity extraction request with typed input/output.
 
@@ -254,8 +254,46 @@ class EntityExtractionAgent(
         except Exception:
             return query[:50]
 
-    # Note: _dspy_to_a2a_output and _get_agent_skills are now handled by A2AAgent base class
-    # which uses Pydantic schemas from EntityExtractionInput/EntityExtractionOutput
+    def _dspy_to_a2a_output(self, result: EntityExtractionResult) -> Dict[str, Any]:
+        """Convert EntityExtractionResult to A2A output format."""
+        return {
+            "status": "success",
+            "agent": self.agent_name,
+            "query": result.query,
+            "entities": [entity.model_dump() for entity in result.entities],
+            "entity_count": result.entity_count,
+            "has_entities": result.has_entities,
+            "dominant_types": result.dominant_types,
+        }
+
+    def _get_agent_skills(self) -> List[Dict[str, Any]]:
+        """Return agent-specific skills for A2A protocol."""
+        return [
+            {
+                "name": "extract_entities",
+                "description": "Extract named entities from user queries",
+                "input_schema": {"query": "string"},
+                "output_schema": {
+                    "entities": "list",
+                    "entity_count": "integer",
+                    "has_entities": "boolean",
+                    "dominant_types": "list",
+                },
+                "examples": [
+                    {
+                        "input": {"query": "Show me videos about Barack Obama in Chicago"},
+                        "output": {
+                            "entities": [
+                                {"text": "Barack Obama", "type": "PERSON"},
+                                {"text": "Chicago", "type": "PLACE"},
+                            ],
+                            "entity_count": 2,
+                            "has_entities": True,
+                        },
+                    }
+                ],
+            }
+        ]
 
 
 # FastAPI app for standalone deployment

@@ -20,7 +20,7 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 import dspy
 import numpy as np
@@ -454,19 +454,34 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
             logger.info("ℹ️  Memory disabled or not configured for search_agent")
 
         # Get model from active profile
-        active_profile = (
+        active_profile_raw = (
             os.getenv("BACKEND_PROFILE")
             or deps.profile
             or self.search_config.get("active_video_profile")
             or "video_colpali_smol500_mv_frame"
         )
 
+        # Ensure active_profile is a string (config may return dict)
+        if isinstance(active_profile_raw, dict):
+            active_profile = active_profile_raw.get("name", "video_colpali_smol500_mv_frame")
+        else:
+            active_profile = str(active_profile_raw) if active_profile_raw else "video_colpali_smol500_mv_frame"
+
         self.active_profile = active_profile
 
         backend_config_data = self.search_config.get("backend", {})
-        profiles = backend_config_data.get("profiles", {})
+        profiles_raw = backend_config_data.get("profiles", {})
 
-        if active_profile and active_profile in profiles:
+        # Ensure profiles is a dict (handle list format or other edge cases)
+        if isinstance(profiles_raw, dict):
+            profiles = profiles_raw
+        elif isinstance(profiles_raw, list):
+            # Convert list of profile dicts to dict keyed by name
+            profiles = {p.get("name", f"profile_{i}"): p for i, p in enumerate(profiles_raw) if isinstance(p, dict)}
+        else:
+            profiles = {}
+
+        if active_profile and isinstance(profiles, dict) and active_profile in profiles:
             model_name = profiles[active_profile].get(
                 "embedding_model", "vidore/colsmol-500m"
             )
@@ -517,7 +532,7 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
         # Initialize query encoder
         try:
             self.query_encoder = QueryEncoderFactory.create_encoder(
-                active_profile, model_name, config=self.config
+                active_profile, model_name, config=self.search_config
             )
             logger.info(f"Query encoder initialized for profile: {active_profile}")
         except Exception as e:
@@ -1434,16 +1449,20 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
     # Type-safe process method (required by AgentBase)
     # ==========================================================================
 
-    async def process(self, input: SearchInput) -> SearchOutput:
+    async def _process_impl(self, input: Union[SearchInput, Dict[str, Any]]) -> SearchOutput:
         """
         Process search request with typed input/output.
 
         Args:
-            input: Typed input with query, modality, top_k, etc.
+            input: Typed input with query, modality, top_k, etc. (or dict)
 
         Returns:
             SearchOutput with results and metadata
         """
+        # Handle dict input for backward compatibility with tests
+        if isinstance(input, dict):
+            input = self.validate_input(input)
+
         query = input.query
         modality = input.modality
         top_k = input.top_k

@@ -8,7 +8,11 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 import numpy as np
 import pytest
-from cogniverse_agents.image_search_agent import ImageResult, ImageSearchAgent
+from cogniverse_agents.image_search_agent import (
+    ImageResult,
+    ImageSearchAgent,
+    ImageSearchDeps,
+)
 from PIL import Image
 
 
@@ -17,7 +21,13 @@ class TestImageSearchAgent:
 
     def setup_method(self):
         """Set up test fixtures"""
-        self.agent = ImageSearchAgent(tenant_id="test_tenant", vespa_endpoint="http://localhost:8080", port=8005)
+        self.agent = ImageSearchAgent(
+            deps=ImageSearchDeps(
+                tenant_id="test_tenant",
+                vespa_endpoint="http://localhost:8080",
+            ),
+            port=8005,
+        )
 
     def test_initialization(self):
         """Test agent initialization"""

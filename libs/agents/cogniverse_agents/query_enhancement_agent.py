@@ -161,7 +161,7 @@ class QueryEnhancementAgent(
 
         logger.info(f"QueryEnhancementAgent initialized for tenant: {deps.tenant_id}")
 
-    async def process(self, input: QueryEnhancementInput) -> QueryEnhancementOutput:
+    async def _process_impl(self, input: QueryEnhancementInput) -> QueryEnhancementOutput:
         """
         Process query enhancement request with typed input/output.
 
@@ -210,7 +210,47 @@ class QueryEnhancementAgent(
             reasoning=result.reasoning,
         )
 
-    # Note: _dspy_to_a2a_output and _get_agent_skills handled by A2AAgent base class
+    def _dspy_to_a2a_output(self, result: QueryEnhancementResult) -> Dict[str, Any]:
+        """Convert QueryEnhancementResult to A2A output format."""
+        return {
+            "status": "success",
+            "agent": self.agent_name,
+            "original_query": result.original_query,
+            "enhanced_query": result.enhanced_query,
+            "expansion_terms": result.expansion_terms,
+            "synonyms": result.synonyms,
+            "context_additions": result.context_additions,
+            "confidence": result.confidence,
+            "reasoning": result.reasoning,
+        }
+
+    def _get_agent_skills(self) -> List[Dict[str, Any]]:
+        """Return agent-specific skills for A2A protocol."""
+        return [
+            {
+                "name": "enhance_query",
+                "description": "Enhance user queries with synonyms, expansions, and context",
+                "input_schema": {"query": "string"},
+                "output_schema": {
+                    "enhanced_query": "string",
+                    "expansion_terms": "list",
+                    "synonyms": "list",
+                    "context_additions": "list",
+                    "confidence": "float",
+                },
+                "examples": [
+                    {
+                        "input": {"query": "ML tutorials"},
+                        "output": {
+                            "enhanced_query": "machine learning tutorials and guides",
+                            "expansion_terms": ["deep learning", "neural networks"],
+                            "synonyms": ["ML", "artificial intelligence"],
+                            "confidence": 0.85,
+                        },
+                    }
+                ],
+            }
+        ]
 
 
 # FastAPI app for standalone deployment

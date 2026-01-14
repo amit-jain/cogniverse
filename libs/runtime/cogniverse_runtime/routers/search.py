@@ -1,11 +1,13 @@
 """Search endpoints - unified interface for search operations."""
 
+import json
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from cogniverse_runtime.search.service import SearchService
@@ -26,6 +28,7 @@ class SearchRequest(BaseModel):
     tenant_id: Optional[str] = None
     org_id: Optional[str] = None
     session_id: Optional[str] = None
+    stream: bool = False
 
 
 class SearchResponse(BaseModel):
@@ -39,9 +42,9 @@ class SearchResponse(BaseModel):
     session_id: Optional[str] = None
 
 
-@router.post("/", response_model=SearchResponse)
-async def search(request: SearchRequest) -> SearchResponse:
-    """Execute a search query."""
+@router.post("/", response_model=None)
+async def search(request: SearchRequest) -> Union[StreamingResponse, SearchResponse]:
+    """Execute a search query. Returns SSE stream if stream=True, else JSON."""
     tenant_id = request.tenant_id or "default"
 
     telemetry_manager = get_telemetry_manager()
@@ -57,6 +60,7 @@ async def search(request: SearchRequest) -> SearchResponse:
                 "profile": request.profile,
                 "strategy": request.strategy,
                 "top_k": request.top_k,
+                "stream": request.stream,
             },
         )
     else:
@@ -68,6 +72,7 @@ async def search(request: SearchRequest) -> SearchResponse:
                 "profile": request.profile,
                 "strategy": request.strategy,
                 "top_k": request.top_k,
+                "stream": request.stream,
             },
         )
 
@@ -82,26 +87,70 @@ async def search(request: SearchRequest) -> SearchResponse:
                 profile=request.profile or config.get("default_profile", "default"),
             )
 
-            # Execute search - all child spans automatically inherit session_id
-            results = search_service.search(
-                query=request.query,
-                top_k=request.top_k,
-                strategy=request.strategy,
-                filters=request.filters,
-                tenant_id=request.tenant_id,
-                org_id=request.org_id,
-            )
+            if request.stream:
+                # Streaming response
+                async def generate():
+                    try:
+                        # Emit status event
+                        yield f'data: {json.dumps({"type": "status", "message": "Searching...", "query": request.query})}\n\n'
 
-            span.set_attribute("results_count", len(results))
+                        # Execute search
+                        results = search_service.search(
+                            query=request.query,
+                            top_k=request.top_k,
+                            strategy=request.strategy,
+                            filters=request.filters,
+                            tenant_id=request.tenant_id,
+                            org_id=request.org_id,
+                        )
 
-            return SearchResponse(
-                query=request.query,
-                profile=request.profile,
-                strategy=request.strategy,
-                results_count=len(results),
-                results=[r.to_dict() for r in results],
-                session_id=request.session_id,
-            )
+                        span.set_attribute("results_count", len(results))
+
+                        # Emit final event with results
+                        final_data = {
+                            "type": "final",
+                            "data": {
+                                "query": request.query,
+                                "profile": request.profile,
+                                "strategy": request.strategy,
+                                "results_count": len(results),
+                                "results": [r.to_dict() for r in results],
+                                "session_id": request.session_id,
+                            },
+                        }
+                        yield f"data: {json.dumps(final_data)}\n\n"
+
+                    except Exception as e:
+                        error_event = {
+                            "type": "error",
+                            "error": str(e),
+                            "error_type": type(e).__name__,
+                        }
+                        yield f"data: {json.dumps(error_event)}\n\n"
+
+                return StreamingResponse(generate(), media_type="text/event-stream")
+
+            else:
+                # Non-streaming response
+                results = search_service.search(
+                    query=request.query,
+                    top_k=request.top_k,
+                    strategy=request.strategy,
+                    filters=request.filters,
+                    tenant_id=request.tenant_id,
+                    org_id=request.org_id,
+                )
+
+                span.set_attribute("results_count", len(results))
+
+                return SearchResponse(
+                    query=request.query,
+                    profile=request.profile,
+                    strategy=request.strategy,
+                    results_count=len(results),
+                    results=[r.to_dict() for r in results],
+                    session_id=request.session_id,
+                )
 
         except Exception as e:
             logger.error(f"Search error: {e}")

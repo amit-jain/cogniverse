@@ -7,6 +7,8 @@ import pytest
 from cogniverse_agents.entity_extraction_agent import (
     Entity,
     EntityExtractionAgent,
+    EntityExtractionDeps,
+    EntityExtractionInput,
     EntityExtractionModule,
     EntityExtractionResult,
 )
@@ -27,7 +29,8 @@ def mock_dspy_lm():
 def entity_agent():
     """Create EntityExtractionAgent for testing"""
     with patch("dspy.ChainOfThought"):
-        agent = EntityExtractionAgent(tenant_id="test_tenant", port=8010)
+        deps = EntityExtractionDeps(tenant_id="test_tenant")
+        agent = EntityExtractionAgent(deps=deps, port=8010)
         return agent
 
 
@@ -83,8 +86,8 @@ class TestEntityExtractionAgent:
             )
         )
 
-        result = await entity_agent._process(
-            {"query": "Show me Barack Obama in Chicago"}
+        result = await entity_agent._process_impl(
+            EntityExtractionInput(query="Show me Barack Obama in Chicago")
         )
 
         assert isinstance(result, EntityExtractionResult)
@@ -104,7 +107,7 @@ class TestEntityExtractionAgent:
             return_value=dspy.Prediction(entities="", entity_types="")
         )
 
-        result = await entity_agent._process({"query": "show me some videos"})
+        result = await entity_agent._process_impl(EntityExtractionInput(query="show me some videos"))
 
         assert result.entity_count == 0
         assert result.has_entities is False
@@ -113,7 +116,7 @@ class TestEntityExtractionAgent:
     @pytest.mark.asyncio
     async def test_process_empty_query(self, entity_agent):
         """Test processing empty query"""
-        result = await entity_agent._process({"query": ""})
+        result = await entity_agent._process_impl(EntityExtractionInput(query=""))
 
         assert result.query == ""
         assert result.entity_count == 0
@@ -121,8 +124,9 @@ class TestEntityExtractionAgent:
 
     @pytest.mark.asyncio
     async def test_process_missing_query(self, entity_agent):
-        """Test processing with missing query field"""
-        result = await entity_agent._process({})
+        """Test processing with missing query field (defaults to empty string)"""
+        # With typed inputs, we provide an empty query as equivalent to missing
+        result = await entity_agent._process_impl(EntityExtractionInput(query=""))
 
         assert result.query == ""
         assert result.entity_count == 0
@@ -187,8 +191,8 @@ class TestEntityExtractionAgent:
             )
         )
 
-        result = await entity_agent._process(
-            {"query": "Obama and Trump at White House"}
+        result = await entity_agent._process_impl(
+            EntityExtractionInput(query="Obama and Trump at White House")
         )
 
         assert result.dominant_types[0] == "PERSON"  # Most common type

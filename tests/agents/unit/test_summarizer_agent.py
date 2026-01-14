@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from cogniverse_agents.summarizer_agent import (
     SummarizerAgent,
+    SummarizerDeps,
     SummaryGenerationSignature,
     SummaryRequest,
     SummaryResult,
@@ -134,7 +135,7 @@ class TestSummarizerAgent:
         mock_vlm_instance = Mock()
         mock_vlm_class.return_value = mock_vlm_instance
 
-        agent = SummarizerAgent(tenant_id="test_tenant")
+        agent = SummarizerAgent(deps=SummarizerDeps(tenant_id="test_tenant"))
 
         assert agent.config is not None
         assert agent.vlm == mock_vlm_instance
@@ -188,7 +189,7 @@ class TestSummarizerAgent:
         }
         mock_vlm_class.return_value = Mock()
 
-        agent = SummarizerAgent(tenant_id="test_tenant")
+        agent = SummarizerAgent(deps=SummarizerDeps(tenant_id="test_tenant"))
 
         # Create summarization request
         request = SummaryRequest(
@@ -237,7 +238,7 @@ class TestSummarizerAgentCoreFunctionality:
             )
             mock_vlm_class.return_value = mock_vlm
 
-            agent = SummarizerAgent(tenant_id="test_tenant")
+            agent = SummarizerAgent(deps=SummarizerDeps(tenant_id="test_tenant"))
             agent.vlm = mock_vlm
             return agent
 

@@ -25,7 +25,7 @@ class TestCompleteDSPySystem:
 
         # Test that the core components can be imported and work together
         from cogniverse_agents.routing.base import GenerationType, SearchModality
-        from cogniverse_agents.routing_agent import RoutingAgent
+        from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 
         # Mock the dependencies for testing
         with patch(
@@ -38,7 +38,8 @@ class TestCompleteDSPySystem:
                     "cogniverse_agents.query.encoders.QueryEncoderFactory"
                 ):
                     # Initialize routing agent
-                    routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
+                    deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
+                    routing_agent = RoutingAgent(deps=deps)
 
                     # Test that it can process a query
                     query = "Find videos of robots playing soccer"
@@ -153,15 +154,16 @@ class TestCompleteDSPySystem:
     async def test_multi_agent_orchestration_simulation(self, telemetry_manager_without_phoenix):
         """Test multi-agent orchestration with mocked agents"""
 
-        from cogniverse_agents.routing_agent import RoutingAgent
+        from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 
         with patch(
             "cogniverse_agents.routing.relationship_extraction_tools.RelationshipExtractorTool"
         ):
-            routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
+            deps = RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_manager_without_phoenix.config)
+            routing_agent = RoutingAgent(deps=deps)
 
             # Test orchestration capability detection
-            capabilities = routing_agent._get_routing_capabilities()
+            capabilities = routing_agent._get_routing_capabilities(deps)
             assert isinstance(capabilities, list)
             assert len(capabilities) > 0
 

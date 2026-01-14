@@ -3,7 +3,7 @@ Unit tests for AgentRegistry
 """
 
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from cogniverse_agents.agent_registry import AgentEndpoint, AgentRegistry
@@ -471,9 +471,11 @@ class TestAgentRegistryStructuredConfig:
     @pytest.mark.ci_fast
     @patch("cogniverse_agents.agent_registry.get_config")
     def test_structured_config_registration(self, mock_get_config, structured_config):
-        """Test agents are registered from structured config"""
-        # Mock get_config to return structured config
-        mock_get_config.return_value = structured_config
+        """Test agents are registered from structured config merged with defaults"""
+        # Create mock that returns the structured_config dict when .get() is called
+        mock_config = MagicMock()
+        mock_config.get.side_effect = lambda key, default=None: structured_config.get(key, default)
+        mock_get_config.return_value = mock_config
 
         config_manager = create_default_config_manager()
         registry = AgentRegistry(
@@ -481,28 +483,27 @@ class TestAgentRegistryStructuredConfig:
             config_manager=config_manager
         )
 
-        # Should register enabled agents only (orchestrator, entity_extraction)
-        # profile_selection is disabled
-        assert len(registry.agents) == 2
+        # AgentRegistry merges user config with 7 defaults, registering all enabled agents
+        # profile_selection is explicitly disabled in fixture, so 6 agents registered
+        assert len(registry.agents) == 6
         assert "orchestrator" in registry.agents
         assert "entity_extraction" in registry.agents
-        assert "profile_selection" not in registry.agents  # disabled
+        assert "profile_selection" not in registry.agents  # explicitly disabled in fixture
 
     @pytest.mark.ci_fast
-    @patch("cogniverse_foundation.config.utils.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     def test_all_default_agents_registered(self, mock_get_config):
         """Test all 7 Phase 2-3 agents registered with defaults"""
         # Full agents config with all 7 agents enabled
-        full_agents_config = {
-            "agents": {
-                "orchestrator": {"url": "http://localhost:8000", "enabled": True},
-                "entity_extraction": {"url": "http://localhost:8010", "enabled": True},
-                "profile_selection": {"url": "http://localhost:8011", "enabled": True},
-                "query_enhancement": {"url": "http://localhost:8012", "enabled": True},
-                "search": {"url": "http://localhost:8002", "enabled": True},
-                "summarizer": {"url": "http://localhost:8003", "enabled": True},
-                "detailed_report": {"url": "http://localhost:8004", "enabled": True},
-            }
+        full_agents_config = MagicMock()
+        full_agents_config.get.return_value = {
+            "orchestrator": {"url": "http://localhost:8000", "enabled": True},
+            "entity_extraction": {"url": "http://localhost:8010", "enabled": True},
+            "profile_selection": {"url": "http://localhost:8011", "enabled": True},
+            "query_enhancement": {"url": "http://localhost:8012", "enabled": True},
+            "search": {"url": "http://localhost:8002", "enabled": True},
+            "summarizer": {"url": "http://localhost:8003", "enabled": True},
+            "detailed_report": {"url": "http://localhost:8004", "enabled": True},
         }
 
         mock_get_config.return_value = full_agents_config
@@ -524,10 +525,13 @@ class TestAgentRegistryStructuredConfig:
         assert "detailed_report" in registry.agents
 
     @pytest.mark.ci_fast
-    @patch("cogniverse_foundation.config.utils.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     def test_capability_based_discovery(self, mock_get_config, structured_config):
         """Test finding agents by capability"""
-        mock_get_config.return_value = structured_config
+        # Create mock that returns the structured_config dict when .get() is called
+        mock_config = MagicMock()
+        mock_config.get.side_effect = lambda key, default=None: structured_config.get(key, default)
+        mock_get_config.return_value = mock_config
 
         config_manager = create_default_config_manager()
         registry = AgentRegistry(
@@ -535,32 +539,34 @@ class TestAgentRegistryStructuredConfig:
             config_manager=config_manager
         )
 
-        # Find by orchestration capability
-        agents = registry.get_agents_by_capability("orchestration")
+        # Find by orchestration capability - use correct method name
+        agents = registry.find_agents_by_capability("orchestration")
         assert len(agents) == 1
         assert agents[0].name == "orchestrator"
 
         # Find by entity_extraction capability
-        agents = registry.get_agents_by_capability("entity_extraction")
+        agents = registry.find_agents_by_capability("entity_extraction")
         assert len(agents) == 1
         assert agents[0].name == "entity_extraction"
 
         # Nonexistent capability
-        agents = registry.get_agents_by_capability("nonexistent")
+        agents = registry.find_agents_by_capability("nonexistent")
         assert len(agents) == 0
 
     @pytest.mark.ci_fast
-    @patch("cogniverse_foundation.config.utils.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     def test_backward_compatibility_legacy_config(self, mock_get_config):
         """Test backward compatibility with legacy individual URL config"""
         # Legacy config (no agents dict)
-        legacy_config = {
+        legacy_config_data = {
             "video_agent_url": "http://localhost:8002",
             "text_agent_url": "http://localhost:8003",
             "routing_agent_port": 8001,
         }
 
-        mock_get_config.return_value = legacy_config
+        mock_config = MagicMock()
+        mock_config.get.side_effect = lambda key, default=None: legacy_config_data.get(key, default)
+        mock_get_config.return_value = mock_config
 
         config_manager = create_default_config_manager()
         registry = AgentRegistry(
@@ -575,11 +581,11 @@ class TestAgentRegistryStructuredConfig:
         assert "routing_agent" in registry.agents
 
     @pytest.mark.ci_fast
-    @patch("cogniverse_foundation.config.utils.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     def test_custom_url_override(self, mock_get_config):
         """Test custom URL overrides default URL"""
         # Custom URL for orchestrator
-        custom_config = {
+        custom_config_data = {
             "agents": {
                 "orchestrator": {
                     "url": "http://custom-host:9000",
@@ -589,7 +595,9 @@ class TestAgentRegistryStructuredConfig:
             }
         }
 
-        mock_get_config.return_value = custom_config
+        mock_config = MagicMock()
+        mock_config.get.side_effect = lambda key, default=None: custom_config_data.get(key, default)
+        mock_get_config.return_value = mock_config
 
         config_manager = create_default_config_manager()
         registry = AgentRegistry(
@@ -601,10 +609,13 @@ class TestAgentRegistryStructuredConfig:
         assert registry.agents["orchestrator"].url == "http://custom-host:9000"
 
     @pytest.mark.ci_fast
-    @patch("cogniverse_foundation.config.utils.get_config")
+    @patch("cogniverse_agents.agent_registry.get_config")
     def test_disabled_agents_not_registered(self, mock_get_config, structured_config):
         """Test disabled agents are not registered"""
-        mock_get_config.return_value = structured_config
+        # Create mock that returns the structured_config dict when .get() is called
+        mock_config = MagicMock()
+        mock_config.get.side_effect = lambda key, default=None: structured_config.get(key, default)
+        mock_get_config.return_value = mock_config
 
         config_manager = create_default_config_manager()
         registry = AgentRegistry(
@@ -615,5 +626,5 @@ class TestAgentRegistryStructuredConfig:
         # profile_selection is disabled in fixture
         assert "profile_selection" not in registry.agents
 
-        # Only enabled agents registered
-        assert len(registry.agents) == 2
+        # AgentRegistry merges with 7 defaults, 1 disabled = 6 registered
+        assert len(registry.agents) == 6

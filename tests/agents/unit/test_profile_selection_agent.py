@@ -7,6 +7,8 @@ import pytest
 from cogniverse_agents.profile_selection_agent import (
     ProfileCandidate,
     ProfileSelectionAgent,
+    ProfileSelectionDeps,
+    ProfileSelectionInput,
     ProfileSelectionModule,
     ProfileSelectionResult,
 )
@@ -31,15 +33,15 @@ def mock_dspy_lm():
 def profile_agent():
     """Create ProfileSelectionAgent for testing"""
     with patch("dspy.ChainOfThought"):
-        agent = ProfileSelectionAgent(
+        deps = ProfileSelectionDeps(
             tenant_id="test_tenant",
             available_profiles=[
                 "video_colpali_base",
                 "video_colpali_large",
                 "image_colpali_base",
             ],
-            port=8011,
         )
+        agent = ProfileSelectionAgent(deps=deps, port=8011)
         return agent
 
 
@@ -127,7 +129,7 @@ class TestProfileSelectionAgent:
         assert profile_agent.agent_name == "profile_selection_agent"
         assert profile_agent.tenant_id == "test_tenant"
         assert "profile_selection" in profile_agent.capabilities
-        assert len(profile_agent.available_profiles) == 3
+        assert len(profile_agent.deps.available_profiles) == 3
 
     @pytest.mark.asyncio
     async def test_process_with_query(self, profile_agent):
@@ -143,8 +145,8 @@ class TestProfileSelectionAgent:
             )
         )
 
-        result = await profile_agent._process(
-            {"query": "Show me machine learning videos"}
+        result = await profile_agent._process_impl(
+            ProfileSelectionInput(query="Show me machine learning videos")
         )
 
         assert isinstance(result, ProfileSelectionResult)
@@ -158,12 +160,12 @@ class TestProfileSelectionAgent:
     @pytest.mark.asyncio
     async def test_process_empty_query(self, profile_agent):
         """Test processing empty query"""
-        result = await profile_agent._process({"query": ""})
+        result = await profile_agent._process_impl(ProfileSelectionInput(query=""))
 
         assert result.query == ""
         assert result.confidence == 0.0
         assert result.reasoning == "Empty query, using default profile"
-        assert result.selected_profile == profile_agent.available_profiles[0]
+        assert result.selected_profile == profile_agent.deps.available_profiles[0]
 
     @pytest.mark.asyncio
     async def test_process_custom_profiles(self, profile_agent):
@@ -179,11 +181,11 @@ class TestProfileSelectionAgent:
             )
         )
 
-        result = await profile_agent._process(
-            {
-                "query": "test query",
-                "available_profiles": ["custom_profile_1", "custom_profile_2"],
-            }
+        result = await profile_agent._process_impl(
+            ProfileSelectionInput(
+                query="test query",
+                available_profiles=["custom_profile_1", "custom_profile_2"],
+            )
         )
 
         assert result.selected_profile == "custom_profile_1"
@@ -203,7 +205,7 @@ class TestProfileSelectionAgent:
             )
         )
 
-        result = await profile_agent._process({"query": "test"})
+        result = await profile_agent._process_impl(ProfileSelectionInput(query="test"))
 
         assert result.confidence == 0.5  # Default fallback
 

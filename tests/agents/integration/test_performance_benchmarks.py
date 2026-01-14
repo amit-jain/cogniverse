@@ -23,7 +23,7 @@ from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementP
 from cogniverse_agents.routing.relationship_extraction_tools import (
     RelationshipExtractorTool,
 )
-from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_agents.summarizer_agent import SummarizerAgent
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
@@ -89,7 +89,7 @@ class TestPerformanceBenchmarks:
             provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        routing_agent = RoutingAgent(deps=RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config))
 
         test_queries = [
             "Find videos of robots",
@@ -256,7 +256,7 @@ class TestPerformanceBenchmarks:
             provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        routing_agent = RoutingAgent(deps=RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config))
         extractor = RelationshipExtractorTool()
 
         # Do one warmup operation to load models
@@ -332,7 +332,7 @@ class TestPerformanceBenchmarks:
             provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        routing_agent = RoutingAgent(deps=RoutingDeps(tenant_id="test_tenant", telemetry_config=telemetry_config))
 
         # Generate concurrent queries
         num_concurrent = 5

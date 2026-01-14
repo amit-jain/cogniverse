@@ -4,6 +4,9 @@ Generic Type-Safe Agent Base
 Provides the foundation for all agents with compile-time type safety
 and runtime Pydantic validation. Type safety is inherent - not an option.
 
+Streaming support: All agents support streaming via `stream=True` parameter.
+Override `_process_stream_impl()` for custom streaming behavior.
+
 Usage:
     class SearchInput(AgentInput):
         query: str
@@ -16,15 +19,33 @@ Usage:
         vespa_client: VespaClient
 
     class SearchAgent(AgentBase[SearchInput, SearchOutput, SearchDeps]):
-        async def process(self, input: SearchInput) -> SearchOutput:
+        async def _process_impl(self, input: SearchInput) -> SearchOutput:
             # IDE autocomplete works, types are enforced
             results = await self.deps.vespa_client.search(input.query)
             return SearchOutput(results=results)
+
+    # Usage:
+    result = await agent.process(input, stream=False)  # Returns SearchOutput
+    async for event in agent.process(input, stream=True):  # Streams events
+        print(event)
 """
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar, Dict, Generic, Optional, Type, TypeVar, get_args
+from typing import (
+    Any,
+    AsyncGenerator,
+    ClassVar,
+    Dict,
+    Generic,
+    Literal,
+    Optional,
+    Type,
+    TypeVar,
+    Union,
+    get_args,
+    overload,
+)
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -39,7 +60,9 @@ class AgentInput(BaseModel):
     Pydantic validation is automatic.
     """
 
-    model_config = ConfigDict(extra="forbid")  # Strict - no extra fields
+    # Use "ignore" to allow orchestrator to pass additional context fields
+    # from previous agent results, while still validating known fields
+    model_config = ConfigDict(extra="ignore")
 
 
 class AgentOutput(BaseModel):
@@ -82,10 +105,13 @@ class AgentValidationError(Exception):
 
 class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
     """
-    Generic type-safe agent base class.
+    Generic type-safe agent base class with streaming support.
 
     Type safety is inherent - every agent has typed input, output, and dependencies.
     Pydantic validates at runtime; type checkers validate at write-time.
+
+    Streaming: Use `process(input, stream=True)` for SSE-compatible streaming.
+    Override `_process_stream_impl()` for custom streaming behavior.
 
     Type Parameters:
         InputT: Agent input type (must extend AgentInput)
@@ -94,9 +120,16 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
 
     Example:
         class MyAgent(AgentBase[MyInput, MyOutput, MyDeps]):
-            async def process(self, input: MyInput) -> MyOutput:
+            async def _process_impl(self, input: MyInput) -> MyOutput:
                 # Full IDE autocomplete, type checking enforced
                 return MyOutput(result=input.query.upper())
+
+        # Non-streaming
+        result = await agent.process(input)
+
+        # Streaming
+        async for event in agent.process(input, stream=True):
+            print(event)  # {"type": "final", "data": {...}}
     """
 
     # Class-level type references extracted from generics
@@ -203,13 +236,56 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
                 validation_error=e,
             )
 
-    @abstractmethod
-    async def process(self, input: InputT) -> OutputT:
-        """
-        Process typed input and return typed output.
+    @overload
+    async def process(
+        self, input: InputT, stream: Literal[False] = False
+    ) -> OutputT: ...
 
-        This is the main method subclasses implement.
-        IDE autocomplete works. Types are enforced at compile and runtime.
+    @overload
+    async def process(
+        self, input: InputT, stream: Literal[True]
+    ) -> AsyncGenerator[Dict[str, Any], None]: ...
+
+    async def process(
+        self, input: Union[InputT, Dict[str, Any]], stream: bool = False
+    ) -> Union[OutputT, AsyncGenerator[Dict[str, Any], None]]:
+        """
+        Process typed input. Returns result or async generator based on stream param.
+
+        Args:
+            input: Input of type InputT or dict (auto-validated to InputT)
+            stream: If True, returns async generator yielding events (OpenAI style)
+
+        Returns:
+            If stream=False: Output of type OutputT
+            If stream=True: AsyncGenerator yielding event dicts
+
+        Example:
+            # Non-streaming
+            result = await agent.process(input)
+
+            # Streaming
+            async for event in agent.process(input, stream=True):
+                print(event)
+        """
+        # Auto-validate dict inputs to typed InputT
+        if isinstance(input, dict):
+            typed_input = self.validate_input(input)
+        else:
+            typed_input = input
+
+        if stream:
+            return self._process_stream_impl(typed_input)
+        else:
+            return await self._process_impl(typed_input)
+
+    @abstractmethod
+    async def _process_impl(self, input: InputT) -> OutputT:
+        """
+        Core processing logic. Subclasses must implement this.
+
+        This replaces the old `process()` method. Rename your existing
+        `process()` implementations to `_process_impl()`.
 
         Args:
             input: Validated input of type InputT
@@ -219,7 +295,33 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         """
         pass
 
-    async def run(self, raw_input: Dict[str, Any]) -> OutputT:
+    async def _process_stream_impl(
+        self, input: InputT
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Streaming implementation. Override for custom streaming behavior.
+
+        Default implementation wraps _process_impl() result in a final event.
+        Override this to yield intermediate progress events.
+
+        Args:
+            input: Validated input of type InputT
+
+        Yields:
+            Event dicts with "type" key: "status", "partial", "final", "error"
+
+        Example override:
+            async def _process_stream_impl(self, input: MyInput):
+                yield {"type": "status", "message": "Processing..."}
+                result = await self._process_impl(input)
+                yield {"type": "final", "data": result.model_dump()}
+        """
+        result = await self._process_impl(input)
+        yield {"type": "final", "data": result.model_dump()}
+
+    async def run(
+        self, raw_input: Dict[str, Any], stream: bool = False
+    ) -> Union[OutputT, AsyncGenerator[Dict[str, Any], None]]:
         """
         Run agent with raw input dict.
 
@@ -227,9 +329,11 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
 
         Args:
             raw_input: Raw dictionary input
+            stream: If True, returns async generator yielding events
 
         Returns:
-            Validated output of type OutputT
+            If stream=False: Validated output of type OutputT
+            If stream=True: AsyncGenerator yielding event dicts
 
         Raises:
             AgentValidationError: If input or output validation fails
@@ -240,17 +344,21 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
             # Validate input
             validated_input = self.validate_input(raw_input)
 
-            # Process
-            output = await self.process(validated_input)
+            if stream:
+                # Return streaming generator
+                return self._process_stream_impl(validated_input)
+            else:
+                # Process non-streaming
+                output = await self._process_impl(validated_input)
 
-            # Verify output type
-            if not isinstance(output, self._output_type):
-                raise TypeError(
-                    f"process() must return {self._output_type.__name__}, "
-                    f"got {type(output).__name__}"
-                )
+                # Verify output type
+                if not isinstance(output, self._output_type):
+                    raise TypeError(
+                        f"_process_impl() must return {self._output_type.__name__}, "
+                        f"got {type(output).__name__}"
+                    )
 
-            return output
+                return output
 
         except Exception:
             self._error_count += 1

@@ -16,7 +16,10 @@ import pytest
 
 # E2E tests require Ollama server with smollm3:8b model
 # Run with: pytest tests/agents/e2e/test_real_multi_agent_integration.py -v
-from cogniverse_agents.detailed_report_agent import DetailedReportAgent, DetailedReportDeps
+from cogniverse_agents.detailed_report_agent import (
+    DetailedReportAgent,
+    DetailedReportDeps,
+)
 from cogniverse_agents.dspy_agent_optimizer import (
     DSPyAgentOptimizerPipeline,
     DSPyAgentPromptOptimizer,

@@ -86,7 +86,7 @@ class SimpleDSPyA2AAgent(A2AAgent[SimpleInput, SimpleOutput, SimpleDeps]):
         )
         super().__init__(deps=deps, config=config, dspy_module=None)
 
-    async def process(self, input: SimpleInput) -> SimpleOutput:
+    async def _process_impl(self, input: SimpleInput) -> SimpleOutput:
         """Process input and return result"""
         return SimpleOutput(
             result=f"Processed: {input.query}",
@@ -369,7 +369,6 @@ class TestDSPyAgentIntegration:
     @patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent")
     def test_query_analysis_tool_dspy_integration(self, mock_routing_agent):
         """Test DSPy integration in QueryAnalysisToolV3."""
-        from cogniverse_foundation.config.utils import create_default_config_manager
 
         mock_routing_agent.return_value = Mock()
 
@@ -679,7 +678,6 @@ class TestDSPyEndToEndIntegration:
         }
 
         # Test QueryAnalysisToolV3 with direct prompt setting
-        from cogniverse_foundation.config.utils import create_default_config_manager
 
         with patch("cogniverse_agents.query_analysis_tool_v3.RoutingAgent"):
             tool = QueryAnalysisToolV3(enable_agent_integration=False, config_manager=create_default_config_manager())
@@ -728,7 +726,7 @@ class TestDSPy30A2ABaseIntegration:
 
         # Create concrete implementation for testing using type-safe pattern
         class TestDSPy30Agent(A2AAgent[SimpleInput, SimpleOutput, SimpleDeps]):
-            async def process(self, input: SimpleInput) -> SimpleOutput:
+            async def _process_impl(self, input: SimpleInput) -> SimpleOutput:
                 result = await self.dspy_module.forward(query=input.query)
                 return SimpleOutput(
                     result=getattr(result, "response", str(result)),
@@ -1992,13 +1990,6 @@ class TestDSPyComponentsIntegration:
 
             def forward(self, query):
                 return self.analyze(query=query)
-
-        # Mock A2A message
-        a2a_message = {
-            "query": "robots playing soccer in competitions",
-            "context": "video search request",
-            "source_agent": "user_interface",
-        }
 
         # Test Phase 1: A2A to process flow
         # Create agent with proper constructor

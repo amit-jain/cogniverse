@@ -13,7 +13,10 @@ import asyncio
 import os
 
 import pytest
-from cogniverse_agents.detailed_report_agent import DetailedReportAgent, DetailedReportDeps
+from cogniverse_agents.detailed_report_agent import (
+    DetailedReportAgent,
+    DetailedReportDeps,
+)
 from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
 from cogniverse_agents.routing.relationship_extraction_tools import (
     RelationshipExtractorTool,
@@ -164,8 +167,9 @@ class TestCompleteMultiAgentOrchestration:
         from cogniverse_foundation.config.utils import create_default_config_manager
         from cogniverse_foundation.telemetry.config import TelemetryConfig
 
-        # Use default config manager
-        config_manager = create_default_config_manager()
+        # Initialize default config (side effect: sets up singleton)
+        _config_manager = create_default_config_manager()
+        assert _config_manager is not None  # Verify config initialized
 
         # Initialize all core agents with mocked routing agent
         with (
@@ -306,8 +310,9 @@ class TestCompleteMultiAgentOrchestration:
         agents = []
 
         try:
-            # Use default config manager
-            config_manager = create_default_config_manager()
+            # Initialize default config (side effect: sets up singleton)
+            _config_manager = create_default_config_manager()
+            assert _config_manager is not None  # Verify config initialized
 
             # Create multiple agents simultaneously with mocked routing agent
             with (

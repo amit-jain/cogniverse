@@ -30,11 +30,11 @@ def ensemble_system_setup():
 
     Deploys multiple Vespa profiles with different schemas and ingests test data.
     """
-    import tempfile
-    from tests.utils.docker_utils import generate_unique_ports
-    from tests.system.vespa_test_manager import VespaTestManager
     from cogniverse_core.registries.backend_registry import get_backend_registry
     from cogniverse_foundation.config.manager import ConfigManager
+
+    from tests.system.vespa_test_manager import VespaTestManager
+    from tests.utils.docker_utils import generate_unique_ports
 
     # Generate unique ports
     ensemble_http_port, ensemble_config_port = generate_unique_ports("ensemble_e2e")
@@ -195,7 +195,8 @@ class TestEnsembleSearchEndToEnd:
 
         # Execute ensemble search with real profile names
         # Note: We mock encoders and profile-specific search to simulate different models
-        from unittest.mock import patch, Mock
+        from unittest.mock import Mock, patch
+
         import numpy as np
 
         # Get actual schema name for Vespa queries
@@ -236,7 +237,7 @@ class TestEnsembleSearchEndToEnd:
             with patch('cogniverse_agents.query.encoders.QueryEncoderFactory.create_encoder', side_effect=mock_create_encoder):
                 start_time = time.time()
 
-                result = await agent._process({
+                result = await agent._process_impl({
                     "query": "machine learning tutorial videos",
                     "profiles": list(profiles.keys()),
                     "top_k": 5,
@@ -285,7 +286,8 @@ class TestEnsembleSearchEndToEnd:
         """
         agent, profiles = ensemble_search_agent
 
-        from unittest.mock import patch, Mock
+        from unittest.mock import Mock, patch
+
         import numpy as np
 
         # Get actual schema name and mock profile mapping
@@ -325,12 +327,13 @@ class TestEnsembleSearchEndToEnd:
                 for i in range(3):
                     start_time = time.time()
 
-                    result = await agent._process({
+                    _result = await agent._process_impl({
                         "query": f"test query {i}",
                         "profiles": list(profiles.keys()),
                         "top_k": 10,
                         "rrf_k": 60
                     })
+                    assert _result is not None  # Verify execution completed
 
                     latency_ms = (time.time() - start_time) * 1000
                     latencies.append(latency_ms)
@@ -358,7 +361,8 @@ class TestEnsembleSearchEndToEnd:
         """
         agent, profiles = ensemble_search_agent
 
-        from unittest.mock import patch, Mock
+        from unittest.mock import Mock, patch
+
         import numpy as np
 
         # Create mock that simulates realistic profile-specific results
@@ -397,7 +401,7 @@ class TestEnsembleSearchEndToEnd:
 
         try:
             with patch('cogniverse_agents.query.encoders.QueryEncoderFactory.create_encoder', side_effect=mock_create_encoder):
-                result = await agent._process({
+                result = await agent._process_impl({
                     "query": "test query for quality",
                     "profiles": list(profiles.keys()),
                     "top_k": 10,
@@ -440,7 +444,8 @@ class TestEnsembleSearchEndToEnd:
         """
         agent, profiles = ensemble_search_agent
 
-        from unittest.mock import patch, Mock
+        from unittest.mock import Mock, patch
+
         import numpy as np
 
         original_search = agent.search_backend.search
@@ -467,7 +472,7 @@ class TestEnsembleSearchEndToEnd:
 
         try:
             with patch('cogniverse_agents.query.encoders.QueryEncoderFactory.create_encoder', side_effect=mock_create_encoder):
-                result = await agent._process({
+                result = await agent._process_impl({
                     "query": "test query with failure",
                     "profiles": list(profiles.keys()),
                     "top_k": 10,

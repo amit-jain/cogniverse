@@ -45,11 +45,11 @@ def comprehensive_ensemble_setup():
     """
     Module-scoped setup for comprehensive ensemble test with REAL profiles.
     """
-    import tempfile
-    from tests.utils.docker_utils import generate_unique_ports
-    from tests.system.vespa_test_manager import VespaTestManager
     from cogniverse_core.registries.backend_registry import get_backend_registry
     from cogniverse_foundation.config.manager import ConfigManager
+
+    from tests.system.vespa_test_manager import VespaTestManager
+    from tests.utils.docker_utils import generate_unique_ports
 
     # Generate unique ports
     http_port, config_port = generate_unique_ports("comprehensive_ensemble")
@@ -145,11 +145,13 @@ class TestComprehensiveEnsembleSearch:
         - Different embedding dimensions handled correctly
         - RRF fusion works across heterogeneous profiles
         """
+
         from cogniverse_agents.search_agent import SearchAgent
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-        from cogniverse_foundation.config.unified_config import BackendConfig, BackendProfileConfig
-        from unittest.mock import patch, Mock
-        import numpy as np
+        from cogniverse_foundation.config.unified_config import (
+            BackendConfig,
+            BackendProfileConfig,
+        )
 
         vespa_http_port = comprehensive_ensemble_setup["http_port"]
         vespa_config_port = comprehensive_ensemble_setup["config_port"]
@@ -196,7 +198,7 @@ class TestComprehensiveEnsembleSearch:
         logger.info("🔄 Loading REAL query encoders (ColPali model ~2GB)")
 
         try:
-            result = await agent._process({
+            result = await agent._process_impl({
                 "query": "robot playing soccer",  # Real query matching test videos
                 "profiles": list(profiles.keys()),
                 "top_k": 5,
@@ -241,11 +243,13 @@ class TestComprehensiveEnsembleSearch:
         - Parallel search execution
         - Production-realistic latency
         """
+
         from cogniverse_agents.search_agent import SearchAgent
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-        from cogniverse_foundation.config.unified_config import BackendConfig, BackendProfileConfig
-        from unittest.mock import patch, Mock
-        import numpy as np
+        from cogniverse_foundation.config.unified_config import (
+            BackendConfig,
+            BackendProfileConfig,
+        )
 
         vespa_http_port = comprehensive_ensemble_setup["http_port"]
         vespa_config_port = comprehensive_ensemble_setup["config_port"]
@@ -293,12 +297,13 @@ class TestComprehensiveEnsembleSearch:
         try:
             start_time = time.time()
 
-            result = await agent._process({
+            _result = await agent._process_impl({
                 "query": "robot playing soccer",
                 "profiles": list(profiles.keys()),
                 "top_k": 10,
                 "rrf_k": 60
             })
+            assert _result is not None  # Verify execution completed
 
             elapsed_ms = (time.time() - start_time) * 1000
 

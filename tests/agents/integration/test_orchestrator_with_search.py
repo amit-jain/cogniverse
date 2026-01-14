@@ -12,11 +12,24 @@ Tests use:
 
 import dspy
 import pytest
-from cogniverse_agents.entity_extraction_agent import EntityExtractionAgent
-from cogniverse_agents.orchestrator_agent import AgentType, OrchestratorAgent
-from cogniverse_agents.profile_selection_agent import ProfileSelectionAgent
-from cogniverse_agents.query_enhancement_agent import QueryEnhancementAgent
-from cogniverse_agents.search_agent import SearchAgent
+from cogniverse_agents.entity_extraction_agent import (
+    EntityExtractionAgent,
+    EntityExtractionDeps,
+)
+from cogniverse_agents.orchestrator_agent import (
+    AgentType,
+    OrchestratorAgent,
+    OrchestratorDeps,
+)
+from cogniverse_agents.profile_selection_agent import (
+    ProfileSelectionAgent,
+    ProfileSelectionDeps,
+)
+from cogniverse_agents.query_enhancement_agent import (
+    QueryEnhancementAgent,
+    QueryEnhancementDeps,
+)
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 
 from tests.agents.integration.conftest import skip_if_no_ollama
 
@@ -51,15 +64,17 @@ def search_agent_with_vespa(vespa_with_schema, real_dspy_lm):
     )
 
     # Create SearchAgent with test Vespa parameters
-    search_agent = SearchAgent(
+    deps = SearchAgentDeps(
         tenant_id="test_tenant",
-        schema_loader=schema_loader,
-        config_manager=config_manager,
         backend_url=vespa_url,
         backend_port=vespa_http_port,
         backend_config_port=vespa_config_port,
         profile=default_schema,
-        auto_create_schema=False,  # Schema already deployed by fixture
+    )
+    search_agent = SearchAgent(
+        deps=deps,
+        schema_loader=schema_loader,
+        config_manager=config_manager,
         port=8015,
     )
 
@@ -72,9 +87,12 @@ def full_orchestrator_with_search(
 ):
     """OrchestratorAgent with all agents including SearchAgent"""
     # Create all autonomous agents
-    entity_agent = EntityExtractionAgent(tenant_id="test_tenant", port=8010)
-    profile_agent = ProfileSelectionAgent(tenant_id="test_tenant", port=8011)
-    query_agent = QueryEnhancementAgent(tenant_id="test_tenant", port=8012)
+    entity_deps = EntityExtractionDeps(tenant_id="test_tenant")
+    entity_agent = EntityExtractionAgent(deps=entity_deps, port=8010)
+    profile_deps = ProfileSelectionDeps(tenant_id="test_tenant")
+    profile_agent = ProfileSelectionAgent(deps=profile_deps, port=8011)
+    query_deps = QueryEnhancementDeps(tenant_id="test_tenant")
+    query_agent = QueryEnhancementAgent(deps=query_deps, port=8012)
 
     # Create registry with all 4 agents
     agent_registry = {
@@ -84,9 +102,8 @@ def full_orchestrator_with_search(
         AgentType.SEARCH: search_agent_with_vespa,
     }
 
-    orchestrator = OrchestratorAgent(
-        tenant_id="test_tenant", agent_registry=agent_registry, port=8013
-    )
+    orchestrator_deps = OrchestratorDeps(tenant_id="test_tenant", agent_registry=agent_registry)
+    orchestrator = OrchestratorAgent(deps=orchestrator_deps, port=8013)
     return orchestrator
 
 
@@ -119,24 +136,24 @@ class TestOrchestratorWithSearch:
             )
         )
 
-        result = await full_orchestrator_with_search._process(
+        result = await full_orchestrator_with_search._process_impl(
             {"query": "Show me machine learning tutorial videos"}
         )
 
         # VALIDATE: 4-step plan created
         assert (
-            len(result.plan.steps) == 4
-        ), f"Should create 4-step plan, got: {len(result.plan.steps)}"
+            len(result.plan_steps) == 4
+        ), f"Should create 4-step plan, got: {len(result.plan_steps)}"
 
         # VALIDATE: All 4 agents in plan
-        agent_names = [step.agent_type.value for step in result.plan.steps]
+        agent_names = [step["agent_type"] for step in result.plan_steps]
         assert "entity_extraction" in agent_names
         assert "profile_selection" in agent_names
         assert "query_enhancement" in agent_names
         assert "search" in agent_names
 
         # VALIDATE: Parallel execution configured
-        assert len(result.plan.parallel_groups) > 0, "Should have parallel groups"
+        assert len(result.parallel_groups) > 0, "Should have parallel groups"
 
         # VALIDATE: All agents executed (even if search fails without schema)
         assert (
@@ -183,15 +200,15 @@ class TestOrchestratorWithSearch:
             )
         )
 
-        result = await full_orchestrator_with_search._process(
+        result = await full_orchestrator_with_search._process_impl(
             {"query": "Find Python programming videos"}
         )
 
         # VALIDATE: Sequential dependencies
-        assert result.plan.steps[0].depends_on == []  # First has no deps
-        assert result.plan.steps[1].depends_on == [0]  # Second depends on first
-        assert result.plan.steps[2].depends_on == [1]  # Third depends on second
-        assert result.plan.steps[3].depends_on == [2]  # Search depends on profile
+        assert result.plan_steps[0]["depends_on"] == []  # First has no deps
+        assert result.plan_steps[1]["depends_on"] == [0]  # Second depends on first
+        assert result.plan_steps[2]["depends_on"] == [1]  # Third depends on second
+        assert result.plan_steps[3]["depends_on"] == [2]  # Search depends on profile
 
         # VALIDATE: Execution order preserved
         # All agents executed in order
@@ -218,24 +235,24 @@ class TestOrchestratorWithSearch:
             )
         )
 
-        result = await full_orchestrator_with_search._process(
+        result = await full_orchestrator_with_search._process_impl(
             {"query": "Machine learning tutorials"}
         )
 
         # VALIDATE: Parallel group structure
-        assert len(result.plan.parallel_groups) == 1
-        assert result.plan.parallel_groups[0] == [0, 1]
+        assert len(result.parallel_groups) == 1
+        assert result.parallel_groups[0] == [0, 1]
 
         # VALIDATE: Dependencies
         # Steps 0,1 parallel (no deps)
-        assert result.plan.steps[0].depends_on == []
-        assert result.plan.steps[1].depends_on == []
+        assert result.plan_steps[0]["depends_on"] == []
+        assert result.plan_steps[1]["depends_on"] == []
 
         # Profile depends on both parallel steps
-        assert set(result.plan.steps[2].depends_on) == {0, 1}
+        assert set(result.plan_steps[2]["depends_on"]) == {0, 1}
 
         # Search depends on profile
-        assert result.plan.steps[3].depends_on == [2]
+        assert result.plan_steps[3]["depends_on"] == [2]
 
         # VALIDATE: All executed
         assert len(result.agent_results) == 4

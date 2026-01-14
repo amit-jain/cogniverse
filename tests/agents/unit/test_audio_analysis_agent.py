@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, PropertyMock, patch
 import pytest
 from cogniverse_agents.audio_analysis_agent import (
     AudioAnalysisAgent,
+    AudioAnalysisDeps,
     AudioResult,
     MusicClassification,
     TranscriptionResult,
@@ -21,8 +22,12 @@ class TestAudioAnalysisAgent:
     def setup_method(self):
         """Set up test fixtures"""
         self.agent = AudioAnalysisAgent(
-            tenant_id="test_tenant",
-            vespa_endpoint="http://localhost:8080", whisper_model_size="base", port=8006
+            deps=AudioAnalysisDeps(
+                tenant_id="test_tenant",
+                vespa_endpoint="http://localhost:8080",
+                whisper_model_size="base",
+            ),
+            port=8006,
         )
 
     def test_initialization(self):

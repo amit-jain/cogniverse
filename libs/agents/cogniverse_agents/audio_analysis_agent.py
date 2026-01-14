@@ -561,7 +561,7 @@ class AudioAnalysisAgent(A2AAgent[AudioSearchInput, AudioSearchOutput, AudioAnal
     # Type-safe process method (required by AgentBase)
     # ==========================================================================
 
-    async def process(self, input: AudioSearchInput) -> AudioSearchOutput:
+    async def _process_impl(self, input: AudioSearchInput) -> AudioSearchOutput:
         """
         Process audio search request with typed input/output.
 
@@ -579,4 +579,54 @@ class AudioAnalysisAgent(A2AAgent[AudioSearchInput, AudioSearchOutput, AudioAnal
 
         return AudioSearchOutput(results=results, count=len(results))
 
-    # Note: _dspy_to_a2a_output and _get_agent_skills handled by A2AAgent base class
+    def _dspy_to_a2a_output(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert DSPy result to A2A output format."""
+        results = result.get("results", [])
+        return {
+            "status": "success",
+            "agent": self.agent_name,
+            "result_type": "audio_search_results",
+            "count": result.get("count", len(results)),
+            "results": [r.model_dump() if hasattr(r, "model_dump") else r for r in results],
+        }
+
+    def _get_agent_skills(self) -> List[Dict[str, Any]]:
+        """Return agent-specific skills for A2A protocol."""
+        return [
+            {
+                "name": "search_audio",
+                "description": "Search audio content by transcript or acoustic features",
+                "input_schema": {"query": "string", "search_mode": "string", "limit": "integer"},
+                "output_schema": {"results": "list", "count": "integer"},
+            },
+            {
+                "name": "transcribe_audio",
+                "description": "Transcribe audio to text using Whisper",
+                "input_schema": {"audio_url": "string"},
+                "output_schema": {"text": "string", "language": "string", "segments": "list"},
+            },
+            {
+                "name": "detect_audio_events",
+                "description": "Detect audio events like speech, music, sounds",
+                "input_schema": {"audio_url": "string", "event_types": "list"},
+                "output_schema": {"events": "list"},
+            },
+            {
+                "name": "identify_speakers",
+                "description": "Identify and segment speakers in audio",
+                "input_schema": {"audio_url": "string", "num_speakers": "integer"},
+                "output_schema": {"segments": "list"},
+            },
+            {
+                "name": "classify_music",
+                "description": "Classify music genre, mood, tempo",
+                "input_schema": {"audio_url": "string"},
+                "output_schema": {"genre": "string", "mood": "string", "tempo": "float"},
+            },
+            {
+                "name": "find_similar_audio",
+                "description": "Find acoustically or semantically similar audio",
+                "input_schema": {"reference_audio_url": "string", "similarity_type": "string", "limit": "integer"},
+                "output_schema": {"results": "list", "count": "integer"},
+            },
+        ]

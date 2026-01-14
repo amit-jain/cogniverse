@@ -354,7 +354,7 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
     # Type-safe process method (required by AgentBase)
     # ==========================================================================
 
-    async def process(self, input: ImageSearchInput) -> ImageSearchOutput:
+    async def _process_impl(self, input: ImageSearchInput) -> ImageSearchOutput:
         """
         Process image search request with typed input/output.
 
@@ -373,4 +373,36 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
 
         return ImageSearchOutput(results=results, count=len(results))
 
-    # Note: _dspy_to_a2a_output and _get_agent_skills handled by A2AAgent base class
+    def _dspy_to_a2a_output(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert DSPy result to A2A output format."""
+        results = result.get("results", [])
+        return {
+            "status": "success",
+            "agent": self.agent_name,
+            "result_type": "image_search_results",
+            "count": result.get("count", len(results)),
+            "results": [r.model_dump() if hasattr(r, "model_dump") else r for r in results],
+        }
+
+    def _get_agent_skills(self) -> List[Dict[str, Any]]:
+        """Return agent-specific skills for A2A protocol."""
+        return [
+            {
+                "name": "search_images",
+                "description": "Search images using ColPali semantic search",
+                "input_schema": {"query": "string", "search_mode": "string", "limit": "integer"},
+                "output_schema": {"results": "list", "count": "integer"},
+            },
+            {
+                "name": "find_similar_images",
+                "description": "Find visually similar images using ColPali embeddings",
+                "input_schema": {"reference_image_url": "string", "limit": "integer"},
+                "output_schema": {"results": "list", "count": "integer"},
+            },
+            {
+                "name": "encode_image",
+                "description": "Generate ColPali embedding for an image",
+                "input_schema": {"image_url": "string"},
+                "output_schema": {"embedding": "list"},
+            },
+        ]

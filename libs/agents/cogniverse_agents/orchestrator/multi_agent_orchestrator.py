@@ -21,7 +21,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Union
 
 # DSPy 3.0 imports
 import dspy
@@ -306,7 +306,8 @@ class MultiAgentOrchestrator:
         user_id: Optional[str] = None,
         preferences: Optional[Dict[str, Any]] = None,
         resume_from_workflow_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        stream: bool = False,
+    ) -> Union[Dict[str, Any], AsyncGenerator[Dict[str, Any], None]]:
         """
         Process a complex query using multi-agent orchestration
 
@@ -316,10 +317,30 @@ class MultiAgentOrchestrator:
             user_id: User identifier
             preferences: User preferences for processing
             resume_from_workflow_id: If provided, resume from latest checkpoint of this workflow
+            stream: If True, returns async generator yielding progress events
 
         Returns:
-            Orchestrated result from multiple agents
+            If stream=False: Orchestrated result dict
+            If stream=True: AsyncGenerator yielding event dicts
         """
+        if stream:
+            return self._process_complex_query_stream(
+                query, context, user_id, preferences, resume_from_workflow_id
+            )
+        else:
+            return await self._process_complex_query_impl(
+                query, context, user_id, preferences, resume_from_workflow_id
+            )
+
+    async def _process_complex_query_impl(
+        self,
+        query: str,
+        context: Optional[str] = None,
+        user_id: Optional[str] = None,
+        preferences: Optional[Dict[str, Any]] = None,
+        resume_from_workflow_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Non-streaming implementation of process_complex_query."""
         # Handle resume case
         if resume_from_workflow_id:
             return await self._resume_workflow(
@@ -374,6 +395,86 @@ class MultiAgentOrchestrator:
                 "status": "failed",
                 "error": str(e),
                 "fallback_result": await self._generate_fallback_result(query, context),
+            }
+
+    async def _process_complex_query_stream(
+        self,
+        query: str,
+        context: Optional[str] = None,
+        user_id: Optional[str] = None,
+        preferences: Optional[Dict[str, Any]] = None,
+        resume_from_workflow_id: Optional[str] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Streaming implementation of process_complex_query."""
+        workflow_id = f"workflow_{uuid.uuid4().hex[:8]}"
+        self.orchestration_stats["total_workflows"] += 1
+
+        try:
+            # Phase 1: Planning
+            yield {"type": "status", "workflow_id": workflow_id, "phase": "planning"}
+
+            workflow_plan = await self._plan_workflow(
+                workflow_id, query, context, user_id, preferences
+            )
+
+            yield {
+                "type": "partial",
+                "workflow_id": workflow_id,
+                "tasks_planned": len(workflow_plan.tasks),
+                "execution_strategy": workflow_plan.execution_strategy,
+            }
+
+            # Phase 2: Execution
+            for task in workflow_plan.tasks:
+                yield {
+                    "type": "status",
+                    "workflow_id": workflow_id,
+                    "phase": "executing",
+                    "task": task.agent_name,
+                    "task_id": task.task_id,
+                }
+
+            await self._execute_workflow(workflow_plan)
+
+            for task in workflow_plan.tasks:
+                yield {
+                    "type": "task_complete",
+                    "workflow_id": workflow_id,
+                    "task": task.agent_name,
+                    "task_id": task.task_id,
+                    "status": task.status.value if task.status else "unknown",
+                }
+
+            # Phase 3: Aggregation
+            yield {"type": "status", "workflow_id": workflow_id, "phase": "aggregating"}
+
+            final_result = await self._aggregate_results(workflow_plan)
+            self._update_orchestration_stats(workflow_plan, success=True)
+
+            yield {
+                "type": "final",
+                "workflow_id": workflow_id,
+                "data": {
+                    "status": "completed",
+                    "result": final_result,
+                    "execution_summary": {
+                        "total_tasks": len(workflow_plan.tasks),
+                        "completed_tasks": len(
+                            [t for t in workflow_plan.tasks if t.status == TaskStatus.COMPLETED]
+                        ),
+                        "agents_used": list(set(t.agent_name for t in workflow_plan.tasks)),
+                    },
+                },
+            }
+
+        except Exception as e:
+            self.logger.error(f"Orchestration failed for query '{query}': {e}")
+            self.orchestration_stats["failed_workflows"] += 1
+
+            yield {
+                "type": "error",
+                "workflow_id": workflow_id,
+                "error": str(e),
             }
 
     async def _plan_workflow(

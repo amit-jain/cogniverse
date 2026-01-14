@@ -10,10 +10,27 @@ These tests validate CORRECTNESS, not just structure.
 import dspy
 import pytest
 import requests
-from cogniverse_agents.entity_extraction_agent import EntityExtractionAgent
-from cogniverse_agents.orchestrator_agent import AgentType, OrchestratorAgent
-from cogniverse_agents.profile_selection_agent import ProfileSelectionAgent
-from cogniverse_agents.query_enhancement_agent import QueryEnhancementAgent
+from cogniverse_agents.entity_extraction_agent import (
+    EntityExtractionAgent,
+    EntityExtractionDeps,
+    EntityExtractionInput,
+)
+from cogniverse_agents.orchestrator_agent import (
+    AgentType,
+    OrchestratorAgent,
+    OrchestratorDeps,
+    OrchestratorInput,
+)
+from cogniverse_agents.profile_selection_agent import (
+    ProfileSelectionAgent,
+    ProfileSelectionDeps,
+    ProfileSelectionInput,
+)
+from cogniverse_agents.query_enhancement_agent import (
+    QueryEnhancementAgent,
+    QueryEnhancementDeps,
+    QueryEnhancementInput,
+)
 
 
 def is_ollama_available():
@@ -56,14 +73,15 @@ def real_dspy_lm():
 @pytest.fixture
 def entity_agent_with_real_lm(real_dspy_lm):
     """EntityExtractionAgent with real LLM"""
-    agent = EntityExtractionAgent(tenant_id="test_tenant", port=8010)
+    deps = EntityExtractionDeps(tenant_id="test_tenant")
+    agent = EntityExtractionAgent(deps=deps, port=8010)
     return agent
 
 
 @pytest.fixture
 def profile_agent_with_real_lm(real_dspy_lm):
     """ProfileSelectionAgent with real LLM"""
-    agent = ProfileSelectionAgent(
+    deps = ProfileSelectionDeps(
         tenant_id="test_tenant",
         available_profiles=[
             "video_colpali_base",
@@ -72,15 +90,16 @@ def profile_agent_with_real_lm(real_dspy_lm):
             "image_colpali_base",
             "text_bge_base",
         ],
-        port=8011,
     )
+    agent = ProfileSelectionAgent(deps=deps, port=8011)
     return agent
 
 
 @pytest.fixture
 def query_agent_with_real_lm(real_dspy_lm):
     """QueryEnhancementAgent with real LLM"""
-    agent = QueryEnhancementAgent(tenant_id="test_tenant", port=8012)
+    deps = QueryEnhancementDeps(tenant_id="test_tenant")
+    agent = QueryEnhancementAgent(deps=deps, port=8012)
     return agent
 
 
@@ -88,9 +107,12 @@ def query_agent_with_real_lm(real_dspy_lm):
 def orchestrator_with_real_agents(real_dspy_lm):
     """OrchestratorAgent with real agent instances"""
     # Create real agent instances
-    entity_agent = EntityExtractionAgent(tenant_id="test_tenant", port=8010)
-    profile_agent = ProfileSelectionAgent(tenant_id="test_tenant", port=8011)
-    query_agent = QueryEnhancementAgent(tenant_id="test_tenant", port=8012)
+    entity_deps = EntityExtractionDeps(tenant_id="test_tenant")
+    entity_agent = EntityExtractionAgent(deps=entity_deps, port=8010)
+    profile_deps = ProfileSelectionDeps(tenant_id="test_tenant")
+    profile_agent = ProfileSelectionAgent(deps=profile_deps, port=8011)
+    query_deps = QueryEnhancementDeps(tenant_id="test_tenant")
+    query_agent = QueryEnhancementAgent(deps=query_deps, port=8012)
 
     # Create registry
     agent_registry = {
@@ -99,9 +121,8 @@ def orchestrator_with_real_agents(real_dspy_lm):
         AgentType.QUERY_ENHANCEMENT: query_agent,
     }
 
-    orchestrator = OrchestratorAgent(
-        tenant_id="test_tenant", agent_registry=agent_registry, port=8013
-    )
+    orchestrator_deps = OrchestratorDeps(tenant_id="test_tenant", agent_registry=agent_registry)
+    orchestrator = OrchestratorAgent(deps=orchestrator_deps, port=8013)
     return orchestrator
 
 
@@ -115,8 +136,8 @@ class TestEntityExtractionAgentIntegration:
         self, entity_agent_with_real_lm
     ):
         """CORRECTNESS: Validate actual entities are extracted"""
-        result = await entity_agent_with_real_lm._process(
-            {"query": "Show me videos about Barack Obama in Chicago"}
+        result = await entity_agent_with_real_lm._process_impl(
+            EntityExtractionInput(query="Show me videos about Barack Obama in Chicago")
         )
 
         # VALIDATE: Entities are actually found
@@ -158,8 +179,8 @@ class TestEntityExtractionAgentIntegration:
         self, entity_agent_with_real_lm
     ):
         """CORRECTNESS: Validate technical entity extraction"""
-        result = await entity_agent_with_real_lm._process(
-            {"query": "Apple announces iPhone 15 in Cupertino"}
+        result = await entity_agent_with_real_lm._process_impl(
+            EntityExtractionInput(query="Apple announces iPhone 15 in Cupertino")
         )
 
         # VALIDATE: At least some entities extracted
@@ -188,7 +209,9 @@ class TestEntityExtractionAgentIntegration:
     @pytest.mark.asyncio
     async def test_empty_query_correctness(self, entity_agent_with_real_lm):
         """CORRECTNESS: Empty query should return empty results"""
-        result = await entity_agent_with_real_lm._process({"query": ""})
+        result = await entity_agent_with_real_lm._process_impl(
+            EntityExtractionInput(query="")
+        )
 
         # VALIDATE CORRECTNESS: Empty input = empty output
         assert result.query == ""
@@ -212,8 +235,8 @@ class TestProfileSelectionAgentIntegration:
         self, profile_agent_with_real_lm
     ):
         """CORRECTNESS: Validate video query selects video profile"""
-        result = await profile_agent_with_real_lm._process(
-            {"query": "Show me machine learning tutorial videos"}
+        result = await profile_agent_with_real_lm._process_impl(
+            ProfileSelectionInput(query="Show me machine learning tutorial videos")
         )
 
         # VALIDATE: Profile is selected
@@ -261,8 +284,8 @@ class TestProfileSelectionAgentIntegration:
         self, profile_agent_with_real_lm
     ):
         """CORRECTNESS: Validate image query selects image profile"""
-        result = await profile_agent_with_real_lm._process(
-            {"query": "Find pictures of mountains and landscapes"}
+        result = await profile_agent_with_real_lm._process_impl(
+            ProfileSelectionInput(query="Find pictures of mountains and landscapes")
         )
 
         # VALIDATE CORRECTNESS: Image query should prefer image profile or text
@@ -294,7 +317,9 @@ class TestProfileSelectionAgentIntegration:
     @pytest.mark.asyncio
     async def test_empty_query_default_behavior(self, profile_agent_with_real_lm):
         """CORRECTNESS: Empty query should use first profile with 0 confidence"""
-        result = await profile_agent_with_real_lm._process({"query": ""})
+        result = await profile_agent_with_real_lm._process_impl(
+            ProfileSelectionInput(query="")
+        )
 
         # VALIDATE CORRECTNESS: Should default to first profile
         assert (
@@ -320,7 +345,9 @@ class TestQueryEnhancementAgentIntegration:
     async def test_enhance_query_validates_improvement(self, query_agent_with_real_lm):
         """CORRECTNESS: Validate query enhancement actually improves query"""
         original_query = "ML tutorials"
-        result = await query_agent_with_real_lm._process({"query": original_query})
+        result = await query_agent_with_real_lm._process_impl(
+            QueryEnhancementInput(query=original_query)
+        )
 
         # VALIDATE: Original query preserved
         assert result.original_query == original_query
@@ -376,7 +403,9 @@ class TestQueryEnhancementAgentIntegration:
         self, query_agent_with_real_lm
     ):
         """CORRECTNESS: Validate acronym expansion works"""
-        result = await query_agent_with_real_lm._process({"query": "NLP and AI"})
+        result = await query_agent_with_real_lm._process_impl(
+            QueryEnhancementInput(query="NLP and AI")
+        )
 
         # VALIDATE: Acronyms should be recognized
         enhanced_lower = result.enhanced_query.lower()
@@ -401,7 +430,9 @@ class TestQueryEnhancementAgentIntegration:
     @pytest.mark.asyncio
     async def test_empty_query_no_enhancement(self, query_agent_with_real_lm):
         """CORRECTNESS: Empty query should produce empty enhancement"""
-        result = await query_agent_with_real_lm._process({"query": ""})
+        result = await query_agent_with_real_lm._process_impl(
+            QueryEnhancementInput(query="")
+        )
 
         # VALIDATE CORRECTNESS: Empty input = empty output
         assert result.original_query == ""
@@ -422,12 +453,12 @@ class TestOrchestratorAgentIntegration:
     @pytest.mark.asyncio
     async def test_orchestrate_validates_execution(self, orchestrator_with_real_agents):
         """CORRECTNESS: Validate agents are actually executed"""
-        result = await orchestrator_with_real_agents._process(
-            {"query": "Show me videos about machine learning"}
+        result = await orchestrator_with_real_agents._process_impl(
+            OrchestratorInput(query="Show me videos about machine learning")
         )
 
         # VALIDATE: Plan created
-        assert len(result.plan.steps) > 0, "Should create execution plan"
+        assert len(result.plan_steps) > 0, "Should create execution plan"
 
         # VALIDATE CORRECTNESS: Agents were actually executed
         assert (
@@ -435,7 +466,7 @@ class TestOrchestratorAgentIntegration:
         ), "Should execute at least one agent from plan"
 
         # VALIDATE: Executed agents match plan
-        planned_agents = [step.agent_type.value for step in result.plan.steps]
+        planned_agents = [step["agent_type"] for step in result.plan_steps]
         for agent_name in result.agent_results.keys():
             assert (
                 agent_name in planned_agents
@@ -465,32 +496,32 @@ class TestOrchestratorAgentIntegration:
                 result.agent_results
             ), f"Summary says {executed} executed but have {len(result.agent_results)} results"
             assert total == len(
-                result.plan.steps
-            ), f"Summary says {total} total but plan has {len(result.plan.steps)} steps"
+                result.plan_steps
+            ), f"Summary says {total} total but plan has {len(result.plan_steps)} steps"
 
     @pytest.mark.asyncio
     async def test_orchestrate_validates_dependencies(
         self, orchestrator_with_real_agents
     ):
         """CORRECTNESS: Validate dependency tracking works"""
-        result = await orchestrator_with_real_agents._process(
-            {"query": "Find detailed tutorials about Python programming"}
+        result = await orchestrator_with_real_agents._process_impl(
+            OrchestratorInput(query="Find detailed tutorials about Python programming")
         )
 
         # VALIDATE: Plan has dependency structure
-        assert isinstance(result.plan.steps, list)
-        assert isinstance(result.plan.parallel_groups, list)
+        assert isinstance(result.plan_steps, list)
+        assert isinstance(result.parallel_groups, list)
 
         # VALIDATE CORRECTNESS: Dependencies are meaningful
-        for i, step in enumerate(result.plan.steps):
+        for i, step in enumerate(result.plan_steps):
             # Dependencies should reference earlier steps only
-            for dep_idx in step.depends_on:
+            for dep_idx in step["depends_on"]:
                 assert dep_idx < i, f"Step {i} depends on future step {dep_idx}"
 
         # VALIDATE: Parallel groups don't overlap
-        if len(result.plan.parallel_groups) > 1:
+        if len(result.parallel_groups) > 1:
             seen_indices = set()
-            for group in result.plan.parallel_groups:
+            for group in result.parallel_groups:
                 for idx in group:
                     assert (
                         idx not in seen_indices
@@ -500,11 +531,13 @@ class TestOrchestratorAgentIntegration:
     @pytest.mark.asyncio
     async def test_empty_query_no_orchestration(self, orchestrator_with_real_agents):
         """CORRECTNESS: Empty query should not execute agents"""
-        result = await orchestrator_with_real_agents._process({"query": ""})
+        result = await orchestrator_with_real_agents._process_impl(
+            OrchestratorInput(query="")
+        )
 
         # VALIDATE CORRECTNESS: No execution for empty query
         assert result.query == ""
-        assert len(result.plan.steps) == 0, "Empty query should have no plan steps"
+        assert len(result.plan_steps) == 0, "Empty query should have no plan steps"
         assert (
             len(result.agent_results) == 0
         ), "Empty query should not execute any agents"
@@ -529,36 +562,36 @@ class TestOrchestratorAgentIntegration:
             )
         )
 
-        result = await orchestrator_with_real_agents._process(
-            {"query": "Show me AI videos"}
+        result = await orchestrator_with_real_agents._process_impl(
+            OrchestratorInput(query="Show me AI videos")
         )
 
         # VALIDATE: Parallel groups were created
         assert (
-            len(result.plan.parallel_groups) > 0
+            len(result.parallel_groups) > 0
         ), "Should have parallel execution groups"
-        assert result.plan.parallel_groups[0] == [
+        assert result.parallel_groups[0] == [
             0,
             1,
         ], "First two steps should be parallel"
 
         # VALIDATE: Parallel steps have no mutual dependencies
-        step_0 = result.plan.steps[0]
-        step_1 = result.plan.steps[1]
+        step_0 = result.plan_steps[0]
+        step_1 = result.plan_steps[1]
         assert (
-            step_0.depends_on == []
+            step_0["depends_on"] == []
         ), "First parallel step should have no dependencies"
         assert (
-            step_1.depends_on == []
+            step_1["depends_on"] == []
         ), "Second parallel step should have no dependencies"
 
         # VALIDATE: Next step depends on both parallel steps
-        if len(result.plan.steps) > 2:
-            step_2 = result.plan.steps[2]
-            assert set(step_2.depends_on) == {
+        if len(result.plan_steps) > 2:
+            step_2 = result.plan_steps[2]
+            assert set(step_2["depends_on"]) == {
                 0,
                 1,
-            }, f"Third step should depend on both parallel steps, got: {step_2.depends_on}"
+            }, f"Third step should depend on both parallel steps, got: {step_2['depends_on']}"
 
         # VALIDATE: All agents actually executed
         assert (
@@ -583,25 +616,25 @@ class TestOrchestratorAgentIntegration:
             )
         )
 
-        result = await orchestrator_with_real_agents._process(
-            {"query": "Find machine learning tutorials"}
+        result = await orchestrator_with_real_agents._process_impl(
+            OrchestratorInput(query="Find machine learning tutorials")
         )
 
         # VALIDATE: 3-step plan created
         assert (
-            len(result.plan.steps) == 3
-        ), f"Should create 3-step plan, got: {len(result.plan.steps)}"
+            len(result.plan_steps) == 3
+        ), f"Should create 3-step plan, got: {len(result.plan_steps)}"
 
         # VALIDATE: Dependency structure is correct
         # Steps 0,1 parallel (no deps)
-        assert result.plan.steps[0].depends_on == []
-        assert result.plan.steps[1].depends_on == []
+        assert result.plan_steps[0]["depends_on"] == []
+        assert result.plan_steps[1]["depends_on"] == []
 
         # Step 2 depends on both parallel steps
-        assert set(result.plan.steps[2].depends_on) == {
+        assert set(result.plan_steps[2]["depends_on"]) == {
             0,
             1,
-        }, f"Step 2 should depend on both parallel steps, got: {result.plan.steps[2].depends_on}"
+        }, f"Step 2 should depend on both parallel steps, got: {result.plan_steps[2]['depends_on']}"
 
         # VALIDATE: All agents executed
         assert (
@@ -624,7 +657,7 @@ class TestOrchestratorAgentIntegration:
         # Make profile_selection agent fail
         orchestrator_with_real_agents.agent_registry[
             AgentType.PROFILE_SELECTION
-        ]._process = AsyncMock(
+        ]._process_impl = AsyncMock(
             side_effect=Exception("Profile selection service unavailable")
         )
 
@@ -636,12 +669,12 @@ class TestOrchestratorAgentIntegration:
             )
         )
 
-        result = await orchestrator_with_real_agents._process(
-            {"query": "Show me videos"}
+        result = await orchestrator_with_real_agents._process_impl(
+            OrchestratorInput(query="Show me videos")
         )
 
         # VALIDATE: Plan created despite knowing profile_selection will fail
-        assert len(result.plan.steps) == 3
+        assert len(result.plan_steps) == 3
 
         # VALIDATE: First agent succeeded
         assert "entity_extraction" in result.agent_results
@@ -676,14 +709,15 @@ class TestAgentCoordinationIntegration:
         query = "Show me videos about robotics in Japan"
 
         # Step 1: Extract entities
-        entity_result = await entity_agent_with_real_lm._process({"query": query})
+        entity_result = await entity_agent_with_real_lm._process_impl(
+            EntityExtractionInput(query=query)
+        )
 
         # Step 2: Pass entities to profile selection
-        profile_input = {
-            "query": query,
-            "entities": [e.model_dump() for e in entity_result.entities],
-        }
-        profile_result = await profile_agent_with_real_lm._process(profile_input)
+        # Note: ProfileSelectionInput only accepts query and available_profiles
+        profile_result = await profile_agent_with_real_lm._process_impl(
+            ProfileSelectionInput(query=query)
+        )
 
         # VALIDATE CORRECTNESS: Coordination preserves data
         assert entity_result.query == profile_result.query
@@ -713,16 +747,16 @@ class TestAgentCoordinationIntegration:
         # PIPELINE: Enhancement → Entities → Profile Selection
 
         # Step 1: Enhance query
-        query_result = await query_agent_with_real_lm._process(
-            {"query": original_query}
+        query_result = await query_agent_with_real_lm._process_impl(
+            QueryEnhancementInput(query=original_query)
         )
 
         # VALIDATE: Enhancement produces output
         assert len(query_result.enhanced_query) > 0, "Enhancement should produce output"
 
         # Step 2: Extract entities from enhanced query
-        entity_result = await entity_agent_with_real_lm._process(
-            {"query": query_result.enhanced_query}
+        entity_result = await entity_agent_with_real_lm._process_impl(
+            EntityExtractionInput(query=query_result.enhanced_query)
         )
 
         # VALIDATE: Entity extraction works on enhanced query
@@ -730,11 +764,9 @@ class TestAgentCoordinationIntegration:
         assert isinstance(entity_result.entity_count, int)
 
         # Step 3: Select profile with all context
-        profile_result = await profile_agent_with_real_lm._process(
-            {
-                "query": query_result.enhanced_query,
-                "entities": [e.model_dump() for e in entity_result.entities],
-            }
+        # Note: ProfileSelectionInput only accepts query and available_profiles
+        profile_result = await profile_agent_with_real_lm._process_impl(
+            ProfileSelectionInput(query=query_result.enhanced_query)
         )
 
         # VALIDATE CORRECTNESS: Pipeline produces coherent output
@@ -786,30 +818,30 @@ class TestOrchestratorComplexPatterns:
             )
         )
 
-        result = await orchestrator_with_real_agents._process(
-            {"query": "Find videos about neural networks"}
+        result = await orchestrator_with_real_agents._process_impl(
+            OrchestratorInput(query="Find videos about neural networks")
         )
 
         # VALIDATE: Two parallel groups created
         assert (
-            len(result.plan.parallel_groups) == 2
-        ), f"Should have 2 parallel groups, got: {len(result.plan.parallel_groups)}"
-        assert result.plan.parallel_groups[0] == [0, 1]
-        assert result.plan.parallel_groups[1] == [2, 3]
+            len(result.parallel_groups) == 2
+        ), f"Should have 2 parallel groups, got: {len(result.parallel_groups)}"
+        assert result.parallel_groups[0] == [0, 1]
+        assert result.parallel_groups[1] == [2, 3]
 
         # VALIDATE: First parallel group has no dependencies
-        assert result.plan.steps[0].depends_on == []
-        assert result.plan.steps[1].depends_on == []
+        assert result.plan_steps[0]["depends_on"] == []
+        assert result.plan_steps[1]["depends_on"] == []
 
         # VALIDATE: Second parallel group depends on first group
-        assert set(result.plan.steps[2].depends_on) == {
+        assert set(result.plan_steps[2]["depends_on"]) == {
             0,
             1,
-        }, f"Step 2 should depend on steps 0,1, got: {result.plan.steps[2].depends_on}"
-        assert set(result.plan.steps[3].depends_on) == {
+        }, f"Step 2 should depend on steps 0,1, got: {result.plan_steps[2]['depends_on']}"
+        assert set(result.plan_steps[3]["depends_on"]) == {
             0,
             1,
-        }, f"Step 3 should depend on steps 0,1, got: {result.plan.steps[3].depends_on}"
+        }, f"Step 3 should depend on steps 0,1, got: {result.plan_steps[3]['depends_on']}"
 
         # VALIDATE: All 4 agents executed
         assert (
@@ -834,25 +866,25 @@ class TestOrchestratorComplexPatterns:
             )
         )
 
-        result = await orchestrator_with_real_agents._process(
-            {"query": "Machine learning tutorials"}
+        result = await orchestrator_with_real_agents._process_impl(
+            OrchestratorInput(query="Machine learning tutorials")
         )
 
         # VALIDATE: Parallel groups structure
-        assert len(result.plan.parallel_groups) == 2
-        assert result.plan.parallel_groups[0] == [0, 1]
-        assert result.plan.parallel_groups[1] == [3, 4]
+        assert len(result.parallel_groups) == 2
+        assert result.parallel_groups[0] == [0, 1]
+        assert result.parallel_groups[1] == [3, 4]
 
         # VALIDATE: First group has no dependencies
-        assert result.plan.steps[0].depends_on == []
-        assert result.plan.steps[1].depends_on == []
+        assert result.plan_steps[0]["depends_on"] == []
+        assert result.plan_steps[1]["depends_on"] == []
 
         # VALIDATE: Sequential step depends on previous parallel group
-        assert set(result.plan.steps[2].depends_on) == {0, 1}
+        assert set(result.plan_steps[2]["depends_on"]) == {0, 1}
 
         # VALIDATE: Second parallel group depends on sequential step
-        assert result.plan.steps[3].depends_on == [2]
-        assert result.plan.steps[4].depends_on == [2]
+        assert result.plan_steps[3]["depends_on"] == [2]
+        assert result.plan_steps[4]["depends_on"] == [2]
 
     @pytest.mark.asyncio
     async def test_parallel_group_failure_validates_propagation(
@@ -866,11 +898,11 @@ class TestOrchestratorComplexPatterns:
         # Make both agents in parallel group fail
         orchestrator_with_real_agents.agent_registry[
             AgentType.ENTITY_EXTRACTION
-        ]._process = AsyncMock(side_effect=Exception("Extraction service down"))
+        ]._process_impl = AsyncMock(side_effect=Exception("Extraction service down"))
 
         orchestrator_with_real_agents.agent_registry[
             AgentType.QUERY_ENHANCEMENT
-        ]._process = AsyncMock(side_effect=Exception("Enhancement service down"))
+        ]._process_impl = AsyncMock(side_effect=Exception("Enhancement service down"))
 
         orchestrator_with_real_agents.dspy_module.forward = Mock(
             return_value=dspy.Prediction(
@@ -880,8 +912,8 @@ class TestOrchestratorComplexPatterns:
             )
         )
 
-        result = await orchestrator_with_real_agents._process(
-            {"query": "Show me videos"}
+        result = await orchestrator_with_real_agents._process_impl(
+            OrchestratorInput(query="Show me videos")
         )
 
         # VALIDATE: Both parallel agents failed
@@ -911,7 +943,7 @@ class TestOrchestratorComplexPatterns:
         # Make first agent fail → second agent receives error context → third agent proceeds
         orchestrator_with_real_agents.agent_registry[
             AgentType.ENTITY_EXTRACTION
-        ]._process = AsyncMock(
+        ]._process_impl = AsyncMock(
             side_effect=Exception("Entity extraction database unavailable")
         )
 
@@ -923,8 +955,8 @@ class TestOrchestratorComplexPatterns:
             )
         )
 
-        result = await orchestrator_with_real_agents._process(
-            {"query": "Find machine learning tutorials"}
+        result = await orchestrator_with_real_agents._process_impl(
+            OrchestratorInput(query="Find machine learning tutorials")
         )
 
         # VALIDATE: First agent failed
@@ -967,11 +999,13 @@ class TestOrchestratorComplexPatterns:
 
         assert len(long_query) > 500, "Query should be longer than 500 characters"
 
-        result = await orchestrator_with_real_agents._process({"query": long_query})
+        result = await orchestrator_with_real_agents._process_impl(
+            OrchestratorInput(query=long_query)
+        )
 
         # VALIDATE: Orchestrator handled long query
         assert result.query == long_query
-        assert len(result.plan.steps) > 0, "Long query should still create plan"
+        assert len(result.plan_steps) > 0, "Long query should still create plan"
         assert len(result.agent_results) > 0, "Long query should still execute agents"
 
         # VALIDATE: All executed agents produced results (no truncation errors)
@@ -991,12 +1025,12 @@ class TestOrchestratorComplexPatterns:
             "cover these topics? I prefer content that includes practical examples."
         )
 
-        result = await orchestrator_with_real_agents._process(
-            {"query": multi_sentence_query}
+        result = await orchestrator_with_real_agents._process_impl(
+            OrchestratorInput(query=multi_sentence_query)
         )
 
         # VALIDATE: Plan created for complex query
-        assert len(result.plan.steps) > 0
+        assert len(result.plan_steps) > 0
 
         # VALIDATE: Query preserved through pipeline
         assert result.query == multi_sentence_query
@@ -1018,11 +1052,13 @@ class TestOrchestratorComplexPatterns:
             "with code examples @ github.com #machinelearning 100% practical!"
         )
 
-        result = await orchestrator_with_real_agents._process({"query": special_query})
+        result = await orchestrator_with_real_agents._process_impl(
+            OrchestratorInput(query=special_query)
+        )
 
         # VALIDATE: Special characters don't break orchestration
         assert result.query == special_query
-        assert len(result.plan.steps) > 0, "Special chars should not break planning"
+        assert len(result.plan_steps) > 0, "Special chars should not break planning"
 
         # VALIDATE: Agents handled special characters
         assert (

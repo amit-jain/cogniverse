@@ -628,10 +628,12 @@ class RoutingAgent(
         """
         agent_modality_map = {
             "search_agent": QueryModality.VIDEO,
+            "video_search_agent": QueryModality.VIDEO,
             "document_agent": QueryModality.DOCUMENT,
             "document_search_agent": QueryModality.DOCUMENT,
             "image_search_agent": QueryModality.IMAGE,
             "audio_search_agent": QueryModality.AUDIO,
+            "audio_analysis_agent": QueryModality.AUDIO,
             "summarizer_agent": QueryModality.TEXT,
             "detailed_report_agent": QueryModality.TEXT,
         }
@@ -1245,16 +1247,18 @@ class RoutingAgent(
         return stats
 
     # ==========================================================================
-    # Type-safe process method (required by AgentBase)
+    # Type-safe process implementation (required by AgentBase)
     # ==========================================================================
 
-    async def process(self, input: RoutingInput) -> RoutingOutput:
+    async def _process_impl(self, input: RoutingInput) -> RoutingOutput:
         """
-        Process typed routing input and return typed output.
+        Core processing logic for routing.
 
-        This is the main entry point for the agent. The A2AAgent base class
-        handles conversion from A2A protocol format to RoutingInput and
-        from RoutingOutput back to A2A format.
+        The A2AAgent base class handles conversion from A2A protocol format
+        to RoutingInput and from RoutingOutput back to A2A format.
+
+        For streaming, use agent.process(input, stream=True) which calls
+        _process_stream_impl() for custom streaming behavior.
 
         Args:
             input: Validated RoutingInput with query, context, require_orchestration

@@ -10,8 +10,6 @@ import pytest
 from cogniverse_agents.routing_agent import (
     RoutingAgent,
     RoutingDeps,
-    RoutingInput,
-    RoutingOutput,
 )
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 

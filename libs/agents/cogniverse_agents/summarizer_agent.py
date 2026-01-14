@@ -819,7 +819,7 @@ and structure summary based on identified themes and content categories.
     # Type-safe process method (required by AgentBase)
     # ==========================================================================
 
-    async def process(self, input: SummarizerInput) -> SummarizerOutput:
+    async def _process_impl(self, input: SummarizerInput) -> SummarizerOutput:
         """
         Process summarization request with typed input/output.
 

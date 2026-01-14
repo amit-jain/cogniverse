@@ -11,6 +11,9 @@ from cogniverse_agents.orchestrator_agent import (
     OrchestrationPlan,
     OrchestrationResult,
     OrchestratorAgent,
+    OrchestratorDeps,
+    OrchestratorInput,
+    OrchestratorOutput,
 )
 
 
@@ -55,9 +58,8 @@ def mock_agent_registry():
 def orchestrator_agent(mock_agent_registry):
     """Create OrchestratorAgent for testing"""
     with patch("dspy.ChainOfThought"):
-        agent = OrchestratorAgent(
-            tenant_id="test_tenant", agent_registry=mock_agent_registry, port=8013
-        )
+        deps = OrchestratorDeps(tenant_id="test_tenant")
+        agent = OrchestratorAgent(deps=deps, agent_registry=mock_agent_registry, port=8013)
         return agent
 
 
@@ -300,13 +302,13 @@ class TestOrchestratorAgent:
             )
         )
 
-        result = await orchestrator_agent._process(
-            {"query": "Show me machine learning videos"}
+        result = await orchestrator_agent._process_impl(
+            OrchestratorInput(query="Show me machine learning videos")
         )
 
-        assert isinstance(result, OrchestrationResult)
+        assert isinstance(result, OrchestratorOutput)
         assert result.query == "Show me machine learning videos"
-        assert len(result.plan.steps) == 2
+        assert len(result.plan_steps) == 2
         assert "query_enhancement" in result.agent_results
         assert "search" in result.agent_results
         assert result.final_output["status"] == "success"
@@ -315,10 +317,10 @@ class TestOrchestratorAgent:
     @pytest.mark.asyncio
     async def test_process_empty_query(self, orchestrator_agent):
         """Test processing empty query"""
-        result = await orchestrator_agent._process({"query": ""})
+        result = await orchestrator_agent._process_impl(OrchestratorInput(query=""))
 
         assert result.query == ""
-        assert len(result.plan.steps) == 0
+        assert len(result.plan_steps) == 0
         assert result.final_output["status"] == "error"
         assert "Empty query" in result.final_output["message"]
 
