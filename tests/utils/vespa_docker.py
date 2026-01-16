@@ -232,75 +232,70 @@ class VespaDockerManager:
 
         try:
             # Create temporary ConfigManager and SchemaLoader for test infrastructure
-            import tempfile
 
+            from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
             from cogniverse_foundation.config.unified_config import BackendConfig
             from cogniverse_foundation.config.utils import create_default_config_manager
-            from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
-            # Create temporary database for config
-            with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp_db:
-                config_manager = create_default_config_manager(db_path=Path(tmp_db.name))
+            # Create config manager with backend store
+            config_manager = create_default_config_manager()
 
-                # Create SchemaLoader pointing to test schemas directory
-                schema_loader = FilesystemSchemaLoader(base_path=schemas_dir)
+            # Create SchemaLoader pointing to test schemas directory
+            schema_loader = FilesystemSchemaLoader(base_path=schemas_dir)
 
-                # Create backend instance with proper dependency injection
-                backend_config = BackendConfig(
-                    tenant_id=tenant_id,
-                    backend_type="vespa",
-                    url="http://localhost",
-                    port=http_port,
-                )
+            # Create backend instance with proper dependency injection
+            backend_config = BackendConfig(
+                tenant_id=tenant_id,
+                backend_type="vespa",
+                url="http://localhost",
+                port=http_port,
+            )
 
-                # Import and instantiate VespaBackend
-                from cogniverse_vespa.backend import VespaBackend
+            # Import and instantiate VespaBackend
+            from cogniverse_vespa.backend import VespaBackend
 
-                backend = VespaBackend(
-                    backend_config=backend_config,
-                    schema_loader=schema_loader,
-                    config_manager=config_manager
-                )
+            backend = VespaBackend(
+                backend_config=backend_config,
+                schema_loader=schema_loader,
+                config_manager=config_manager
+            )
 
-                # Create and inject SchemaRegistry
-                from cogniverse_core.registries.schema_registry import SchemaRegistry
+            # Create and inject SchemaRegistry
+            from cogniverse_core.registries.schema_registry import SchemaRegistry
 
-                schema_registry = SchemaRegistry(
-                    config_manager=config_manager,
-                    backend=backend,
-                    schema_loader=schema_loader
-                )
-                backend.schema_registry = schema_registry
+            schema_registry = SchemaRegistry(
+                config_manager=config_manager,
+                backend=backend,
+                schema_loader=schema_loader
+            )
+            backend.schema_registry = schema_registry
 
-                # Initialize backend
-                backend.initialize({"tenant_id": tenant_id})
+            # Initialize backend
+            backend.initialize({"tenant_id": tenant_id})
 
-                # Deploy each schema using SchemaRegistry (automatically handles tenant suffixes)
-                schema_files = list(schemas_dir.glob("*_schema.json"))
-                if not schema_files:
-                    raise RuntimeError(f"No schema files found in {schemas_dir}")
+            # Deploy each schema using SchemaRegistry (automatically handles tenant suffixes)
+            schema_files = list(schemas_dir.glob("*_schema.json"))
+            if not schema_files:
+                raise RuntimeError(f"No schema files found in {schemas_dir}")
 
-                deployed_schemas = []
-                for schema_file in schema_files:
-                    try:
-                        # Extract base schema name from file (remove _schema.json suffix)
-                        base_schema_name = schema_file.stem.replace("_schema", "")
+            deployed_schemas = []
+            for schema_file in schema_files:
+                try:
+                    # Extract base schema name from file (remove _schema.json suffix)
+                    base_schema_name = schema_file.stem.replace("_schema", "")
 
-                        # Use SchemaRegistry to deploy with tenant suffix
-                        tenant_schema_name = schema_registry.deploy_schema(
-                            tenant_id=tenant_id,
-                            base_schema_name=base_schema_name
-                        )
-                        deployed_schemas.append(tenant_schema_name)
-                        logger.info(f"  Deployed tenant schema: {tenant_schema_name}")
-                    except Exception as e:
-                        logger.warning(f"  Failed to deploy {schema_file.name}: {e}")
-                        raise
+                    # Use SchemaRegistry to deploy with tenant suffix
+                    tenant_schema_name = schema_registry.deploy_schema(
+                        tenant_id=tenant_id,
+                        base_schema_name=base_schema_name
+                    )
+                    deployed_schemas.append(tenant_schema_name)
+                    logger.info(f"  Deployed tenant schema: {tenant_schema_name}")
+                except Exception as e:
+                    logger.warning(f"  Failed to deploy {schema_file.name}: {e}")
+                    raise
 
-                logger.info(f"✅ Deployed {len(deployed_schemas)} tenant-scoped schemas")
-
-            # Cleanup temporary database
-            Path(tmp_db.name).unlink(missing_ok=True)
+            logger.info(f"✅ Deployed {len(deployed_schemas)} tenant-scoped schemas")
 
         except Exception as e:
             raise RuntimeError(f"Schema deployment failed: {e}") from e

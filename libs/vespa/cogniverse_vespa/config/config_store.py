@@ -105,9 +105,10 @@ class VespaConfigStore(ConfigStore):
         config_id = self._create_document_id(tenant_id, scope, service, config_key)
 
         # Query for all versions of this config
+        # Use contains() for indexed string matching (avoids YQL colon parsing issues)
         yql = (
             f"select version from {self.schema_name} "
-            f"where config_id = '{config_id}' "
+            f"where config_id contains \"{config_id}\" "
             f"order by version desc limit 1"
         )
 
@@ -222,17 +223,18 @@ class VespaConfigStore(ConfigStore):
         config_id = self._create_document_id(tenant_id, scope, service, config_key)
 
         # Build YQL query
+        # Use contains() for indexed string matching (avoids YQL colon parsing issues)
         if version is None:
             # Get latest version
             yql = (
                 f"select * from {self.schema_name} "
-                f"where config_id = '{config_id}' "
+                f"where config_id contains \"{config_id}\" "
                 f"order by version desc limit 1"
             )
         else:
             # Get specific version
             doc_id = f"{self.schema_name}::{config_id}::{version}"
-            yql = f"select * from {self.schema_name} where documentid = '{doc_id}'"
+            yql = f"select * from {self.schema_name} where documentid = \"{doc_id}\""
 
         try:
             response = self.vespa_app.query(yql=yql)
@@ -283,7 +285,7 @@ class VespaConfigStore(ConfigStore):
 
         yql = (
             f"select * from {self.schema_name} "
-            f"where config_id = '{config_id}' "
+            f"where config_id contains \"{config_id}\" "
             f"order by version desc limit {limit}"
         )
 
@@ -332,20 +334,21 @@ class VespaConfigStore(ConfigStore):
             List of latest version ConfigEntry objects
         """
         # Build YQL query with filters
-        conditions = [f"tenant_id = '{tenant_id}'"]
+        # Use contains() for indexed string matching (avoids YQL colon parsing issues)
+        conditions = [f"tenant_id contains \"{tenant_id}\""]
 
         if scope is not None:
-            conditions.append(f"scope = '{scope.value}'")
+            conditions.append(f"scope contains \"{scope.value}\"")
 
         if service is not None:
-            conditions.append(f"service = '{service}'")
+            conditions.append(f"service contains \"{service}\"")
 
         where_clause = " and ".join(conditions)
 
         # Query all matching configs, then filter to latest versions
         # Note: This is a simplified approach - for production, consider using
         # Vespa grouping or ranking to get only latest versions efficiently
-        yql = f"select * from {self.schema_name} where {where_clause} limit 1000"
+        yql = f"select * from {self.schema_name} where {where_clause} limit 400"
 
         try:
             response = self.vespa_app.query(yql=yql)
@@ -399,18 +402,19 @@ class VespaConfigStore(ConfigStore):
             List of latest version ConfigEntry objects from all tenants
         """
         # Build YQL query with filters (no tenant_id filter)
+        # Use contains() for indexed string matching (avoids YQL colon parsing issues)
         conditions = []
 
         if scope is not None:
-            conditions.append(f"scope = '{scope.value}'")
+            conditions.append(f"scope contains \"{scope.value}\"")
 
         if service is not None:
-            conditions.append(f"service = '{service}'")
+            conditions.append(f"service contains \"{service}\"")
 
         where_clause = " and ".join(conditions) if conditions else "true"
 
         # Query all matching configs, then filter to latest versions
-        yql = f"select * from {self.schema_name} where {where_clause} limit 10000"
+        yql = f"select * from {self.schema_name} where {where_clause} limit 400"
 
         try:
             response = self.vespa_app.query(yql=yql)
@@ -509,7 +513,7 @@ class VespaConfigStore(ConfigStore):
         """
         if include_history:
             # Get all versions
-            yql = f"select * from {self.schema_name} where tenant_id = '{tenant_id}' limit 10000"
+            yql = f"select * from {self.schema_name} where tenant_id contains \"{tenant_id}\" limit 400"
         else:
             # Get only latest versions
             configs = self.list_configs(tenant_id)
@@ -611,7 +615,7 @@ class VespaConfigStore(ConfigStore):
         try:
             # Count total configs (distinct config_ids)
             yql_total = (
-                f"select config_id from {self.schema_name} where true limit 10000"
+                f"select config_id from {self.schema_name} where true limit 400"
             )
             response = self.vespa_app.query(yql=yql_total)
 

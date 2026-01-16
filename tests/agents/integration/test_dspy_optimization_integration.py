@@ -17,10 +17,9 @@ from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 
 @pytest.fixture
-def config_manager(tmp_path):
-    """Create ConfigManager with temp database for tests."""
-    db_path = tmp_path / "test_config.db"
-    return create_default_config_manager(db_path=db_path)
+def config_manager(backend_config_env):
+    """Create ConfigManager with backend store for tests."""
+    return create_default_config_manager()
 
 
 @pytest.fixture
@@ -365,22 +364,6 @@ class TestDSPyAgentIntegration:
                 # Basic validation that agent was created successfully
                 assert agent is not None
                 assert hasattr(agent, "route_query")
-
-    @pytest.mark.skip(reason="Legacy DSPy optimization attributes removed in A2A refactor")
-    def test_summarizer_agent_with_optimized_prompts(self, temp_optimized_prompts_dir):
-        """Test SummarizerAgent with loaded optimized prompts."""
-        # This test relied on legacy dspy_enabled, dspy_optimized_prompts attributes
-        # which were removed during the A2A agent migration
-        pass
-
-    @pytest.mark.skip(reason="Legacy DSPy optimization attributes removed in A2A refactor")
-    def test_detailed_report_agent_with_optimized_prompts(
-        self, temp_optimized_prompts_dir
-    ):
-        """Test DetailedReportAgent with loaded optimized prompts."""
-        # This test relied on legacy dspy_enabled, dspy_optimized_prompts attributes
-        # which were removed during the A2A agent migration
-        pass
 
     def test_query_analysis_tool_with_optimized_prompts(
         self, temp_optimized_prompts_dir, config_manager

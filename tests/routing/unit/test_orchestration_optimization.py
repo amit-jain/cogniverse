@@ -25,8 +25,9 @@ from cogniverse_agents.workflow_intelligence import WorkflowExecution
 class TestOrchestrationEvaluator:
     """Test OrchestrationEvaluator span extraction logic"""
 
-    def setup_method(self):
-        """Set up test fixtures"""
+    @pytest.fixture(autouse=True)
+    def setup_evaluator(self, telemetry_manager_without_phoenix):
+        """Set up test fixtures with telemetry configured"""
         self.mock_workflow_intelligence = MagicMock()
         self.mock_workflow_intelligence.record_execution = AsyncMock()
 
@@ -174,8 +175,9 @@ class TestOrchestrationEvaluator:
 class TestOrchestrationFeedbackLoop:
     """Test OrchestrationFeedbackLoop annotation processing"""
 
-    def setup_method(self):
-        """Set up test fixtures"""
+    @pytest.fixture(autouse=True)
+    def setup_feedback_loop(self, telemetry_manager_without_phoenix):
+        """Set up test fixtures with telemetry configured"""
         self.mock_workflow_intelligence = MagicMock()
         self.mock_workflow_intelligence.record_ground_truth_execution = AsyncMock()
         self.mock_workflow_intelligence.optimize_from_ground_truth = AsyncMock()

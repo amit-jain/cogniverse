@@ -35,6 +35,11 @@ class MockAgentMultipleInheritance(MockDSPyAgent, TenantAwareAgentMixin):
 class TestTenantAwareAgentMixin:
     """Test TenantAwareAgentMixin"""
 
+    @pytest.fixture(autouse=True)
+    def setup_env(self, backend_config_env):
+        """Ensure backend environment is configured for all tests."""
+        pass
+
     def test_initialization_valid_tenant_id(self):
         """Test successful initialization with valid tenant_id"""
         agent = MockAgentWithTenant("customer_a")

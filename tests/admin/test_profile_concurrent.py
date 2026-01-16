@@ -46,21 +46,20 @@ class TestProfileConcurrentOperations:
     @pytest.fixture
     def test_client(self, temp_schema_dir: Path, tmp_path: Path):
         """Create test client with properly configured instances."""
-        from cogniverse_foundation.config.utils import create_default_config_manager
-        from cogniverse_foundation.config.unified_config import SystemConfig
         from cogniverse_core.registries.backend_registry import BackendRegistry
         from cogniverse_core.registries.schema_registry import SchemaRegistry
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-        from cogniverse_runtime.routers import admin
+        from cogniverse_foundation.config.unified_config import SystemConfig
+        from cogniverse_foundation.config.utils import create_default_config_manager
         from cogniverse_runtime.main import app
+        from cogniverse_runtime.routers import admin
 
         # Reset registries
         BackendRegistry._instance = None
         SchemaRegistry._instance = None
 
-        # Create temporary database
-        temp_db = tmp_path / "test_config.db"
-        config_manager = create_default_config_manager(db_path=temp_db)
+        # Create config manager with backend store
+        config_manager = create_default_config_manager()
 
         # Set up system config
         system_config = SystemConfig(

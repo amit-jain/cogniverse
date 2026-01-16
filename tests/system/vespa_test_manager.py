@@ -154,9 +154,19 @@ class VespaTestManager:
                 print("❌ Test environment setup failed")
                 return False
 
-            # NOTE: Schema deployment removed - tests should deploy via SchemaRegistry
-            # This ensures proper cross-tenant schema tracking and prevents schema-removal errors
-            # Metadata schemas are auto-deployed by backends on first initialization
+            # Deploy metadata schemas (config_metadata, organization_metadata, tenant_metadata)
+            # MUST happen before VespaConfigStore can be used
+            print("Deploying metadata schemas for VespaConfigStore...")
+            from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+            schema_manager = VespaSchemaManager(
+                backend_endpoint="http://localhost",
+                backend_port=self.config_port,
+            )
+            schema_manager.upload_metadata_schemas(app_name="cogniverse")
+
+            # Wait for application to be ready after schema deployment
+            print("Waiting for metadata schemas to be ready...")
+            self.docker_manager.wait_for_application_ready(container_info, timeout=120)
 
             print(f"✅ Isolated Vespa ready on port {self.http_port}")
             self.is_deployed = True
@@ -186,6 +196,8 @@ class VespaTestManager:
             # Set environment to point to test Vespa and use test config
             original_vespa_url = os.environ.get("VESPA_URL")
             original_vespa_port = os.environ.get("VESPA_PORT")  # Store original port
+            original_backend_url = os.environ.get("BACKEND_URL")
+            original_backend_port = os.environ.get("BACKEND_PORT")
             original_config_path = os.environ.get("CONFIG_PATH")
             original_cogniverse_config = os.environ.get("COGNIVERSE_CONFIG")
             # Store for cleanup - ingest_test_videos runs in setup, cleanup needs this value
@@ -213,9 +225,14 @@ class VespaTestManager:
                 registry._backend_instances.clear()
                 print("🔧 Cleared backend cache for fresh SchemaRegistry")
 
-            config_manager = create_default_config_manager(db_path=temp_db_path)
-            actual_db_path = getattr(config_manager.store, 'db_path', 'unknown')
-            print(f"🔧 config_manager created with DB: {actual_db_path}")
+            # CRITICAL: Set BACKEND_URL and BACKEND_PORT BEFORE creating config_manager
+            # BootstrapConfig.from_environment() reads these to connect VespaConfigStore
+            os.environ["BACKEND_URL"] = "http://localhost"
+            os.environ["BACKEND_PORT"] = str(self.http_port)
+            print(f"🔧 Set BACKEND_URL=http://localhost, BACKEND_PORT={self.http_port}")
+
+            config_manager = create_default_config_manager()
+            print("🔧 config_manager created with backend store")
 
             # Store config_manager as instance variable so tests can access it
             self.config_manager = config_manager
@@ -409,6 +426,16 @@ class VespaTestManager:
                     os.environ["VESPA_PORT"] = original_vespa_port
                 elif "VESPA_PORT" in os.environ:
                     del os.environ["VESPA_PORT"]
+
+                if original_backend_url:
+                    os.environ["BACKEND_URL"] = original_backend_url
+                elif "BACKEND_URL" in os.environ:
+                    del os.environ["BACKEND_URL"]
+
+                if original_backend_port:
+                    os.environ["BACKEND_PORT"] = original_backend_port
+                elif "BACKEND_PORT" in os.environ:
+                    del os.environ["BACKEND_PORT"]
 
                 if original_config_path:
                     os.environ["CONFIG_PATH"] = original_config_path

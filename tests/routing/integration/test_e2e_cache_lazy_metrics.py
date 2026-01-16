@@ -20,12 +20,12 @@ import pytest
 import requests
 from cogniverse_agents.routing.lazy_executor import LazyModalityExecutor
 from cogniverse_agents.routing.modality_cache import ModalityCacheManager
+from cogniverse_agents.routing.modality_metrics import ModalityMetricsTracker
 from cogniverse_agents.routing.parallel_executor import ParallelAgentExecutor
 from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 from cogniverse_foundation.telemetry.manager import TelemetryManager
-from cogniverse_agents.routing.modality_metrics import ModalityMetricsTracker
 
 # Set synchronous export for integration tests
 os.environ["TELEMETRY_SYNC_EXPORT"] = "true"

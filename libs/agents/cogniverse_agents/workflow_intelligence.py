@@ -26,18 +26,15 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+
+# WorkflowStore interface for persistence
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 # DSPy 3.0 imports
 import dspy
 
-# Database/persistence imports (for workflow history)
-try:
-    import sqlite3
-
-    SQLITE_AVAILABLE = True
-except ImportError:
-    SQLITE_AVAILABLE = False
+if TYPE_CHECKING:
+    from cogniverse_sdk.interfaces.workflow_store import WorkflowStore
 
 # Shared workflow types
 from cogniverse_agents.workflow_types import (
@@ -162,11 +159,20 @@ class WorkflowIntelligence:
         max_history_size: int = 10000,
         enable_persistence: bool = True,
         optimization_strategy: OptimizationStrategy = OptimizationStrategy.BALANCED,
+        workflow_store: Optional["WorkflowStore"] = None,
+        tenant_id: str = "default",
     ):
         self.logger = logging.getLogger(__name__)
         self.max_history_size = max_history_size
-        self.enable_persistence = enable_persistence and SQLITE_AVAILABLE
         self.optimization_strategy = optimization_strategy
+        self.tenant_id = tenant_id
+        self.workflow_store = workflow_store
+
+        # Initialize persistence via WorkflowStore if enabled
+        if enable_persistence and workflow_store is None:
+            self.workflow_store = self._create_default_workflow_store()
+
+        self.enable_persistence = enable_persistence and self.workflow_store is not None
 
         # In-memory data structures
         self.workflow_history: deque = deque(maxlen=max_history_size)
@@ -187,7 +193,7 @@ class WorkflowIntelligence:
         self._initialize_dspy_modules()
 
         # Initialize persistence if enabled
-        if self.enable_persistence:
+        if self.enable_persistence and self.workflow_store is not None:
             self._initialize_persistence()
 
         # Load historical data
@@ -231,149 +237,122 @@ class WorkflowIntelligence:
         self.template_generator = FallbackTemplateModule()
         self.logger.warning("Using fallback workflow intelligence modules")
 
-    def _initialize_persistence(self) -> None:
-        """Initialize SQLite persistence for workflow history"""
+    def _create_default_workflow_store(self) -> Optional["WorkflowStore"]:
+        """Create default WorkflowStore based on backend configuration."""
         try:
-            from cogniverse_core.common.utils.output_manager import get_output_manager
+            from cogniverse_foundation.config.bootstrap import BootstrapConfig
 
-            # Get output directory from config-based OutputManager
-            output_manager = get_output_manager()
-            db_dir = output_manager.get_path("data")  # databases go in outputs/data/
-            db_path = db_dir / "workflow_intelligence.db"
+            bootstrap = BootstrapConfig.from_environment()
 
-            self.db_connection = sqlite3.connect(str(db_path), check_same_thread=False)
-            self._create_tables()
-            self.logger.info(f"Workflow intelligence persistence initialized: {db_path}")
+            if bootstrap.backend_type == "vespa":
+                from cogniverse_vespa.workflow.workflow_store import VespaWorkflowStore
 
+                store = VespaWorkflowStore(
+                    vespa_url=bootstrap.backend_url,
+                    vespa_port=bootstrap.backend_port,
+                )
+                return store
+            else:
+                self.logger.warning(
+                    f"Unsupported backend type: {bootstrap.backend_type}"
+                )
+                return None
+
+        except Exception as e:
+            self.logger.warning(f"Could not create default WorkflowStore: {e}")
+            return None
+
+    def _initialize_persistence(self) -> None:
+        """Initialize WorkflowStore persistence for workflow history"""
+        try:
+            if self.workflow_store is not None:
+                self.workflow_store.initialize()
+                self.logger.info("Workflow persistence initialized via WorkflowStore")
         except Exception as e:
             self.logger.error(f"Failed to initialize persistence: {e}")
             self.enable_persistence = False
 
-    def _create_tables(self) -> None:
-        """Create database tables for persistence"""
-        cursor = self.db_connection.cursor()
-
-        # Workflow executions table
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS workflow_executions (
-                workflow_id TEXT PRIMARY KEY,
-                query TEXT NOT NULL,
-                query_type TEXT,
-                execution_time REAL,
-                success BOOLEAN,
-                agent_sequence TEXT,
-                task_count INTEGER,
-                parallel_efficiency REAL,
-                confidence_score REAL,
-                user_satisfaction REAL,
-                error_details TEXT,
-                timestamp TEXT,
-                metadata TEXT
-            )
-        """
-        )
-
-        # Agent performance table
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS agent_performance (
-                agent_name TEXT PRIMARY KEY,
-                total_executions INTEGER,
-                successful_executions INTEGER,
-                average_execution_time REAL,
-                average_confidence REAL,
-                error_rate REAL,
-                preferred_query_types TEXT,
-                performance_trend TEXT,
-                last_updated TEXT
-            )
-        """
-        )
-
-        # Workflow templates table
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS workflow_templates (
-                template_id TEXT PRIMARY KEY,
-                name TEXT,
-                description TEXT,
-                query_patterns TEXT,
-                task_sequence TEXT,
-                expected_execution_time REAL,
-                success_rate REAL,
-                usage_count INTEGER,
-                created_at TEXT,
-                last_used TEXT
-            )
-        """
-        )
-
-        self.db_connection.commit()
-
     def _load_historical_data(self) -> None:
-        """Load historical data from persistence"""
-        if not self.enable_persistence:
+        """Load historical data from persistence via WorkflowStore"""
+        if not self.enable_persistence or self.workflow_store is None:
             return
 
         try:
-            cursor = self.db_connection.cursor()
-
             # Load workflow executions
-            cursor.execute(
-                "SELECT * FROM workflow_executions ORDER BY timestamp DESC LIMIT ?",
-                (self.max_history_size,),
+            executions = self.workflow_store.list_executions(
+                tenant_id=self.tenant_id,
+                limit=self.max_history_size,
             )
-            for row in cursor.fetchall():
+            for exec_record in executions:
+                metrics = exec_record.metrics
                 execution = WorkflowExecution(
-                    workflow_id=row[0],
-                    query=row[1],
-                    query_type=row[2],
-                    execution_time=row[3],
-                    success=bool(row[4]),
-                    agent_sequence=json.loads(row[5]) if row[5] else [],
-                    task_count=row[6],
-                    parallel_efficiency=row[7],
-                    confidence_score=row[8],
-                    user_satisfaction=row[9],
-                    error_details=row[10],
-                    timestamp=datetime.fromisoformat(row[11]),
-                    metadata=json.loads(row[12]) if row[12] else {},
+                    workflow_id=exec_record.execution_id,
+                    query=metrics.get("query", ""),
+                    query_type=metrics.get("query_type", ""),
+                    execution_time=metrics.get("execution_time", 0.0),
+                    success=exec_record.status == "completed",
+                    agent_sequence=metrics.get("agent_sequence", []),
+                    task_count=metrics.get("task_count", 0),
+                    parallel_efficiency=metrics.get("parallel_efficiency", 0.0),
+                    confidence_score=metrics.get("confidence_score", 0.5),
+                    user_satisfaction=metrics.get("user_satisfaction"),
+                    error_details=metrics.get("error_details"),
+                    timestamp=exec_record.created_at,
+                    metadata=metrics.get("metadata", {}),
                 )
                 self.workflow_history.append(execution)
 
-            # Load agent performance
-            cursor.execute("SELECT * FROM agent_performance")
-            for row in cursor.fetchall():
-                performance = AgentPerformance(
-                    agent_name=row[0],
-                    total_executions=row[1],
-                    successful_executions=row[2],
-                    average_execution_time=row[3],
-                    average_confidence=row[4],
-                    error_rate=row[5],
-                    preferred_query_types=json.loads(row[6]) if row[6] else [],
-                    performance_trend=row[7],
-                    last_updated=datetime.fromisoformat(row[8]),
-                )
-                self.agent_performance[row[0]] = performance
+            # Load agent performance from stats (aggregate from performance records)
+            perf_records = self.workflow_store.list_agent_performance(
+                tenant_id=self.tenant_id,
+                limit=1000,
+            )
+            agent_records: Dict[str, List] = defaultdict(list)
+            for record in perf_records:
+                agent_records[record.agent_type].append(record)
+
+            for agent_name, records in agent_records.items():
+                if records:
+                    total = len(records)
+                    successful = sum(1 for r in records if r.success)
+                    avg_time = sum(r.duration_ms for r in records) / total
+                    latest = max(records, key=lambda r: r.created_at)
+                    avg_conf = sum(
+                        r.metrics.get("confidence", 0.5) for r in records
+                    ) / total
+                    pref_types = latest.metrics.get("preferred_query_types", [])
+                    performance = AgentPerformance(
+                        agent_name=agent_name,
+                        total_executions=total,
+                        successful_executions=successful,
+                        average_execution_time=avg_time,
+                        average_confidence=avg_conf,
+                        error_rate=(total - successful) / total if total > 0 else 0.0,
+                        preferred_query_types=pref_types,
+                        performance_trend=latest.metrics.get(
+                            "performance_trend", "stable"
+                        ),
+                        last_updated=latest.created_at,
+                    )
+                    self.agent_performance[agent_name] = performance
 
             # Load workflow templates
-            cursor.execute("SELECT * FROM workflow_templates")
-            for row in cursor.fetchall():
+            templates = self.workflow_store.list_templates(tenant_id=self.tenant_id)
+            for tmpl in templates:
+                config = tmpl.config
                 template = WorkflowTemplate(
-                    template_id=row[0],
-                    name=row[1],
-                    description=row[2],
-                    query_patterns=json.loads(row[3]) if row[3] else [],
-                    task_sequence=json.loads(row[4]) if row[4] else [],
-                    expected_execution_time=row[5],
-                    success_rate=row[6],
-                    usage_count=row[7],
-                    created_at=datetime.fromisoformat(row[8]),
-                    last_used=datetime.fromisoformat(row[9]) if row[9] else None,
+                    template_id=tmpl.template_id,
+                    name=tmpl.template_name,
+                    description=config.get("description", ""),
+                    query_patterns=config.get("query_patterns", []),
+                    task_sequence=config.get("task_sequence", []),
+                    expected_execution_time=config.get("expected_execution_time", 0.0),
+                    success_rate=config.get("success_rate", 0.0),
+                    usage_count=config.get("usage_count", 0),
+                    created_at=tmpl.created_at,
+                    last_used=config.get("last_used"),
                 )
-                self.workflow_templates[row[0]] = template
+                self.workflow_templates[tmpl.template_id] = template
 
             self.logger.info(
                 f"Loaded {len(self.workflow_history)} executions, "
@@ -966,100 +945,86 @@ class WorkflowIntelligence:
         return relevant[:limit]
 
     async def _persist_execution(self, execution: WorkflowExecution) -> None:
-        """Persist workflow execution to database"""
-        if not self.enable_persistence:
+        """Persist workflow execution via WorkflowStore"""
+        if not self.enable_persistence or self.workflow_store is None:
             return
 
         try:
-            cursor = self.db_connection.cursor()
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO workflow_executions 
-                (workflow_id, query, query_type, execution_time, success, agent_sequence,
-                 task_count, parallel_efficiency, confidence_score, user_satisfaction,
-                 error_details, timestamp, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    execution.workflow_id,
-                    execution.query,
-                    execution.query_type,
-                    execution.execution_time,
-                    execution.success,
-                    json.dumps(execution.agent_sequence),
-                    execution.task_count,
-                    execution.parallel_efficiency,
-                    execution.confidence_score,
-                    execution.user_satisfaction,
-                    execution.error_details,
-                    execution.timestamp.isoformat(),
-                    json.dumps(execution.metadata),
-                ),
+            # Store full execution details in metrics
+            metrics = {
+                "query": execution.query,
+                "query_type": execution.query_type,
+                "execution_time": execution.execution_time,
+                "agent_sequence": execution.agent_sequence,
+                "task_count": execution.task_count,
+                "parallel_efficiency": execution.parallel_efficiency,
+                "confidence_score": execution.confidence_score,
+                "user_satisfaction": execution.user_satisfaction,
+                "error_details": execution.error_details,
+                "metadata": execution.metadata,
+            }
+
+            self.workflow_store.record_execution(
+                tenant_id=self.tenant_id,
+                workflow_name=execution.workflow_id,
+                status="completed" if execution.success else "failed",
+                metrics=metrics,
             )
-            self.db_connection.commit()
 
         except Exception as e:
             self.logger.error(f"Failed to persist execution: {e}")
 
     async def _persist_agent_performance(self, performance: AgentPerformance) -> None:
-        """Persist agent performance to database"""
-        if not self.enable_persistence:
+        """Persist agent performance via WorkflowStore"""
+        if not self.enable_persistence or self.workflow_store is None:
             return
 
         try:
-            cursor = self.db_connection.cursor()
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO agent_performance 
-                (agent_name, total_executions, successful_executions, average_execution_time,
-                 average_confidence, error_rate, preferred_query_types, performance_trend, last_updated)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    performance.agent_name,
-                    performance.total_executions,
-                    performance.successful_executions,
-                    performance.average_execution_time,
-                    performance.average_confidence,
-                    performance.error_rate,
-                    json.dumps(performance.preferred_query_types),
-                    performance.performance_trend,
-                    performance.last_updated.isoformat(),
-                ),
+            # Store performance record with all metrics
+            metrics = {
+                "confidence": performance.average_confidence,
+                "preferred_query_types": performance.preferred_query_types,
+                "performance_trend": performance.performance_trend,
+                "total_executions": performance.total_executions,
+                "successful_executions": performance.successful_executions,
+            }
+
+            # Calculate success for this record
+            success = performance.successful_executions > (performance.total_executions * 0.5)
+
+            self.workflow_store.record_agent_performance(
+                tenant_id=self.tenant_id,
+                agent_type=performance.agent_name,
+                duration_ms=performance.average_execution_time,
+                success=success,
+                metrics=metrics,
             )
-            self.db_connection.commit()
 
         except Exception as e:
             self.logger.error(f"Failed to persist agent performance: {e}")
 
     async def _persist_template(self, template: WorkflowTemplate) -> None:
-        """Persist workflow template to database"""
-        if not self.enable_persistence:
+        """Persist workflow template via WorkflowStore"""
+        if not self.enable_persistence or self.workflow_store is None:
             return
 
         try:
-            cursor = self.db_connection.cursor()
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO workflow_templates 
-                (template_id, name, description, query_patterns, task_sequence,
-                 expected_execution_time, success_rate, usage_count, created_at, last_used)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    template.template_id,
-                    template.name,
-                    template.description,
-                    json.dumps(template.query_patterns),
-                    json.dumps(template.task_sequence),
-                    template.expected_execution_time,
-                    template.success_rate,
-                    template.usage_count,
-                    template.created_at.isoformat(),
-                    template.last_used.isoformat() if template.last_used else None,
-                ),
+            # Store template config with all details
+            config = {
+                "description": template.description,
+                "query_patterns": template.query_patterns,
+                "task_sequence": template.task_sequence,
+                "expected_execution_time": template.expected_execution_time,
+                "success_rate": template.success_rate,
+                "usage_count": template.usage_count,
+                "last_used": template.last_used.isoformat() if template.last_used else None,
+            }
+
+            self.workflow_store.save_template(
+                tenant_id=self.tenant_id,
+                template_name=template.name,
+                config=config,
             )
-            self.db_connection.commit()
 
         except Exception as e:
             self.logger.error(f"Failed to persist template: {e}")

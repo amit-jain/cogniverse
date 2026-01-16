@@ -28,7 +28,10 @@ logger = logging.getLogger(__name__)
 def phoenix_container():
     """Start Phoenix Docker container on non-default ports for routing span evaluator tests"""
     import cogniverse_foundation.telemetry.manager as telemetry_manager_module
-    from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
+    from cogniverse_foundation.telemetry.config import (
+        BatchExportConfig,
+        TelemetryConfig,
+    )
     from cogniverse_foundation.telemetry.registry import get_telemetry_registry
 
     # Reset TelemetryManager singleton AND clear provider cache
@@ -198,7 +201,10 @@ def phoenix_container():
 async def routing_agent_with_spans(phoenix_container):
     """Create routing agent and generate real routing spans"""
     from cogniverse_agents.routing_agent import RoutingAgent
-    from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
+    from cogniverse_foundation.telemetry.config import (
+        BatchExportConfig,
+        TelemetryConfig,
+    )
 
     telemetry_config = TelemetryConfig(
         otlp_endpoint="http://localhost:24317",
@@ -313,7 +319,10 @@ class TestRoutingSpanEvaluatorIntegration:
         import tempfile
 
         from cogniverse_agents.routing_agent import RoutingAgent
-        from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
+        from cogniverse_foundation.telemetry.config import (
+            BatchExportConfig,
+            TelemetryConfig,
+        )
 
         # Create telemetry config
         telemetry_config = TelemetryConfig(
@@ -463,7 +472,10 @@ class TestRoutingSpanEvaluatorIntegration:
     async def test_end_to_end_evaluation_workflow(self, optimizer):
         """Test complete end-to-end workflow from span generation to experience creation"""
         from cogniverse_agents.routing_agent import RoutingAgent
-        from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
+        from cogniverse_foundation.telemetry.config import (
+            BatchExportConfig,
+            TelemetryConfig,
+        )
 
         # 1. Create telemetry config
         telemetry_config = TelemetryConfig(

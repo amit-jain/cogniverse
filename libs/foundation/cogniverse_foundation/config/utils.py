@@ -339,35 +339,48 @@ def get_config_value(key: str, default: Any = None, tenant_id: str = "default", 
     return config.get(key, default)
 
 
-def create_default_config_manager(db_path: Optional[Path] = None, cache_size: int = 100) -> ConfigManager:
+def create_default_config_manager(cache_size: int = 100) -> ConfigManager:
     """
-    Factory function to create ConfigManager with default SQLite store.
+    Factory function to create ConfigManager with backend store.
 
-    This is a convenience function for creating ConfigManager without needing
-    to explicitly create a ConfigStore. For tests or custom stores, create
-    ConfigManager directly with your store instance.
+    Requires:
+        Environment variables: BACKEND_URL, BACKEND_PORT (optional)
+        Config file: configs/config.json with backend.type
 
     Args:
-        db_path: Path to SQLite database (optional, uses default if None)
         cache_size: LRU cache size (number of configs per tenant)
 
     Returns:
-        ConfigManager instance with SQLite store
+        ConfigManager instance with appropriate backend store
+
+    Raises:
+        ValueError: If BACKEND_URL not set or unsupported backend type
 
     Example:
-        # Production: Use default database location
-        config_manager = create_default_config_manager()
+        # Set environment variables first
+        # export BACKEND_URL=http://localhost
+        # export BACKEND_PORT=8080
 
-        # Test: Use temporary database
-        config_manager = create_default_config_manager(db_path=Path("/tmp/test.db"))
+        config_manager = create_default_config_manager()
 
         # Custom store: Create ConfigManager directly
         mock_store = MockConfigStore()
         config_manager = ConfigManager(store=mock_store)
     """
-    from cogniverse_foundation.config.sqlite.config_store import SQLiteConfigStore
+    from cogniverse_foundation.config.bootstrap import BootstrapConfig
 
-    store = SQLiteConfigStore(db_path=db_path)
+    bootstrap = BootstrapConfig.from_environment()
+
+    if bootstrap.backend_type == "vespa":
+        from cogniverse_vespa.config.config_store import VespaConfigStore
+
+        store = VespaConfigStore(
+            vespa_url=bootstrap.backend_url,
+            vespa_port=bootstrap.backend_port,
+        )
+    else:
+        raise ValueError(f"Unsupported backend type: {bootstrap.backend_type}")
+
     return ConfigManager(store=store, cache_size=cache_size)
 
 
@@ -375,7 +388,7 @@ def create_default_config_manager(db_path: Optional[Path] = None, cache_size: in
 _config_manager_singleton: Optional[ConfigManager] = None
 
 
-def get_config_manager_singleton(db_path: Optional[Path] = None) -> ConfigManager:
+def get_config_manager_singleton() -> ConfigManager:
     """
     Get or create singleton ConfigManager instance.
 
@@ -383,8 +396,7 @@ def get_config_manager_singleton(db_path: Optional[Path] = None) -> ConfigManage
     ConfigManager instance. For better testability, use create_default_config_manager()
     or explicit dependency injection instead.
 
-    Args:
-        db_path: Path to SQLite database (only used on first call)
+    Requires BACKEND_URL environment variable to be set.
 
     Returns:
         Singleton ConfigManager instance
@@ -395,5 +407,5 @@ def get_config_manager_singleton(db_path: Optional[Path] = None) -> ConfigManage
     """
     global _config_manager_singleton
     if _config_manager_singleton is None:
-        _config_manager_singleton = create_default_config_manager(db_path=db_path)
+        _config_manager_singleton = create_default_config_manager()
     return _config_manager_singleton

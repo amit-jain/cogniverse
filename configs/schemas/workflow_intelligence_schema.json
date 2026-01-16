@@ -1,0 +1,75 @@
+{
+  "name": "workflow_intelligence",
+  "document": {
+    "name": "workflow_intelligence",
+    "fields": [
+      {
+        "name": "doc_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "tenant_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "record_type",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "workflow_name",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "agent_type",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "status",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "metrics",
+        "type": "string",
+        "indexing": ["summary"]
+      },
+      {
+        "name": "template_config",
+        "type": "string",
+        "indexing": ["summary"]
+      },
+      {
+        "name": "created_at",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "updated_at",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      }
+    ]
+  },
+  "fieldsets": [
+    {
+      "name": "default",
+      "fields": ["doc_id", "tenant_id", "record_type", "workflow_name", "agent_type"]
+    }
+  ],
+  "rank_profiles": [
+    {
+      "name": "default",
+      "first_phase": {
+        "expression": "attribute(updated_at)"
+      }
+    }
+  ]
+}

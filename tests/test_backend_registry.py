@@ -21,7 +21,6 @@ import numpy as np
 sys.path.append(str(Path(__file__).parent.parent))
 
 from cogniverse_core.common.document import ContentType, Document
-from cogniverse_sdk.interfaces.backend import Backend, IngestionBackend, SearchBackend
 from cogniverse_core.registries.backend_registry import (
     BackendRegistry,
     get_backend_registry,
@@ -29,6 +28,7 @@ from cogniverse_core.registries.backend_registry import (
     register_ingestion_backend,
     register_search_backend,
 )
+from cogniverse_sdk.interfaces.backend import Backend, IngestionBackend, SearchBackend
 
 
 class MockIngestionBackend(IngestionBackend):
@@ -252,9 +252,9 @@ class TestBackendRegistry(unittest.TestCase):
         import tempfile
         from unittest.mock import MagicMock
 
-        from cogniverse_vespa.config.config_store import VespaConfigStore
-        from cogniverse_foundation.config.manager import ConfigManager
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_vespa.config.config_store import VespaConfigStore
         self.temp_dir = tempfile.mkdtemp()
         # Create a mock config store for testing
         mock_store = MagicMock(spec=VespaConfigStore)
@@ -468,9 +468,9 @@ class TestBackendIntegration(unittest.TestCase):
         import tempfile
         from unittest.mock import MagicMock
 
-        from cogniverse_vespa.config.config_store import VespaConfigStore
-        from cogniverse_foundation.config.manager import ConfigManager
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_vespa.config.config_store import VespaConfigStore
         self.temp_dir = tempfile.mkdtemp()
         # Create a mock config store for testing
         mock_store = MagicMock(spec=VespaConfigStore)

@@ -52,22 +52,21 @@ class TestDashboardProfileIntegration:
     @pytest.fixture
     def running_api(self, temp_schema_dir: Path, tmp_path: Path):
         """Start the FastAPI server for integration tests"""
-        from cogniverse_foundation.config.utils import create_default_config_manager
-        from cogniverse_foundation.config.unified_config import SystemConfig
         from cogniverse_core.registries.backend_registry import BackendRegistry
         from cogniverse_core.registries.schema_registry import SchemaRegistry
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-        from cogniverse_runtime.routers import admin
+        from cogniverse_foundation.config.unified_config import SystemConfig
+        from cogniverse_foundation.config.utils import create_default_config_manager
         from cogniverse_runtime.main import app
+        from cogniverse_runtime.routers import admin
         from fastapi.testclient import TestClient
 
         # Reset registries
         BackendRegistry._instance = None
         SchemaRegistry._instance = None
 
-        # Create temporary database
-        temp_db = tmp_path / "test_config.db"
-        config_manager = create_default_config_manager(db_path=temp_db)
+        # Create config manager with backend store
+        config_manager = create_default_config_manager()
 
         # Set up system config
         system_config = SystemConfig(
@@ -196,9 +195,8 @@ class TestDashboardProfileIntegration:
     def test_end_to_end_workflow_via_dashboard_functions(self, running_api):
         """Test complete workflow using dashboard API functions"""
         from scripts.backend_profile_tab import (
-            deploy_schema_via_api,
             delete_profile_via_api,
-            get_profile_schema_status
+            get_profile_schema_status,
         )
 
         profile_name = "e2e_test"

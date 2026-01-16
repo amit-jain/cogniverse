@@ -58,15 +58,15 @@ class TestTenantManagerAPI:
     @pytest.fixture(scope="module")
     def config_manager(self, vespa_backend, shared_test_db):
         """Create class-scoped ConfigManager"""
-        from cogniverse_foundation.config.utils import create_default_config_manager
-        from cogniverse_foundation.config.unified_config import SystemConfig
         from cogniverse_core.registries.backend_registry import BackendRegistry
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_foundation.config.unified_config import SystemConfig
+        from cogniverse_foundation.config.utils import create_default_config_manager
 
         wait_for_vespa_indexing(delay=1, description="Vespa startup")
 
-        # Create ConfigManager with shared DB (class-scoped for state persistence)
-        config_manager = create_default_config_manager(db_path=shared_test_db)
+        # Create ConfigManager with backend store
+        config_manager = create_default_config_manager()
 
         # Set system config pointing to test Vespa
         logger.info(f"Setting up config with Vespa on port {vespa_backend.http_port} (config port {vespa_backend.config_port})")

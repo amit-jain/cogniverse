@@ -32,9 +32,9 @@ class TestConfigPersistence:
             yield db_path
 
     @pytest.fixture
-    def config_manager(self, temp_db):
-        """Create ConfigManager with temp database"""
-        manager = create_default_config_manager(db_path=temp_db)
+    def config_manager(self, backend_config_env):
+        """Create ConfigManager with backend store"""
+        manager = create_default_config_manager()
         return manager
 
     def test_system_config_persistence(self, config_manager):
@@ -186,21 +186,19 @@ class TestConfigPersistence:
         assert loaded_tenant1.llm_model == "tenant1-model"
         assert loaded_tenant2.llm_model == "tenant2-model"
 
-    def test_config_survives_manager_restart(self, temp_db):
+    def test_config_survives_manager_restart(self, backend_config_env):
         """Test configuration survives ConfigManager restart"""
         # Create first manager instance
-        manager1 = create_default_config_manager(db_path=temp_db)
+        manager1 = create_default_config_manager()
         system_config = SystemConfig(
             tenant_id="test_tenant", llm_model="persistent-model"
         )
         manager1.set_system_config(system_config)
 
-        # Simulate restart by creating new manager with same db_path
-        # The singleton will return the same instance, but we verify
-        # that data persists in the database
+        # Simulate restart by creating new manager instance
+        # The backend store should persist data between instances
         ConfigManager._instance = None
-        ConfigManager._db_path = None
-        manager2 = create_default_config_manager(db_path=temp_db)
+        manager2 = create_default_config_manager()
 
         # Load config with new instance
         loaded_config = manager2.get_system_config("test_tenant")

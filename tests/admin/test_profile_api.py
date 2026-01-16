@@ -66,20 +66,18 @@ class TestProfileAPICRUD:
     @pytest.fixture
     def test_client(self, temp_schema_dir: Path, tmp_path: Path):
         """Create test client for profile API with properly configured test instances."""
+        # Reset registries
+        from cogniverse_core.registries.backend_registry import BackendRegistry
         from cogniverse_foundation.config.utils import (
             create_default_config_manager,
         )
-
-        # Reset registries
-        from cogniverse_core.registries.backend_registry import BackendRegistry
         from cogniverse_runtime.routers import admin
         BackendRegistry._instance = None
         from cogniverse_core.registries.schema_registry import SchemaRegistry
         SchemaRegistry._instance = None
 
-        # Create temporary database for ConfigManager
-        temp_db = tmp_path / "test_config.db"
-        config_manager = create_default_config_manager(db_path=temp_db)
+        # Create ConfigManager with backend store
+        config_manager = create_default_config_manager()
 
         # Set up system config with non-existent Vespa (so schema checks fail)
         from cogniverse_foundation.config.unified_config import SystemConfig
@@ -533,10 +531,10 @@ class TestProfileAPISchemaDeployment:
     def test_client(self, vespa_backend, tmp_path: Path, shared_test_db: Path):
         """Create test client with Vespa backend."""
 
+        from cogniverse_core.registries.backend_registry import BackendRegistry
         from cogniverse_foundation.config.utils import (
             create_default_config_manager,
         )
-        from cogniverse_core.registries.backend_registry import BackendRegistry
         from cogniverse_runtime.routers import admin
 
         wait_for_vespa_indexing(delay=1, description="Vespa startup")
@@ -618,10 +616,9 @@ class TestProfileAPISchemaDeployment:
         # CRITICAL: Import VespaBackend to trigger self-registration
         import cogniverse_vespa.backend  # noqa: F401
 
-        # CRITICAL FIX: Use shared database for all tests in class
+        # Use backend store for all tests in class
         # This ensures SchemaRegistry persists schema registrations across tests
-        # preventing Vespa "schema removed" errors
-        config_manager = create_default_config_manager(db_path=shared_test_db)
+        config_manager = create_default_config_manager()
 
         # Set system config for test tenants using ACTUAL Vespa port
         # (vespa_backend.http_port may have changed from initial value after Docker starts)

@@ -9,10 +9,9 @@ Tests validate:
 5. Session ID propagation to nested spans
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
-from contextlib import contextmanager
 
+import pytest
 from cogniverse_foundation.telemetry.config import (
     BatchExportConfig,
     TelemetryConfig,
@@ -60,8 +59,8 @@ class TestSessionContextAbstractMethod:
 
     def test_session_context_is_abstract_method(self):
         """Verify session_context is defined as an abstract method."""
+
         from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
-        import inspect
 
         # Check that session_context is defined
         assert hasattr(TelemetryProvider, "session_context")
@@ -74,8 +73,9 @@ class TestSessionContextAbstractMethod:
 
     def test_session_context_signature(self):
         """Verify session_context has correct signature."""
-        from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
         import inspect
+
+        from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
         sig = inspect.signature(TelemetryProvider.session_context)
         params = list(sig.parameters.keys())

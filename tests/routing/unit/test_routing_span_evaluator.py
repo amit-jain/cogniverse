@@ -35,13 +35,18 @@ def span_evaluator(mock_optimizer, mock_provider):
     """Create RoutingSpanEvaluator with mocked dependencies"""
     with patch(
         "cogniverse_agents.routing.routing_span_evaluator.get_telemetry_manager"
-    ) as mock_get_manager:
+    ) as mock_get_manager, patch(
+        "cogniverse_agents.routing.routing_span_evaluator.SpanEvaluator"
+    ) as mock_span_evaluator_class:
         mock_manager = Mock()
         mock_config = Mock()
         mock_config.get_project_name = Mock(return_value="cogniverse-test-tenant-routing-optimization")
         mock_manager.config = mock_config
         mock_manager.get_provider = Mock(return_value=mock_provider)
         mock_get_manager.return_value = mock_manager
+
+        # Mock SpanEvaluator to avoid creating real evaluators
+        mock_span_evaluator_class.return_value = Mock()
 
         evaluator = RoutingSpanEvaluator(
             optimizer=mock_optimizer, tenant_id="test-tenant"
@@ -56,13 +61,16 @@ class TestRoutingSpanEvaluatorInit:
         """Test initialization with default tenant"""
         with patch(
             "cogniverse_agents.routing.routing_span_evaluator.get_telemetry_manager"
-        ) as mock_get_manager:
+        ) as mock_get_manager, patch(
+            "cogniverse_agents.routing.routing_span_evaluator.SpanEvaluator"
+        ) as mock_span_evaluator_class:
             mock_manager = Mock()
             mock_config = Mock()
             mock_config.get_project_name = Mock(return_value="cogniverse-default-routing-optimization")
             mock_manager.config = mock_config
             mock_manager.get_provider = Mock(return_value=mock_provider)
             mock_get_manager.return_value = mock_manager
+            mock_span_evaluator_class.return_value = Mock()
 
             evaluator = RoutingSpanEvaluator(optimizer=mock_optimizer)
 
@@ -75,13 +83,16 @@ class TestRoutingSpanEvaluatorInit:
         """Test initialization with custom tenant"""
         with patch(
             "cogniverse_agents.routing.routing_span_evaluator.get_telemetry_manager"
-        ) as mock_get_manager:
+        ) as mock_get_manager, patch(
+            "cogniverse_agents.routing.routing_span_evaluator.SpanEvaluator"
+        ) as mock_span_evaluator_class:
             mock_manager = Mock()
             mock_config = Mock()
             mock_config.get_project_name = Mock(return_value="cogniverse-custom-tenant-routing-optimization")
             mock_manager.config = mock_config
             mock_manager.get_provider = Mock(return_value=mock_provider)
             mock_get_manager.return_value = mock_manager
+            mock_span_evaluator_class.return_value = Mock()
 
             evaluator = RoutingSpanEvaluator(
                 optimizer=mock_optimizer, tenant_id="custom-tenant"

@@ -20,13 +20,17 @@ from pathlib import Path
 
 import pytest
 import requests
-from cogniverse_agents.detailed_report_agent import DetailedReportAgent
+from cogniverse_agents.detailed_report_agent import (
+    DetailedReportAgent,
+    DetailedReportDeps,
+)
 from cogniverse_agents.routing.query_enhancement_engine import QueryEnhancementPipeline
 from cogniverse_agents.routing.relationship_extraction_tools import (
     RelationshipExtractorTool,
 )
-from cogniverse_agents.routing_agent import RoutingAgent
-from cogniverse_agents.summarizer_agent import SummarizerAgent
+from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
+from cogniverse_agents.summarizer_agent import SummarizerAgent, SummarizerDeps
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
 
 from tests.utils.async_polling import wait_for_vespa_indexing
@@ -216,15 +220,17 @@ class TestRealVespaIntegration:
             # Use config_manager from fixture (temp DB with correct ports)
             config_manager = shared_system_vespa["manager"].config_manager
 
-            video_agent = SearchAgent(
+            search_deps = SearchAgentDeps(
                 tenant_id="test_tenant",
+                backend_url=vespa_url,
+                backend_port=vespa_port,
+                backend_config_port=shared_system_vespa["config_port"],
+                profile=default_schema,
+            )
+            video_agent = SearchAgent(
+                deps=search_deps,
                 schema_loader=schema_loader,
                 config_manager=config_manager,
-                backend_url=vespa_url,  # Backend-agnostic naming
-                backend_port=vespa_port,  # Backend-agnostic naming
-                backend_config_port=shared_system_vespa["config_port"],  # Config port for schema deployment
-                profile=default_schema,
-                auto_create_schema=False,  # Schema already deployed by fixture
             )
 
             # Test queries that should match our ingested test data
@@ -242,16 +248,22 @@ class TestRealVespaIntegration:
                 direct_query_url = f"{base_url}/search/"
                 direct_query_params = {
                     "yql": f"select * from {tenant_schema} where true limit 5",
-                    "timeout": "10s"
+                    "timeout": "10s",
                 }
-                direct_response = requests.get(direct_query_url, params=direct_query_params, timeout=15)
+                direct_response = requests.get(
+                    direct_query_url, params=direct_query_params, timeout=15
+                )
                 print(f"   Direct Vespa query status: {direct_response.status_code}")
                 if direct_response.status_code == 200:
                     direct_data = direct_response.json()
                     direct_hits = direct_data.get("root", {}).get("children", [])
-                    print(f"   Direct query found {len(direct_hits)} documents in {tenant_schema}")
+                    print(
+                        f"   Direct query found {len(direct_hits)} documents in {tenant_schema}"
+                    )
                     if direct_hits:
-                        print(f"   Sample document: {direct_hits[0].get('fields', {}).get('video_id', 'N/A')}")
+                        print(
+                            f"   Sample document: {direct_hits[0].get('fields', {}).get('video_id', 'N/A')}"
+                        )
                 else:
                     print(f"   Direct query failed: {direct_response.text[:200]}")
             except Exception as e:
@@ -264,7 +276,9 @@ class TestRealVespaIntegration:
                 search_results = video_agent.search_by_text(query, top_k=10)
 
                 # DEBUG: Log what the agent is doing
-                print(f"   Agent returned {len(search_results) if search_results else 0} results")
+                print(
+                    f"   Agent returned {len(search_results) if search_results else 0} results"
+                )
                 print(f"   Agent schema: {video_agent.search_backend.schema_name}")
 
                 assert search_results is not None, (
@@ -294,7 +308,7 @@ class TestRealVespaIntegration:
 
                     # Verify result structure
                     assert "video_id" in result, f"Result {i} missing video_id"
-                    assert ("score" in result or "relevance" in result), (
+                    assert "score" in result or "relevance" in result, (
                         f"Result {i} missing score/relevance"
                     )
 
@@ -316,17 +330,16 @@ class TestRealVespaIntegration:
         default_schema = shared_system_vespa["default_schema"]
 
         try:
-            from cogniverse_agents.search_agent import SearchAgent
-
+            # SearchAgent is imported at top of file
             print("Initializing SearchAgent...")
-            video_agent = SearchAgent(
+            search_deps = SearchAgentDeps(
                 tenant_id="test_tenant",
                 backend_url=vespa_url,
                 backend_port=vespa_port,
-                vespa_config_port=shared_system_vespa["config_port"],  # Config port for schema deployment
+                backend_config_port=shared_system_vespa["config_port"],
                 profile=default_schema,
-                auto_create_schema=False,  # Schema already deployed by fixture
             )
+            video_agent = SearchAgent(deps=search_deps)
 
             # Verify agent is properly configured
             assert video_agent is not None
@@ -506,10 +519,16 @@ class TestRealPipelineIntegration:
         # Initialize all components
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
-            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            provider_config={
+                "http_endpoint": "http://localhost:26006",
+                "grpc_endpoint": "http://localhost:24317",
+            },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
+        routing_deps = RoutingDeps(
+            tenant_id="test_tenant", telemetry_config=telemetry_config
+        )
+        routing_agent = RoutingAgent(deps=routing_deps)
         extractor = RelationshipExtractorTool()
         pipeline = QueryEnhancementPipeline()
 
@@ -607,8 +626,10 @@ class TestRealPipelineIntegration:
         _vespa_url = shared_system_vespa["vespa_url"]
         _vespa_port = shared_system_vespa["http_port"]
 
-        summarizer = SummarizerAgent(tenant_id="test_tenant")
-        reporter = DetailedReportAgent(tenant_id="test_tenant")
+        summarizer_deps = SummarizerDeps(tenant_id="test_tenant")
+        summarizer = SummarizerAgent(deps=summarizer_deps)
+        reporter_deps = DetailedReportDeps(tenant_id="test_tenant")
+        reporter = DetailedReportAgent(deps=reporter_deps)
 
         # Simulate a workflow where:
         # 1. Video search finds content (with real Vespa)
@@ -684,11 +705,18 @@ class TestRealEndToEndIntegration:
         # Initialize all agents
         telemetry_config = TelemetryConfig(
             otlp_endpoint="http://localhost:24317",
-            provider_config={"http_endpoint": "http://localhost:26006", "grpc_endpoint": "http://localhost:24317"},
+            provider_config={
+                "http_endpoint": "http://localhost:26006",
+                "grpc_endpoint": "http://localhost:24317",
+            },
             batch_config=BatchExportConfig(use_sync_export=True),
         )
-        routing_agent = RoutingAgent(tenant_id="test_tenant", telemetry_config=telemetry_config)
-        summarizer_agent = SummarizerAgent(tenant_id="test_tenant")
+        routing_deps = RoutingDeps(
+            tenant_id="test_tenant", telemetry_config=telemetry_config
+        )
+        routing_agent = RoutingAgent(deps=routing_deps)
+        summarizer_deps = SummarizerDeps(tenant_id="test_tenant")
+        summarizer_agent = SummarizerAgent(deps=summarizer_deps)
 
         # Initialize relationship extractor properly
         from cogniverse_agents.routing.relationship_extraction_tools import (
@@ -711,12 +739,14 @@ class TestRealEndToEndIntegration:
             routing_result = await routing_agent.route_query(test_query)
             print(f"   ✅ Routing result: {routing_result}")
 
-            # STRICT ASSERTION 1: Must recommend video_search_agent
+            # STRICT ASSERTION 1: Must recommend a search agent
             assert hasattr(routing_result, "recommended_agent"), (
                 "Routing result missing recommended_agent"
             )
-            assert routing_result.recommended_agent == "video_search_agent", (
-                f"Expected 'video_search_agent', got '{routing_result.recommended_agent}'"
+            # Accept either 'search_agent' (current) or 'video_search_agent' (legacy)
+            valid_agents = {"search_agent", "video_search_agent"}
+            assert routing_result.recommended_agent in valid_agents, (
+                f"Expected one of {valid_agents}, got '{routing_result.recommended_agent}'"
             )
 
             # STRICT ASSERTION 2: Must have extracted entities matching our query
@@ -822,7 +852,7 @@ class TestRealEndToEndIntegration:
             # Pass ports directly - NO environment variables
             from pathlib import Path
 
-            from cogniverse_agents.search_agent import SearchAgent
+            # SearchAgent is imported at top of file
             from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
             # Create dependencies for agent
@@ -832,15 +862,17 @@ class TestRealEndToEndIntegration:
             # Use config_manager from fixture (temp DB with correct ports)
             config_manager = vespa_test_manager.config_manager
 
-            video_search_agent = SearchAgent(
+            search_deps = SearchAgentDeps(
                 tenant_id="test_tenant",
-                schema_loader=schema_loader,
-                config_manager=config_manager,
                 backend_url="http://localhost",
                 backend_port=vespa_test_manager.http_port,
-                vespa_config_port=vespa_test_manager.config_port,  # Use actual config port from manager
+                backend_config_port=vespa_test_manager.config_port,
                 profile="video_colpali_smol500_mv_frame",
-                auto_create_schema=False,  # Schema already deployed by fixture
+            )
+            video_search_agent = SearchAgent(
+                deps=search_deps,
+                schema_loader=schema_loader,
+                config_manager=config_manager,
             )
 
             search_results = video_search_agent.search_by_text(

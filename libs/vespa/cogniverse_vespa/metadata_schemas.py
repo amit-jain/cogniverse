@@ -122,11 +122,96 @@ def create_tenant_metadata_schema() -> Schema:
     )
 
 
+def create_config_metadata_schema() -> Schema:
+    """
+    Create config_metadata schema for VespaConfigStore.
+
+    Stores configuration key-value pairs for multi-tenant configuration management.
+
+    Fields:
+        config_id: Unique config identifier (indexed for exact matching)
+        tenant_id: Tenant identifier (indexed for exact matching)
+        scope: Configuration scope (indexed for exact matching)
+        service: Service name (indexed for exact matching)
+        config_key: Configuration key name
+        config_value: Configuration value (JSON string)
+        version: Config version for optimistic locking (indexed, fast-search)
+        created_at: Creation timestamp
+        updated_at: Last update timestamp
+
+    Returns:
+        Schema object ready for deployment
+    """
+    return Schema(
+        name="config_metadata",
+        document=Document(
+            fields=[
+                Field(
+                    name="config_id",
+                    type="string",
+                    indexing=["summary", "index", "attribute"],
+                    attribute=["fast-search"],
+                    match=["word"],
+                ),
+                Field(
+                    name="tenant_id",
+                    type="string",
+                    indexing=["summary", "index", "attribute"],
+                    attribute=["fast-search"],
+                    match=["word"],
+                ),
+                Field(
+                    name="scope",
+                    type="string",
+                    indexing=["summary", "index", "attribute"],
+                    attribute=["fast-search"],
+                    match=["word"],
+                ),
+                Field(
+                    name="service",
+                    type="string",
+                    indexing=["summary", "index", "attribute"],
+                    attribute=["fast-search"],
+                    match=["word"],
+                ),
+                Field(
+                    name="config_key",
+                    type="string",
+                    indexing=["summary", "index", "attribute"],
+                    match=["word"],
+                ),
+                Field(
+                    name="config_value",
+                    type="string",
+                    indexing=["summary"],
+                ),
+                Field(
+                    name="version",
+                    type="int",
+                    indexing=["summary", "attribute"],
+                    attribute=["fast-search"],
+                ),
+                Field(
+                    name="created_at",
+                    type="string",
+                    indexing=["summary", "attribute"],
+                ),
+                Field(
+                    name="updated_at",
+                    type="string",
+                    indexing=["summary", "attribute"],
+                ),
+            ]
+        ),
+    )
+
+
 def add_metadata_schemas_to_package(app_package) -> None:
     """
-    Add both metadata schemas to an ApplicationPackage.
+    Add all metadata schemas to an ApplicationPackage.
 
     This is the recommended way to include metadata schemas in deployments.
+    Includes organization, tenant, and config metadata schemas.
 
     Args:
         app_package: ApplicationPackage instance to add schemas to
@@ -135,7 +220,8 @@ def add_metadata_schemas_to_package(app_package) -> None:
         >>> from vespa.package import ApplicationPackage
         >>> app_package = ApplicationPackage(name="cogniverse")
         >>> add_metadata_schemas_to_package(app_package)
-        >>> # Now app_package has organization_metadata and tenant_metadata schemas
+        >>> # Now app_package has organization_metadata, tenant_metadata, and config_metadata schemas
     """
     app_package.add_schema(create_organization_metadata_schema())
     app_package.add_schema(create_tenant_metadata_schema())
+    app_package.add_schema(create_config_metadata_schema())

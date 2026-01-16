@@ -120,6 +120,14 @@ composing_config_patcher = patch(
 )
 composing_config_patcher.start()
 
+# Mock create_default_config_manager to avoid BACKEND_URL requirement
+mock_config_manager = MagicMock()
+config_manager_patcher = patch(
+    "cogniverse_agents.composing_agents_main.create_default_config_manager",
+    return_value=mock_config_manager
+)
+config_manager_patcher.start()
+
 
 class TestEnhancedA2AClientTool:
     """Test the enhanced A2A client tool for agent communication"""
@@ -339,10 +347,13 @@ class TestQueryAnalysisTool:
         mock_gliner.from_pretrained.return_value = mock_model
 
         # Create a new tool instance with GLiNER config
-        with patch("cogniverse_agents.composing_agents_main.config") as mock_config:
-            mock_config.get.return_value = {
-                "mode": "gliner_only",
-                "current_gliner_model": "gliner-test-model",
+        # Patch _get_config to return proper nested structure
+        with patch("cogniverse_agents.composing_agents_main._get_config") as mock_get_config:
+            mock_get_config.return_value = {
+                "query_inference_engine": {
+                    "mode": "gliner_only",
+                    "current_gliner_model": "gliner-test-model",
+                }
             }
 
             from cogniverse_agents.composing_agents_main import QueryAnalysisTool
@@ -500,11 +511,11 @@ class TestRouteAndExecuteQuery:
         assert f"Manual: {preferred_agent}" in result["agents_called"]
 
     @pytest.mark.asyncio
-    @patch("cogniverse_agents.composing_agents_main.query_analyzer")
-    @patch("cogniverse_agents.composing_agents_main.video_search_tool")
+    @patch("cogniverse_agents.composing_agents_main.get_query_analyzer")
+    @patch("cogniverse_agents.composing_agents_main.get_video_search_tool")
     @patch("cogniverse_core.config.utils.get_config")
     async def test_automatic_routing_video_search(
-        self, mock_get_config, mock_video_tool, mock_analyzer
+        self, mock_get_config, mock_get_video_tool, mock_get_analyzer
     ):
         """Test automatic routing to video search agent"""
         mock_config = MagicMock()
@@ -516,7 +527,12 @@ class TestRouteAndExecuteQuery:
             "temporal_info": {"start_date": "2024-01-01", "end_date": "2024-01-31"},
         }
 
+        # Create mock tool instances
+        mock_analyzer = MagicMock()
         mock_analyzer.execute = AsyncMock(return_value=mock_analysis)
+        mock_get_analyzer.return_value = mock_analyzer
+
+        mock_video_tool = MagicMock()
         mock_video_tool.execute = AsyncMock(
             return_value={
                 "success": True,
@@ -524,6 +540,7 @@ class TestRouteAndExecuteQuery:
                 "result_count": 1,
             }
         )
+        mock_get_video_tool.return_value = mock_video_tool
 
         from cogniverse_agents.composing_agents_main import route_and_execute_query
 
@@ -544,10 +561,10 @@ class TestRouteAndExecuteQuery:
         )
 
     @pytest.mark.asyncio
-    @patch("cogniverse_agents.composing_agents_main.query_analyzer")
+    @patch("cogniverse_agents.composing_agents_main.get_query_analyzer")
     @patch("cogniverse_core.config.utils.get_config")
     async def test_automatic_routing_text_search_unavailable(
-        self, mock_get_config, mock_analyzer
+        self, mock_get_config, mock_get_analyzer
     ):
         """Test automatic routing when text search is needed but unavailable"""
         mock_config = MagicMock()
@@ -559,7 +576,9 @@ class TestRouteAndExecuteQuery:
             "temporal_info": {},
         }
 
+        mock_analyzer = MagicMock()
         mock_analyzer.execute = AsyncMock(return_value=mock_analysis)
+        mock_get_analyzer.return_value = mock_analyzer
 
         from cogniverse_agents.composing_agents_main import route_and_execute_query
 
@@ -572,14 +591,16 @@ class TestRouteAndExecuteQuery:
         assert "not available" in result["text_search_results"]["error"]
 
     @pytest.mark.asyncio
-    @patch("cogniverse_agents.composing_agents_main.query_analyzer")
+    @patch("cogniverse_agents.composing_agents_main.get_query_analyzer")
     @patch("cogniverse_core.config.utils.get_config")
-    async def test_routing_exception_handling(self, mock_get_config, mock_analyzer):
+    async def test_routing_exception_handling(self, mock_get_config, mock_get_analyzer):
         """Test exception handling in routing"""
         mock_config = MagicMock()
         mock_get_config.return_value = mock_config
 
+        mock_analyzer = MagicMock()
         mock_analyzer.execute = AsyncMock(side_effect=Exception("Analysis failed"))
+        mock_get_analyzer.return_value = mock_analyzer
 
         from cogniverse_agents.composing_agents_main import route_and_execute_query
 

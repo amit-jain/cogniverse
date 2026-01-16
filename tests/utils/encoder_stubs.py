@@ -8,8 +8,9 @@ These stubs simulate real encoder behavior without loading heavy model weights:
 """
 
 import time
-import numpy as np
 from typing import Any, Dict
+
+import numpy as np
 
 
 class EncoderStub:

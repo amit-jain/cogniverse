@@ -16,9 +16,9 @@ from pathlib import Path
 import cogniverse_vespa  # noqa: F401
 import pytest
 import requests
-from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_core.registries.backend_registry import BackendRegistry
+from cogniverse_foundation.config.utils import create_default_config_manager
 
 from tests.utils.async_polling import wait_for_service_startup, wait_for_vespa_indexing
 
@@ -62,8 +62,11 @@ def deploy_memory_schema_for_tests(
     Returns:
         Tenant schema name that was deployed
     """
-    from cogniverse_foundation.config.utils import create_default_config_manager, get_config
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.utils import (
+        create_default_config_manager,
+        get_config,
+    )
 
     print(f"📦 Deploying {base_schema_name} for {tenant_id}...")
 
@@ -232,19 +235,15 @@ def shared_memory_vespa():
 
     try:
         # Deploy schema via BackendRegistry + SchemaRegistry (correct pattern)
-        import tempfile
         from pathlib import Path
 
-        from cogniverse_foundation.config.unified_config import SystemConfig
         from cogniverse_core.registries.backend_registry import BackendRegistry
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_foundation.config.unified_config import SystemConfig
 
-        # Create persistent ConfigManager for session (not temporary!)
+        # Create persistent ConfigManager for session
         # This must persist for the entire test session so SchemaRegistry state is maintained
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp_db:
-            session_db_path = Path(tmp_db.name)
-
-        config_manager = create_default_config_manager(db_path=session_db_path)
+        config_manager = create_default_config_manager()
 
         # Set system config pointing to test Vespa
         system_config = SystemConfig(
@@ -315,7 +314,3 @@ def shared_memory_vespa():
     # Cleanup container after tests
     subprocess.run(["docker", "stop", MEMORY_BACKEND_CONTAINER], capture_output=True)
     subprocess.run(["docker", "rm", MEMORY_BACKEND_CONTAINER], capture_output=True)
-
-    # Cleanup session database
-    if 'session_db_path' in locals():
-        session_db_path.unlink(missing_ok=True)

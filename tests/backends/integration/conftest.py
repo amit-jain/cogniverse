@@ -58,19 +58,30 @@ def vespa_instance():
         # Start container with module-specific ports
         container_info = manager.start_container(module_name=__name__, use_module_ports=True)
 
-        # Wait for config server to be ready
-        manager.wait_for_config_ready(container_info)
+        # Wait for config server to be ready (with longer timeout for slow startups)
+        manager.wait_for_config_ready(container_info, timeout=180)
 
-        # Give Vespa additional time to fully initialize all services
-        # Config port being ready doesn't mean data port is ready
+        # Give Vespa additional time for internal services to initialize
         import time
-        logger.info("Waiting additional 10 seconds for Vespa services to fully initialize...")
-        time.sleep(10)
-        logger.info("Vespa initialization complete")
+        logger.info("Waiting 15 seconds for Vespa internal services to initialize...")
+        time.sleep(15)
 
-        # NOTE: Schema deployment is intentionally SKIPPED for backend schema lifecycle tests
-        # These tests are designed to TEST schema deployment, so they deploy schemas themselves
-        # Pre-deploying schemas would interfere with the tests and cause timeout issues
+        # Deploy metadata schemas (organization, tenant, config) before any ConfigStore is used
+        # This breaks the circular dependency: VespaConfigStore needs config_metadata schema
+        from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
+        schema_manager = VespaSchemaManager(
+            backend_endpoint="http://localhost",
+            backend_port=container_info['config_port'],
+        )
+        schema_manager.upload_metadata_schemas(app_name="cogniverse")
+        logger.info("Deployed metadata schemas (organization, tenant, config)")
+
+        # Wait for Vespa HTTP/application endpoint to be ready after schema deployment
+        # The config server deployment is async - HTTP service needs time to initialize
+        manager.wait_for_application_ready(container_info, timeout=120)
+
+        logger.info("Vespa initialization complete - ready for schema tests")
 
         # Yield instance info
         yield container_info
@@ -85,8 +96,8 @@ def vespa_instance():
 
         # Clear singleton state to avoid interference with other test modules
         try:
-            from cogniverse_foundation.config.manager import ConfigManager
             from cogniverse_core.registries.backend_registry import get_backend_registry
+            from cogniverse_foundation.config.manager import ConfigManager
 
             # Clear backend registry instances
             registry = get_backend_registry()

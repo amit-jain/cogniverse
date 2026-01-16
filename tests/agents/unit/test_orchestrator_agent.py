@@ -42,7 +42,8 @@ def mock_agent_registry():
         AgentType.SEARCH,
     ]:
         mock_agent = Mock()
-        mock_agent._process = AsyncMock(
+        # Orchestrator calls agent.process(), not agent._process()
+        mock_agent.process = AsyncMock(
             return_value={
                 "status": "success",
                 "agent": agent_type.value,
@@ -266,8 +267,8 @@ class TestOrchestratorAgent:
     @pytest.mark.asyncio
     async def test_execute_plan_agent_error(self, orchestrator_agent):
         """Test execution when agent raises exception"""
-        # Make one agent fail
-        orchestrator_agent.agent_registry[AgentType.SEARCH]._process = AsyncMock(
+        # Make one agent fail - orchestrator calls process(), not _process()
+        orchestrator_agent.agent_registry[AgentType.SEARCH].process = AsyncMock(
             side_effect=Exception("Agent failed")
         )
 

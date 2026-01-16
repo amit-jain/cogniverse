@@ -4,7 +4,6 @@ Unit tests for WorkflowIntelligence with DSPy integration and adaptive learning
 
 from collections import deque
 from datetime import datetime
-from unittest.mock import patch
 
 import pytest
 from cogniverse_agents.workflow_intelligence import (
@@ -204,7 +203,6 @@ class TestTemplateGeneratorSignature:
 class TestWorkflowIntelligence:
     """Test cases for WorkflowIntelligence class"""
 
-    @patch("cogniverse_agents.workflow_intelligence.SQLITE_AVAILABLE", False)
     @pytest.mark.ci_fast
     def test_workflow_intelligence_initialization_no_persistence(self):
         """Test WorkflowIntelligence initialization without persistence"""
@@ -230,30 +228,19 @@ class TestWorkflowIntelligence:
         assert stats["successful_optimizations"] == 0
         assert stats["average_improvement"] == 0.0
 
-    @patch("cogniverse_agents.workflow_intelligence.SQLITE_AVAILABLE", True)
-    def test_workflow_intelligence_initialization_with_persistence(self):
+    def test_workflow_intelligence_initialization_with_persistence(self, workflow_store):
         """Test WorkflowIntelligence initialization with persistence"""
-        # Mock the database initialization to avoid actual database operations
-        with (
-            patch.object(
-                WorkflowIntelligence, "_initialize_persistence"
-            ) as mock_init_db,
-            patch.object(
-                WorkflowIntelligence, "_load_historical_data"
-            ) as mock_load_data,
-        ):
+        intelligence = WorkflowIntelligence(
+            max_history_size=1000,
+            enable_persistence=True,
+            optimization_strategy=OptimizationStrategy.BALANCED,
+            workflow_store=workflow_store,
+        )
 
-            intelligence = WorkflowIntelligence(
-                max_history_size=1000,
-                enable_persistence=True,
-                optimization_strategy=OptimizationStrategy.BALANCED,
-            )
+        assert intelligence.enable_persistence is True
+        # With WorkflowStore backend, persistence is handled by the store
+        assert intelligence.workflow_store is not None
 
-            assert intelligence.enable_persistence is True
-            mock_init_db.assert_called_once()
-            mock_load_data.assert_called_once()
-
-    @patch("cogniverse_agents.workflow_intelligence.SQLITE_AVAILABLE", False)
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
     async def test_record_workflow_execution(self):
@@ -290,7 +277,6 @@ class TestWorkflowIntelligence:
         assert recorded_execution.workflow_id == "test-workflow"
         assert recorded_execution.query == "find AI videos"
 
-    @patch("cogniverse_agents.workflow_intelligence.SQLITE_AVAILABLE", False)
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
     async def test_optimization_workflow_methods(self):
@@ -316,7 +302,6 @@ class TestWorkflowIntelligence:
         )
         assert isinstance(optimized_plan, WorkflowPlan)
 
-    @patch("cogniverse_agents.workflow_intelligence.SQLITE_AVAILABLE", False)
     @pytest.mark.asyncio
     async def test_get_agent_performance_metrics(self):
         """Test getting agent performance metrics"""
@@ -347,7 +332,6 @@ class TestWorkflowIntelligence:
             video_perf = intelligence.agent_performance["video_search"]
             assert video_perf.agent_name == "video_search"
 
-    @patch("cogniverse_agents.workflow_intelligence.SQLITE_AVAILABLE", False)
     def test_query_type_classification(self):
         """Test query type classification functionality"""
         intelligence = WorkflowIntelligence(enable_persistence=False)
@@ -369,7 +353,6 @@ class TestWorkflowIntelligence:
 class TestWorkflowIntelligenceOptimization:
     """Test optimization functionality"""
 
-    @patch("cogniverse_agents.workflow_intelligence.SQLITE_AVAILABLE", False)
     def test_optimization_statistics_tracking(self):
         """Test optimization statistics are tracked correctly"""
         intelligence = WorkflowIntelligence(enable_persistence=False)
@@ -391,7 +374,6 @@ class TestWorkflowIntelligenceOptimization:
                 == initial_successful + 1
             )
 
-    @patch("cogniverse_agents.workflow_intelligence.SQLITE_AVAILABLE", False)
     def test_template_management(self):
         """Test workflow template creation and management"""
         intelligence = WorkflowIntelligence(enable_persistence=False)
@@ -419,7 +401,6 @@ class TestWorkflowIntelligenceOptimization:
 class TestWorkflowIntelligenceEdgeCases:
     """Test edge cases and error handling"""
 
-    @patch("cogniverse_agents.workflow_intelligence.SQLITE_AVAILABLE", False)
     @pytest.mark.asyncio
     async def test_max_history_size_limit(self):
         """Test that workflow history respects max size limit"""
@@ -449,7 +430,6 @@ class TestWorkflowIntelligenceEdgeCases:
         assert intelligence.workflow_history[-1].workflow_id == "workflow-4"
         assert intelligence.workflow_history[0].workflow_id == "workflow-2"
 
-    @patch("cogniverse_agents.workflow_intelligence.SQLITE_AVAILABLE", False)
     @pytest.mark.ci_fast
     def test_dspy_modules_initialization(self):
         """Test that DSPy modules are initialized"""

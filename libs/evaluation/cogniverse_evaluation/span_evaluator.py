@@ -45,8 +45,10 @@ class SpanEvaluator:
         if provider is None:
             from .providers import get_evaluation_provider
 
+            # Pass project_name via config, not as a direct argument
             provider = get_evaluation_provider(
-                tenant_id=tenant_id, project_name=project_name
+                tenant_id=tenant_id,
+                config={"project_name": project_name} if project_name else None,
             )
 
         self.provider = provider

@@ -1198,6 +1198,70 @@ class VespaSchemaManager:
                 )
             )
 
+            # Config metadata schema (for VespaConfigStore)
+            config_metadata_schema = Schema(
+                name='config_metadata',
+                document=Document(
+                    fields=[
+                        Field(
+                            name='config_id',
+                            type='string',
+                            indexing=['summary', 'index', 'attribute'],
+                            attribute=['fast-search'],
+                            match=['word']
+                        ),
+                        Field(
+                            name='tenant_id',
+                            type='string',
+                            indexing=['summary', 'index', 'attribute'],
+                            attribute=['fast-search'],
+                            match=['word']
+                        ),
+                        Field(
+                            name='scope',
+                            type='string',
+                            indexing=['summary', 'index', 'attribute'],
+                            attribute=['fast-search'],
+                            match=['word']
+                        ),
+                        Field(
+                            name='service',
+                            type='string',
+                            indexing=['summary', 'index', 'attribute'],
+                            attribute=['fast-search'],
+                            match=['word']
+                        ),
+                        Field(
+                            name='config_key',
+                            type='string',
+                            indexing=['summary', 'index', 'attribute'],
+                            match=['word']
+                        ),
+                        Field(
+                            name='config_value',
+                            type='string',
+                            indexing=['summary']
+                        ),
+                        Field(
+                            name='version',
+                            type='int',
+                            indexing=['summary', 'attribute'],
+                            attribute=['fast-search']
+                        ),
+                        Field(
+                            name='created_at',
+                            type='string',
+                            indexing=['summary', 'attribute']
+                        ),
+                        Field(
+                            name='updated_at',
+                            type='string',
+                            indexing=['summary', 'attribute']
+                        ),
+                    ]
+                )
+            )
+
             # Get existing tenant schemas from SchemaRegistry
             existing_schemas = self._get_existing_tenant_schemas()
 
@@ -1205,7 +1269,8 @@ class VespaSchemaManager:
             # This prevents Vespa schema-removal errors when tenant schemas already exist
             all_schemas = [
                 organization_metadata_schema,
-                tenant_metadata_schema
+                tenant_metadata_schema,
+                config_metadata_schema,
             ] + existing_schemas
 
             # Deploy all schemas together
@@ -1222,7 +1287,7 @@ class VespaSchemaManager:
                     f"(preserved {len(existing_schemas)} tenant schemas)"
                 )
             else:
-                self._logger.info("Successfully deployed organization and tenant metadata schemas")
+                self._logger.info("Successfully deployed organization, tenant, and config metadata schemas")
 
         except Exception as e:
             self._logger.error(f"Failed to deploy metadata schemas: {str(e)}")

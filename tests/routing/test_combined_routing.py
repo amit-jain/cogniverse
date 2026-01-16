@@ -251,7 +251,7 @@ class CombinedRoutingTester:
             self.config.set("local_llm_model", model_name)
 
             # Create new analyzer instance for this model
-            test_analyzer = QueryAnalyzer()
+            test_analyzer = QueryAnalyzer()  # noqa: F821
 
             # CRITICAL: Explicitly set mode to LLM (like legacy GLiNER test does)
             test_analyzer.set_mode("llm_only")
@@ -433,7 +433,7 @@ class CombinedRoutingTester:
         return gliner_queries
 
     async def test_query_with_gliner_model(
-        self, analyzer: "QueryAnalyzer", query_tuple: tuple, model_name: str  # type: ignore
+        self, analyzer: "QueryAnalyzer", query_tuple: tuple, model_name: str  # type: ignore  # noqa: F821
     ) -> TestResult:
         """Test a single query with GLiNER model."""
         query, expected_video, expected_text, expected_temporal = query_tuple
@@ -531,7 +531,7 @@ class CombinedRoutingTester:
         print(f"📊 Running {len(query_tuples)} queries...")
 
         # Create analyzer and switch to this model
-        analyzer = QueryAnalyzer()
+        analyzer = QueryAnalyzer()  # noqa: F821
         success = analyzer.switch_gliner_model(model_name)
         if not success:
             print(f"❌ Failed to load GLiNER model: {model_name}")

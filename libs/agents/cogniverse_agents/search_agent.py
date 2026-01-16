@@ -846,6 +846,23 @@ class SearchAgent(MemoryAwareMixin, A2AAgent[SearchInput, SearchOutput, SearchAg
 
             raise
 
+    def search_by_text(
+        self, query: str, modality: str = "video", top_k: int = 10, **kwargs
+    ) -> List[Dict[str, Any]]:
+        """
+        Search content using text query.
+
+        Args:
+            query: Text search query
+            modality: Content modality to search (video/image/text/audio/document)
+            top_k: Number of results to return
+            **kwargs: Additional search parameters (ranking, etc.)
+
+        Returns:
+            List of search results
+        """
+        return self._search_by_text(query, modality=modality, top_k=top_k, **kwargs)
+
     def _search_by_video(
         self, video_data: bytes, filename: str, modality: str = "video", top_k: int = 10, **kwargs
     ) -> List[Dict[str, Any]]:

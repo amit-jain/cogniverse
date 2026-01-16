@@ -204,7 +204,10 @@ def telemetry_manager_without_phoenix():
     just need telemetry configured but don't export/query real spans.
     """
     import cogniverse_foundation.telemetry.manager as telemetry_manager_module
-    from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
+    from cogniverse_foundation.telemetry.config import (
+        BatchExportConfig,
+        TelemetryConfig,
+    )
     from cogniverse_foundation.telemetry.manager import TelemetryManager
     from cogniverse_foundation.telemetry.registry import get_telemetry_registry
 
@@ -365,7 +368,10 @@ def telemetry_config_with_phoenix(phoenix_container):
 
     Depends on phoenix_container to ensure env vars are set.
     """
-    from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
+    from cogniverse_foundation.telemetry.config import (
+        BatchExportConfig,
+        TelemetryConfig,
+    )
 
     otlp_endpoint = os.getenv("OTLP_ENDPOINT", "localhost:4317")
     config = TelemetryConfig(
@@ -400,3 +406,87 @@ def telemetry_manager_with_phoenix(telemetry_config_with_phoenix):
 
     TelemetryManager.reset()
     get_telemetry_registry().clear_cache()
+
+
+# ==================== Backend Configuration Fixtures ====================
+
+
+@pytest.fixture(scope="session", autouse=True)
+def backend_config_env():
+    """
+    Set environment variables for backend configuration.
+
+    Sets BACKEND_URL and BACKEND_PORT environment variables
+    required by create_default_config_manager().
+
+    Uses TEST_BACKEND_URL and TEST_BACKEND_PORT if available,
+    otherwise defaults to localhost:8080.
+
+    This fixture is autouse=True so it applies to all tests automatically.
+    """
+    original_url = os.environ.get("BACKEND_URL")
+    original_port = os.environ.get("BACKEND_PORT")
+
+    # Set test values
+    os.environ["BACKEND_URL"] = os.environ.get("TEST_BACKEND_URL", "http://localhost")
+    os.environ["BACKEND_PORT"] = os.environ.get("TEST_BACKEND_PORT", "8080")
+
+    yield
+
+    # Restore original values
+    if original_url is not None:
+        os.environ["BACKEND_URL"] = original_url
+    elif "BACKEND_URL" in os.environ:
+        del os.environ["BACKEND_URL"]
+
+    if original_port is not None:
+        os.environ["BACKEND_PORT"] = original_port
+    elif "BACKEND_PORT" in os.environ:
+        del os.environ["BACKEND_PORT"]
+
+
+@pytest.fixture
+def config_manager(backend_config_env):
+    """
+    Create ConfigManager with backend store for testing.
+
+    Requires backend_config_env fixture to set environment variables.
+    """
+    from cogniverse_foundation.config.utils import create_default_config_manager
+
+    return create_default_config_manager()
+
+
+@pytest.fixture
+def config_manager_memory():
+    """
+    Create ConfigManager with in-memory store for unit testing.
+
+    Does not require any backend infrastructure (Vespa, etc.).
+    Use this for unit tests that test business logic without
+    needing real backend connectivity.
+    """
+    from cogniverse_foundation.config.manager import ConfigManager
+
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    return ConfigManager(store=store)
+
+
+@pytest.fixture
+def workflow_store(backend_config_env):
+    """
+    Create VespaWorkflowStore for testing.
+
+    Requires backend_config_env fixture to set environment variables.
+    """
+    from cogniverse_vespa.workflow.workflow_store import VespaWorkflowStore
+
+    store = VespaWorkflowStore(
+        vespa_url=os.environ.get("BACKEND_URL", "http://localhost"),
+        vespa_port=int(os.environ.get("BACKEND_PORT", "8080")),
+    )
+    store.initialize()
+    return store

@@ -201,7 +201,10 @@ def test_tenant_id():
 def telemetry_manager(phoenix_container):
     """Get telemetry manager with Phoenix HTTP and gRPC endpoints configured"""
     import cogniverse_foundation.telemetry.manager as telemetry_manager_module
-    from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
+    from cogniverse_foundation.telemetry.config import (
+        BatchExportConfig,
+        TelemetryConfig,
+    )
     from cogniverse_foundation.telemetry.registry import get_telemetry_registry
 
     # Reset TelemetryManager singleton AND clear provider cache

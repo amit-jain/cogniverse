@@ -6,7 +6,6 @@ from unittest.mock import patch
 
 import dspy
 import pytest
-from cogniverse_foundation.config.api_mixin import ConfigAPIMixin
 from cogniverse_core.common.dynamic_dspy_mixin import DynamicDSPyMixin
 from cogniverse_foundation.config.agent_config import (
     AgentConfig,
@@ -15,7 +14,7 @@ from cogniverse_foundation.config.agent_config import (
     OptimizerConfig,
     OptimizerType,
 )
-from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_foundation.config.api_mixin import ConfigAPIMixin
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -86,10 +85,9 @@ class TestConfigAPIMixin:
         return FastAPI()
 
     @pytest.fixture
-    def config_manager(self, tmp_path):
-        """Create ConfigManager for testing"""
-        db_path = tmp_path / "test_config.db"
-        return create_default_config_manager(db_path=db_path)
+    def config_manager(self, config_manager_memory):
+        """Create ConfigManager for testing (uses in-memory store)"""
+        return config_manager_memory
 
     @pytest.fixture
     def client(self, agent_config, app, config_manager):

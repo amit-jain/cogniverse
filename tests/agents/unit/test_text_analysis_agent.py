@@ -12,7 +12,6 @@ from cogniverse_agents.text_analysis_agent import (
     get_agent,
     set_config_manager,
 )
-from cogniverse_foundation.config.utils import create_default_config_manager
 from fastapi.testclient import TestClient
 
 
@@ -27,6 +26,7 @@ class TestTextAnalysisAgent:
         mock_get_config,
         mock_initialize_dspy,
         mock_register_signature,
+        config_manager_memory,
     ):
         """Test agent initializes correctly with tenant_id"""
         mock_config = {
@@ -37,8 +37,7 @@ class TestTextAnalysisAgent:
         mock_get_config.return_value = mock_config
 
         # Initialize agent with config_manager
-        config_manager = create_default_config_manager()
-        agent = TextAnalysisAgent(tenant_id="test_tenant", config_manager=config_manager)
+        agent = TextAnalysisAgent(tenant_id="test_tenant", config_manager=config_manager_memory)
 
         assert agent.tenant_id == "test_tenant"
         assert agent.config is not None
@@ -49,15 +48,13 @@ class TestTextAnalysisAgent:
         mock_initialize_dspy.assert_called_once()
         mock_register_signature.assert_called_once()
 
-    def test_initialization_without_tenant_id_raises_error(self):
+    def test_initialization_without_tenant_id_raises_error(self, config_manager_memory):
         """Test that initializing without tenant_id raises ValueError"""
-        config_manager = create_default_config_manager()
+        with pytest.raises(ValueError, match="tenant_id is required"):
+            TextAnalysisAgent(tenant_id="", config_manager=config_manager_memory)
 
         with pytest.raises(ValueError, match="tenant_id is required"):
-            TextAnalysisAgent(tenant_id="", config_manager=config_manager)
-
-        with pytest.raises(ValueError, match="tenant_id is required"):
-            TextAnalysisAgent(tenant_id=None, config_manager=config_manager)
+            TextAnalysisAgent(tenant_id=None, config_manager=config_manager_memory)
 
     @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
     @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy")
@@ -67,6 +64,7 @@ class TestTextAnalysisAgent:
         mock_get_config,
         mock_initialize_dspy,
         mock_register_signature,
+        config_manager_memory,
     ):
         """Test text analysis functionality"""
         mock_config = {
@@ -76,7 +74,7 @@ class TestTextAnalysisAgent:
         }
         mock_get_config.return_value = mock_config
 
-        agent = TextAnalysisAgent(tenant_id="test_tenant", config_manager=create_default_config_manager())
+        agent = TextAnalysisAgent(tenant_id="test_tenant", config_manager=config_manager_memory)
 
         # Mock the get_or_create_module method to return a mock module
         mock_module = MagicMock()
@@ -102,6 +100,7 @@ class TestTextAnalysisAgent:
         mock_get_config,
         mock_initialize_dspy,
         mock_register_signature,
+        config_manager_memory,
     ):
         """Test get_agent factory function creates and caches instances"""
         mock_config = {
@@ -115,7 +114,7 @@ class TestTextAnalysisAgent:
         _agent_instances.clear()
 
         # Set config_manager for factory function
-        set_config_manager(create_default_config_manager())
+        set_config_manager(config_manager_memory)
 
         # First call creates new instance
         agent1 = get_agent("test_tenant_1")

@@ -15,9 +15,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from cogniverse_core.validation.profile_validator import ProfileValidator
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import BackendProfileConfig
-from cogniverse_core.validation.profile_validator import ProfileValidator
 
 
 @pytest.fixture

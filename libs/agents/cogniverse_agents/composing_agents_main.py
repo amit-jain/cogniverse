@@ -20,8 +20,23 @@ from cogniverse_foundation.config.utils import create_default_config_manager, ge
 from cogniverse_agents.tools.a2a_utils import A2AClient, format_search_results
 from cogniverse_agents.tools.video_player_tool import VideoPlayerTool
 
-# Initialize configuration
-config = get_config(tenant_id="default", config_manager=create_default_config_manager())
+# Lazy configuration initialization (avoids module-level bootstrap requirements)
+_config_cache: Optional[Dict[str, Any]] = None
+
+
+def _get_config() -> Dict[str, Any]:
+    """Get configuration lazily to avoid bootstrap at import time."""
+    global _config_cache
+    if _config_cache is None:
+        _config_cache = get_config(
+            tenant_id="default",
+            config_manager=create_default_config_manager()
+        )
+    return _config_cache
+
+
+# For backward compatibility, expose as module-level property via function
+config = None  # Placeholder - use _get_config() instead
 
 
 # --- Enhanced A2A Tool for Specialist Agents ---
@@ -34,7 +49,7 @@ class EnhancedA2AClientTool(BaseTool):
         super().__init__(name=name, description=description)
         self.agent_url = agent_url
         self.result_type = result_type
-        self.client = A2AClient(timeout=config.get("timeout", 60.0))
+        self.client = A2AClient(timeout=_get_config().get("timeout", 60.0))
 
     async def execute(
         self,
@@ -115,7 +130,7 @@ class QueryAnalysisTool(BaseTool):
             description="Analyzes user queries to extract search intent and temporal information",
         )
         # Check configuration for inference mode
-        self.inference_mode = config.get("query_inference_engine", {}).get(
+        self.inference_mode = _get_config().get("query_inference_engine", {}).get(
             "mode", "keyword"
         )
 
@@ -124,7 +139,7 @@ class QueryAnalysisTool(BaseTool):
             try:
                 from gliner import GLiNER
 
-                gliner_model = config.get("query_inference_engine", {}).get(
+                gliner_model = _get_config().get("query_inference_engine", {}).get(
                     "current_gliner_model"
                 )
                 if gliner_model:
@@ -178,8 +193,8 @@ class QueryAnalysisTool(BaseTool):
             and self.gliner_model
         ):
             # Use GLiNER for entity extraction
-            labels = config.get("query_inference_engine", {}).get("gliner_labels", [])
-            threshold = config.get("query_inference_engine", {}).get(
+            labels = _get_config().get("query_inference_engine", {}).get("gliner_labels", [])
+            threshold = _get_config().get("query_inference_engine", {}).get(
                 "gliner_threshold", 0.3
             )
 
@@ -231,7 +246,7 @@ class QueryAnalysisTool(BaseTool):
                 prompt = self.prompt_manager.get_routing_prompt(query)
 
                 # Call inference endpoint based on provider
-                inference_config = config.get("inference", {})
+                inference_config = _get_config().get("inference", {})
                 provider = inference_config.get("provider", "local")
 
                 if provider == "local":
@@ -394,31 +409,62 @@ class QueryAnalysisTool(BaseTool):
         return temporal_info
 
 
-# --- Initialize Tools ---
-query_analyzer = QueryAnalysisTool()
+# --- Lazy Tool Initialization ---
+# Tools are created on first access to avoid bootstrap at import time
+_query_analyzer: Optional["QueryAnalysisTool"] = None
+_video_search_tool: Optional["EnhancedA2AClientTool"] = None
+_video_player_tool: Optional["VideoPlayerTool"] = None
 
-# Text search tool - commented out until Elasticsearch is configured
-# text_search_tool = EnhancedA2AClientTool(
-#     name="TextSearchAgent",
-#     description="Searches for information in text documents and reports using hybrid search",
-#     agent_url=config.get("text_agent_url"),
-#     result_type="text"
-# )
 
-video_search_tool = EnhancedA2AClientTool(
-    name="VideoSearchAgent",
-    description="Searches for video content and scenes using multi-modal search with optional temporal filtering",
-    agent_url=config.get("video_agent_url"),
-    result_type="video",
-)
+def get_query_analyzer() -> "QueryAnalysisTool":
+    """Get query analyzer (lazy initialization)."""
+    global _query_analyzer
+    if _query_analyzer is None:
+        _query_analyzer = QueryAnalysisTool()
+    return _query_analyzer
 
-video_player_tool = VideoPlayerTool(tenant_id="default", config_manager=create_default_config_manager())
 
-# --- Enhanced Composing Agent ---
-composing_agent = LlmAgent(
-    name="CoordinatorAgent",
-    model=config.get("local_llm_model", "deepseek-r1:1.5b"),
-    description="""I am an intelligent research coordinator that helps users find information from both text documents and video content.
+def get_video_search_tool() -> "EnhancedA2AClientTool":
+    """Get video search tool (lazy initialization)."""
+    global _video_search_tool
+    if _video_search_tool is None:
+        _video_search_tool = EnhancedA2AClientTool(
+            name="VideoSearchAgent",
+            description="Searches for video content using multi-modal search",
+            agent_url=_get_config().get("video_agent_url"),
+            result_type="video",
+        )
+    return _video_search_tool
+
+
+def get_video_player_tool() -> "VideoPlayerTool":
+    """Get video player tool (lazy initialization)."""
+    global _video_player_tool
+    if _video_player_tool is None:
+        _video_player_tool = VideoPlayerTool(
+            tenant_id="default",
+            config_manager=create_default_config_manager()
+        )
+    return _video_player_tool
+
+
+# Backward compatibility aliases (deprecated - use factory functions)
+query_analyzer = None  # Use get_query_analyzer()
+video_search_tool = None  # Use get_video_search_tool()
+video_player_tool = None  # Use get_video_player_tool()
+
+# --- Lazy Composing Agent ---
+_composing_agent: Optional[LlmAgent] = None
+
+
+def get_composing_agent() -> LlmAgent:
+    """Get composing agent (lazy initialization)."""
+    global _composing_agent
+    if _composing_agent is None:
+        _composing_agent = LlmAgent(
+            name="CoordinatorAgent",
+            model=_get_config().get("local_llm_model", "deepseek-r1:1.5b"),
+            description="""I am an intelligent research coordinator that helps users find information from both text documents and video content.
 
 I analyze user queries to understand what they're looking for, then intelligently route their requests to specialized search agents:
 - VideoSearchAgent for video clips, scenes, and visual content
@@ -430,12 +476,17 @@ I can also extract temporal information from queries (like "last week" or "yeste
 After finding relevant video content, I can play videos with highlighted frames and timeline markers for easy navigation.
 
 My goal is to provide comprehensive, well-organized answers by combining insights from multiple sources.""",
-    tools=[
-        query_analyzer,
-        video_search_tool,
-        video_player_tool,
-    ],  # text_search_tool commented out for now
-)
+            tools=[
+                get_query_analyzer(),
+                get_video_search_tool(),
+                get_video_player_tool(),
+            ],
+        )
+    return _composing_agent
+
+
+# Backward compatibility alias
+composing_agent = None  # Use get_composing_agent()
 
 
 # --- Direct Tool Execution (Bypass LLM) ---
@@ -488,7 +539,7 @@ async def route_and_execute_query(
 
         # Step 1: Analyze the query to determine routing
         logger.info("📊 Step 1: Analyzing query for routing...")
-        analysis = await query_analyzer.execute(query)
+        analysis = await get_query_analyzer().execute(query)
         logger.info(f"   Analysis result: {analysis}")
 
         results = {
@@ -514,7 +565,7 @@ async def route_and_execute_query(
                     search_params["end_date"] = temporal["end_date"]
                     logger.info(f"   Adding end_date: {temporal['end_date']}")
 
-            video_results = await video_search_tool.execute(**search_params)
+            video_results = await get_video_search_tool().execute(**search_params)
             logger.info(
                 f"   VideoSearchAgent found {video_results.get('result_count', 0)} results"
             )
@@ -537,7 +588,7 @@ async def route_and_execute_query(
                 "❓ No specific routing determined, defaulting to VideoSearchAgent"
             )
             search_params = {"query": query, "top_k": top_k}
-            video_results = await video_search_tool.execute(**search_params)
+            video_results = await get_video_search_tool().execute(**search_params)
             results["video_search_results"] = video_results
             results["agents_called"].append("VideoSearchAgent (default)")
 
@@ -595,11 +646,11 @@ def start_web_interface():
         return
 
     logger.info("✅ Configuration validated successfully")
-    logger.info("📊 Search Backend: {config.get('search_backend').upper()}")
-    logger.info("🔍 Text Agent: {config.get('text_agent_url')}")
-    logger.info("🎥 Video Agent: {config.get('video_agent_url')}")
+    logger.info("📊 Search Backend: {_get_config().get('search_backend').upper()}")
+    logger.info("🔍 Text Agent: {_get_config().get('text_agent_url')}")
+    logger.info("🎥 Video Agent: {_get_config().get('video_agent_url')}")
     logger.info(
-        f"🌐 Web Interface: http://localhost:{config.get('composing_agent_port', 8000)}"
+        f"🌐 Web Interface: http://localhost:{_get_config().get('composing_agent_port', 8000)}"
     )
 
     print("\n" + "=" * 60)

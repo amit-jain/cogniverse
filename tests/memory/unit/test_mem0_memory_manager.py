@@ -63,10 +63,10 @@ class TestMem0MemoryManager:
         # Create dependencies for dependency injection
         from pathlib import Path
 
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         from cogniverse_foundation.config.utils import (
             create_default_config_manager,
         )
-        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         config_manager = create_default_config_manager()
         schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 

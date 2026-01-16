@@ -9,7 +9,6 @@ import logging
 from pathlib import Path
 
 import pytest
-from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
@@ -17,16 +16,27 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope="module")
-def temp_config_manager(tmp_path_factory):
+def temp_config_manager(vespa_instance, tmp_path_factory):
     """
-    Provide a temporary ConfigManager for test isolation.
+    Provide a temporary ConfigManager with real VespaConfigStore.
 
-    Scope is "module" because Vespa state persists across test classes in this module.
-    This ensures SchemaRegistry tracks all schemas deployed by any test class, preventing
-    Vespa schema-removal errors.
+    Uses VespaConfigStore connected to the test Vespa instance.
+    The config_metadata schema is automatically deployed as part of
+    VespaSchemaManager.upload_metadata_schemas() during backend initialization.
     """
-    tmp_path = tmp_path_factory.mktemp("config")
-    return create_default_config_manager(db_path=tmp_path / "test_config.db")
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_vespa.config.config_store import VespaConfigStore
+
+    http_port = vespa_instance["http_port"]
+    logger.info(f"Creating VespaConfigStore with http_port={http_port}")
+
+    store = VespaConfigStore(
+        vespa_url="http://localhost",
+        vespa_port=http_port,
+    )
+    logger.info(f"VespaConfigStore created, vespa_app URL: {store.vespa_app.url}")
+
+    return ConfigManager(store=store)
 
 
 @pytest.fixture(scope="module")

@@ -11,8 +11,11 @@ Tests:
 import json
 
 import pytest
-from cogniverse_foundation.config.unified_config import BackendConfig, BackendProfileConfig
-from cogniverse_foundation.config.utils import ConfigUtils, create_default_config_manager
+from cogniverse_foundation.config.unified_config import (
+    BackendConfig,
+    BackendProfileConfig,
+)
+from cogniverse_foundation.config.utils import ConfigUtils
 
 
 class TestBackendConfigDataclasses:
@@ -180,10 +183,9 @@ class TestConfigManagerBackendMethods:
     """Test ConfigManager backend configuration methods"""
 
     @pytest.fixture
-    def config_manager(self, tmp_path):
-        """Create ConfigManager with temp database"""
-        db_path = tmp_path / "test_config.db"
-        return create_default_config_manager(db_path=db_path)
+    def config_manager(self, config_manager_memory):
+        """Create ConfigManager with in-memory store for unit tests"""
+        return config_manager_memory
 
     def test_get_backend_config_default_empty(self, config_manager):
         """Test getting backend config returns empty config if not set"""
@@ -288,6 +290,16 @@ class TestConfigManagerBackendMethods:
 class TestConfigUtilsBackendConfig:
     """Test ConfigUtils backend config auto-discovery and merging"""
 
+    @pytest.fixture(autouse=True)
+    def setup_env(self, backend_config_env):
+        """Ensure backend environment is configured for all tests."""
+        pass
+
+    @pytest.fixture
+    def memory_config_manager(self, config_manager_memory):
+        """Provide in-memory config manager for unit tests."""
+        return config_manager_memory
+
     @pytest.fixture
     def temp_config_file(self, tmp_path):
         """Create a temporary config.json file"""
@@ -320,48 +332,47 @@ class TestConfigUtilsBackendConfig:
 
         return config_file
 
-    def test_auto_discovery_from_configs_dir(self, temp_config_file, tmp_path, monkeypatch):
+    def test_auto_discovery_from_configs_dir(
+        self, temp_config_file, tmp_path, monkeypatch, memory_config_manager
+    ):
         """Test auto-discovery finds config.json in configs/ directory"""
         # Change to temp directory so configs/config.json can be found
         monkeypatch.chdir(tmp_path)
 
-        config_manager = create_default_config_manager()
-        config_utils = ConfigUtils(tenant_id="default", config_manager=config_manager)
+        config_utils = ConfigUtils(tenant_id="default", config_manager=memory_config_manager)
         backend = config_utils.get("backend")
 
         assert backend is not None
         assert backend["type"] == "vespa"
         assert "system_profile" in backend["profiles"]
 
-    def test_system_and_tenant_merge(self, temp_config_file, tmp_path, monkeypatch):
+    def test_system_and_tenant_merge(
+        self, temp_config_file, tmp_path, monkeypatch, memory_config_manager
+    ):
         """Test merging system config with tenant overrides"""
         monkeypatch.chdir(tmp_path)
 
-        # Create ConfigManager with tenant-specific profile
-        db_path = tmp_path / "test_config.db"
-        config_manager = create_default_config_manager(db_path=db_path)
-
+        # Create tenant-specific profile
         tenant_profile = BackendProfileConfig(
             profile_name="tenant_profile",
             schema_name="tenant_schema",
             embedding_model="tenant/model",
         )
-        config_manager.add_backend_profile(tenant_profile, tenant_id="acme")
+        memory_config_manager.add_backend_profile(tenant_profile, tenant_id="acme")
 
         # Get merged config for acme tenant
-        config_utils = ConfigUtils(tenant_id="acme", config_manager=config_manager)
+        config_utils = ConfigUtils(tenant_id="acme", config_manager=memory_config_manager)
         backend = config_utils.get("backend")
 
         # Should have both system and tenant profiles
         assert "system_profile" in backend["profiles"]  # From config.json
         assert "tenant_profile" in backend["profiles"]  # From ConfigManager
 
-    def test_tenant_override_system_profile(self, temp_config_file, tmp_path, monkeypatch):
+    def test_tenant_override_system_profile(
+        self, temp_config_file, tmp_path, monkeypatch, memory_config_manager
+    ):
         """Test tenant overriding a system profile"""
         monkeypatch.chdir(tmp_path)
-
-        db_path = tmp_path / "test_config.db"
-        config_manager = create_default_config_manager(db_path=db_path)
 
         # Tenant wants to override system_profile
         overridden_profile = BackendProfileConfig(
@@ -369,9 +380,9 @@ class TestConfigUtilsBackendConfig:
             schema_name="tenant_custom_schema",
             embedding_model="tenant/custom-model",
         )
-        config_manager.add_backend_profile(overridden_profile, tenant_id="acme")
+        memory_config_manager.add_backend_profile(overridden_profile, tenant_id="acme")
 
-        config_utils = ConfigUtils(tenant_id="acme", config_manager=config_manager)
+        config_utils = ConfigUtils(tenant_id="acme", config_manager=memory_config_manager)
         backend = config_utils.get("backend")
 
         # Tenant profile should win

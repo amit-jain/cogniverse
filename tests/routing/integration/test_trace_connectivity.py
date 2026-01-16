@@ -16,7 +16,7 @@ import logging
 
 import pytest
 from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryConfig
-from cogniverse_foundation.telemetry.manager import TelemetryManager, NoOpSpan
+from cogniverse_foundation.telemetry.manager import NoOpSpan, TelemetryManager
 
 logger = logging.getLogger(__name__)
 

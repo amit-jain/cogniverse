@@ -167,7 +167,7 @@ class TestVespaBackendIngestion:
             VideoIngestionPipeline,
         )
 
-        config_manager = create_default_config_manager(db_path=tmp_path / "test_config.db")
+        config_manager = create_default_config_manager()
         config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
@@ -198,7 +198,7 @@ class TestVespaBackendIngestion:
             PipelineConfig,
             VideoIngestionPipeline,
         )
-        config_manager = create_default_config_manager(db_path=tmp_path / "test_config.db")
+        config_manager = create_default_config_manager()
         config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
@@ -226,7 +226,7 @@ class TestVespaBackendIngestion:
             PipelineConfig,
             VideoIngestionPipeline,
         )
-        config_manager = create_default_config_manager(db_path=tmp_path / "test_config.db")
+        config_manager = create_default_config_manager()
         config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
@@ -253,7 +253,7 @@ class TestVespaBackendIngestion:
             PipelineConfig,
             VideoIngestionPipeline,
         )
-        config_manager = create_default_config_manager(db_path=tmp_path / "test_config.db")
+        config_manager = create_default_config_manager()
         config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
         config.video_dir = vespa_test_videos[0].parent
         config.search_backend = "vespa"
@@ -305,7 +305,7 @@ class TestComprehensiveIngestion:
         results = {}
         for profile in profiles_to_test:
             try:
-                config_manager = create_default_config_manager(db_path=tmp_path / "test_config.db")
+                config_manager = create_default_config_manager()
                 config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
                 config.video_dir = all_test_videos[0].parent
                 config.search_backend = "vespa"
@@ -336,7 +336,7 @@ class TestComprehensiveIngestion:
             PipelineConfig,
             VideoIngestionPipeline,
         )
-        config_manager = create_default_config_manager(db_path=tmp_path / "test_config.db")
+        config_manager = create_default_config_manager()
         config = PipelineConfig.from_config(tenant_id="default", config_manager=config_manager)
         config.video_dir = all_test_videos[0].parent
         config.search_backend = "vespa"

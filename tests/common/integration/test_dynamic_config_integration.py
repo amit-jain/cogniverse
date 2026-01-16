@@ -25,9 +25,8 @@ class TestDynamicConfigIntegration:
         from cogniverse_foundation.config.utils import create_default_config_manager
         from fastapi import FastAPI
 
-        # Create temporary ConfigManager instance
-        temp_db = tmp_path / "test_config.db"
-        config_manager = create_default_config_manager(db_path=temp_db)
+        # Create ConfigManager instance with backend store
+        config_manager = create_default_config_manager()
 
         fresh_app = FastAPI()
         with patch("dspy.LM"):
@@ -36,7 +35,10 @@ class TestDynamicConfigIntegration:
             )
 
             # Reset to default PREDICT module for consistent tests
-            from cogniverse_foundation.config.agent_config import DSPyModuleType, ModuleConfig
+            from cogniverse_foundation.config.agent_config import (
+                DSPyModuleType,
+                ModuleConfig,
+            )
 
             default_module_config = ModuleConfig(
                 module_type=DSPyModuleType.PREDICT,

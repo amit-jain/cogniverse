@@ -20,8 +20,8 @@ def memory_manager(shared_memory_vespa):
 
     from pathlib import Path
 
-    from cogniverse_foundation.config.utils import create_default_config_manager
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.utils import create_default_config_manager
 
     manager = Mem0MemoryManager(tenant_id="test_tenant")
 
@@ -396,10 +396,10 @@ class TestMem0MemoryAwareMixinIntegration:
         from pathlib import Path
 
         from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         from cogniverse_foundation.config.utils import (
             create_default_config_manager,
         )
-        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
         # CRITICAL: Clear singletons FIRST before any initialization
         Mem0MemoryManager._instances.clear()

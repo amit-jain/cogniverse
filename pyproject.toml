@@ -57,7 +57,6 @@ dependencies = [
     "pdf2image>=1.17.0",
     "pypdf2>=3.0.1",
     "xgboost>=3.0.5",
-    "sqlite-vec>=0.1.6",
     "mem0ai>=0.1.118",
     "ollama>=0.6.0",
     "tabulate>=0.9.0",
