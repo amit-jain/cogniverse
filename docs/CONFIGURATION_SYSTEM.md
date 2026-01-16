@@ -9,7 +9,7 @@ Multi-tenant, versioned configuration system with pluggable storage backends for
 The configuration system provides centralized management for all system configurations with:
 - **Multi-tenant isolation**: Complete configuration separation per tenant
 - **Versioning**: Full history tracking with rollback capability
-- **Pluggable backends**: SQLite (default), Vespa, PostgreSQL, or custom
+- **Pluggable backends**: VespaConfigStore (default), or custom implementations via ConfigStore interface
 - **Hot reload**: Configuration changes apply immediately without restart
 - **Type-safe schemas**: Strongly typed configuration dataclasses
 - **DSPy integration**: Dynamic optimizer and module configuration
@@ -47,10 +47,10 @@ The configuration system provides centralized management for all system configur
 └───────────────────────────────────────────────────────┘
 
        Storage Backend Implementations:
-┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-│   SQLite     │ │    Vespa     │ │  PostgreSQL  │
-│ ConfigStore  │ │ ConfigStore  │ │ ConfigStore  │
-└──────────────┘ └──────────────┘ └──────────────┘
+┌──────────────────┐ ┌──────────────┐
+│ VespaConfigStore │ │    Custom    │
+│    (Default)     │ │ ConfigStore  │
+└──────────────────┘ └──────────────┘
 ```
 
 ## Configuration Scopes
@@ -146,63 +146,61 @@ config = manager.get_config(
 
 ## Storage Backends
 
-### SQLiteConfigStore (Default)
+### VespaConfigStore (Default)
 
-Local SQLite database for development and single-instance deployments.
+Unified configuration storage in Vespa alongside application data. This is the primary and recommended backend for production deployments.
 
 ```python
-from cogniverse_core.config.manager import get_config_manager
+from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_vespa.config.config_store import VespaConfigStore
 
-# Automatically uses SQLite at data/config/config.db
-manager = get_config_manager()
+# Initialize Vespa store (connects to Vespa backend)
+store = VespaConfigStore(
+    vespa_url="http://localhost",
+    vespa_port=8080
+)
+
+# Use with ConfigManager
+manager = ConfigManager(store=store)
 
 # Get system configuration
 system_config = manager.get_system_config(tenant_id="default")
 print(f"LLM: {system_config.llm_model}")
-print(f"Vespa: {system_config.vespa_url}")
+print(f"Backend: {system_config.backend_url}")
 ```
 
-**Features:**
-- Zero configuration setup
-- File-based persistence
-- Full ACID compliance
-- Migration path to PostgreSQL
-
-### VespaConfigStore
-
-Unified configuration storage in Vespa alongside application data.
-
+**Default Initialization:**
 ```python
-from vespa.application import Vespa
-from cogniverse_core.config.store import VespaConfigStore
-from cogniverse_core.config.manager import ConfigManager
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-# Initialize Vespa store
-vespa_app = Vespa(url="http://localhost:8080")
-vespa_store = VespaConfigStore(
-    vespa_app=vespa_app,
-    namespace="config_metadata",
-    document_type="configuration"
-)
-
-# Use with ConfigManager
-manager = ConfigManager(store=vespa_store)
+# Automatically uses VespaConfigStore with settings from environment
+# Reads BACKEND_URL and BACKEND_PORT from environment variables
+manager = create_default_config_manager()
 ```
 
 **Schema Deployment:**
-```bash
-# Deploy configuration schema
-vespa deploy --wait 300 schemas/config_metadata/
 
-# Verify deployment
-curl http://localhost:8080/ApplicationStatus | jq '.schemas'
+The `config_metadata` schema is automatically deployed as part of the metadata schemas when initializing a Vespa backend:
+
+```python
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
+schema_manager = VespaSchemaManager(
+    backend_endpoint="http://localhost",
+    backend_port=19071  # Config server port
+)
+
+# Deploys organization_metadata, tenant_metadata, config_metadata, adapter_registry
+schema_manager.upload_metadata_schemas(app_name="cogniverse")
 ```
 
 **Features:**
 - Leverages Vespa's HA/replication
-- Unified storage management
+- Unified storage with application data (no separate database)
 - Real-time configuration sync
 - Scales with Vespa cluster
+- Multi-tenant isolation via tenant_id field
+- Version tracking for configuration history
 
 ### Custom Backend Implementation
 
@@ -702,12 +700,18 @@ except VersionConflictError:
 ### Storage Backend Issues
 
 ```python
-# Fallback to local storage
+from cogniverse_vespa.config.config_store import VespaConfigStore
+from cogniverse_foundation.config.manager import ConfigManager
+
+# Ensure Vespa is available before creating ConfigManager
 try:
-    manager = ConfigManager(store=VespaConfigStore())
-except ConnectionError:
-    print("Vespa unavailable, using local SQLite")
-    manager = ConfigManager(store=SQLiteConfigStore())
+    store = VespaConfigStore(vespa_url="http://localhost", vespa_port=8080)
+    manager = ConfigManager(store=store)
+except ConnectionError as e:
+    raise RuntimeError(
+        f"Vespa backend unavailable: {e}. "
+        "Ensure Vespa is running and metadata schemas are deployed."
+    )
 ```
 
 ## Configuration Layer Details
