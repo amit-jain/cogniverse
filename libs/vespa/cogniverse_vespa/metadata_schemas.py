@@ -1,7 +1,7 @@
 """
 Vespa Metadata Schemas
 
-Single source of truth for organization and tenant metadata schemas.
+Single source of truth for metadata schemas loaded from JSON files.
 These schemas store multi-tenant management data in Vespa.
 
 Used by:
@@ -9,15 +9,99 @@ Used by:
 - VespaTestManager: For test isolation
 - Integration tests: For test setup
 
-DO NOT duplicate these definitions elsewhere - always import from this module.
+All schemas are defined in configs/schemas/*_schema.json files.
+DO NOT duplicate schema definitions - always use the JSON files as source of truth.
 """
 
-from vespa.package import Document, Field, Schema
+import logging
+from pathlib import Path
+from typing import Optional
+
+from vespa.package import Schema
+
+from cogniverse_vespa.json_schema_parser import JsonSchemaParser
+
+logger = logging.getLogger(__name__)
+
+# Default path to schema files - can be overridden for testing
+_SCHEMAS_DIR: Optional[Path] = None
+
+
+def get_schemas_dir() -> Path:
+    """
+    Get the path to the schemas directory.
+
+    Returns the configured path or auto-detects based on common locations.
+
+    Returns:
+        Path to configs/schemas directory
+    """
+    global _SCHEMAS_DIR
+    if _SCHEMAS_DIR is not None:
+        return _SCHEMAS_DIR
+
+    # Try to find configs/schemas relative to common locations
+    possible_paths = [
+        Path("configs/schemas"),  # Current directory
+        Path(__file__).parent.parent.parent.parent.parent / "configs" / "schemas",  # From libs/vespa/cogniverse_vespa/
+    ]
+
+    for path in possible_paths:
+        if path.exists():
+            _SCHEMAS_DIR = path.resolve()
+            logger.debug(f"Found schemas directory at: {_SCHEMAS_DIR}")
+            return _SCHEMAS_DIR
+
+    # Default to configs/schemas (will be created if needed)
+    _SCHEMAS_DIR = Path("configs/schemas").resolve()
+    return _SCHEMAS_DIR
+
+
+def set_schemas_dir(path: Path) -> None:
+    """
+    Set the path to the schemas directory.
+
+    Useful for testing or when running from non-standard locations.
+
+    Args:
+        path: Path to configs/schemas directory
+    """
+    global _SCHEMAS_DIR
+    _SCHEMAS_DIR = path.resolve()
+    logger.info(f"Schemas directory set to: {_SCHEMAS_DIR}")
+
+
+def _load_schema(schema_name: str) -> Schema:
+    """
+    Load a schema from its JSON file.
+
+    Args:
+        schema_name: Name of the schema (without _schema.json suffix)
+
+    Returns:
+        Schema object loaded from JSON file
+
+    Raises:
+        RuntimeError: If schema file cannot be loaded
+    """
+    schemas_dir = get_schemas_dir()
+    schema_file = schemas_dir / f"{schema_name}_schema.json"
+
+    if not schema_file.exists():
+        raise RuntimeError(
+            f"Schema file not found: {schema_file}. "
+            f"Ensure the schema JSON file exists in {schemas_dir}"
+        )
+
+    parser = JsonSchemaParser()
+    return parser.load_schema_from_json_file(str(schema_file))
 
 
 def create_organization_metadata_schema() -> Schema:
     """
     Create organization metadata schema.
+
+    Loads from configs/schemas/organization_metadata_schema.json.
 
     Stores organization-level information for multi-tenant management.
 
@@ -32,40 +116,14 @@ def create_organization_metadata_schema() -> Schema:
     Returns:
         Schema object ready for deployment
     """
-    return Schema(
-        name="organization_metadata",
-        document=Document(
-            fields=[
-                Field(
-                    name="org_id",
-                    type="string",
-                    indexing=["summary", "attribute"],
-                    attribute=["fast-search"],
-                ),
-                Field(name="org_name", type="string", indexing=["summary", "index"]),
-                Field(
-                    name="created_at", type="long", indexing=["summary", "attribute"]
-                ),
-                Field(
-                    name="created_by", type="string", indexing=["summary", "attribute"]
-                ),
-                Field(
-                    name="status",
-                    type="string",
-                    indexing=["summary", "attribute"],
-                    attribute=["fast-search"],
-                ),
-                Field(
-                    name="tenant_count", type="int", indexing=["summary", "attribute"]
-                ),
-            ]
-        ),
-    )
+    return _load_schema("organization_metadata")
 
 
 def create_tenant_metadata_schema() -> Schema:
     """
     Create tenant metadata schema.
+
+    Loads from configs/schemas/tenant_metadata_schema.json.
 
     Stores tenant-level information for multi-tenant management.
 
@@ -81,50 +139,14 @@ def create_tenant_metadata_schema() -> Schema:
     Returns:
         Schema object ready for deployment
     """
-    return Schema(
-        name="tenant_metadata",
-        document=Document(
-            fields=[
-                Field(
-                    name="tenant_full_id",
-                    type="string",
-                    indexing=["summary", "attribute"],
-                    attribute=["fast-search"],
-                ),
-                Field(
-                    name="org_id",
-                    type="string",
-                    indexing=["summary", "attribute"],
-                    attribute=["fast-search"],
-                ),
-                Field(
-                    name="tenant_name", type="string", indexing=["summary", "attribute"]
-                ),
-                Field(
-                    name="created_at", type="long", indexing=["summary", "attribute"]
-                ),
-                Field(
-                    name="created_by", type="string", indexing=["summary", "attribute"]
-                ),
-                Field(
-                    name="status",
-                    type="string",
-                    indexing=["summary", "attribute"],
-                    attribute=["fast-search"],
-                ),
-                Field(
-                    name="schemas_deployed",
-                    type="array<string>",
-                    indexing=["summary", "attribute"],
-                ),
-            ]
-        ),
-    )
+    return _load_schema("tenant_metadata")
 
 
 def create_config_metadata_schema() -> Schema:
     """
     Create config_metadata schema for VespaConfigStore.
+
+    Loads from configs/schemas/config_metadata_schema.json.
 
     Stores configuration key-value pairs for multi-tenant configuration management.
 
@@ -142,73 +164,14 @@ def create_config_metadata_schema() -> Schema:
     Returns:
         Schema object ready for deployment
     """
-    return Schema(
-        name="config_metadata",
-        document=Document(
-            fields=[
-                Field(
-                    name="config_id",
-                    type="string",
-                    indexing=["summary", "index", "attribute"],
-                    attribute=["fast-search"],
-                    match=["word"],
-                ),
-                Field(
-                    name="tenant_id",
-                    type="string",
-                    indexing=["summary", "index", "attribute"],
-                    attribute=["fast-search"],
-                    match=["word"],
-                ),
-                Field(
-                    name="scope",
-                    type="string",
-                    indexing=["summary", "index", "attribute"],
-                    attribute=["fast-search"],
-                    match=["word"],
-                ),
-                Field(
-                    name="service",
-                    type="string",
-                    indexing=["summary", "index", "attribute"],
-                    attribute=["fast-search"],
-                    match=["word"],
-                ),
-                Field(
-                    name="config_key",
-                    type="string",
-                    indexing=["summary", "index", "attribute"],
-                    match=["word"],
-                ),
-                Field(
-                    name="config_value",
-                    type="string",
-                    indexing=["summary"],
-                ),
-                Field(
-                    name="version",
-                    type="int",
-                    indexing=["summary", "attribute"],
-                    attribute=["fast-search"],
-                ),
-                Field(
-                    name="created_at",
-                    type="string",
-                    indexing=["summary", "attribute"],
-                ),
-                Field(
-                    name="updated_at",
-                    type="string",
-                    indexing=["summary", "attribute"],
-                ),
-            ]
-        ),
-    )
+    return _load_schema("config_metadata")
 
 
 def create_adapter_registry_schema() -> Schema:
     """
     Create adapter_registry schema for Model Registry.
+
+    Loads from configs/schemas/adapter_registry_schema.json.
 
     Stores metadata for trained LoRA adapters, enabling versioning, activation,
     and deployment to agents.
@@ -223,6 +186,7 @@ def create_adapter_registry_schema() -> Schema:
         agent_type: Target agent type (fast-search)
         training_method: Training method - "sft", "dpo", or "embedding"
         adapter_path: Filesystem path to adapter weights
+        adapter_uri: Cloud storage URI (s3://, gs://, hf://, file://)
         status: Adapter status - "active", "inactive", "deprecated" (fast-search)
         is_active: Boolean (0/1) for quick active adapter lookup (fast-search)
         metrics: JSON string with training metrics
@@ -234,104 +198,7 @@ def create_adapter_registry_schema() -> Schema:
     Returns:
         Schema object ready for deployment
     """
-    return Schema(
-        name="adapter_registry",
-        document=Document(
-            fields=[
-                Field(
-                    name="adapter_id",
-                    type="string",
-                    indexing=["summary", "attribute"],
-                    attribute=["fast-search"],
-                ),
-                Field(
-                    name="tenant_id",
-                    type="string",
-                    indexing=["summary", "attribute"],
-                    attribute=["fast-search"],
-                ),
-                Field(
-                    name="name",
-                    type="string",
-                    indexing=["summary", "attribute"],
-                ),
-                Field(
-                    name="version",
-                    type="string",
-                    indexing=["summary", "attribute"],
-                ),
-                Field(
-                    name="base_model",
-                    type="string",
-                    indexing=["summary", "attribute"],
-                ),
-                Field(
-                    name="model_type",
-                    type="string",
-                    indexing=["summary", "attribute"],
-                    attribute=["fast-search"],
-                ),
-                Field(
-                    name="agent_type",
-                    type="string",
-                    indexing=["summary", "attribute"],
-                    attribute=["fast-search"],
-                ),
-                Field(
-                    name="training_method",
-                    type="string",
-                    indexing=["summary", "attribute"],
-                ),
-                Field(
-                    name="adapter_path",
-                    type="string",
-                    indexing=["summary"],
-                ),
-                Field(
-                    name="adapter_uri",
-                    type="string",
-                    indexing=["summary"],
-                ),
-                Field(
-                    name="status",
-                    type="string",
-                    indexing=["summary", "attribute"],
-                    attribute=["fast-search"],
-                ),
-                Field(
-                    name="is_active",
-                    type="int",
-                    indexing=["summary", "attribute"],
-                    attribute=["fast-search"],
-                ),
-                Field(
-                    name="metrics",
-                    type="string",
-                    indexing=["summary"],
-                ),
-                Field(
-                    name="training_config",
-                    type="string",
-                    indexing=["summary"],
-                ),
-                Field(
-                    name="experiment_run_id",
-                    type="string",
-                    indexing=["summary", "attribute"],
-                ),
-                Field(
-                    name="created_at",
-                    type="string",
-                    indexing=["summary", "attribute"],
-                ),
-                Field(
-                    name="updated_at",
-                    type="string",
-                    indexing=["summary", "attribute"],
-                ),
-            ]
-        ),
-    )
+    return _load_schema("adapter_registry")
 
 
 def add_metadata_schemas_to_package(app_package) -> None:

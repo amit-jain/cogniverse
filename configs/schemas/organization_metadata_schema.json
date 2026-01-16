@@ -1,0 +1,54 @@
+{
+  "name": "organization_metadata",
+  "document": {
+    "name": "organization_metadata",
+    "fields": [
+      {
+        "name": "org_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "org_name",
+        "type": "string",
+        "indexing": ["summary", "index"]
+      },
+      {
+        "name": "created_at",
+        "type": "long",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "created_by",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "status",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "tenant_count",
+        "type": "int",
+        "indexing": ["summary", "attribute"]
+      }
+    ]
+  },
+  "fieldsets": [
+    {
+      "name": "default",
+      "fields": ["org_id", "org_name", "status"]
+    }
+  ],
+  "rank_profiles": [
+    {
+      "name": "default",
+      "first_phase": {
+        "expression": "attribute(tenant_count)"
+      }
+    }
+  ]
+}

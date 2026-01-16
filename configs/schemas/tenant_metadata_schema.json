@@ -1,0 +1,60 @@
+{
+  "name": "tenant_metadata",
+  "document": {
+    "name": "tenant_metadata",
+    "fields": [
+      {
+        "name": "tenant_full_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "org_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "tenant_name",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "created_at",
+        "type": "long",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "created_by",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "status",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "schemas_deployed",
+        "type": "array<string>",
+        "indexing": ["summary", "attribute"]
+      }
+    ]
+  },
+  "fieldsets": [
+    {
+      "name": "default",
+      "fields": ["tenant_full_id", "org_id", "tenant_name", "status"]
+    }
+  ],
+  "rank_profiles": [
+    {
+      "name": "default",
+      "first_phase": {
+        "expression": "1"
+      }
+    }
+  ]
+}
