@@ -613,9 +613,9 @@ class VespaConfigStore(ConfigStore):
             Dictionary with storage statistics
         """
         try:
-            # Count total configs (distinct config_ids)
+            # Select all fields needed for stats
             yql_total = (
-                f"select config_id from {self.schema_name} where true limit 400"
+                f"select config_id, tenant_id, scope from {self.schema_name} where true limit 400"
             )
             response = self.vespa_app.query(yql=yql_total)
 

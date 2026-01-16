@@ -1,0 +1,114 @@
+{
+  "name": "adapter_registry",
+  "document": {
+    "name": "adapter_registry",
+    "fields": [
+      {
+        "name": "adapter_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "tenant_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "version",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "base_model",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "model_type",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "agent_type",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "training_method",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "adapter_path",
+        "type": "string",
+        "indexing": ["summary"]
+      },
+      {
+        "name": "adapter_uri",
+        "type": "string",
+        "indexing": ["summary"],
+        "comment": "Cloud storage URI (s3://, gs://, modal://, file://)"
+      },
+      {
+        "name": "status",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "is_active",
+        "type": "int",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "metrics",
+        "type": "string",
+        "indexing": ["summary"]
+      },
+      {
+        "name": "training_config",
+        "type": "string",
+        "indexing": ["summary"]
+      },
+      {
+        "name": "experiment_run_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "created_at",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "updated_at",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      }
+    ]
+  },
+  "fieldsets": [
+    {
+      "name": "default",
+      "fields": ["adapter_id", "tenant_id", "name", "agent_type", "status"]
+    }
+  ],
+  "rank_profiles": [
+    {
+      "name": "default",
+      "first_phase": {
+        "expression": "attribute(is_active)"
+      }
+    }
+  ]
+}

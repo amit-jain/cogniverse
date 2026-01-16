@@ -60,29 +60,24 @@ class TestTenantManagerAPI:
         """Create class-scoped ConfigManager"""
         from cogniverse_core.registries.backend_registry import BackendRegistry
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_foundation.config.manager import ConfigManager
         from cogniverse_foundation.config.unified_config import SystemConfig
-        from cogniverse_foundation.config.utils import create_default_config_manager
+        from cogniverse_vespa.config.config_store import VespaConfigStore
 
         wait_for_vespa_indexing(delay=1, description="Vespa startup")
 
-        # Create ConfigManager with backend store
-        config_manager = create_default_config_manager()
-
-        # Set system config pointing to test Vespa
-        logger.info(f"Setting up config with Vespa on port {vespa_backend.http_port} (config port {vespa_backend.config_port})")
-        system_config = SystemConfig(
-            tenant_id="system",
-            backend_url="http://localhost",
-            backend_port=vespa_backend.http_port,
+        # Create ConfigManager with VespaConfigStore pointing to test Docker container
+        store = VespaConfigStore(
+            vespa_url="http://localhost",
+            vespa_port=vespa_backend.http_port,
         )
-        config_manager.set_system_config(system_config)
-        logger.info(f"System config set: backend_port={system_config.backend_port}")
+        config_manager = ConfigManager(store=store)
 
-        # Deploy metadata schemas using upload_metadata_schemas()
-        # This uses the old schema definitions that are compatible with existing deployments
+        # FIRST: Deploy metadata schemas via backend initialization
+        # This must happen BEFORE set_system_config() which writes to config_metadata schema
         schema_loader = FilesystemSchemaLoader(vespa_backend.test_schemas_resource_dir)
         logger.info(f"Creating backend for system tenant on port {vespa_backend.http_port}")
-        backend = BackendRegistry.get_instance().get_ingestion_backend(
+        BackendRegistry.get_instance().get_ingestion_backend(
             name="vespa",
             tenant_id="system",
             config={
@@ -95,15 +90,24 @@ class TestTenantManagerAPI:
             config_manager=config_manager,
             schema_loader=schema_loader,
         )
-        logger.info("Backend created successfully")
+        logger.info("Backend created successfully - metadata schemas deployed")
 
-        # Metadata schemas are now deployed automatically during backend initialization
         # Wait for Vespa to be ready and for schemas to be fully activated
         from tests.utils.vespa_health import wait_for_vespa_ready
         wait_for_vespa_ready(port=vespa_backend.http_port, max_timeout=30)
 
         # Additional wait for metadata schema activation
         wait_for_vespa_indexing(delay=3, description="metadata schema activation")
+
+        # NOW set system config (schemas are deployed, config_metadata exists)
+        logger.info(f"Setting up config with Vespa on port {vespa_backend.http_port} (config port {vespa_backend.config_port})")
+        system_config = SystemConfig(
+            tenant_id="system",
+            backend_url="http://localhost",
+            backend_port=vespa_backend.http_port,
+        )
+        config_manager.set_system_config(system_config)
+        logger.info(f"System config set: backend_port={system_config.backend_port}")
 
         yield config_manager
 

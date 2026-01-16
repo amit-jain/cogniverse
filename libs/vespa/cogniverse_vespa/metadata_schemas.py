@@ -206,12 +206,140 @@ def create_config_metadata_schema() -> Schema:
     )
 
 
+def create_adapter_registry_schema() -> Schema:
+    """
+    Create adapter_registry schema for Model Registry.
+
+    Stores metadata for trained LoRA adapters, enabling versioning, activation,
+    and deployment to agents.
+
+    Fields:
+        adapter_id: Unique adapter identifier (fast-search)
+        tenant_id: Tenant identifier for multi-tenancy (fast-search)
+        name: Human-readable adapter name
+        version: Semantic version string
+        base_model: Base model the adapter was trained on
+        model_type: Type of model - "llm" or "embedding" (fast-search)
+        agent_type: Target agent type (fast-search)
+        training_method: Training method - "sft", "dpo", or "embedding"
+        adapter_path: Filesystem path to adapter weights
+        status: Adapter status - "active", "inactive", "deprecated" (fast-search)
+        is_active: Boolean (0/1) for quick active adapter lookup (fast-search)
+        metrics: JSON string with training metrics
+        training_config: JSON string with training configuration
+        experiment_run_id: MLflow experiment run ID
+        created_at: Creation timestamp
+        updated_at: Last update timestamp
+
+    Returns:
+        Schema object ready for deployment
+    """
+    return Schema(
+        name="adapter_registry",
+        document=Document(
+            fields=[
+                Field(
+                    name="adapter_id",
+                    type="string",
+                    indexing=["summary", "attribute"],
+                    attribute=["fast-search"],
+                ),
+                Field(
+                    name="tenant_id",
+                    type="string",
+                    indexing=["summary", "attribute"],
+                    attribute=["fast-search"],
+                ),
+                Field(
+                    name="name",
+                    type="string",
+                    indexing=["summary", "attribute"],
+                ),
+                Field(
+                    name="version",
+                    type="string",
+                    indexing=["summary", "attribute"],
+                ),
+                Field(
+                    name="base_model",
+                    type="string",
+                    indexing=["summary", "attribute"],
+                ),
+                Field(
+                    name="model_type",
+                    type="string",
+                    indexing=["summary", "attribute"],
+                    attribute=["fast-search"],
+                ),
+                Field(
+                    name="agent_type",
+                    type="string",
+                    indexing=["summary", "attribute"],
+                    attribute=["fast-search"],
+                ),
+                Field(
+                    name="training_method",
+                    type="string",
+                    indexing=["summary", "attribute"],
+                ),
+                Field(
+                    name="adapter_path",
+                    type="string",
+                    indexing=["summary"],
+                ),
+                Field(
+                    name="adapter_uri",
+                    type="string",
+                    indexing=["summary"],
+                ),
+                Field(
+                    name="status",
+                    type="string",
+                    indexing=["summary", "attribute"],
+                    attribute=["fast-search"],
+                ),
+                Field(
+                    name="is_active",
+                    type="int",
+                    indexing=["summary", "attribute"],
+                    attribute=["fast-search"],
+                ),
+                Field(
+                    name="metrics",
+                    type="string",
+                    indexing=["summary"],
+                ),
+                Field(
+                    name="training_config",
+                    type="string",
+                    indexing=["summary"],
+                ),
+                Field(
+                    name="experiment_run_id",
+                    type="string",
+                    indexing=["summary", "attribute"],
+                ),
+                Field(
+                    name="created_at",
+                    type="string",
+                    indexing=["summary", "attribute"],
+                ),
+                Field(
+                    name="updated_at",
+                    type="string",
+                    indexing=["summary", "attribute"],
+                ),
+            ]
+        ),
+    )
+
+
 def add_metadata_schemas_to_package(app_package) -> None:
     """
     Add all metadata schemas to an ApplicationPackage.
 
     This is the recommended way to include metadata schemas in deployments.
-    Includes organization, tenant, and config metadata schemas.
+    Includes organization, tenant, config metadata, and adapter registry schemas.
 
     Args:
         app_package: ApplicationPackage instance to add schemas to
@@ -220,8 +348,10 @@ def add_metadata_schemas_to_package(app_package) -> None:
         >>> from vespa.package import ApplicationPackage
         >>> app_package = ApplicationPackage(name="cogniverse")
         >>> add_metadata_schemas_to_package(app_package)
-        >>> # Now app_package has organization_metadata, tenant_metadata, and config_metadata schemas
+        >>> # Now app_package has organization_metadata, tenant_metadata,
+        >>> # config_metadata, and adapter_registry schemas
     """
     app_package.add_schema(create_organization_metadata_schema())
     app_package.add_schema(create_tenant_metadata_schema())
     app_package.add_schema(create_config_metadata_schema())
+    app_package.add_schema(create_adapter_registry_schema())

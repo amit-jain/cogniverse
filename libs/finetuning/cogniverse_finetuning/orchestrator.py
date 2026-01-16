@@ -156,6 +156,14 @@ class OrchestrationConfig:
     evaluate_after_training: bool = True  # Auto-evaluate adapter
     test_set_size: int = 50  # Number of test examples
 
+    # Registry
+    enable_registry: bool = True  # Register adapters in the registry
+    adapter_version: str = "1.0.0"  # Version for registered adapter
+
+    # Storage
+    adapter_storage_uri: Optional[str] = None  # Storage URI to upload adapters (hf://org/repo, file://, etc.)
+    hf_token: Optional[str] = None  # HuggingFace token for hf:// storage
+
     # Output
     output_dir: str = "outputs/adapters"
 
@@ -173,6 +181,8 @@ class OrchestrationResult:
     used_synthetic: bool
     synthetic_approval_count: Optional[int] = None
     evaluation_result: Optional[Any] = None  # ComparisonResult from evaluation
+    adapter_id: Optional[str] = None  # Registry adapter ID (if registered)
+    adapter_uri: Optional[str] = None  # Storage URI where adapter was uploaded
 
 
 class FinetuningOrchestrator:
@@ -185,7 +195,8 @@ class FinetuningOrchestrator:
     3. Generate synthetic if needed (with mandatory approval)
     4. Extract and format dataset
     5. Train with LoRA
-    6. Return adapter and metrics
+    6. Register adapter in registry (optional)
+    7. Return adapter and metrics
     """
 
     def __init__(
@@ -193,6 +204,7 @@ class FinetuningOrchestrator:
         telemetry_provider: TelemetryProvider,
         synthetic_service: Optional[any] = None,
         approval_orchestrator: Optional[any] = None,
+        registry: Optional[any] = None,
     ):
         """
         Initialize orchestrator.
@@ -201,10 +213,128 @@ class FinetuningOrchestrator:
             telemetry_provider: TelemetryProvider for querying spans/annotations
             synthetic_service: Optional SyntheticDataService for data generation
             approval_orchestrator: Optional ApprovalOrchestrator for human approval
+            registry: Optional AdapterRegistry for adapter registration
         """
         self.provider = telemetry_provider
         self.synthetic_service = synthetic_service
         self.approval_orchestrator = approval_orchestrator
+        self.registry = registry
+
+    def _upload_adapter_to_storage(
+        self,
+        config: "OrchestrationConfig",
+        result: "OrchestrationResult",
+    ) -> Optional[str]:
+        """
+        Upload adapter to storage if configured.
+
+        Args:
+            config: Orchestration configuration
+            result: Training result with adapter_path
+
+        Returns:
+            Final storage URI or None if upload not configured/failed
+        """
+        if not config.adapter_storage_uri:
+            return None
+
+        try:
+            from cogniverse_finetuning.registry import upload_adapter
+
+            # Build destination URI with adapter-specific path
+            # e.g., hf://myorg/adapters -> hf://myorg/adapters/sft_routing_v1.0.0
+            name_parts = [result.training_method]
+            if config.agent_type:
+                name_parts.append(config.agent_type)
+            elif config.modality:
+                name_parts.append(config.modality)
+            name_parts.append(f"v{config.adapter_version}")
+            adapter_name = "_".join(name_parts)
+
+            base_uri = config.adapter_storage_uri.rstrip("/")
+            destination_uri = f"{base_uri}/{adapter_name}"
+
+            logger.info(f"Uploading adapter to storage: {destination_uri}")
+            final_uri = upload_adapter(result.adapter_path, destination_uri)
+            logger.info(f"Adapter uploaded successfully: {final_uri}")
+
+            return final_uri
+
+        except Exception as e:
+            logger.error(f"Failed to upload adapter to storage: {e}")
+            return None
+
+    def _register_adapter(
+        self,
+        config: "OrchestrationConfig",
+        result: "OrchestrationResult",
+        run_id: str,
+    ) -> Optional[str]:
+        """
+        Register adapter in the registry.
+
+        Uploads to storage first if configured, then registers with storage URI.
+
+        Args:
+            config: Orchestration configuration
+            result: Training result
+            run_id: Experiment run ID
+
+        Returns:
+            adapter_id if registered, None if registry disabled
+        """
+        if not config.enable_registry:
+            return None
+
+        if self.registry is None:
+            try:
+                from cogniverse_finetuning.registry import AdapterRegistry
+                self.registry = AdapterRegistry()
+            except Exception as e:
+                logger.warning(f"Failed to initialize registry: {e}")
+                return None
+
+        try:
+            # Upload to storage if configured
+            adapter_uri = self._upload_adapter_to_storage(config, result)
+            if adapter_uri:
+                result.adapter_uri = adapter_uri
+
+            # Generate adapter name from config
+            name_parts = [result.training_method]
+            if config.agent_type:
+                name_parts.append(config.agent_type)
+            elif config.modality:
+                name_parts.append(config.modality)
+            adapter_name = "_".join(name_parts)
+
+            adapter_id = self.registry.register_adapter(
+                tenant_id=config.tenant_id,
+                name=adapter_name,
+                version=config.adapter_version,
+                base_model=config.base_model,
+                model_type=config.model_type,
+                training_method=result.training_method,
+                adapter_path=result.adapter_path,
+                adapter_uri=adapter_uri,  # Include storage URI
+                agent_type=config.agent_type,
+                metrics=result.metrics,
+                training_config={
+                    "epochs": config.epochs,
+                    "batch_size": config.batch_size,
+                    "learning_rate": config.learning_rate,
+                    "use_lora": config.use_lora,
+                    "backend": config.backend,
+                },
+                experiment_run_id=run_id,
+            )
+
+            logger.info(f"Registered adapter in registry: {adapter_id}")
+            return adapter_id
+
+        except Exception as e:
+            logger.error(f"Failed to register adapter: {e}")
+            return None
 
     def _log_experiment_to_phoenix(
         self,
@@ -490,6 +620,7 @@ class FinetuningOrchestrator:
                     # Continue without evaluation
 
             # Log experiment to Phoenix
+            run_id = f"run_{datetime.utcnow().isoformat()}"
             self._log_experiment_to_phoenix(
                 config=config,
                 result=orchestration_result,
@@ -497,6 +628,10 @@ class FinetuningOrchestrator:
                 approved_batch=approved_batch,
                 formatted_dataset=formatted_dataset,
             )
+
+            # Register adapter in registry
+            adapter_id = self._register_adapter(config, orchestration_result, run_id)
+            orchestration_result.adapter_id = adapter_id
 
             return orchestration_result
 
@@ -580,6 +715,7 @@ class FinetuningOrchestrator:
                     # Continue without evaluation
 
             # Log experiment to Phoenix
+            run_id = f"run_{datetime.utcnow().isoformat()}"
             self._log_experiment_to_phoenix(
                 config=config,
                 result=orchestration_result,
@@ -587,6 +723,10 @@ class FinetuningOrchestrator:
                 approved_batch=approved_batch,
                 formatted_dataset=formatted_dataset,
             )
+
+            # Register adapter in registry
+            adapter_id = self._register_adapter(config, orchestration_result, run_id)
+            orchestration_result.adapter_id = adapter_id
 
             return orchestration_result
 
@@ -667,6 +807,7 @@ class FinetuningOrchestrator:
         )
 
         # Log experiment to Phoenix
+        run_id = f"run_{datetime.utcnow().isoformat()}"
         self._log_experiment_to_phoenix(
             config=config,
             result=orchestration_result,
@@ -674,6 +815,10 @@ class FinetuningOrchestrator:
             approved_batch=None,
             formatted_dataset=formatted_dataset,
         )
+
+        # Register adapter in registry
+        adapter_id = self._register_adapter(config, orchestration_result, run_id)
+        orchestration_result.adapter_id = adapter_id
 
         return orchestration_result
 

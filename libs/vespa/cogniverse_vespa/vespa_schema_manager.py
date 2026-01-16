@@ -1094,6 +1094,7 @@ class VespaSchemaManager:
         Deploy organization and tenant metadata schemas for multi-tenant management.
 
         These schemas store org/tenant metadata and are used by the tenant management API.
+        Schema definitions are imported from metadata_schemas.py (single source of truth).
 
         IMPORTANT: This method is schema-aware and preserves existing tenant schemas
         to avoid Vespa schema-removal errors. It queries SchemaRegistry for deployed
@@ -1103,175 +1104,29 @@ class VespaSchemaManager:
             app_name: Name of the application (default: "videosearch" to match standard app name)
         """
         try:
-            from vespa.package import (
-                ApplicationPackage,
-                Document,
-                Field,
-                Schema,
+            from vespa.package import ApplicationPackage
+
+            from cogniverse_vespa.metadata_schemas import (
+                create_adapter_registry_schema,
+                create_config_metadata_schema,
+                create_organization_metadata_schema,
+                create_tenant_metadata_schema,
             )
 
-            # Organization metadata schema
-            organization_metadata_schema = Schema(
-                name='organization_metadata',
-                document=Document(
-                    fields=[
-                        Field(
-                            name='org_id',
-                            type='string',
-                            indexing=['summary', 'attribute'],
-                            attribute=['fast-search']
-                        ),
-                        Field(
-                            name='org_name',
-                            type='string',
-                            indexing=['summary', 'index']
-                        ),
-                        Field(
-                            name='created_at',
-                            type='long',
-                            indexing=['summary', 'attribute']
-                        ),
-                        Field(
-                            name='created_by',
-                            type='string',
-                            indexing=['summary', 'attribute']
-                        ),
-                        Field(
-                            name='status',
-                            type='string',
-                            indexing=['summary', 'attribute'],
-                            attribute=['fast-search']
-                        ),
-                        Field(
-                            name='tenant_count',
-                            type='int',
-                            indexing=['summary', 'attribute']
-                        ),
-                    ]
-                )
-            )
-
-            # Tenant metadata schema
-            tenant_metadata_schema = Schema(
-                name='tenant_metadata',
-                document=Document(
-                    fields=[
-                        Field(
-                            name='tenant_full_id',
-                            type='string',
-                            indexing=['summary', 'attribute'],
-                            attribute=['fast-search']
-                        ),
-                        Field(
-                            name='org_id',
-                            type='string',
-                            indexing=['summary', 'attribute'],
-                            attribute=['fast-search']
-                        ),
-                        Field(
-                            name='tenant_name',
-                            type='string',
-                            indexing=['summary', 'attribute']
-                        ),
-                        Field(
-                            name='created_at',
-                            type='long',
-                            indexing=['summary', 'attribute']
-                        ),
-                        Field(
-                            name='created_by',
-                            type='string',
-                            indexing=['summary', 'attribute']
-                        ),
-                        Field(
-                            name='status',
-                            type='string',
-                            indexing=['summary', 'attribute'],
-                            attribute=['fast-search']
-                        ),
-                        Field(
-                            name='schemas_deployed',
-                            type='array<string>',
-                            indexing=['summary', 'attribute']
-                        ),
-                    ]
-                )
-            )
-
-            # Config metadata schema (for VespaConfigStore)
-            config_metadata_schema = Schema(
-                name='config_metadata',
-                document=Document(
-                    fields=[
-                        Field(
-                            name='config_id',
-                            type='string',
-                            indexing=['summary', 'index', 'attribute'],
-                            attribute=['fast-search'],
-                            match=['word']
-                        ),
-                        Field(
-                            name='tenant_id',
-                            type='string',
-                            indexing=['summary', 'index', 'attribute'],
-                            attribute=['fast-search'],
-                            match=['word']
-                        ),
-                        Field(
-                            name='scope',
-                            type='string',
-                            indexing=['summary', 'index', 'attribute'],
-                            attribute=['fast-search'],
-                            match=['word']
-                        ),
-                        Field(
-                            name='service',
-                            type='string',
-                            indexing=['summary', 'index', 'attribute'],
-                            attribute=['fast-search'],
-                            match=['word']
-                        ),
-                        Field(
-                            name='config_key',
-                            type='string',
-                            indexing=['summary', 'index', 'attribute'],
-                            match=['word']
-                        ),
-                        Field(
-                            name='config_value',
-                            type='string',
-                            indexing=['summary']
-                        ),
-                        Field(
-                            name='version',
-                            type='int',
-                            indexing=['summary', 'attribute'],
-                            attribute=['fast-search']
-                        ),
-                        Field(
-                            name='created_at',
-                            type='string',
-                            indexing=['summary', 'attribute']
-                        ),
-                        Field(
-                            name='updated_at',
-                            type='string',
-                            indexing=['summary', 'attribute']
-                        ),
-                    ]
-                )
-            )
+            # Get metadata schemas from centralized definitions
+            metadata_schemas = [
+                create_organization_metadata_schema(),
+                create_tenant_metadata_schema(),
+                create_config_metadata_schema(),
+                create_adapter_registry_schema(),
+            ]
 
             # Get existing tenant schemas from SchemaRegistry
             existing_schemas = self._get_existing_tenant_schemas()
 
             # Build complete schema list: metadata + existing tenant schemas
             # This prevents Vespa schema-removal errors when tenant schemas already exist
-            all_schemas = [
-                organization_metadata_schema,
-                tenant_metadata_schema,
-                config_metadata_schema,
-            ] + existing_schemas
+            all_schemas = metadata_schemas + existing_schemas
 
             # Deploy all schemas together
             app_package = ApplicationPackage(
@@ -1287,7 +1142,10 @@ class VespaSchemaManager:
                     f"(preserved {len(existing_schemas)} tenant schemas)"
                 )
             else:
-                self._logger.info("Successfully deployed organization, tenant, and config metadata schemas")
+                self._logger.info(
+                    "Successfully deployed metadata schemas: "
+                    "organization_metadata, tenant_metadata, config_metadata, adapter_registry"
+                )
 
         except Exception as e:
             self._logger.error(f"Failed to deploy metadata schemas: {str(e)}")
