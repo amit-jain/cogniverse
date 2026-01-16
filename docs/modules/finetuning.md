@@ -427,6 +427,127 @@ class TrainingBackend(ABC):
 - **DPO**: `{"prompt": "...", "chosen": "...", "rejected": "..."}`
 - **Triplets**: `{"anchor": "...", "positive": "...", "negative": "..."}`
 
+### 5. Adapter Registry (`registry/`)
+
+**Purpose**: Manage trained LoRA adapters with versioning, activation, and deployment capabilities.
+
+The Adapter Registry provides complete lifecycle management for trained adapters, storing metadata in Vespa for multi-tenant support and enabling seamless integration with inference systems.
+
+#### Key Components
+
+| Component | File | Description |
+|-----------|------|-------------|
+| `AdapterRegistry` | `adapter_registry.py` | Main interface for adapter lifecycle management |
+| `AdapterMetadata` | `models.py` | Data model for adapter metadata |
+| `VespaAdapterStore` | `libs/vespa/.../adapter_store.py` | Vespa-backed storage for adapter metadata |
+| `LocalStorage` | `storage.py` | Local filesystem storage backend |
+| `HuggingFaceStorage` | `storage.py` | HuggingFace Hub storage backend |
+| Inference Helpers | `inference.py` | vLLM integration utilities |
+
+#### Core Features
+
+**Registration & Versioning**:
+```python
+from cogniverse_finetuning.registry import AdapterRegistry, AdapterMetadata
+
+registry = AdapterRegistry()
+
+# Register a trained adapter
+adapter_id = registry.register_adapter(
+    tenant_id="acme_corp",
+    name="routing_sft",
+    version="1.0.0",
+    base_model="SmolLM-135M",
+    model_type="llm",
+    training_method="sft",
+    adapter_path="outputs/adapters/sft_routing_20251116/",
+    agent_type="routing",
+    metrics={"eval_loss": 0.15, "accuracy": 0.92}
+)
+```
+
+**Activation & Deployment**:
+```python
+# Activate adapter for use by agents
+registry.activate_adapter(adapter_id)
+
+# Get active adapter for a specific agent type
+active = registry.get_active_adapter("acme_corp", "routing")
+print(f"Active adapter: {active.adapter_path}")
+```
+
+**Storage Backends**:
+```python
+from cogniverse_finetuning.registry import upload_adapter, download_adapter
+
+# Upload to HuggingFace Hub
+upload_adapter(
+    local_path="outputs/adapters/sft_routing/",
+    destination_uri="hf://myorg/my-adapter",
+    hf_token="hf_xxx"
+)
+
+# Download from HuggingFace Hub
+local_path = download_adapter(
+    source_uri="hf://myorg/my-adapter",
+    local_dir="/tmp/adapters/"
+)
+```
+
+**Inference Integration** (vLLM):
+```python
+from cogniverse_finetuning.registry import (
+    get_active_adapter_for_inference,
+    resolve_adapter_path
+)
+
+# Get active adapter info for vLLM
+adapter_info = get_active_adapter_for_inference("acme_corp", "routing")
+if adapter_info:
+    # Configure vLLM with the adapter
+    engine = LLMEngine(
+        model=adapter_info.base_model,
+        enable_lora=True,
+        lora_modules=[LoRARequest(
+            lora_name=adapter_info.name,
+            lora_path=resolve_adapter_path(adapter_info.adapter_uri)
+        )]
+    )
+```
+
+#### Orchestrator Integration
+
+When `enable_registry=True`, the orchestrator automatically registers adapters after training:
+
+```python
+config = OrchestrationConfig(
+    tenant_id="acme_corp",
+    agent_type="routing",
+    enable_registry=True,           # Auto-register after training
+    adapter_version="1.0.0",        # Version for registered adapter
+    adapter_storage_uri="hf://org/repo"  # Optional: upload to HuggingFace
+)
+
+result = orchestrator.train_sft(config)
+print(f"Registered adapter: {result.adapter_id}")
+print(f"Storage URI: {result.adapter_uri}")
+```
+
+#### Agent Integration
+
+Agents can use `AdapterAwareMixin` to automatically load fine-tuned adapters:
+
+```python
+from cogniverse_agents import AdapterAwareMixin, get_active_adapter_path
+
+class RoutingAgent(AdapterAwareMixin):
+    def __init__(self, tenant_id: str):
+        self.tenant_id = tenant_id
+        adapter_path = self.load_adapter_if_available("routing")
+        if adapter_path:
+            self.model = self._load_with_adapter(adapter_path)
+```
+
 ---
 
 ## Data Flow
