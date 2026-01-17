@@ -26,6 +26,8 @@ from cogniverse_evaluation.plugins.document_analyzer import (
 from cogniverse_evaluation.plugins.video_analyzer import VideoSchemaAnalyzer
 
 
+@pytest.mark.integration
+@pytest.mark.ci_fast
 class TestSchemaAnalyzerIntegration:
     """Test that schema analyzers correctly identify and process different schemas."""
 
@@ -108,6 +110,8 @@ class TestSchemaAnalyzerIntegration:
         assert analyzer.get_expected_field_name() == "expected_items"
 
 
+@pytest.mark.integration
+@pytest.mark.ci_fast
 class TestScorerIntegration:
     """Test that scorers work correctly with different schemas."""
 

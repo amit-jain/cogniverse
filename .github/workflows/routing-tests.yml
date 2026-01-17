@@ -102,29 +102,61 @@ jobs:
         if-no-files-found: warn
 
 
-  integration-tests:
+  fast-integration-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     needs: unit-tests
-    
+
     steps:
     - uses: actions/checkout@v3
-    
+
     - name: Set up Python 3.12
       uses: actions/setup-python@v4
       with:
         python-version: '3.12'
-    
+
     - name: Install uv
       run: |
         curl -LsSf https://astral.sh/uv/install.sh | sh
         echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-    
+
     - name: Install dependencies
       run: |
         uv sync --all-packages --all-extras
         uv pip install pytest-cov
-    
+
+    - name: Run fast integration tests (ci_fast)
+      env:
+        MOCK_LLM_RESPONSES: "true"
+      run: |
+        echo "🧪 Running CI fast integration tests..."
+        uv run python -m pytest tests/routing/integration -m "ci_fast" \
+          -v --tb=short || true
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: unit-tests
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras
+        uv pip install pytest-cov
+
     - name: Run routing integration tests
       env:
         MOCK_LLM_RESPONSES: "true"

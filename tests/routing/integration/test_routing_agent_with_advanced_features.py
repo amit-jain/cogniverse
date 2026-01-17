@@ -18,6 +18,7 @@ from cogniverse_foundation.telemetry.config import BatchExportConfig, TelemetryC
 
 
 @pytest.mark.integration
+@pytest.mark.ci_fast
 class TestRoutingAgentWithAdvancedFeatures:
     """Test RoutingAgent with advanced features integrated"""
 

@@ -11,6 +11,8 @@ from cogniverse_foundation.config.agent_config import DSPyModuleType
 from fastapi.testclient import TestClient
 
 
+@pytest.mark.integration
+@pytest.mark.requires_vespa
 class TestDynamicConfigIntegration:
     """Test dynamic DSPy configuration integration"""
 
