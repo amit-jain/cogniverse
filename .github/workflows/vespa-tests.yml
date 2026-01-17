@@ -114,8 +114,42 @@ jobs:
         uv run python -c "from cogniverse_vespa.config.config_store import VespaConfigStore; print('VespaConfigStore import successful')"
         echo "All vespa imports successful"
 
+  fast-integration-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: unit-tests
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras
+        uv pip install pytest-cov
+
+    - name: Run integration tests (self-managed Docker)
+      run: |
+        echo "🧪 Running real integration tests (tests manage their own Vespa containers)..."
+        # Tests use VespaDockerManager with module-scoped fixtures
+        # 7 tests sharing one container = efficient startup amortization
+        JAX_PLATFORM_NAME=cpu uv run python -m pytest \
+          tests/backends/integration/test_tenant_schema_lifecycle.py \
+          -m "integration" \
+          -v --tb=short
+
   integration-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: unit-tests
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
 
@@ -137,43 +171,9 @@ jobs:
         uv sync --all-packages --all-extras
         uv pip install pytest-cov
 
-    - name: Start Vespa
+    - name: Run all integration tests
       run: |
-        echo "Starting Vespa container..."
-        docker run -d \
-          --name vespa-test \
-          -p 8080:8080 \
-          -p 19071:19071 \
-          vespaengine/vespa:latest
-
-        echo "Waiting for Vespa to start (max 2 minutes)..."
-        VESPA_READY=false
-        for i in {1..40}; do
-          if curl -s http://localhost:8080/state/v1/health >/dev/null 2>&1; then
-            echo "Vespa is ready after $((i*3)) seconds!"
-            VESPA_READY=true
-            break
-          fi
-          echo "Waiting for Vespa... (attempt $i/40)"
-          sleep 3
-        done
-
-        if [ "$VESPA_READY" = false ]; then
-          echo "Vespa failed to start within 2 minutes"
-          exit 1
-        fi
-
-    - name: Run integration tests
-      env:
-        BACKEND_URL: http://localhost
-        BACKEND_PORT: "8080"
-      run: |
+        # Tests manage their own Vespa containers via VespaDockerManager
         JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/backends/integration \
           -m "integration" \
           -v --tb=short
-
-    - name: Stop Vespa
-      if: always()
-      run: |
-        docker stop vespa-test || true
-        docker rm vespa-test || true

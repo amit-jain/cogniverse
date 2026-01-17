@@ -104,7 +104,7 @@ jobs:
 
   fast-integration-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     needs: unit-tests
 
     steps:
@@ -125,13 +125,18 @@ jobs:
         uv sync --all-packages --all-extras
         uv pip install pytest-cov
 
-    - name: Run fast integration tests (ci_fast)
+    - name: Run real integration tests (subset)
       env:
         MOCK_LLM_RESPONSES: "true"
       run: |
-        echo "🧪 Running CI fast integration tests..."
-        uv run python -m pytest tests/routing/integration -m "ci_fast" \
-          -v --tb=short || true
+        echo "🧪 Running real integration tests (Docker containers managed by tests)..."
+        # Run subset of integration tests that use module-scoped Docker fixtures
+        # ~20% coverage: 13 tests across 2 files with real Vespa
+        uv run python -m pytest \
+          tests/routing/integration/test_routing_agent_with_advanced_features.py \
+          tests/routing/integration/test_modality_routing_integration.py \
+          -v --tb=short \
+          -m "integration and not local_only" || true
 
   integration-tests:
     runs-on: ubuntu-latest
