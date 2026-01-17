@@ -100,8 +100,14 @@ class TestPipelineConfig:
 
     @patch("cogniverse_core.common.utils.output_manager.get_output_manager")
     @patch("cogniverse_runtime.ingestion.pipeline.get_config")
-    def test_from_profile_method(self, mock_get_config, mock_get_output_manager):
+    @patch("cogniverse_foundation.config.utils.create_default_config_manager")
+    def test_from_profile_method(
+        self, mock_create_config_manager, mock_get_config, mock_get_output_manager
+    ):
         """Test PipelineConfig.from_profile method."""
+        # Mock config manager
+        mock_create_config_manager.return_value = Mock()
+
         # Mock config data with profiles in backend.profiles structure
         config_data = {
             "backend": {
@@ -141,8 +147,14 @@ class TestPipelineConfig:
         assert config.output_dir == Path("/profile/output")
 
     @patch("cogniverse_runtime.ingestion.pipeline.get_config")
-    def test_from_profile_method_profile_not_found(self, mock_get_config):
+    @patch("cogniverse_foundation.config.utils.create_default_config_manager")
+    def test_from_profile_method_profile_not_found(
+        self, mock_create_config_manager, mock_get_config
+    ):
         """Test PipelineConfig.from_profile with non-existent profile."""
+        # Mock config manager
+        mock_create_config_manager.return_value = Mock()
+
         config_data = {"backend": {"profiles": {}}, "search_backend": "byaldi"}
         mock_get_config.return_value = config_data
 
