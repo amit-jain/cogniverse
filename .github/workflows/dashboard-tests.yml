@@ -1,0 +1,112 @@
+name: Dashboard Tests
+
+on:
+  push:
+    branches: [ main, develop, feature/* ]
+    paths:
+      - 'libs/dashboard/**'
+      - 'libs/core/**'
+      - 'tests/dashboard/**'
+      - 'pytest.ini'
+      - 'pyproject.toml'
+      - '.github/workflows/dashboard-tests.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'libs/dashboard/**'
+      - 'libs/core/**'
+      - 'tests/dashboard/**'
+      - 'pytest.ini'
+      - 'pyproject.toml'
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras
+        uv pip install pytest-cov
+
+    - name: Run tests
+      run: |
+        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/dashboard/ \
+          -v --tb=short \
+          --cov=libs/dashboard/cogniverse_dashboard \
+          --cov-report=term-missing \
+          --cov-report=xml:coverage_dashboard.xml
+
+    - name: Upload coverage XML
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-dashboard-xml
+        path: coverage_dashboard.xml
+        retention-days: 7
+        if-no-files-found: warn
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras
+
+    - name: Run linting
+      run: |
+        uv run ruff check libs/dashboard/cogniverse_dashboard || true
+        uv run black --check libs/dashboard/cogniverse_dashboard || true
+      continue-on-error: true
+
+  test-imports:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras
+
+    - name: Test module imports
+      run: |
+        uv run python -c "from cogniverse_dashboard.app import create_app; print('Dashboard app import successful')"
+        echo "All dashboard imports successful"

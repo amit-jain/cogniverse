@@ -1,0 +1,130 @@
+name: Finetuning Module Tests
+
+on:
+  push:
+    branches: [ main, develop, feature/* ]
+    paths:
+      - 'libs/finetuning/**'
+      - 'libs/core/**'
+      - 'libs/foundation/**'
+      - 'tests/finetuning/**'
+      - 'pytest.ini'
+      - 'pyproject.toml'
+      - '.github/workflows/finetuning-tests.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'libs/finetuning/**'
+      - 'libs/core/**'
+      - 'libs/foundation/**'
+      - 'tests/finetuning/**'
+      - 'pytest.ini'
+      - 'pyproject.toml'
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg libgl1-mesa-dri libgl1 libglib2.0-0
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras
+        uv pip install pytest-cov torch
+
+    - name: Run unit tests
+      env:
+        COVERAGE_FILE: .coverage
+      run: |
+        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/finetuning/ -m "unit or not integration" \
+          --ignore=tests/finetuning/integration \
+          -v --tb=short \
+          --cov=libs/finetuning/cogniverse_finetuning \
+          --cov-report=term-missing \
+          --cov-report=xml:coverage_finetuning.xml
+
+    - name: Upload coverage XML
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-finetuning-xml
+        path: coverage_finetuning.xml
+        retention-days: 7
+        if-no-files-found: warn
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras
+
+    - name: Run linting
+      run: |
+        uv run ruff check libs/finetuning/cogniverse_finetuning tests/finetuning || true
+        uv run black --check libs/finetuning/cogniverse_finetuning tests/finetuning || true
+      continue-on-error: true
+
+  test-imports:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg libgl1-mesa-dri libgl1 libglib2.0-0
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras
+        uv pip install torch
+
+    - name: Test module imports
+      run: |
+        JAX_PLATFORM_NAME=cpu uv run python -c "from cogniverse_finetuning.orchestrator import FinetuningOrchestrator; print('Orchestrator import successful')"
+        JAX_PLATFORM_NAME=cpu uv run python -c "from cogniverse_finetuning.registry import AdapterRegistry; print('Registry import successful')"
+        JAX_PLATFORM_NAME=cpu uv run python -c "from cogniverse_finetuning.methods.sft import SFTTrainer; print('SFTTrainer import successful')"
+        echo "All finetuning imports successful"

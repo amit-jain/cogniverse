@@ -1,0 +1,113 @@
+name: Synthetic Data Tests
+
+on:
+  push:
+    branches: [ main, develop, feature/* ]
+    paths:
+      - 'libs/synthetic/**'
+      - 'libs/core/**'
+      - 'tests/synthetic/**'
+      - 'pytest.ini'
+      - 'pyproject.toml'
+      - '.github/workflows/synthetic-tests.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'libs/synthetic/**'
+      - 'libs/core/**'
+      - 'tests/synthetic/**'
+      - 'pytest.ini'
+      - 'pyproject.toml'
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras
+        uv pip install pytest-cov
+
+    - name: Run unit tests
+      run: |
+        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/synthetic/ -m "unit or not integration" \
+          --ignore=tests/synthetic/integration \
+          -v --tb=short \
+          --cov=libs/synthetic/cogniverse_synthetic \
+          --cov-report=term-missing \
+          --cov-report=xml:coverage_synthetic.xml
+
+    - name: Upload coverage XML
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-synthetic-xml
+        path: coverage_synthetic.xml
+        retention-days: 7
+        if-no-files-found: warn
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras
+
+    - name: Run linting
+      run: |
+        uv run ruff check libs/synthetic/cogniverse_synthetic || true
+        uv run black --check libs/synthetic/cogniverse_synthetic || true
+      continue-on-error: true
+
+  test-imports:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras
+
+    - name: Test module imports
+      run: |
+        uv run python -c "from cogniverse_synthetic.generator import SyntheticDataGenerator; print('SyntheticDataGenerator import successful')"
+        echo "All synthetic imports successful"
