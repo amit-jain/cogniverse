@@ -109,5 +109,5 @@ jobs:
 
     - name: Test module imports
       run: |
-        uv run python -c "from cogniverse_synthetic.generator import SyntheticDataGenerator; print('SyntheticDataGenerator import successful')"
+        uv run python -c "from cogniverse_synthetic.service import SyntheticDataService; print('SyntheticDataService import successful')"
         echo "All synthetic imports successful"

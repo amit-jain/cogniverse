@@ -111,7 +111,7 @@ jobs:
 
     - name: Test module imports
       run: |
-        uv run python -c "from cogniverse_core.registries import get_registry; print('Registry import successful')"
+        uv run python -c "from cogniverse_core.registries.registry import get_registry; print('Registry import successful')"
         uv run python -c "from cogniverse_foundation.config import BootstrapConfig; print('BootstrapConfig import successful')"
-        uv run python -c "from cogniverse_sdk.backends import BackendInterface; print('BackendInterface import successful')"
+        uv run python -c "from cogniverse_sdk.interfaces import Backend; print('Backend import successful')"
         echo "All core imports successful"

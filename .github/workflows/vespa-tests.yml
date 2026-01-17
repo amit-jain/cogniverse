@@ -110,7 +110,7 @@ jobs:
 
     - name: Test module imports
       run: |
-        uv run python -c "from cogniverse_vespa.client import VespaClient; print('VespaClient import successful')"
+        uv run python -c "from cogniverse_vespa import VespaBackend; print('VespaBackend import successful')"
         uv run python -c "from cogniverse_vespa.config.config_store import VespaConfigStore; print('VespaConfigStore import successful')"
         echo "All vespa imports successful"
 
