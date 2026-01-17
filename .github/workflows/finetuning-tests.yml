@@ -128,3 +128,53 @@ jobs:
         JAX_PLATFORM_NAME=cpu uv run python -c "from cogniverse_finetuning.registry import AdapterRegistry; print('Registry import successful')"
         JAX_PLATFORM_NAME=cpu uv run python -c "from cogniverse_finetuning.training.sft_trainer import SFTFinetuner; print('SFTFinetuner import successful')"
         echo "All finetuning imports successful"
+
+  fast-integration-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: unit-tests
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg libgl1-mesa-dri libgl1 libglib2.0-0
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install dependencies
+      run: |
+        uv sync --all-packages --all-extras
+        uv pip install pytest-cov torch
+
+    - name: Free up disk space for Vespa
+      run: |
+        echo "🧹 Cleaning up disk space for Vespa..."
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo docker image prune -af
+        df -h
+
+    - name: Pre-pull Vespa Docker image
+      run: |
+        docker pull vespaengine/vespa:latest
+
+    - name: Run integration tests (Vespa Docker)
+      timeout-minutes: 10
+      run: |
+        echo "🧪 Running adapter registry integration tests with Vespa..."
+        JAX_PLATFORM_NAME=cpu uv run python -m pytest \
+          tests/finetuning/integration/test_adapter_registry_vespa.py \
+          -v --tb=short
