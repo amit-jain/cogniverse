@@ -137,7 +137,13 @@ jobs:
         uv sync --all-packages --all-extras
         uv pip install pytest-cov
 
+    - name: Pre-pull Vespa Docker image
+      run: |
+        echo "📦 Pre-pulling Vespa Docker image to avoid timeout during test..."
+        docker pull vespaengine/vespa:latest
+
     - name: Run integration tests (self-managed Docker)
+      timeout-minutes: 10
       run: |
         echo "🧪 Running real integration tests (tests manage their own Vespa containers)..."
         # Tests use VespaDockerManager with module-scoped fixtures
@@ -145,7 +151,11 @@ jobs:
         JAX_PLATFORM_NAME=cpu uv run python -m pytest \
           tests/backends/integration/test_tenant_schema_lifecycle.py \
           -m "integration" \
-          -v --tb=short
+          -v --tb=short 2>&1 | tee /tmp/vespa_test_output.log || {
+            echo "::warning::Integration tests failed - check logs"
+            cat /tmp/vespa_test_output.log
+            exit 1
+          }
 
   integration-tests:
     runs-on: ubuntu-latest
