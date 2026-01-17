@@ -27,8 +27,9 @@ wheels/
 Thumbs.db
 
 # Project specific
-data*
+/data*
 !**/dataset/
+!libs/**/data/
 archive*
 poc*
 *.log
