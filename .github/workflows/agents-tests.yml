@@ -4,8 +4,8 @@ on:
   push:
     branches: [ main, develop, feature/* ]
     paths:
-      - 'src/app/agents/**'
-      - 'src/common/**'
+      - 'libs/agents/**'
+      - 'libs/core/**'
       - 'tests/agents/**'
       - 'pytest.ini'
       - 'pyproject.toml'
@@ -13,8 +13,8 @@ on:
   pull_request:
     branches: [ main, develop ]
     paths:
-      - 'src/app/agents/**'
-      - 'src/common/**'
+      - 'libs/agents/**'
+      - 'libs/core/**'
       - 'tests/agents/**'
       - 'pytest.ini'
       - 'pyproject.toml'
@@ -54,7 +54,7 @@ jobs:
         # Run only essential tests marked with @pytest.mark.ci_fast for faster CI
         # To run all tests locally: uv run python -m pytest tests/agents/unit -m unit
         JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/unit -m "unit and ci_fast" \
-          --cov=src/app/agents \
+          --cov=libs/agents/cogniverse_agents \
           --cov-report=term-missing \
           --cov-report=xml:coverage_agents.xml
         # Rename the coverage file to avoid conflicts and make it uploadable
@@ -137,21 +137,21 @@ jobs:
         uv pip install pytest-cov torch dspy-ai
     
     - name: Test agent modules
-      run: |        
+      run: |
         # Test agent module imports
-        uv run python -c "from src.app.agents.routing_agent import RoutingAgent; print('RoutingAgent import successful')"
-        
-        uv run python -c "from src.app.agents.query_analysis_tool_v3 import QueryAnalysisToolV3; print('QueryAnalysisToolV3 import successful')"
-        
-        uv run python -c "from src.app.agents.enhanced_video_search_agent import EnhancedVideoSearchAgent; print('EnhancedVideoSearchAgent import successful')"
-        
-        uv run python -c "from src.app.agents.summarizer_agent import SummarizerAgent; print('SummarizerAgent import successful')"
-        
-        uv run python -c "from src.app.agents.detailed_report_agent import DetailedReportAgent; print('DetailedReportAgent import successful')"
-        
+        uv run python -c "from cogniverse_agents.routing_agent import RoutingAgent; print('RoutingAgent import successful')"
+
+        uv run python -c "from cogniverse_agents.query_analysis_tool_v3 import QueryAnalysisToolV3; print('QueryAnalysisToolV3 import successful')"
+
+        uv run python -c "from cogniverse_agents.enhanced_video_search_agent import EnhancedVideoSearchAgent; print('EnhancedVideoSearchAgent import successful')"
+
+        uv run python -c "from cogniverse_agents.summarizer_agent import SummarizerAgent; print('SummarizerAgent import successful')"
+
+        uv run python -c "from cogniverse_agents.detailed_report_agent import DetailedReportAgent; print('DetailedReportAgent import successful')"
+
         # Test DSPy integration
         uv run python -c "
-        from src.app.agents.dspy_agent_optimizer import DSPyAgentPromptOptimizer
+        from cogniverse_agents.dspy_agent_optimizer import DSPyAgentPromptOptimizer
         optimizer = DSPyAgentPromptOptimizer()
         print('✅ DSPy optimizer import successful')
         "
@@ -203,7 +203,7 @@ jobs:
           -m ci_fast \
           -v \
           --tb=short \
-          --cov=src/app/agents \
+          --cov=libs/agents/cogniverse_agents \
           --cov-report=term-missing \
           --cov-report=xml:coverage_agents_integration.xml
         

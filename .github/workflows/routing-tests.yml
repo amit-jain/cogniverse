@@ -4,8 +4,8 @@ on:
   push:
     branches: [ main, develop, feature/* ]
     paths:
-      - 'src/app/routing/**'
-      - 'src/common/**'
+      - 'libs/agents/cogniverse_agents/routing/**'
+      - 'libs/core/**'
       - 'tests/routing/unit/**'
       - 'tests/routing/integration/**'
       - 'configs/config.json'
@@ -15,8 +15,8 @@ on:
   pull_request:
     branches: [ main, develop ]
     paths:
-      - 'src/app/routing/**'
-      - 'src/common/**'
+      - 'libs/agents/cogniverse_agents/routing/**'
+      - 'libs/core/**'
       - 'tests/routing/unit/**'
       - 'tests/routing/integration/**'
       - 'configs/config.json'
@@ -70,7 +70,7 @@ jobs:
         COVERAGE_FILE: .coverage
       run: |
         uv run python -m pytest tests/routing/unit -m "unit and not requires_ollama" \
-          --cov=src/app/routing \
+          --cov=libs/agents/cogniverse_agents/routing \
           --cov-report=term-missing \
           --cov-report=xml:coverage_routing.xml \
           --cov-fail-under=15
@@ -132,7 +132,7 @@ jobs:
       run: |
         # Run routing integration tests from proper directory structure
         uv run python -m pytest tests/routing/integration -m "integration and not local_only" \
-          --cov=src/app/routing \
+          --cov=libs/agents/cogniverse_agents/routing \
           --cov-report=term-missing \
           --cov-report=xml:coverage_routing_integration.xml
         # Rename the coverage file to avoid conflicts and make it uploadable
@@ -214,7 +214,7 @@ jobs:
     
     - name: Test routing module imports
       run: |
-        uv run python -c "from src.app.routing import TieredRouter, ComprehensiveRouter; print('Routing imports successful')"
+        uv run python -c "from cogniverse_agents.routing import TieredRouter, ComprehensiveRouter; print('Routing imports successful')"
 
   coverage-report:
     runs-on: ubuntu-latest

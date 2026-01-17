@@ -66,7 +66,7 @@ help:
 test-ingestion:
 	@echo "🧪 Running ingestion tests..."
 	JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/ingestion/unit -m unit \
-		--cov=src/app/ingestion \
+		--cov=libs/runtime/cogniverse_runtime/ingestion \
 		--cov-report=term-missing \
 		--cov-report=html:htmlcov_ingestion \
 		--cov-report=xml:coverage_ingestion.xml \
@@ -91,7 +91,7 @@ test-evaluation:
 test-agents:
 	@echo "🧪 Running agents tests..."
 	JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/unit -m unit \
-		--cov=src/app/agents \
+		--cov=libs/agents/cogniverse_agents \
 		--cov-report=term-missing \
 		--cov-report=html:htmlcov_agents \
 		--cov-report=xml:coverage_agents.xml \
@@ -109,7 +109,7 @@ test-all-modules: test-ingestion test-routing test-evaluation test-agents
 test-integration:
 	@echo "🔗 Running integration tests across modules..."
 	uv run python -m pytest tests/integration \
-		--cov=src \
+		--cov=libs \
 		--cov-report=term-missing \
 		--cov-report=html:htmlcov_integration \
 		--tb=short
@@ -119,31 +119,31 @@ test-integration:
 # =============================================================================
 lint-ingestion:
 	@echo "🔍 Linting ingestion module..."
-	uv run ruff check src/app/ingestion tests/ingestion
-	uv run black --check src/app/ingestion tests/ingestion
-	uv run isort --check-only src/app/ingestion tests/ingestion
-	uv run mypy src/app/ingestion --ignore-missing-imports
+	uv run ruff check libs/runtime/cogniverse_runtime/ingestion tests/ingestion
+	uv run black --check libs/runtime/cogniverse_runtime/ingestion tests/ingestion
+	uv run isort --check-only libs/runtime/cogniverse_runtime/ingestion tests/ingestion
+	uv run mypy libs/runtime/cogniverse_runtime/ingestion --ignore-missing-imports
 
 lint-routing:
 	@echo "🔍 Linting routing module..."
-	uv run ruff check src/app/routing tests/routing
-	uv run black --check src/app/routing tests/routing
-	uv run isort --check-only src/app/routing tests/routing
-	uv run mypy src/app/routing --ignore-missing-imports
+	uv run ruff check libs/agents/cogniverse_agents/routing tests/routing
+	uv run black --check libs/agents/cogniverse_agents/routing tests/routing
+	uv run isort --check-only libs/agents/cogniverse_agents/routing tests/routing
+	uv run mypy libs/agents/cogniverse_agents/routing --ignore-missing-imports
 
 lint-evaluation:
 	@echo "🔍 Linting evaluation module..."
-	uv run ruff check src/evaluation
-	uv run black --check src/evaluation
-	uv run isort --check-only src/evaluation
-	uv run mypy src/evaluation --ignore-missing-imports
+	uv run ruff check libs/evaluation/cogniverse_evaluation
+	uv run black --check libs/evaluation/cogniverse_evaluation
+	uv run isort --check-only libs/evaluation/cogniverse_evaluation
+	uv run mypy libs/evaluation/cogniverse_evaluation --ignore-missing-imports
 
 lint-agents:
 	@echo "🔍 Linting agents module..."
-	uv run ruff check src/app/agents tests/agents
-	uv run black --check src/app/agents tests/agents
-	uv run isort --check-only src/app/agents tests/agents
-	uv run mypy src/app/agents --ignore-missing-imports
+	uv run ruff check libs/agents/cogniverse_agents tests/agents
+	uv run black --check libs/agents/cogniverse_agents tests/agents
+	uv run isort --check-only libs/agents/cogniverse_agents tests/agents
+	uv run mypy libs/agents/cogniverse_agents --ignore-missing-imports
 
 lint-all: lint-ingestion lint-routing lint-evaluation lint-agents
 	@echo "✅ All modules linted successfully"
@@ -153,23 +153,23 @@ lint-all: lint-ingestion lint-routing lint-evaluation lint-agents
 # =============================================================================
 format-ingestion:
 	@echo "✨ Formatting ingestion module..."
-	uv run black src/app/ingestion tests/ingestion
-	uv run ruff check --fix src/app/ingestion tests/ingestion
+	uv run black libs/runtime/cogniverse_runtime/ingestion tests/ingestion
+	uv run ruff check --fix libs/runtime/cogniverse_runtime/ingestion tests/ingestion
 
 format-routing:
 	@echo "✨ Formatting routing module..."
-	uv run black src/app/routing tests/routing
-	uv run ruff check --fix src/app/routing tests/routing
+	uv run black libs/agents/cogniverse_agents/routing tests/routing
+	uv run ruff check --fix libs/agents/cogniverse_agents/routing tests/routing
 
 format-evaluation:
 	@echo "✨ Formatting evaluation module..."
-	uv run black src/evaluation
-	uv run ruff check --fix src/evaluation
+	uv run black libs/evaluation/cogniverse_evaluation
+	uv run ruff check --fix libs/evaluation/cogniverse_evaluation
 
 format-agents:
 	@echo "✨ Formatting agents module..."
-	uv run black src/app/agents tests/agents
-	uv run ruff check --fix src/app/agents tests/agents
+	uv run black libs/agents/cogniverse_agents tests/agents
+	uv run ruff check --fix libs/agents/cogniverse_agents tests/agents
 
 format-all: format-ingestion format-routing format-evaluation format-agents
 	@echo "✅ All modules formatted successfully"
@@ -179,19 +179,19 @@ format-all: format-ingestion format-routing format-evaluation format-agents
 # =============================================================================
 typecheck-ingestion:
 	@echo "🔧 Type checking ingestion module..."
-	uv run mypy src/app/ingestion --ignore-missing-imports --check-untyped-defs || true
+	uv run mypy libs/runtime/cogniverse_runtime/ingestion --ignore-missing-imports --check-untyped-defs || true
 
 typecheck-routing:
 	@echo "🔧 Type checking routing module..."
-	uv run mypy src/app/routing --ignore-missing-imports --check-untyped-defs || true
+	uv run mypy libs/agents/cogniverse_agents/routing --ignore-missing-imports --check-untyped-defs || true
 
 typecheck-evaluation:
 	@echo "🔧 Type checking evaluation module..."
-	uv run mypy src/evaluation --ignore-missing-imports --check-untyped-defs || true
+	uv run mypy libs/evaluation/cogniverse_evaluation --ignore-missing-imports --check-untyped-defs || true
 
 typecheck-agents:
 	@echo "🔧 Type checking agents module..."
-	uv run mypy src/app/agents --ignore-missing-imports --check-untyped-defs || true
+	uv run mypy libs/agents/cogniverse_agents --ignore-missing-imports --check-untyped-defs || true
 
 typecheck-all: typecheck-ingestion typecheck-routing typecheck-evaluation typecheck-agents
 	@echo "✅ All modules type checked"

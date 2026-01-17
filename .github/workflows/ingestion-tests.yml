@@ -4,8 +4,8 @@ on:
   push:
     branches: [ main, develop, feature/* ]
     paths:
-      - 'src/app/ingestion/**'
-      - 'src/common/**'
+      - 'libs/runtime/cogniverse_runtime/ingestion/**'
+      - 'libs/core/**'
       - 'tests/ingestion/**'
       - 'pytest.ini'
       - 'pyproject.toml'
@@ -13,8 +13,8 @@ on:
   pull_request:
     branches: [ main, develop ]
     paths:
-      - 'src/app/ingestion/**'
-      - 'src/common/**'
+      - 'libs/runtime/cogniverse_runtime/ingestion/**'
+      - 'libs/core/**'
       - 'tests/ingestion/**'
       - 'pytest.ini'
       - 'pyproject.toml'
@@ -51,7 +51,7 @@ jobs:
         COVERAGE_FILE: .coverage
       run: |
         JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/ingestion/unit -m unit \
-          --cov=src/app/ingestion \
+          --cov=libs/runtime/cogniverse_runtime/ingestion \
           --cov-report=term-missing \
           --cov-report=xml:coverage_ingestion.xml
         # Rename the coverage file to avoid conflicts and make it uploadable
@@ -137,13 +137,13 @@ jobs:
       run: |
         # Test ingestion script help/import
         uv run python scripts/run_ingestion.py --help
-        
+
         # Test pipeline module can be imported
-        uv run python -c "from src.app.ingestion.pipeline import VideoIngestionPipeline; print('Pipeline import successful')"
-        
+        uv run python -c "from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline; print('Pipeline import successful')"
+
         # Test processor discovery
         uv run python -c "
-        from src.app.ingestion.processor_manager import ProcessorManager
+        from cogniverse_runtime.ingestion.processor_manager import ProcessorManager
         import logging
         logger = logging.getLogger('test')
         manager = ProcessorManager(logger)
@@ -221,7 +221,7 @@ jobs:
             -m "integration and not requires_vespa" \
             -v \
             --tb=short \
-            --cov=src/app/ingestion \
+            --cov=libs/runtime/cogniverse_runtime/ingestion \
             --cov-report=term-missing \
             --cov-report=xml:coverage_ingestion_integration.xml
         else
@@ -230,7 +230,7 @@ jobs:
             -m "integration" \
             -v \
             --tb=short \
-            --cov=src/app/ingestion \
+            --cov=libs/runtime/cogniverse_runtime/ingestion \
             --cov-report=term-missing \
             --cov-report=xml:coverage_ingestion_integration.xml
         fi

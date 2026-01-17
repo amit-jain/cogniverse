@@ -4,18 +4,18 @@ on:
   push:
     branches: [ main, develop, feature/* ]
     paths:
-      - 'src/evaluation/**'
-      - 'src/common/**'
-      - 'src/evaluation/tests/**'
+      - 'libs/evaluation/**'
+      - 'libs/core/**'
+      - 'tests/evaluation/**'
       - 'pytest.ini'
       - 'pyproject.toml'
       - '.github/workflows/evaluation-tests.yml'
   pull_request:
     branches: [ main, develop ]
     paths:
-      - 'src/evaluation/**'
-      - 'src/common/**'
-      - 'src/evaluation/tests/**'
+      - 'libs/evaluation/**'
+      - 'libs/core/**'
+      - 'tests/evaluation/**'
       - 'pytest.ini'
       - 'pyproject.toml'
 
@@ -57,7 +57,7 @@ jobs:
         COVERAGE_FILE: .coverage
       run: |
         uv run python -m pytest tests/evaluation/unit -m unit \
-          --cov=src/evaluation \
+          --cov=libs/evaluation/cogniverse_evaluation \
           --cov-report=term-missing \
           --cov-report=xml:coverage_evaluation.xml \
           --cov-fail-under=50
@@ -129,7 +129,7 @@ jobs:
         COVERAGE_FILE: .coverage
       run: |
         uv run python -m pytest tests/evaluation/integration -v -m integration \
-          --cov=src/evaluation \
+          --cov=libs/evaluation/cogniverse_evaluation \
           --cov-report=term-missing \
           --cov-report=xml:coverage_evaluation_integration.xml
         # Rename the coverage file to avoid conflicts and make it uploadable
@@ -211,14 +211,14 @@ jobs:
     
     - name: Test CLI help
       run: |
-        uv run python -m src.evaluation.cli --help
-    
+        uv run python -m cogniverse_evaluation.cli --help
+
     - name: Test CLI commands
       run: |
-        uv run python -m src.evaluation.cli evaluate --help
-        uv run python -m src.evaluation.cli create-dataset --help
-        uv run python -m src.evaluation.cli list-traces --help
-        uv run python -m src.evaluation.cli test --help
+        uv run python -m cogniverse_evaluation.cli evaluate --help
+        uv run python -m cogniverse_evaluation.cli create-dataset --help
+        uv run python -m cogniverse_evaluation.cli list-traces --help
+        uv run python -m cogniverse_evaluation.cli test --help
 
   coverage-report:
     runs-on: ubuntu-latest

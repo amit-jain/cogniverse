@@ -76,7 +76,6 @@ class TestAdvancedRoutingOptimizerIntegration:
         optimizer = AdvancedRoutingOptimizer(tenant_id="test_tenant")
 
         # Clear any existing experiences
-        initial_count = len(optimizer.experiences)
         optimizer.experiences.clear()
 
         # Generate small batch without Vespa (uses mock data)
