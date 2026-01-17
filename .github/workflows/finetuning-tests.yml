@@ -126,5 +126,5 @@ jobs:
       run: |
         JAX_PLATFORM_NAME=cpu uv run python -c "from cogniverse_finetuning.orchestrator import FinetuningOrchestrator; print('Orchestrator import successful')"
         JAX_PLATFORM_NAME=cpu uv run python -c "from cogniverse_finetuning.registry import AdapterRegistry; print('Registry import successful')"
-        JAX_PLATFORM_NAME=cpu uv run python -c "from cogniverse_finetuning.methods.sft import SFTTrainer; print('SFTTrainer import successful')"
+        JAX_PLATFORM_NAME=cpu uv run python -c "from cogniverse_finetuning.training.sft_trainer import SFTFinetuner; print('SFTFinetuner import successful')"
         echo "All finetuning imports successful"
