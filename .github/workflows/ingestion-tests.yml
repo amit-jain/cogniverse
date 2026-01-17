@@ -7,6 +7,7 @@ on:
       - 'libs/runtime/cogniverse_runtime/ingestion/**'
       - 'libs/core/**'
       - 'tests/ingestion/**'
+      - 'scripts/run_ingestion.py'
       - 'pytest.ini'
       - 'pyproject.toml'
       - '.github/workflows/ingestion-tests.yml'
@@ -16,6 +17,7 @@ on:
       - 'libs/runtime/cogniverse_runtime/ingestion/**'
       - 'libs/core/**'
       - 'tests/ingestion/**'
+      - 'scripts/run_ingestion.py'
       - 'pytest.ini'
       - 'pyproject.toml'
 
