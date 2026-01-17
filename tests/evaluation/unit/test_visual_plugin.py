@@ -90,7 +90,7 @@ class TestVisualEvaluatorPlugin:
         with (
             patch("cogniverse_core.config.utils.get_config") as mock_config,
             patch(
-                "cogniverse_core.evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge"
+                "cogniverse_evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge"
             ) as mock_judge_class,
         ):
 
@@ -124,7 +124,7 @@ class TestVisualEvaluatorPlugin:
         }
 
         with patch(
-            "cogniverse_core.evaluation.evaluators.sync_reference_free.create_sync_evaluators"
+            "cogniverse_evaluation.evaluators.sync_reference_free.create_sync_evaluators"
         ) as mock_create:
             mock_evaluator = Mock()
             mock_eval_result = Mock()

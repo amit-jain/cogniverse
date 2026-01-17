@@ -183,7 +183,7 @@ class TestPhoenixQueryTool:
         mock_provider = Mock()
         mock_provider.telemetry.traces.get_spans = AsyncMock(return_value=mock_df)
 
-        with patch("cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider):
+        with patch("cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider):
             tool_func = phoenix_query_tool()
             results = await tool_func(
                 query_type="traces", filter="name == 'search'", limit=10
@@ -209,7 +209,7 @@ class TestPhoenixQueryTool:
         mock_provider = Mock()
         mock_provider.telemetry.datasets.get_dataset = AsyncMock(return_value=mock_dataset_data)
 
-        with patch("cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider):
+        with patch("cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider):
             tool_func = phoenix_query_tool()
             result = await tool_func(query_type="datasets", name="test_dataset")
 
@@ -257,7 +257,7 @@ class TestPhoenixQueryTool:
 
         mock_provider = Mock()
 
-        with patch("cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider):
+        with patch("cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider):
             tool_func = phoenix_query_tool()
 
             # Test listing experiments
@@ -299,7 +299,7 @@ class TestPhoenixQueryTool:
         mock_provider = Mock()
         mock_provider.telemetry.traces.get_spans = AsyncMock(side_effect=Exception("Phoenix connection failed"))
 
-        with patch("cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider):
+        with patch("cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider):
             tool_func = phoenix_query_tool()
 
             # The function raises RuntimeError wrapping the original exception
@@ -320,7 +320,7 @@ class TestPhoenixQueryTool:
         mock_provider = Mock()
         mock_provider.telemetry.traces.get_spans = AsyncMock(return_value=mock_df)
 
-        with patch("cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider):
+        with patch("cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider):
             tool_func = phoenix_query_tool()
 
             start_time = datetime.now()

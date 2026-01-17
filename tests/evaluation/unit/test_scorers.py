@@ -65,7 +65,7 @@ class TestConfiguredScorers:
         }
 
         with patch(
-            "cogniverse_core.evaluation.plugins.visual_evaluator.get_visual_scorers"
+            "cogniverse_evaluation.plugins.visual_evaluator.get_visual_scorers"
         ) as mock_get:
             mock_get.return_value = [Mock(), Mock()]  # Two mock scorers
             scorers = get_configured_scorers(config)
@@ -150,7 +150,7 @@ class TestDiversityScorer:
         """Test diversity scorer using schema analyzer."""
         # Mock the analyzer
         with patch(
-            "cogniverse_core.evaluation.core.scorers.get_schema_analyzer"
+            "cogniverse_evaluation.core.scorers.get_schema_analyzer"
         ) as mock_get_analyzer:
             mock_analyzer = Mock()
             mock_analyzer.extract_item_id.side_effect = ["item1", "item2", "item1"]
@@ -178,7 +178,7 @@ class TestDiversityScorer:
     async def test_diversity_scorer_all_unique(self):
         """Test diversity scorer with all unique results."""
         with patch(
-            "cogniverse_core.evaluation.core.scorers.get_schema_analyzer"
+            "cogniverse_evaluation.core.scorers.get_schema_analyzer"
         ) as mock_get_analyzer:
             mock_analyzer = Mock()
             mock_analyzer.extract_item_id.side_effect = ["item1", "item2", "item3"]
@@ -296,7 +296,7 @@ class TestPrecisionRecallScorers:
     async def test_precision_scorer_with_ground_truth(self):
         """Test precision scorer with ground truth."""
         with patch(
-            "cogniverse_core.evaluation.core.scorers.get_schema_analyzer"
+            "cogniverse_evaluation.core.scorers.get_schema_analyzer"
         ) as mock_get_analyzer:
             mock_analyzer = Mock()
             mock_analyzer.extract_item_id.side_effect = ["item1", "item2", "item3"]
@@ -324,7 +324,7 @@ class TestPrecisionRecallScorers:
     async def test_recall_scorer_with_ground_truth(self):
         """Test recall scorer with ground truth."""
         with patch(
-            "cogniverse_core.evaluation.core.scorers.get_schema_analyzer"
+            "cogniverse_evaluation.core.scorers.get_schema_analyzer"
         ) as mock_get_analyzer:
             mock_analyzer = Mock()
             mock_analyzer.extract_item_id.side_effect = ["item1", "item2", "item3"]

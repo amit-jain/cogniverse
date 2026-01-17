@@ -20,8 +20,8 @@ class TestCLISimple:
             {
                 "inspect_ai": MagicMock(),
                 "inspect_ai.eval": MagicMock(),
-                "cogniverse_core.evaluation.core": MagicMock(),
-                "cogniverse_core.evaluation.data": MagicMock(),
+                "cogniverse_evaluation.core": MagicMock(),
+                "cogniverse_evaluation.data": MagicMock(),
             },
         ):
             # Now we can import the CLI module
@@ -40,8 +40,8 @@ class TestCLISimple:
             "sys.modules",
             {
                 "inspect_ai": MagicMock(),
-                "cogniverse_core.evaluation.core": MagicMock(),
-                "cogniverse_core.evaluation.data": MagicMock(),
+                "cogniverse_evaluation.core": MagicMock(),
+                "cogniverse_evaluation.data": MagicMock(),
             },
         ):
             from cogniverse_evaluation.cli import evaluate
@@ -64,8 +64,8 @@ class TestCLISimple:
             "sys.modules",
             {
                 "inspect_ai": MagicMock(),
-                "cogniverse_core.evaluation.core": MagicMock(),
-                "cogniverse_core.evaluation.data": MagicMock(),
+                "cogniverse_evaluation.core": MagicMock(),
+                "cogniverse_evaluation.data": MagicMock(),
             },
         ):
             from cogniverse_evaluation.cli import cli
@@ -80,8 +80,8 @@ class TestCLISimple:
             "sys.modules",
             {
                 "inspect_ai": MagicMock(),
-                "cogniverse_core.evaluation.core": MagicMock(),
-                "cogniverse_core.evaluation.data": MagicMock(),
+                "cogniverse_evaluation.core": MagicMock(),
+                "cogniverse_evaluation.data": MagicMock(),
             },
         ):
             from cogniverse_evaluation.cli import evaluate
@@ -99,8 +99,8 @@ class TestCLISimple:
             "sys.modules",
             {
                 "inspect_ai": MagicMock(),
-                "cogniverse_core.evaluation.core": MagicMock(),
-                "cogniverse_core.evaluation.data": MagicMock(),
+                "cogniverse_evaluation.core": MagicMock(),
+                "cogniverse_evaluation.data": MagicMock(),
             },
         ):
             from cogniverse_evaluation.cli import create_dataset
@@ -119,8 +119,8 @@ class TestCLISimple:
             "sys.modules",
             {
                 "inspect_ai": MagicMock(),
-                "cogniverse_core.evaluation.core": MagicMock(),
-                "cogniverse_core.evaluation.data": MagicMock(),
+                "cogniverse_evaluation.core": MagicMock(),
+                "cogniverse_evaluation.data": MagicMock(),
             },
         ):
             from cogniverse_evaluation.cli import list_traces
@@ -141,8 +141,8 @@ class TestCLISimple:
             "sys.modules",
             {
                 "inspect_ai": MagicMock(),
-                "cogniverse_core.evaluation.core": MagicMock(),
-                "cogniverse_core.evaluation.data": MagicMock(),
+                "cogniverse_evaluation.core": MagicMock(),
+                "cogniverse_evaluation.data": MagicMock(),
             },
         ):
             # Import should configure logging
@@ -159,8 +159,8 @@ class TestCLISimple:
             "sys.modules",
             {
                 "inspect_ai": MagicMock(),
-                "cogniverse_core.evaluation.core": MagicMock(),
-                "cogniverse_core.evaluation.data": MagicMock(),
+                "cogniverse_evaluation.core": MagicMock(),
+                "cogniverse_evaluation.data": MagicMock(),
             },
         ):
             with patch("builtins.open", mock_open(read_data='{"test": "config"}')):

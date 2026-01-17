@@ -14,12 +14,12 @@ class TestEvaluationTask:
     @pytest.mark.unit
     def test_evaluation_task_experiment_mode(self, mock_evaluator_provider):
         """Test creating evaluation task in experiment mode."""
-        with patch("cogniverse_core.evaluation.core.task.MemoryDataset") as mock_dataset_class:
+        with patch("cogniverse_evaluation.core.task.MemoryDataset") as mock_dataset_class:
             with patch(
-                "cogniverse_core.evaluation.core.solvers.create_retrieval_solver"
+                "cogniverse_evaluation.core.solvers.create_retrieval_solver"
             ) as mock_solver:
                 with patch(
-                    "cogniverse_core.evaluation.core.inspect_scorers.get_configured_scorers"
+                    "cogniverse_evaluation.core.inspect_scorers.get_configured_scorers"
                 ) as mock_scorers:
                     # Create mock dataset with examples and __len__
                     mock_dataset = MagicMock()
@@ -51,12 +51,12 @@ class TestEvaluationTask:
     @pytest.mark.unit
     def test_evaluation_task_batch_mode(self, mock_evaluator_provider):
         """Test creating evaluation task in batch mode."""
-        with patch("cogniverse_core.evaluation.core.task.MemoryDataset") as mock_dataset_class:
+        with patch("cogniverse_evaluation.core.task.MemoryDataset") as mock_dataset_class:
             with patch(
-                "cogniverse_core.evaluation.core.solvers.create_batch_solver"
+                "cogniverse_evaluation.core.solvers.create_batch_solver"
             ) as mock_solver:
                 with patch(
-                    "cogniverse_core.evaluation.core.inspect_scorers.get_configured_scorers"
+                    "cogniverse_evaluation.core.inspect_scorers.get_configured_scorers"
                 ) as mock_scorers:
                     # Create mock dataset with examples and __len__
                     mock_dataset = MagicMock()
@@ -83,12 +83,12 @@ class TestEvaluationTask:
     @pytest.mark.unit
     def test_evaluation_task_live_mode(self, mock_evaluator_provider):
         """Test creating evaluation task in live mode."""
-        with patch("cogniverse_core.evaluation.core.task.MemoryDataset") as mock_dataset_class:
+        with patch("cogniverse_evaluation.core.task.MemoryDataset") as mock_dataset_class:
             with patch(
-                "cogniverse_core.evaluation.core.solvers.create_live_solver"
+                "cogniverse_evaluation.core.solvers.create_live_solver"
             ) as mock_solver:
                 with patch(
-                    "cogniverse_core.evaluation.core.inspect_scorers.get_configured_scorers"
+                    "cogniverse_evaluation.core.inspect_scorers.get_configured_scorers"
                 ) as mock_scorers:
                     # Create mock dataset with examples and __len__
                     mock_dataset = MagicMock()
@@ -107,7 +107,7 @@ class TestEvaluationTask:
     @pytest.mark.unit
     def test_invalid_mode_raises_error(self, mock_evaluator_provider):
         """Test that invalid mode raises ValueError."""
-        with patch("cogniverse_core.evaluation.core.task.MemoryDataset") as mock_dataset_class:
+        with patch("cogniverse_evaluation.core.task.MemoryDataset") as mock_dataset_class:
             mock_dataset_class.return_value = Mock()
             with pytest.raises(ValueError, match="Unknown mode"):
                 evaluation_task(mode="invalid", dataset_name="test_dataset")
@@ -131,10 +131,10 @@ class TestEvaluationTask:
         """Test that config is passed to get_configured_scorers."""
         config = {"use_ragas": True, "custom_metrics": ["diversity"]}
 
-        with patch("cogniverse_core.evaluation.core.task.MemoryDataset") as mock_dataset_class:
-            with patch("cogniverse_core.evaluation.core.solvers.create_retrieval_solver"):
+        with patch("cogniverse_evaluation.core.task.MemoryDataset") as mock_dataset_class:
+            with patch("cogniverse_evaluation.core.solvers.create_retrieval_solver"):
                 with patch(
-                    "cogniverse_core.evaluation.core.inspect_scorers.get_configured_scorers"
+                    "cogniverse_evaluation.core.inspect_scorers.get_configured_scorers"
                 ) as mock_scorers:
                     # Create mock dataset with examples and __len__
                     mock_dataset = MagicMock()
@@ -158,13 +158,13 @@ class TestEvaluationTask:
         """Test that plugins are auto-registered from config."""
         config = {"evaluation": {"plugins": ["video"]}}
 
-        with patch("cogniverse_core.evaluation.plugins.auto_register_plugins") as mock_register:
+        with patch("cogniverse_evaluation.plugins.auto_register_plugins") as mock_register:
             with patch(
-                "cogniverse_core.evaluation.core.task.MemoryDataset"
+                "cogniverse_evaluation.core.task.MemoryDataset"
             ) as mock_dataset_class:
-                with patch("cogniverse_core.evaluation.core.solvers.create_batch_solver"):
+                with patch("cogniverse_evaluation.core.solvers.create_batch_solver"):
                     with patch(
-                        "cogniverse_core.evaluation.core.inspect_scorers.get_configured_scorers"
+                        "cogniverse_evaluation.core.inspect_scorers.get_configured_scorers"
                     ):
                         # Create mock dataset with examples and __len__
                         mock_dataset = MagicMock()
@@ -181,13 +181,13 @@ class TestEvaluationTask:
     @pytest.mark.unit
     def test_video_plugin_auto_registration(self, mock_evaluator_provider):
         """Test that video plugin is auto-registered for video datasets."""
-        with patch("cogniverse_core.evaluation.plugins.register_video_plugin") as mock_register:
+        with patch("cogniverse_evaluation.plugins.register_video_plugin") as mock_register:
             with patch(
-                "cogniverse_core.evaluation.core.task.MemoryDataset"
+                "cogniverse_evaluation.core.task.MemoryDataset"
             ) as mock_dataset_class:
-                with patch("cogniverse_core.evaluation.core.solvers.create_retrieval_solver"):
+                with patch("cogniverse_evaluation.core.solvers.create_retrieval_solver"):
                     with patch(
-                        "cogniverse_core.evaluation.core.inspect_scorers.get_configured_scorers"
+                        "cogniverse_evaluation.core.inspect_scorers.get_configured_scorers"
                     ):
                         # Create mock dataset with examples and __len__
                         mock_dataset = MagicMock()

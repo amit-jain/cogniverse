@@ -242,7 +242,7 @@ class TestPhoenixExperimentPlugin:
                 "cogniverse_telemetry_phoenix.evaluation.experiments.run_experiment",
                 return_value=mock_result,
             ) as mock_run_exp,
-            patch("cogniverse_core.evaluation.core.solvers.create_retrieval_solver") as mock_solver,
+            patch("cogniverse_evaluation.core.solvers.create_retrieval_solver") as mock_solver,
         ):
 
             result = PhoenixExperimentPlugin.run_inspect_with_phoenix_tracking(
@@ -306,7 +306,7 @@ class TestPhoenixExperimentPlugin:
                 "cogniverse_telemetry_phoenix.evaluation.experiments.run_experiment",
                 return_value=mock_result,
             ),
-            patch("cogniverse_core.evaluation.core.solvers.create_retrieval_solver"),
+            patch("cogniverse_evaluation.core.solvers.create_retrieval_solver"),
         ):
 
             result = PhoenixExperimentPlugin.run_inspect_with_phoenix_tracking(
@@ -355,7 +355,7 @@ class TestPhoenixExperimentPluginUtilities:
         }
 
         with patch(
-            "cogniverse_core.evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge"
+            "cogniverse_evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge"
         ) as mock_judge:
             mock_instance = Mock()
             mock_judge.return_value = mock_instance
@@ -379,7 +379,7 @@ class TestPhoenixExperimentPluginUtilities:
         mock_quality_evaluators = [Mock(), Mock()]
 
         with patch(
-            "cogniverse_core.evaluation.evaluators.sync_reference_free.create_sync_evaluators",
+            "cogniverse_evaluation.evaluators.sync_reference_free.create_sync_evaluators",
             return_value=mock_quality_evaluators,
         ):
 
@@ -402,11 +402,11 @@ class TestPhoenixExperimentPluginUtilities:
 
         with (
             patch(
-                "cogniverse_core.evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge",
+                "cogniverse_evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge",
                 return_value=mock_visual_judge,
             ),
             patch(
-                "cogniverse_core.evaluation.evaluators.sync_reference_free.create_sync_evaluators",
+                "cogniverse_evaluation.evaluators.sync_reference_free.create_sync_evaluators",
                 return_value=mock_quality_evaluators,
             ),
         ):
@@ -427,7 +427,7 @@ class TestPhoenixExperimentPluginUtilities:
         }
 
         with patch(
-            "cogniverse_core.evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge"
+            "cogniverse_evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge"
         ) as mock_judge:
             mock_judge.return_value = Mock()
 
@@ -450,7 +450,7 @@ class TestPhoenixExperimentPluginUtilities:
         }
 
         with patch(
-            "cogniverse_core.evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge"
+            "cogniverse_evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge"
         ) as mock_judge:
             mock_judge.return_value = Mock()
 

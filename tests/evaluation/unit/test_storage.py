@@ -251,9 +251,9 @@ class TestTelemetryStorage:
     def test_initialization_success(self, mock_provider, config):
         """Test successful initialization."""
         with patch(
-            "cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider
+            "cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider
         ):
-            with patch("cogniverse_core.evaluation.data.storage.trace"):
+            with patch("cogniverse_evaluation.data.storage.trace"):
                 storage = TelemetryStorage(config)
 
                 assert storage.connection_state == ConnectionState.CONNECTED
@@ -271,8 +271,8 @@ class TestTelemetryStorage:
             pd.DataFrame(),
         ])
 
-        with patch("cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider):
-            with patch("cogniverse_core.evaluation.data.storage.trace"):
+        with patch("cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider):
+            with patch("cogniverse_evaluation.data.storage.trace"):
                 storage = TelemetryStorage(config)
 
                 assert storage.connection_state == ConnectionState.CONNECTED
@@ -285,7 +285,7 @@ class TestTelemetryStorage:
         mock_provider = Mock()
         mock_provider.telemetry.traces.get_spans = AsyncMock(side_effect=Exception("Connection failed"))
 
-        with patch("cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider):
+        with patch("cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider):
             with pytest.raises(ConnectionError) as exc_info:
                 TelemetryStorage(config)
 
@@ -295,9 +295,9 @@ class TestTelemetryStorage:
     def test_log_experiment_results(self, mock_provider, config):
         """Test logging experiment results."""
         with patch(
-            "cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider
+            "cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider
         ):
-            with patch("cogniverse_core.evaluation.data.storage.trace"):
+            with patch("cogniverse_evaluation.data.storage.trace"):
                 storage = TelemetryStorage(config)
 
                 # Mock tracer
@@ -352,9 +352,9 @@ class TestTelemetryStorage:
         mock_provider.telemetry.traces.get_spans = AsyncMock(return_value=test_df)
 
         with patch(
-            "cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider
+            "cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider
         ):
-            with patch("cogniverse_core.evaluation.data.storage.trace"):
+            with patch("cogniverse_evaluation.data.storage.trace"):
                 storage = TelemetryStorage(config)
 
                 # Test regular query
@@ -383,9 +383,9 @@ class TestTelemetryStorage:
         ])
 
         with patch(
-            "cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider
+            "cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider
         ):
-            with patch("cogniverse_core.evaluation.data.storage.trace"):
+            with patch("cogniverse_evaluation.data.storage.trace"):
                 storage = TelemetryStorage(config)
 
                 df = storage.get_traces_for_evaluation(trace_ids=["trace1", "trace2"])
@@ -414,9 +414,9 @@ class TestTelemetryStorage:
         ]
 
         with patch(
-            "cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider
+            "cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider
         ):
-            with patch("cogniverse_core.evaluation.data.storage.trace"):
+            with patch("cogniverse_evaluation.data.storage.trace"):
                 storage = TelemetryStorage(config)
 
                 result = storage.get_traces_for_evaluation()
@@ -427,9 +427,9 @@ class TestTelemetryStorage:
     def test_get_metrics(self, mock_provider, config):
         """Test getting storage metrics."""
         with patch(
-            "cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider
+            "cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider
         ):
-            with patch("cogniverse_core.evaluation.data.storage.trace"):
+            with patch("cogniverse_evaluation.data.storage.trace"):
                 storage = TelemetryStorage(config)
 
                 # Add some metrics
@@ -448,9 +448,9 @@ class TestTelemetryStorage:
     def test_context_manager(self, mock_provider, config):
         """Test context manager functionality."""
         with patch(
-            "cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider
+            "cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider
         ):
-            with patch("cogniverse_core.evaluation.data.storage.trace"):
+            with patch("cogniverse_evaluation.data.storage.trace"):
                 with TelemetryStorage(config) as storage:
                     assert storage.connection_state == ConnectionState.CONNECTED
 
@@ -468,9 +468,9 @@ class TestTelemetryStorage:
         ])
 
         with patch(
-            "cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider
+            "cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider
         ):
-            with patch("cogniverse_core.evaluation.data.storage.trace"):
+            with patch("cogniverse_evaluation.data.storage.trace"):
                 storage = TelemetryStorage(config)
                 assert storage.connection_state == ConnectionState.CONNECTED
 
@@ -491,8 +491,8 @@ class TestTelemetryStorage:
         mock_provider = Mock()
         mock_provider.telemetry.traces.get_spans = AsyncMock(return_value=pd.DataFrame())
 
-        with patch("cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider):
-            with patch("cogniverse_core.evaluation.data.storage.trace"):
+        with patch("cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider):
+            with patch("cogniverse_evaluation.data.storage.trace"):
                 storage = TelemetryStorage(config)
 
                 # Simulate disconnection
@@ -513,9 +513,9 @@ class TestTelemetryStorage:
     def test_shutdown(self, mock_provider, config):
         """Test graceful shutdown."""
         with patch(
-            "cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider
+            "cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider
         ):
-            with patch("cogniverse_core.evaluation.data.storage.trace"):
+            with patch("cogniverse_evaluation.data.storage.trace"):
                 storage = TelemetryStorage(config)
 
                 storage.shutdown()
@@ -527,9 +527,9 @@ class TestTelemetryStorage:
     def test_span_creation_without_tracer(self, mock_provider, config):
         """Test _create_span when tracer is None."""
         with patch(
-            "cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider
+            "cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider
         ):
-            with patch("cogniverse_core.evaluation.data.storage.trace"):
+            with patch("cogniverse_evaluation.data.storage.trace"):
                 storage = TelemetryStorage(config)
                 storage.tracer = None
 
@@ -540,9 +540,9 @@ class TestTelemetryStorage:
     def test_span_creation_with_exception(self, mock_provider, config):
         """Test _create_span exception handling."""
         with patch(
-            "cogniverse_core.evaluation.providers.get_evaluator_provider", return_value=mock_provider
+            "cogniverse_evaluation.providers.get_evaluation_provider", return_value=mock_provider
         ):
-            with patch("cogniverse_core.evaluation.data.storage.trace"):
+            with patch("cogniverse_evaluation.data.storage.trace"):
                 storage = TelemetryStorage(config)
 
                 mock_span = MagicMock()

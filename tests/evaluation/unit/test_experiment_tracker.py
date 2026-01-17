@@ -17,15 +17,17 @@ class TestExperimentTracker:
     def mock_dependencies(self):
         """Mock all external dependencies."""
         with (
-            patch("cogniverse_core.evaluation.core.experiment_tracker.DatasetManager") as mock_dm,
-            patch("cogniverse_core.evaluation.core.experiment_tracker.RetrievalMonitor") as mock_pm,
-            patch("cogniverse_core.evaluation.core.experiment_tracker.register_plugin") as mock_reg,
+            patch("cogniverse_evaluation.core.experiment_tracker.register_plugin") as mock_reg,
+            patch("cogniverse_evaluation.core.experiment_tracker.get_evaluation_provider") as mock_provider,
         ):
+            # Mock provider to avoid actual Phoenix connection
+            mock_provider_instance = Mock()
+            mock_provider_instance.get_dataset_url.return_value = "http://localhost:6006/datasets/test"
+            mock_provider.return_value = mock_provider_instance
 
             yield {
-                "dataset_manager": mock_dm,
-                "phoenix_monitor": mock_pm,
                 "register_plugin": mock_reg,
+                "provider": mock_provider_instance,
             }
 
     @pytest.fixture
@@ -77,7 +79,7 @@ class TestExperimentTracker:
     def test_register_evaluator_plugins_quality(self, mock_dependencies):
         """Test registering quality evaluator plugins."""
         # Mock the entire module since VideoAnalyzerPlugin may not exist
-        with patch("cogniverse_core.evaluation.plugins.video_analyzer") as mock_module:
+        with patch("cogniverse_evaluation.plugins.video_analyzer") as mock_module:
             mock_plugin = Mock()
             mock_module.VideoAnalyzerPlugin = Mock(return_value=mock_plugin)
 
@@ -88,7 +90,7 @@ class TestExperimentTracker:
     @pytest.mark.unit
     def test_register_evaluator_plugins_llm(self, mock_dependencies):
         """Test registering LLM evaluator plugins."""
-        with patch("cogniverse_core.evaluation.plugins.visual_evaluator.VisualEvaluatorPlugin"):
+        with patch("cogniverse_evaluation.plugins.visual_evaluator.VisualEvaluatorPlugin"):
             ExperimentTracker(enable_llm_evaluators=True)
 
             mock_dependencies["register_plugin"].assert_called()
@@ -98,7 +100,7 @@ class TestExperimentTracker:
         """Test handling import errors when registering plugins."""
         # Mock the import to fail
         with patch(
-            "cogniverse_core.evaluation.core.experiment_tracker.register_plugin"
+            "cogniverse_evaluation.core.experiment_tracker.register_plugin"
         ) as mock_reg:
             mock_reg.side_effect = ImportError("Module not found")
 
@@ -211,7 +213,7 @@ class TestExperimentTracker:
         mock_result.scores = {"mrr": Mock(value=0.85), "recall": Mock(value=0.75)}
 
         with (
-            patch("cogniverse_core.evaluation.core.experiment_tracker.evaluation_task"),
+            patch("cogniverse_evaluation.core.experiment_tracker.evaluation_task"),
             patch("inspect_ai.eval", new_callable=AsyncMock) as mock_eval,
         ):
 
@@ -238,7 +240,7 @@ class TestExperimentTracker:
     async def test_run_experiment_async_failure(self, tracker):
         """Test experiment execution failure."""
         with (
-            patch("cogniverse_core.evaluation.core.experiment_tracker.evaluation_task"),
+            patch("cogniverse_evaluation.core.experiment_tracker.evaluation_task"),
             patch("inspect_ai.eval", side_effect=Exception("Evaluation failed")),
         ):
 
@@ -268,10 +270,10 @@ class TestExperimentTracker:
             mock_async.assert_called_once_with("profile", "strategy", "dataset", "desc")
 
     @pytest.mark.unit
-    def test_create_or_get_dataset_existing(self, tracker):
+    def test_create_or_get_dataset_existing(self, tracker, mock_dependencies):
         """Test getting existing dataset."""
-        mock_dataset = Mock()
-        tracker.dataset_manager.get_dataset.return_value = mock_dataset
+        # Mock provider method
+        mock_dependencies["provider"].get_dataset_url.return_value = "http://localhost:6006/datasets/existing_dataset"
 
         result = tracker.create_or_get_dataset(dataset_name="existing_dataset")
 
@@ -279,29 +281,33 @@ class TestExperimentTracker:
         assert tracker.dataset_url == "http://localhost:6006/datasets/existing_dataset"
 
     @pytest.mark.unit
-    def test_create_or_get_dataset_new_from_csv(self, tracker):
+    def test_create_or_get_dataset_new_from_csv(self, tracker, mock_dependencies, tmp_path):
         """Test creating new dataset from CSV."""
-        tracker.dataset_manager.get_dataset.return_value = None
-        tracker.dataset_manager.create_from_csv.return_value = "new_dataset_id"
+        # Create a test CSV file
+        csv_path = tmp_path / "test.csv"
+        csv_path.write_text("query,expected\ntest query,test result\n")
+
+        mock_dependencies["provider"].create_dataset.return_value = "new_dataset_id"
+        mock_dependencies["provider"].get_dataset_url.return_value = "http://localhost:6006/datasets/new_dataset"
 
         result = tracker.create_or_get_dataset(
-            dataset_name="new_dataset", csv_path="/path/to/file.csv", force_new=True
+            dataset_name="new_dataset", csv_path=str(csv_path), force_new=True
         )
 
-        assert result == "new_dataset_id"
-        assert tracker.dataset_url == "http://localhost:6006/datasets/new_dataset_id"
-        tracker.dataset_manager.create_from_csv.assert_called_once()
+        assert result == "new_dataset"
+        mock_dependencies["provider"].create_dataset.assert_called_once()
 
     @pytest.mark.unit
-    def test_create_or_get_dataset_test_dataset(self, tracker):
+    def test_create_or_get_dataset_test_dataset(self, tracker, mock_dependencies):
         """Test creating test dataset."""
-        tracker.dataset_manager.get_dataset.return_value = None
-        tracker.dataset_manager.create_test_dataset.return_value = "test_dataset_id"
+        mock_dependencies["provider"].create_dataset.return_value = "test_dataset_id"
+        mock_dependencies["provider"].get_dataset_url.return_value = "http://localhost:6006/datasets/test"
 
         result = tracker.create_or_get_dataset()
 
-        assert result == "test_dataset_id"
-        tracker.dataset_manager.create_test_dataset.assert_called_once()
+        # Should generate a timestamp-based name
+        assert result.startswith("experiment_")
+        mock_dependencies["provider"].create_dataset.assert_called_once()
 
     @pytest.mark.unit
     def test_run_all_experiments_no_configurations(self, tracker):
@@ -508,7 +514,7 @@ class TestExperimentTracker:
         mock_args.force_new = False
 
         with patch(
-            "cogniverse_core.evaluation.core.experiment_tracker.ExperimentTracker"
+            "cogniverse_evaluation.core.experiment_tracker.ExperimentTracker"
         ) as mock_tracker_class:
             mock_tracker = Mock()
             mock_tracker_class.return_value = mock_tracker
@@ -530,7 +536,7 @@ class TestExperimentTracker:
         from cogniverse_evaluation.core.experiment_tracker import main
 
         with patch(
-            "cogniverse_core.evaluation.core.experiment_tracker.ExperimentTracker"
+            "cogniverse_evaluation.core.experiment_tracker.ExperimentTracker"
         ) as mock_tracker_class:
             mock_tracker = Mock()
             mock_tracker_class.return_value = mock_tracker

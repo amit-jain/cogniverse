@@ -17,7 +17,7 @@ class TestDatasetManager:
     @pytest.fixture
     def manager(self, mock_phoenix_client):
         """Create dataset manager with mocked storage."""
-        with patch("cogniverse_core.evaluation.data.storage.TelemetryStorage") as mock_storage_class:
+        with patch("cogniverse_evaluation.data.storage.TelemetryStorage") as mock_storage_class:
             # Create mock storage instance
             mock_storage = Mock()
             # Create mock provider structure
@@ -218,7 +218,7 @@ class TestTraceManager:
     def manager(self, mock_phoenix_client):
         """Create trace manager with mocked storage."""
         from unittest.mock import AsyncMock
-        with patch("cogniverse_core.evaluation.data.storage.TelemetryStorage") as mock_storage_class:
+        with patch("cogniverse_evaluation.data.storage.TelemetryStorage") as mock_storage_class:
             # Create mock storage instance
             mock_storage = Mock()
             # Create mock provider structure

@@ -127,7 +127,7 @@ class TestSchemaAwareGroundTruthStrategy:
     ):
         """Test successful ground truth extraction."""
         with patch(
-            "cogniverse_core.evaluation.core.ground_truth.get_schema_analyzer",
+            "cogniverse_evaluation.core.ground_truth.get_schema_analyzer",
             return_value=mock_analyzer,
         ):
             trace_data = {
@@ -173,7 +173,7 @@ class TestSchemaAwareGroundTruthStrategy:
         backend.search = AsyncMock(side_effect=Exception("Backend error"))
 
         with patch(
-            "cogniverse_core.evaluation.core.ground_truth.get_schema_analyzer",
+            "cogniverse_evaluation.core.ground_truth.get_schema_analyzer",
             return_value=mock_analyzer,
         ):
             trace_data = {
@@ -258,7 +258,7 @@ class TestDatasetGroundTruthStrategy:
         from unittest.mock import AsyncMock
 
         # Mock provider's dataset method
-        with patch("cogniverse_core.evaluation.providers.get_evaluator_provider") as mock_get_provider:
+        with patch("cogniverse_evaluation.providers.get_evaluation_provider") as mock_get_provider:
             mock_provider = MagicMock()
 
             # Create dataset data with matching query
@@ -322,7 +322,7 @@ class TestBackendGroundTruthStrategy:
         )
 
         with patch(
-            "cogniverse_core.evaluation.core.ground_truth.get_schema_analyzer"
+            "cogniverse_evaluation.core.ground_truth.get_schema_analyzer"
         ) as mock_analyzer:
             analyzer = Mock()
             analyzer.analyze_query.return_value = {"query_type": "keyword"}
@@ -385,7 +385,7 @@ class TestHybridGroundTruthStrategy:
         )
 
         with patch(
-            "cogniverse_core.evaluation.core.ground_truth.get_schema_analyzer"
+            "cogniverse_evaluation.core.ground_truth.get_schema_analyzer"
         ) as mock_analyzer:
             analyzer = Mock()
             analyzer.analyze_query.return_value = {"query_type": "keyword"}
@@ -714,7 +714,7 @@ class TestDatasetGroundTruthStrategyExtended:
         from unittest.mock import AsyncMock
 
         # Mock provider's dataset method
-        with patch("cogniverse_core.evaluation.providers.get_evaluator_provider") as mock_get_provider:
+        with patch("cogniverse_evaluation.providers.get_evaluation_provider") as mock_get_provider:
             mock_provider = MagicMock()
 
             # Create dataset data with alternative field names
@@ -799,7 +799,7 @@ class TestHybridGroundTruthStrategyExtended:
         )
 
         with patch(
-            "cogniverse_core.evaluation.core.ground_truth.get_schema_analyzer"
+            "cogniverse_evaluation.core.ground_truth.get_schema_analyzer"
         ) as mock_analyzer:
             analyzer = Mock()
             analyzer.analyze_query.return_value = {"query_type": "exact"}
