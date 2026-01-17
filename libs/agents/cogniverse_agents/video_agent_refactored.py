@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 if TYPE_CHECKING:
     from cogniverse_foundation.config.manager import ConfigManager
 
-from a2a import DataPart
+from cogniverse_agents.tools.a2a_utils import DataPart
 from cogniverse_foundation.config.utils import get_config
 from fastapi import FastAPI, HTTPException
 

@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.app.ingestion.pipeline_builder import (
+from cogniverse_runtime.ingestion.pipeline_builder import (
     build_simple_pipeline,
     build_test_pipeline,
     create_config,
@@ -38,7 +38,6 @@ async def main_async():
     args = parser.parse_args()
 
     # Get profiles to process
-    from src.common.config_utils import get_config
     from cogniverse_foundation.config.utils import create_default_config_manager, get_config
     config_manager = create_default_config_manager()
     app_config = get_config(tenant_id="default", config_manager=config_manager)

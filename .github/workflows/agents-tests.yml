@@ -144,7 +144,7 @@ jobs:
 
         uv run python -c "from cogniverse_agents.query_analysis_tool_v3 import QueryAnalysisToolV3; print('QueryAnalysisToolV3 import successful')"
 
-        uv run python -c "from cogniverse_agents.enhanced_video_search_agent import EnhancedVideoSearchAgent; print('EnhancedVideoSearchAgent import successful')"
+        uv run python -c "from cogniverse_agents.video_agent_refactored import VideoSearchAgent; print('VideoSearchAgent import successful')"
 
         uv run python -c "from cogniverse_agents.summarizer_agent import SummarizerAgent; print('SummarizerAgent import successful')"
 
