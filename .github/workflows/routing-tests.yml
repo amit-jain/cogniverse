@@ -62,7 +62,7 @@ jobs:
     
     - name: Install dependencies
       run: |
-        uv sync --all-extras
+        uv sync --all-packages --all-extras
         uv pip install pytest-cov
     
     - name: Run routing unit tests
@@ -122,7 +122,7 @@ jobs:
     
     - name: Install dependencies
       run: |
-        uv sync --all-extras
+        uv sync --all-packages --all-extras
         uv pip install pytest-cov
     
     - name: Run routing integration tests
@@ -180,7 +180,7 @@ jobs:
     
     - name: Install dependencies with dev tools
       run: |
-        uv sync --all-extras
+        uv sync --all-packages --all-extras
     
     - name: Run linting and formatting checks
       run: make lint-routing
@@ -205,7 +205,7 @@ jobs:
     
     - name: Install package
       run: |
-        uv sync --all-extras
+        uv sync --all-packages --all-extras
     
     - name: Test demo script
       run: |
