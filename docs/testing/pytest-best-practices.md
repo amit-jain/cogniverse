@@ -1,6 +1,6 @@
 # Pytest Best Practices
 
-**Last Updated:** 2025-11-13
+**Last Updated:** 2025-01-18
 **Architecture:** UV Workspace with 11-package layered architecture and multi-tenant support
 **Purpose:** Guide for writing and running tests in the Cogniverse project
 
@@ -97,13 +97,58 @@ JAX_PLATFORM_NAME=cpu uv run pytest -xvs
 # Run only unit tests
 uv run pytest -m unit
 
+# Run only integration tests
+uv run pytest -m integration
+
+# Run fast CI tests (subset for quick feedback)
+uv run pytest -m ci_fast
+
 # Skip slow tests
 uv run pytest -m "not slow"
 
 # Run tests requiring specific models
 uv run pytest -m requires_colpali
 uv run pytest -m requires_ollama
+
+# Skip tests requiring Ollama (for CI)
+uv run pytest -m "not requires_ollama"
 ```
+
+### Available Markers
+
+Defined in `pytest.ini`:
+
+```ini
+[pytest]
+markers =
+    unit: Unit tests (no external dependencies)
+    integration: Integration tests (require external services)
+    ci_fast: Fast, essential tests for CI (subset of most important functionality)
+    slow: Slow tests (skip in quick runs)
+    requires_ollama: Tests requiring Ollama LLM
+    requires_colpali: Tests requiring ColPali model
+    requires_vespa: Tests requiring Vespa backend
+    local_only: Tests that only run locally (not in CI)
+```
+
+### The `ci_fast` Marker
+
+The `ci_fast` marker identifies tests suitable for the `fast-integration-tests` CI job:
+
+```python
+@pytest.mark.integration
+@pytest.mark.ci_fast
+async def test_tenant_schema_creation(vespa_docker):
+    """Essential test for CI - verifies tenant schema lifecycle."""
+    # This runs on every push in fast-integration-tests job
+    ...
+```
+
+**Guidelines for `ci_fast` tests:**
+- Essential functionality that must work
+- Complete in under 2 minutes
+- No external API calls (Ollama, OpenAI, etc.)
+- Can use Docker containers (Vespa, Phoenix)
 
 ### Async Test Timeout
 
@@ -594,6 +639,129 @@ ENV OMP_NUM_THREADS=1
 ENV MKL_NUM_THREADS=1
 
 RUN pytest
+```
+
+---
+
+## Docker Fixtures for Integration Tests
+
+Integration tests use self-managed Docker containers via pytest fixtures.
+
+### VespaDockerManager
+
+Located in `tests/utils/vespa_docker.py`, manages Vespa containers:
+
+```python
+from tests.utils.vespa_docker import VespaDockerManager
+
+@pytest.fixture(scope="module")
+def vespa_docker():
+    """
+    Module-scoped Vespa container.
+
+    Starts Vespa, waits for readiness, yields manager, then cleans up.
+    Uses unique ports per module to avoid conflicts.
+    """
+    manager = VespaDockerManager(
+        container_name=f"vespa_test_{int(time.time())}",
+        vespa_port=8080,      # Query/feed port
+        config_port=19071     # Config server port
+    )
+    manager.start()
+    manager.wait_for_ready(timeout=120)
+    yield manager
+    manager.stop()
+
+# Usage in tests
+@pytest.mark.integration
+async def test_vespa_operations(vespa_docker):
+    """Test with real Vespa container."""
+    client = vespa_docker.get_client()
+    # ... test operations
+```
+
+**Key Features:**
+- Generates unique container names to avoid conflicts
+- Waits for both config server and application readiness
+- Proper cleanup on test completion or failure
+- Module-scoped to share container across tests in a file
+
+### Phoenix Docker Fixtures
+
+For telemetry and evaluation tests:
+
+```python
+import subprocess
+import time
+
+@pytest.fixture(scope="module")
+def phoenix_container():
+    """Start Phoenix container for telemetry tests."""
+    container_name = f"phoenix_test_{int(time.time())}"
+
+    # Start container
+    subprocess.run([
+        "docker", "run", "-d", "--name", container_name,
+        "-p", "6006:6006",   # UI port
+        "-p", "4317:4317",   # OTLP gRPC port
+        "arizephoenix/phoenix:latest"
+    ], check=True)
+
+    # Wait for Phoenix to be ready
+    for _ in range(30):
+        try:
+            response = requests.get("http://localhost:6006")
+            if response.ok:
+                break
+        except requests.ConnectionError:
+            time.sleep(2)
+
+    yield {
+        "container_name": container_name,
+        "ui_url": "http://localhost:6006",
+        "otlp_endpoint": "http://localhost:4317"
+    }
+
+    # Cleanup
+    subprocess.run(["docker", "rm", "-f", container_name])
+
+# Usage
+@pytest.mark.integration
+def test_telemetry_collection(phoenix_container):
+    """Test with real Phoenix container."""
+    provider = PhoenixProvider(endpoint=phoenix_container["otlp_endpoint"])
+    # ... test operations
+```
+
+### Port Management
+
+To avoid port conflicts when running tests in parallel:
+
+```python
+def get_unique_ports(base_port: int = 8080) -> tuple[int, int]:
+    """Generate unique ports based on process ID and time."""
+    import os
+    offset = (os.getpid() % 100) * 10 + int(time.time()) % 10
+    return base_port + offset, 19071 + offset
+```
+
+### CI Disk Space Requirements
+
+Vespa requires disk usage below 75%. In GitHub Actions:
+
+```yaml
+- name: Free up disk space for Vespa
+  run: |
+    # Remove ~30GB of unused packages
+    sudo rm -rf /usr/share/dotnet           # .NET SDK
+    sudo rm -rf /usr/local/lib/android      # Android SDK
+    sudo rm -rf /opt/ghc                    # Haskell
+    sudo rm -rf /opt/hostedtoolcache/CodeQL # CodeQL
+    sudo docker image prune -af
+    df -h  # Verify disk usage
+
+- name: Pre-pull Vespa Docker image
+  run: docker pull vespaengine/vespa:latest
 ```
 
 ---

@@ -1,5 +1,7 @@
 # Testing Guide
 
+**Last Updated:** 2025-01-18
+
 Comprehensive guide to testing practices in Cogniverse.
 
 ---
@@ -472,6 +474,129 @@ exclude_lines = [
 
 ## CI/CD Testing
 
+### GitHub Actions Workflows
+
+The project has **12 GitHub workflow files** organized by module:
+
+| Workflow | Module | Tests | Docker Services |
+|----------|--------|-------|-----------------|
+| `agents-tests.yml` | cogniverse-agents | unit + integration | None (mocked) |
+| `core-tests.yml` | cogniverse-core | unit + integration | Vespa |
+| `dashboard-tests.yml` | cogniverse-dashboard | unit + integration | None (TestClient) |
+| `evaluation-tests.yml` | cogniverse-evaluation | unit + integration | Phoenix |
+| `finetuning-tests.yml` | cogniverse-finetuning | unit + integration | Vespa |
+| `ingestion-tests.yml` | cogniverse-runtime (ingestion) | unit + integration | Vespa |
+| `routing-tests.yml` | cogniverse-agents (routing) | unit + integration | Vespa |
+| `synthetic-tests.yml` | cogniverse-synthetic | unit + integration | Phoenix |
+| `telemetry-tests.yml` | cogniverse-telemetry-phoenix | unit + integration | Phoenix |
+| `vespa-tests.yml` | cogniverse-vespa | unit + integration | Vespa |
+| `docs.yml` | Documentation | build check | None |
+| `publish-packages.yml` | Package publishing | N/A | None |
+
+### Workflow Structure
+
+Each test workflow has these jobs:
+
+1. **unit-tests** - Fast unit tests with mocked dependencies
+2. **fast-integration-tests** - Real integration tests (runs on every push)
+3. **integration-tests** - Full integration suite (main/develop only)
+4. **lint** - Code linting with ruff/black
+5. **test-imports** - Verify package imports work
+6. **coverage-report** - Combined coverage (if applicable)
+
+### Fast Integration Tests
+
+Every workflow runs `fast-integration-tests` on every push to provide quick feedback with real Docker containers:
+
+```yaml
+fast-integration-tests:
+  runs-on: ubuntu-latest
+  timeout-minutes: 15
+  needs: unit-tests
+
+  steps:
+  - uses: actions/checkout@v4
+
+  - name: Set up Python 3.12
+    uses: actions/setup-python@v4
+    with:
+      python-version: '3.12'
+
+  - name: Install uv
+    uses: astral-sh/setup-uv@v4
+    with:
+      version: "latest"
+
+  - name: Install dependencies
+    run: |
+      uv sync --all-packages --all-extras
+      uv pip install pytest-cov
+
+  - name: Free up disk space for Vespa
+    run: |
+      # Vespa requires <75% disk usage
+      sudo rm -rf /usr/share/dotnet
+      sudo rm -rf /usr/local/lib/android
+      sudo rm -rf /opt/ghc
+      sudo rm -rf /opt/hostedtoolcache/CodeQL
+      sudo docker image prune -af
+
+  - name: Pre-pull Vespa Docker image
+    run: docker pull vespaengine/vespa:latest
+
+  - name: Run integration tests
+    timeout-minutes: 10
+    run: |
+      JAX_PLATFORM_NAME=cpu uv run python -m pytest \
+        tests/module/integration/ \
+        -v --tb=short
+```
+
+### Disk Cleanup for Vespa
+
+Vespa requires disk usage below 75%. GitHub runners have ~14GB disk, so cleanup is required:
+
+```bash
+# Remove ~30GB of unused packages
+sudo rm -rf /usr/share/dotnet           # .NET SDK (~6GB)
+sudo rm -rf /usr/local/lib/android      # Android SDK (~10GB)
+sudo rm -rf /opt/ghc                    # Haskell compiler (~2GB)
+sudo rm -rf /opt/hostedtoolcache/CodeQL # CodeQL (~5GB)
+sudo docker image prune -af             # Unused Docker images
+```
+
+### Docker Service Management
+
+Tests manage their own Docker containers via fixtures:
+
+**Vespa (VespaDockerManager):**
+```python
+# tests/utils/vespa_docker.py
+@pytest.fixture(scope="module")
+def vespa_docker():
+    """Start Vespa container for module tests."""
+    manager = VespaDockerManager()
+    manager.start()
+    yield manager
+    manager.stop()
+```
+
+**Phoenix:**
+```python
+@pytest.fixture(scope="module")
+def phoenix_container():
+    """Start Phoenix container for telemetry tests."""
+    container_name = f"phoenix_test_{int(time.time())}"
+    subprocess.run([
+        "docker", "run", "-d", "--name", container_name,
+        "-p", "6006:6006", "-p", "4317:4317",
+        "arizephoenix/phoenix:latest"
+    ])
+    # Wait for ready...
+    yield container_name
+    subprocess.run(["docker", "rm", "-f", container_name])
+```
+
 ### Pre-commit Checklist
 
 Before every commit:
@@ -488,35 +613,6 @@ grep -E "passed|failed" /tmp/test_output.log
 
 # 4. Lint
 uv run make lint-all
-```
-
-### GitHub Actions Example
-
-```yaml
-name: Tests
-
-on: [push, pull_request]
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v1
-
-      - name: Install dependencies
-        run: uv sync
-
-      - name: Run tests
-        run: |
-          JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v \
-            --cov=cogniverse_core \
-            --cov-report=xml
-
-      - name: Upload coverage
-        uses: codecov/codecov-action@v3
 ```
 
 ---
