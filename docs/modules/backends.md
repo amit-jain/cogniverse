@@ -3,7 +3,7 @@
 **Package:** `cogniverse_vespa` (Implementation Layer)
 **Location:** `libs/vespa/cogniverse_vespa/`
 **Purpose:** Vespa backend integration with multi-tenant schema management
-**Last Updated:** 2025-11-13
+**Last Updated:** 2025-01-18
 
 ---
 
@@ -14,8 +14,9 @@
 3. [Multi-Tenant Schema Management](#multi-tenant-schema-management)
 4. [Search Client](#search-client)
 5. [Ingestion Client](#ingestion-client)
-6. [Usage Examples](#usage-examples)
-7. [Testing](#testing)
+6. [Metadata Schema Management](#metadata-schema-management)
+7. [Usage Examples](#usage-examples)
+8. [Testing](#testing)
 
 ---
 
@@ -1533,6 +1534,178 @@ schema_manager = VespaSchemaManager(
 
 schema_manager.deploy_schema(schema, app_name="videosearch")
 ```
+
+---
+
+## Metadata Schema Management
+
+Cogniverse uses **JSON-based metadata schemas** for multi-tenant management data stored in Vespa. These schemas are the single source of truth and are loaded dynamically at runtime.
+
+### Overview
+
+Metadata schemas store operational data (not video content):
+- **Organization/tenant hierarchy** for multi-tenancy
+- **Configuration key-value pairs** for VespaConfigStore
+- **Adapter registry** for model management
+
+```
+configs/schemas/
+├── organization_metadata_schema.json   # Organization-level data
+├── tenant_metadata_schema.json         # Tenant-level data
+├── config_metadata_schema.json         # Configuration storage (VespaConfigStore)
+├── adapter_registry_schema.json        # Trained adapter metadata
+├── agent_memories_schema.json          # Agent memory storage
+├── workflow_intelligence_schema.json   # Workflow tracking
+└── video_*_schema.json                 # Video content schemas (profiles)
+```
+
+### Metadata Schema Types
+
+| Schema | Purpose | Key Fields |
+|--------|---------|------------|
+| `organization_metadata` | Multi-tenant org hierarchy | `org_id`, `org_name`, `status`, `tenant_count` |
+| `tenant_metadata` | Tenant information | `tenant_full_id`, `org_id`, `status`, `schemas_deployed` |
+| `config_metadata` | VespaConfigStore backend | `config_id`, `tenant_id`, `scope`, `config_key`, `config_value` |
+| `adapter_registry` | Trained LoRA adapters | `adapter_id`, `tenant_id`, `base_model`, `status`, `is_active` |
+
+### Loading Schemas from JSON
+
+All metadata schemas are loaded via `metadata_schemas.py`:
+
+```python
+from cogniverse_vespa.metadata_schemas import (
+    create_organization_metadata_schema,
+    create_tenant_metadata_schema,
+    create_config_metadata_schema,
+    create_adapter_registry_schema,
+    add_metadata_schemas_to_package,
+)
+
+# Load individual schema
+org_schema = create_organization_metadata_schema()
+
+# Or add all metadata schemas to an ApplicationPackage
+from vespa.package import ApplicationPackage
+app_package = ApplicationPackage(name="cogniverse")
+add_metadata_schemas_to_package(app_package)
+# Adds: organization_metadata, tenant_metadata, config_metadata, adapter_registry
+```
+
+### Schema File Location
+
+Schemas are auto-discovered from `configs/schemas/`:
+
+```python
+from cogniverse_vespa.metadata_schemas import get_schemas_dir, set_schemas_dir
+
+# Get current schemas directory
+schemas_path = get_schemas_dir()
+print(schemas_path)  # /path/to/cogniverse/configs/schemas
+
+# Override for testing
+set_schemas_dir(Path("/tmp/test_schemas"))
+```
+
+### JSON Schema Format
+
+Metadata schemas follow the same JSON format as video schemas:
+
+```json
+{
+  "name": "config_metadata",
+  "document": {
+    "fields": [
+      {
+        "name": "config_id",
+        "type": "string",
+        "indexing": ["attribute", "summary"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "tenant_id",
+        "type": "string",
+        "indexing": ["attribute", "summary"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "config_value",
+        "type": "string",
+        "indexing": ["summary"]
+      }
+    ]
+  }
+}
+```
+
+**Field Attributes:**
+- `indexing: ["attribute", "summary"]` - Stored and searchable
+- `attribute: ["fast-search"]` - Optimized for exact matching
+- `indexing: ["summary"]` - Stored but not indexed (for large values)
+
+### Adding New Metadata Schemas
+
+1. **Create JSON schema file** in `configs/schemas/`:
+
+```json
+// configs/schemas/my_metadata_schema.json
+{
+  "name": "my_metadata",
+  "document": {
+    "fields": [
+      {"name": "id", "type": "string", "indexing": ["attribute", "summary"], "attribute": ["fast-search"]},
+      {"name": "tenant_id", "type": "string", "indexing": ["attribute", "summary"], "attribute": ["fast-search"]},
+      {"name": "data", "type": "string", "indexing": ["summary"]}
+    ]
+  }
+}
+```
+
+2. **Add loader function** in `metadata_schemas.py`:
+
+```python
+def create_my_metadata_schema() -> Schema:
+    """Create my_metadata schema. Loads from configs/schemas/my_metadata_schema.json."""
+    return _load_schema("my_metadata")
+```
+
+3. **Include in package deployment** (if needed globally):
+
+```python
+def add_metadata_schemas_to_package(app_package) -> None:
+    # ... existing schemas ...
+    app_package.add_schema(create_my_metadata_schema())
+```
+
+### Schema Deployment
+
+Metadata schemas are deployed automatically via `VespaSchemaManager`:
+
+```python
+from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+from cogniverse_vespa.metadata_schemas import add_metadata_schemas_to_package
+from vespa.package import ApplicationPackage
+
+# Create application package
+app_package = ApplicationPackage(name="cogniverse")
+
+# Add all metadata schemas
+add_metadata_schemas_to_package(app_package)
+
+# Deploy to Vespa
+schema_manager = VespaSchemaManager(
+    vespa_endpoint="http://localhost",
+    vespa_port=19071
+)
+schema_manager.deploy_application(app_package)
+```
+
+### Best Practices
+
+1. **Single Source of Truth**: Always define schemas in JSON files, never duplicate in Python code
+2. **Tenant Isolation**: Include `tenant_id` field with `fast-search` for multi-tenant queries
+3. **Versioning**: Use `version` field for optimistic locking when needed
+4. **Timestamps**: Include `created_at` and `updated_at` for auditing
+5. **JSON Storage**: Store complex objects as JSON strings in `string` fields
 
 ---
 
