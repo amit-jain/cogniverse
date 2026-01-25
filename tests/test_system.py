@@ -22,7 +22,7 @@ from cogniverse_foundation.config.utils import create_default_config_manager, ge
 
 
 class SystemTester:
-    """Comprehensive system tester for the multi-agent RAG system."""
+    """Comprehensive system tester for the multi-agent AI platform."""
 
     def __init__(self):
         config_manager = create_default_config_manager()

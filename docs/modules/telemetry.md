@@ -1,6 +1,6 @@
 # Telemetry Module Documentation
 
-**Last Updated:** 2025-11-13
+**Last Updated:** 2026-01-25
 **Packages:**
 - **Foundation Interfaces**: `cogniverse-foundation` (libs/foundation/cogniverse_foundation/telemetry/)
 - **Core Infrastructure**: `cogniverse-core` (libs/core/cogniverse_core/telemetry/)

@@ -2,7 +2,7 @@
 
 **Package:** `cogniverse_agents` (Implementation Layer)
 **Location:** `libs/agents/cogniverse_agents/`
-**Purpose:** Agent implementations for multi-agent RAG system with multi-tenant support
+**Purpose:** Agent implementations for general-purpose multi-agent AI platform with multi-tenant support
 **Last Updated:** 2026-01-01
 
 ---
@@ -30,7 +30,7 @@
 
 ## Module Overview
 
-The Agents package (`cogniverse-agents`) provides concrete agent implementations for the Cogniverse multi-agent RAG system. All agents are tenant-aware and integrate with the core SDK packages.
+The Agents package (`cogniverse-agents`) provides concrete agent implementations for the Cogniverse multi-agent AI platform. The architecture supports **any agent type** - content understanding agents ship by default, but web browsing, code analysis, and domain-specific agents can be integrated via the same AgentBase/A2AAgent base classes. All agents are tenant-aware and integrate with the core SDK packages.
 
 ### Key Agents
 
@@ -50,6 +50,18 @@ The Agents package (`cogniverse-agents`) provides concrete agent implementations
 - **DSPy 3.0 Integration**: A2A protocol + DSPy modules for optimization
 - **Streaming Support**: OpenAI-style `stream=True` parameter for progressive results
 - **Production-Ready**: Health checks, graceful degradation, telemetry
+
+### Extensibility
+
+The agent architecture is **not limited to content understanding**. The AgentBase and A2AAgent base classes support any agent type:
+
+- **Web Browsing Agents**: Research, scraping, monitoring
+- **Code Agents**: Analysis, generation, refactoring
+- **Data Agents**: Database queries, API integrations
+- **Communication Agents**: Email, Slack, notifications
+- **Domain-Specific Agents**: Legal, medical, financial analysis
+
+To add a custom agent, implement `A2AAgent[InputT, OutputT, DepsT]` and register with the AgentRegistry. All agents automatically gain tenant isolation, memory, telemetry, and DSPy optimization capabilities.
 
 ### Package Dependencies
 

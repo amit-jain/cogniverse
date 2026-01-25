@@ -506,7 +506,7 @@ if schema_dim != embedding_dim:
 
 ---
 
-**Last Updated**: 2025-11-13
+**Last Updated:** 2026-01-25
 **Status**: Production Ready
 
 **Package Architecture Note**: Schema-driven processing spans multiple packages in the 11-package layered architecture:

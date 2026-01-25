@@ -1,6 +1,6 @@
 # Testing Guide
 
-**Last Updated:** 2025-01-18
+**Last Updated:** 2026-01-25
 
 Comprehensive guide to testing practices in Cogniverse.
 

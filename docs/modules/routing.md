@@ -2,7 +2,7 @@
 
 **Package:** `cogniverse_agents` (Implementation Layer)
 **Location:** `libs/agents/cogniverse_agents/routing/`
-**Last Updated:** 2025-11-13
+**Last Updated:** 2026-01-25
 **Purpose:** Comprehensive guide to intelligent query routing strategies and optimization
 
 ---

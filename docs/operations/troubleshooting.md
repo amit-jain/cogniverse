@@ -1,8 +1,8 @@
 # Troubleshooting Guide
 
-**Last Updated:** 2025-11-13
+**Last Updated:** 2026-01-25
 **Architecture:** UV Workspace with 11 packages in layered architecture
-**Purpose:** Common issues and solutions for the Cogniverse multi-agent RAG system
+**Purpose:** Common issues and solutions for the Cogniverse multi-agent AI platform
 
 ---
 
@@ -501,4 +501,4 @@ Phoenix traces:  http://localhost:6006
 
 ---
 
-**Last Updated:** 2025-11-13
+**Last Updated:** 2026-01-25

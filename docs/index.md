@@ -1,10 +1,10 @@
 # Welcome to Cogniverse
 
-**Version 2.0.0** | **11-Package UV Workspace Architecture** | **Production Ready** | **Last Updated: 2025-11-24**
+**Version 2.1.0** | **11-Package UV Workspace Architecture** | **Production Ready** | **Last Updated: 2026-01-25**
 
-## Multi-Agent RAG System for Multi-Modal Content Analysis and Search
+## Self-Optimizing Content Intelligence Platform
 
-Cogniverse is a production-ready multi-agent RAG (Retrieval-Augmented Generation) system for intelligent processing and search across multi-modal content with complete multi-tenant isolation.
+Cogniverse is a general-purpose multi-agent AI platform for intelligent processing and understanding across multi-modal content. The architecture supports any agent type (content, web, code, domain-specific) with complete multi-tenant isolation and self-optimization via DSPy.
 
 ---
 
@@ -272,7 +272,7 @@ Cogniverse uses a UV workspace with 11 packages organized in 4 layers:
 
 ---
 
-**Version**: 2.0.0
+**Version**: 2.1.0
 **Architecture**: UV Workspace (11 Packages - Layered Architecture)
-**Last Updated**: 2025-11-24
+**Last Updated**: 2026-01-25
 **Status**: Production Ready

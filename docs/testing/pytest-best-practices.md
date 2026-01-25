@@ -1,6 +1,6 @@
 # Pytest Best Practices
 
-**Last Updated:** 2025-01-18
+**Last Updated:** 2026-01-25
 **Architecture:** UV Workspace with 11-package layered architecture and multi-tenant support
 **Purpose:** Guide for writing and running tests in the Cogniverse project
 

@@ -1,6 +1,6 @@
 # SDK Architecture Diagrams
 
-**Last Updated:** 2025-11-13
+**Last Updated:** 2026-01-25
 **Purpose:** Comprehensive visual documentation of UV workspace SDK architecture with 11-package layered structure
 
 ---

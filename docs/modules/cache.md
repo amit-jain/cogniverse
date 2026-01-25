@@ -2,7 +2,7 @@
 
 **Package:** `cogniverse_core` (Core Layer)
 **Module Location:** `libs/core/cogniverse_core/common/cache/`
-**Last Updated:** 2025-11-13
+**Last Updated:** 2026-01-25
 **Purpose:** Multi-tiered caching system for embeddings, pipeline artifacts, and video processing outputs with pluggable backend architecture
 
 ---

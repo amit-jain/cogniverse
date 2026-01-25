@@ -1,6 +1,6 @@
 # Package Publishing Guide
 
-**Last Updated:** 2025-11-13
+**Last Updated:** 2026-01-25
 **Architecture:** UV Workspace with 10 SDK Packages in Layered Architecture
 **Purpose:** Complete guide for building and publishing Cogniverse SDK packages to PyPI in dependency order
 
@@ -871,6 +871,6 @@ open https://pypi.org/project/cogniverse-core/
 
 ---
 
-**Version:** 2.0.0
-**Last Updated:** 2025-10-15
+**Version:** 2.1.0
+**Last Updated:** 2026-01-25
 **Status:** Production Ready

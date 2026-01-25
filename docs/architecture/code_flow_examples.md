@@ -496,7 +496,7 @@ with telemetry.trace("search_request", tenant_id) as trace:
 
 ---
 
-**Last Updated**: 2025-11-13
+**Last Updated:** 2026-01-25
 **Status**: Production Ready
 
 **Package Architecture Note**: Code examples use Cogniverse's 11-package layered architecture:

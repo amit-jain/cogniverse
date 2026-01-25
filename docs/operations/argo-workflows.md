@@ -1,6 +1,6 @@
 # Argo Workflows Guide
 
-**Last Updated:** 2025-11-13
+**Last Updated:** 2026-01-25
 **Architecture:** UV Workspace with 11 packages - Kubernetes-based batch processing with Argo Workflows
 **Purpose:** Complete guide for batch operations and scheduled tasks
 
@@ -609,6 +609,6 @@ kubectl get storageclass
 
 ---
 
-**Version:** 2.0.0
-**Last Updated:** 2025-11-13
+**Version:** 2.1.0
+**Last Updated:** 2026-01-25
 **Status:** Production Ready

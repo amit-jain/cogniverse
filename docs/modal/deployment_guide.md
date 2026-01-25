@@ -435,5 +435,5 @@ with telemetry.span("modal.vlm.describe", tenant_id) as span:
 
 ---
 
-**Last Updated**: 2025-11-13
+**Last Updated:** 2026-01-25
 **Status**: Production Ready - Integrated with 11-Package Architecture

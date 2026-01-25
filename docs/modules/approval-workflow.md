@@ -3,7 +3,7 @@
 **Package**: `cogniverse_agents` (Implementation Layer)
 **Location**: `libs/agents/cogniverse_agents/approval/`
 **Related Package**: `cogniverse_synthetic` (Application Layer)
-**Last Updated:** 2025-11-13
+**Last Updated:** 2026-01-25
 
 The human-in-the-loop approval workflow enables quality control for synthetically generated training data by allowing humans to review and approve/reject examples before they're used for model optimization.
 

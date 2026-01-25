@@ -1,6 +1,6 @@
 # Cogniverse SDK Architecture
 
-**Last Updated:** 2025-11-13
+**Last Updated:** 2026-01-25
 **Purpose:** Deep-dive into UV workspace structure, package design, and development workflows
 **Audience:** Developers working on Cogniverse SDK packages
 

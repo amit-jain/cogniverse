@@ -1,7 +1,7 @@
 [project]
 name = "cogniverse-core"
 version = "0.1.0"
-description = "Core interfaces, registries, and base classes for Cogniverse multi-agent RAG system"
+description = "Core interfaces, registries, and base classes for Cogniverse multi-agent AI platform"
 readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "MIT"}

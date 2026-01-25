@@ -1,6 +1,6 @@
 # Cogniverse Study Guide: Package Development
 
-**Last Updated:** 2025-11-13
+**Last Updated:** 2026-01-25
 **Architecture:** UV Workspace with 10 SDK packages in layered architecture
 **Purpose:** Package development workflows, dependency management, and best practices for layered system
 
@@ -1109,7 +1109,7 @@ uv build                            # Build verification
 ```markdown
 # cogniverse-agents
 
-Agent implementations for Cogniverse multi-agent RAG system.
+Agent implementations for Cogniverse multi-agent AI platform.
 
 ## Installation
 

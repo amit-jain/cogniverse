@@ -1,6 +1,6 @@
 # GPU Recommendations for Cogniverse Multi-Modal Processing
 
-**Last Updated:** 2025-11-13
+**Last Updated:** 2026-01-25
 **Package:** `cogniverse-runtime` (ingestion pipeline) + `cogniverse-agents` (search agents)
 **Purpose:** GPU requirements for multi-modal content processing (video, audio, images, documents, text, dataframes) with ColPali, VideoPrism, and ColQwen models
 

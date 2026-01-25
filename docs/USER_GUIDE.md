@@ -1,8 +1,8 @@
 # Cogniverse User Guide
 
-**Version:** 2.1.0 | **Last Updated:** 2025-01-13 | **Status:** Production Ready
+**Version:** 2.1.0 | **Last Updated:** 2026-01-25 | **Status:** Production Ready
 
-Complete guide for using Cogniverse - the multi-agent system for multi-modal content analysis and search.
+Complete guide for using Cogniverse - the general-purpose multi-agent AI platform for content intelligence and beyond.
 
 ---
 
@@ -24,7 +24,7 @@ Complete guide for using Cogniverse - the multi-agent system for multi-modal con
 
 ### What is Cogniverse?
 
-Cogniverse is a production-ready **multi-agent RAG (Retrieval-Augmented Generation) system** designed for intelligent video content analysis and search. It combines state-of-the-art embedding models, multi-agent orchestration, and complete multi-tenant isolation to provide:
+Cogniverse is a **Self-Optimizing Content Intelligence Platform** - a general-purpose multi-agent AI system with built-in optimization via DSPy (including GEPA, BootstrapFewShot, and other optimizers). While it ships with multi-modal content understanding (video, audio, images, documents), the architecture supports integrating **any agent type** including web browsing, code analysis, and domain-specific agents. It provides:
 
 - **Multi-Modal Search**: Search videos using text, images, or video queries
 - **Intelligent Routing**: AI-powered query routing to the best search strategy
@@ -1129,5 +1129,5 @@ uv run python scripts/run_ingestion.py \
 
 **Version**: 2.1.0
 **Architecture**: UV Workspace (11 Packages - Layered Architecture)
-**Last Updated**: 2025-01-13
+**Last Updated:** 2026-01-25
 **Status**: Production Ready

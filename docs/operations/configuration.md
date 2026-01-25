@@ -1,6 +1,6 @@
 # Cogniverse Study Guide: Configuration Management
 
-**Last Updated:** 2025-11-13
+**Last Updated:** 2026-01-25
 **Architecture:** UV Workspace with 11 packages in layered architecture
 **Packages:** `cogniverse_sdk`, `cogniverse_foundation`, `cogniverse_core`
 **Module Path:** `libs/foundation/cogniverse_foundation/config/` and `libs/core/cogniverse_core/config/`

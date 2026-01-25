@@ -84,7 +84,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 # Create FastAPI app
 app = FastAPI(
     title="Cogniverse Runtime",
-    description="Unified multi-agent RAG system for video content analysis and search",
+    description="Multi-agent AI platform for content intelligence",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -112,7 +112,7 @@ async def root():
     return {
         "service": "Cogniverse Runtime",
         "version": "1.0.0",
-        "description": "Unified multi-agent RAG system",
+        "description": "Multi-agent AI platform for content intelligence",
         "docs": "/docs",
         "health": "/health",
     }

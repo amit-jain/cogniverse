@@ -1,6 +1,6 @@
 # Cogniverse Study Guide: UI/Dashboard Module
 
-**Last Updated:** 2025-11-13
+**Last Updated:** 2026-01-25
 **Module Path:** `scripts/*_tab.py`
 **Architecture:** 11-package layered architecture
 **SDK Packages:** Uses dashboard (application layer) + agents, telemetry-phoenix (implementation layer) + core, evaluation (core layer) + foundation (foundation layer)

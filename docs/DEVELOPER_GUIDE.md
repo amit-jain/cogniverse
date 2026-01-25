@@ -1,8 +1,8 @@
 # Cogniverse Developer Guide
 
-**Version:** 2.0.0 | **Last Updated:** 2025-11-13 | **Status:** Production Ready
+**Version:** 2.1.0 | **Last Updated:** 2026-01-25 | **Status:** Production Ready
 
-Complete guide for developers contributing to Cogniverse - the multi-agent system for multi-modal content analysis and search.
+Complete guide for developers contributing to Cogniverse - a general-purpose multi-agent AI platform with self-optimization via DSPy optimizers. Content understanding is a primary use case, but the architecture supports any agent type.
 
 ---
 
@@ -812,7 +812,7 @@ uv run pytest tests/agents/ -v -s  # -s shows print statements
 
 ---
 
-**Version**: 2.0.0
+**Version**: 2.1.0
 **Architecture**: UV Workspace (11 Packages - Layered Architecture)
-**Last Updated**: 2025-11-13
+**Last Updated**: 2026-01-25
 **Status**: Production Ready

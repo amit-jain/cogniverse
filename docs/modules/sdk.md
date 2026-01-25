@@ -4,7 +4,7 @@
 **Import Name**: `cogniverse_sdk`
 **Layer**: Foundation Layer
 **Version**: 0.1.0
-**Last Updated**: 2025-11-13
+**Last Updated**: 2026-01-25
 
 ---
 
@@ -950,4 +950,4 @@ uv publish --token $PYPI_TOKEN
 **Version**: 0.1.0
 **Layer**: Foundation Layer
 **Dependencies**: Zero internal dependencies
-**Last Updated**: 2025-11-13
+**Last Updated**: 2026-01-25

@@ -1,6 +1,6 @@
 # Vespa Search Strategies
 
-**Last Updated**: 2025-11-13
+**Last Updated:** 2026-01-25
 **Package**: cogniverse-vespa (Implementation Layer)
 **Related**: cogniverse-core (backend configuration)
 

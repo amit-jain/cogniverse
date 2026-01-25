@@ -3,7 +3,7 @@
 **Package:** `cogniverse_runtime` (Application Layer)
 **Module Location:** `libs/runtime/cogniverse_runtime/ingestion/`
 **Purpose**: Configurable video processing pipeline for multi-modal content extraction and indexing
-**Last Updated**: 2025-11-13
+**Last Updated:** 2026-01-25
 
 ---
 

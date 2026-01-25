@@ -1,6 +1,6 @@
 # Cogniverse Study Guide: Scripts & Operations Module
 
-**Last Updated:** 2025-11-13
+**Last Updated:** 2026-01-25
 **Module Path:** `scripts/`
 **Architecture:** 11-package layered architecture
 **SDK Packages:** Uses all 11 packages (foundation → core → implementation → application)

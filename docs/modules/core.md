@@ -3,7 +3,7 @@
 **Package:** `cogniverse_core`
 **Location:** `libs/core/cogniverse_core/`
 **Purpose:** Type-safe agent base classes, registries, and core infrastructure
-**Last Updated:** 2026-01-01
+**Last Updated:** 2026-01-25
 
 ---
 

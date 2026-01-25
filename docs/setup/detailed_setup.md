@@ -1,7 +1,7 @@
 # Getting Started with Cogniverse
 
 **Architecture**: 11-Package Layered System
-**Last Updated**: 2025-11-13
+**Last Updated:** 2026-01-25
 
 Welcome to Cogniverse! This guide will help you get your sophisticated multi-agent video search system up and running quickly.
 

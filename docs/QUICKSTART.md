@@ -216,6 +216,5 @@ python -c "import cogniverse_core; print('OK')"
 ## Getting Help
 
 - [Full Documentation](./README.md)
-- [Study Guide](./plan/STUDY_GUIDE.md)
 - [Troubleshooting Guide](./TROUBLESHOOTING.md)
 - [GitHub Issues](https://github.com/your-org/cogniverse/issues)
