@@ -68,6 +68,11 @@ cogniverse_core/
 │   ├── tenant_utils.py          # Tenant utilities
 │   ├── dspy_module_registry.py  # DSPy module management
 │   └── a2a_utils.py             # A2A protocol utilities
+├── events/                      # Real-time event notification system
+│   ├── types.py                 # Event type definitions (StatusEvent, ProgressEvent, etc.)
+│   ├── queue.py                 # EventQueue and QueueManager protocols
+│   └── backends/                # Backend implementations
+│       └── memory.py            # In-memory EventQueue backend
 ├── config/                      # Configuration management
 ├── schemas/                     # Data schemas
 │   └── filesystem_loader.py     # Schema loading from files
